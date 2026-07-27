@@ -178,7 +178,7 @@ failure path is already obvious, runnable, readable, and correlated.
 ## Example Fragments
 
 For concrete examples of high-signal rules, read
-`examples/agents-md-good-examples.md`. Use those snippets as review anchors,
+`../../case-studies/agent-customize/agents-md-good-examples.md`. Use those snippets as review anchors,
 not as a pasteable universal template.
 
 ## Review Criteria

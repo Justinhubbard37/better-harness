@@ -265,8 +265,8 @@ candidate through Loop Discovery and the coverage ladder above.
 
 | Supported procedure shape | Joined evidence | Copy/adapt example |
 |---|---|---|
-| Browser or UI reproduction | GitHub Issue, Jira, Aone, or exported screenshots/video/comments plus a project-owned browser, component, E2E, WebView, IDE, or desktop route | [`reproduce-frontend-bug`](examples/bug-diagnosis-skills/reproduce-frontend-bug/SKILL.md) |
-| Backend correlated diagnosis | Issue evidence plus a project-owned service/test/job route, readable logs or traces, and a stable request/trace/job/run id | [`diagnose-backend-bug`](examples/bug-diagnosis-skills/diagnose-backend-bug/SKILL.md) |
+| Browser or UI reproduction | GitHub Issue, Jira, Aone, or exported screenshots/video/comments plus a project-owned browser, component, E2E, WebView, IDE, or desktop route | [`reproduce-frontend-bug`](../../case-studies/agent-customize/bug-diagnosis-skills/reproduce-frontend-bug/SKILL.md) |
+| Backend correlated diagnosis | Issue evidence plus a project-owned service/test/job route, readable logs or traces, and a stable request/trace/job/run id | [`diagnose-backend-bug`](../../case-studies/agent-customize/bug-diagnosis-skills/diagnose-backend-bug/SKILL.md) |
 
 These directories are example package shapes, not built-ins, configured or
 observed coverage, creation authorization, or a universal issue-solving Skill.

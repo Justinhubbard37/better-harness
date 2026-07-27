@@ -1,8 +1,8 @@
 # Architecture Principles
 
-This file defines repository-wide architecture principles, ownership boundaries,
-and AI-facing routing rules. The detailed directory reference remains
-`docs/adrs/directory-structure.md`.
+This file is the accepted repository-wide owner of architecture principles,
+ownership boundaries, and AI-facing routing rules. Its detailed directory-status
+reference is `docs/adrs/directory-structure.md`.
 
 - Build minimum runnable atomic capabilities: each `scripts/<capability>/` should be copyable, executable, testable, and distributable.
 - Put command execution in `cli.mjs`; add `index.mjs` only when other modules need a public import surface.
@@ -10,7 +10,7 @@ and AI-facing routing rules. The detailed directory reference remains
   dispatches to capability-owned commands with argv arrays and must not own
   product logic, schemas, fixtures, or host adapters.
 - Compose through public surfaces; do not import another capability's private helpers, fixtures, or provider modules.
-- Keep product judgment in canonical owners such as `skills/`, `scripts/`, `hooks/`, `models/`, `schemas/`, `templates/`, and `references/`; host shells stay thin.
+- Keep product judgment in canonical owners such as `skills/`, `scripts/`, `hooks/`, `models/`, `schemas/` (a target owner, not yet created), `templates/`, and `references/`; host shells stay thin.
 - Use business-named boundaries, not generic umbrellas such as `scripts/core/`.
 - Runtime behavior needs a contract plus validation evidence: fixtures, tests, smoke commands, or parser-safe output. CLI facades need help, unknown-command, and delegated-output coverage.
 - Reader-facing prose produced by an AI mutation workflow stays owned by that AI.
@@ -38,17 +38,17 @@ and AI-facing routing rules. The detailed directory reference remains
   its bounded human-review integrity chain: packet binding, episode/delivery
   normalization, and review application. Non-facade consumers import its public
   `index.mjs`; historical flat paths remain compatibility entrypoints.
-- `schemas/` owns versioned public runtime contracts consumed by multiple repo surfaces or packaged hosts. Capability-private schemas stay under `scripts/<capability>/`.
+- `schemas/` is a target owner, not yet created, for versioned public runtime contracts consumed by multiple repo surfaces or packaged hosts; see the directory-structure ADR for adoption criteria. Capability-private schemas stay under `scripts/<capability>/`.
 
 ## AI Directory Routing
 
-- The Proposed ADR at `docs/adrs/directory-structure.md` is the current AI-optimized directory-ownership reference until accepted or replaced.
+- The ADR at `docs/adrs/directory-structure.md` is this file's detailed AI-optimized directory-status reference.
 - For open-source community extensibility, start from `docs/community.md` and route intent -> owner -> contract -> evidence -> activation -> validation -> packaging before adding surfaces.
 - Put shared user workflows in root `skills/`; use `.agents/skills/` only for host-local skills, generated mirrors, or wrappers.
 - Use each `.agents/skills/<skill>/SKILL.md` as the host-local entrypoint; do not add mirror sidecar metadata.
-- Put reusable role/persona prompts in `agent-roles/` only when they contain no workflow steps and have a second skill/host consumer.
+- Put reusable role/persona prompts in `agent-roles/` (a target directory, not yet created; see the directory-structure ADR for adoption criteria) only when they contain no workflow steps and have a second skill/host consumer.
 - Keep skill-specific evidence, artifact, output, and validation rules under `skills/<skill>/references/`.
-- Treat `knowledge-base/` as candidate documentation until schema, fixtures, registry compilation, explicit consumer binding, and mapping tests pass.
+- Treat `knowledge-base/` as a candidate directory, not yet created (see the directory-structure ADR for adoption criteria), until schema, fixtures, registry compilation, explicit consumer binding, and mapping tests pass.
 - Put prose guidance in `references/`, examples and operating models in `case-studies/`, and runtime behavior in `skills/`, `scripts/`, `hooks/`, or `templates/` with tests.
 - For shared reference placement, start from `references/README.md`: session
   evidence lives under `references/session-evidence/`, static project and

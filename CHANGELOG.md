@@ -5,6 +5,10 @@ observable behavior and compatibility, not every internal refactor.
 
 ## Unreleased
 
+No unreleased changes yet.
+
+## 0.3.0 - 2026-07-27
+
 ### Changed
 
 - The public npm package now includes the Qoder, Claude Code, Codex, and Cursor

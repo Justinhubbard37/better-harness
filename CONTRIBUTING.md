@@ -1,7 +1,7 @@
 # Contributing to Better Harness
 
 Thank you for helping improve Better Harness. This guide is the human entry point
-for contributions to the 0.3.x project. Repository location:
+for contributions to Better Harness. Repository location:
 <https://github.com/QoderAI/better-harness>.
 
 By submitting a contribution, you confirm that you have the right to contribute

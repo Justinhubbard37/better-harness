@@ -12,7 +12,7 @@ agents: YAML frontmatter carries machine-readable tokens, and Markdown carries
 design rationale and guardrails.
 
 When authoring support is needed, load the
-[complete packaged example](examples/design-md-complete-example.md) after this
+[complete packaged example](../../case-studies/project-harness/design-md-complete-example.md) after this
 contract. It is a generic structural fallback, not product evidence: replace
 its illustrative values only with inspected project sources.
 
@@ -111,7 +111,7 @@ rules as inference and mark unresolved policy `needs-design-decision` instead
 of inventing brand decisions.
 
 When those optional Skills are unavailable, use the
-[complete packaged example](examples/design-md-complete-example.md) as the
+[complete packaged example](../../case-studies/project-harness/design-md-complete-example.md) as the
 structural fallback while keeping every project value evidence-bound.
 
 Recommend lint, CI, or hooks only after the team has a stable `DESIGN.md`

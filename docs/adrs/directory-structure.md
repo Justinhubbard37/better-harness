@@ -6,9 +6,9 @@ Proposed. Revision: 2026-07-16. Renamed from
 `docs/specs/directory-structure.md`. If local host instructions still name the
 old path, this ADR is the canonical successor.
 
-This file is review guidance while proposed; `docs/ARCHITECTURE.md` remains the
-accepted repository-wide owner. Formal acceptance still requires the validation
-gate below.
+This ADR is the detailed directory-status reference under
+`docs/ARCHITECTURE.md`, the accepted repository-wide owner. Formal acceptance
+of this ADR still requires the validation gate below.
 
 ## Scope
 
