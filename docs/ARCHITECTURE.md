@@ -20,7 +20,7 @@ and AI-facing routing rules. The detailed directory reference remains
 - Keep host evidence adapters separate from packaging, and keep all automation cross-platform.
 - Keep source-local host artifact assembly under `scripts/packaging/`; generated
   host artifacts are validation/install outputs, not canonical product owners or
-  Qoder package inputs.
+  public package or Qoder runtime inputs.
 
 ## Directory Conventions
 
@@ -45,7 +45,7 @@ and AI-facing routing rules. The detailed directory reference remains
 - The Proposed ADR at `docs/adrs/directory-structure.md` is the current AI-optimized directory-ownership reference until accepted or replaced.
 - For open-source community extensibility, start from `docs/community.md` and route intent -> owner -> contract -> evidence -> activation -> validation -> packaging before adding surfaces.
 - Put shared user workflows in root `skills/`; use `.agents/skills/` only for host-local skills, generated mirrors, or wrappers.
-- Until `node scripts/agent-skills/validate-mirrors.mjs` exists, inspect `.agents/skills/*/mirror.json` manually.
+- Use each `.agents/skills/<skill>/SKILL.md` as the host-local entrypoint; do not add mirror sidecar metadata.
 - Put reusable role/persona prompts in `agent-roles/` only when they contain no workflow steps and have a second skill/host consumer.
 - Keep skill-specific evidence, artifact, output, and validation rules under `skills/<skill>/references/`.
 - Treat `knowledge-base/` as candidate documentation until schema, fixtures, registry compilation, explicit consumer binding, and mapping tests pass.
@@ -65,9 +65,9 @@ and AI-facing routing rules. The detailed directory reference remains
   canonical root skills; Claude configured-asset and session evidence remain
   in the capability-owned agent-customize and session-analysis providers. The Codex shell
   owns local install/discovery metadata only; Codex evidence collection remains
-  in the capability-owned provider and session-analysis modules. The Qoder npm
-  package and runtime bundle ship only `.qoder-plugin/`, not Claude Code, Codex,
-  or Cursor shell metadata.
+  in the capability-owned provider and session-analysis modules. The public npm
+  package ships all four plugin metadata roots, while the Qoder runtime bundle
+  includes only `.qoder-plugin/`.
 
 ## Template Boundaries
 

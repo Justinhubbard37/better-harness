@@ -22,7 +22,7 @@ function runBetterHarness(args) {
 }
 
 function readFixture(name) {
-  return readFileSync(path.join(FIXTURES, name), "utf8");
+  return readFileSync(path.join(FIXTURES, name), "utf8").replaceAll("\r\n", "\n");
 }
 
 function sha256(value) {
@@ -35,6 +35,11 @@ function assertSuccessfulOutput(result, expected, label) {
   assert.equal(result.stderr, "");
   assert.equal(result.stdout, expected);
 }
+
+test("scripts refactor contract keeps one canonical doc-link graph CLI", () => {
+  assert.equal(existsSync(path.join(ROOT, "scripts", "doc-link-graph.mjs")), false);
+  assert.equal(existsSync(path.join(ROOT, "scripts", "doc-link-graph", "cli.mjs")), true);
+});
 
 test("scripts refactor contract freezes human-readable CLI help", () => {
   const cases = [

@@ -10,10 +10,10 @@ providers, real session-evidence adapters, and output modes. Canonical product
 judgment stays in `skills/`, `models/`, `references/`, `templates/`, and
 `scripts/<capability>/`.
 
-The `@qoderai/better-harness` npm package and generated Qoder runtime bundle include
-only the Qoder shell, `.qoder-plugin/`. Claude Code, Codex, and Cursor shell
-directories are source-local install/discovery metadata unless a dedicated
-host package is introduced. Claude Code installs its shell through the
+The `@qoderai/better-harness` npm package includes the Qoder, Claude Code,
+Codex, and Cursor plugin metadata roots. The generated Qoder runtime bundle
+includes only the Qoder shell, `.qoder-plugin/`; non-Qoder generated host
+artifacts remain source-local. Claude Code installs its shell through the
 repository's native marketplace manifest.
 
 | Host | Positioning | Shell | Configured Assets | Session Evidence | Default Output | Rules / Prompts | Smoke |
@@ -40,12 +40,12 @@ repository's native marketplace manifest.
 - Codex configured assets are inventoried through
   `scripts/agent-customize/providers/codex.mjs`. Session evidence comes from
   `scripts/session-analysis/platforms/codex.mjs`. The `.codex-plugin/` shell is
-  source-local install/discovery metadata and does not ship in the Qoder npm
-  package.
+  install/discovery metadata included in the public npm package; it does not
+  own Codex evidence collection.
 - Cursor configured assets are inventoried through
   `scripts/agent-customize/providers/cursor.mjs` and the active
-  `.cursor-plugin/` shell. The shell does not ship in the Qoder npm package.
-  Session evidence comes from
+  `.cursor-plugin/` shell, which is included in the public npm package. Session
+  evidence comes from
   `scripts/session-analysis/platforms/cursor.mjs`, which keeps transcript,
   metadata, and audit coverage explicit when local identities do not join.
 

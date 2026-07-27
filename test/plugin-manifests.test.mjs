@@ -109,6 +109,7 @@ test("host plugin manifests expose canonical Better Harness resources", () => {
   const packageLock = readJson("package-lock.json");
 
   assert.equal(packageJson.name, "@qoderai/better-harness");
+  assert.equal(packageJson.description, qoder.description);
   assert.deepEqual(packageJson.bin, {
     "better-harness": "scripts/better-harness.mjs",
   });
@@ -173,8 +174,9 @@ test("host plugin manifests expose canonical Better Harness resources", () => {
   assert.equal(existsSync(path.join(ROOT, "skills/harness")), false);
   assertExistingPath("hooks/hooks.json.template");
 
-  assert.equal(cursorMarketplace.name, "better-harness-dev");
+  assert.equal(cursorMarketplace.name, "better-harness");
   assert.deepEqual(cursorMarketplace.owner, cursor.author);
+  assert.equal(cursorMarketplace.metadata.description, claudeMarketplace.description);
   assert.equal(cursorMarketplace.plugins.length, 1);
   assert.equal(cursorMarketplace.plugins[0].name, cursor.name);
   assert.equal(cursorMarketplace.plugins[0].description, cursor.description);
@@ -192,12 +194,15 @@ test("host plugin manifests expose canonical Better Harness resources", () => {
   assert.deepEqual(claudeMarketplace.plugins[0].author, claude.author);
 });
 
-test("packaging keeps Qoder distribution host-specific", () => {
+test("npm packaging includes every host manifest while the runtime bundle stays Qoder-specific", () => {
   const packageJson = readJson("package.json");
   const releaseMetadata = `${readText("package.json")}\n${readText("package-lock.json")}`;
   assert.doesNotMatch(releaseMetadata, /@ali\/better-harness|registry\.anpm|registry\.npmmirror/u);
-  assert.ok(packageJson.files.includes(".qoder-plugin/"), "npm package should include Qoder plugin shell");
   for (const publicPath of [
+    ".claude-plugin/",
+    ".codex-plugin/",
+    ".cursor-plugin/",
+    ".qoder-plugin/",
     "AGENTS.md",
     "CHANGELOG.md",
     "CODE_OF_CONDUCT.md",
@@ -207,9 +212,6 @@ test("packaging keeps Qoder distribution host-specific", () => {
   ]) {
     assert.ok(packageJson.files.includes(publicPath), `npm package should include ${publicPath}`);
   }
-  assert.equal(packageJson.files.includes(".codex-plugin/"), false, "npm package should not include Codex shell");
-  assert.equal(packageJson.files.includes(".claude-plugin/"), false, "npm package should not include Claude shell");
-  assert.equal(packageJson.files.includes(".cursor-plugin/"), false, "npm package should not include Cursor shell");
   assert.ok(packageJson.files.includes("!scripts/packaging/"), "npm package should exclude source-local host builders");
   assert.equal(packageJson.files.includes("schemas/"), false, "npm package should not expose retired schemas");
 
@@ -241,9 +243,11 @@ test("packaging keeps Qoder distribution host-specific", () => {
   assert.match(verifyScript, /vendor\/tree-sitter-wasm\/LICENSE/u);
   assert.match(verifyScript, /vendor\/esbuild-wasm\/LICENSE\.md/u);
   assert.match(verifyScript, /package\/\.qoder-plugin\/plugin\.json/u);
-  assert.match(verifyScript, /package\/\.claude-plugin\//u);
-  assert.match(verifyScript, /package\/\.codex-plugin\//u);
-  assert.match(verifyScript, /package\/\.cursor-plugin\//u);
+  assert.match(verifyScript, /package\/\.claude-plugin\/plugin\.json/u);
+  assert.match(verifyScript, /package\/\.claude-plugin\/marketplace\.json/u);
+  assert.match(verifyScript, /package\/\.codex-plugin\/plugin\.json/u);
+  assert.match(verifyScript, /package\/\.cursor-plugin\/plugin\.json/u);
+  assert.match(verifyScript, /package\/\.cursor-plugin\/marketplace\.json/u);
   assert.doesNotMatch(verifyScript, /package\/schemas\/proactive-trigger\.v1\.schema\.json/u);
   assert.doesNotMatch(verifyScript, /package\/scripts\/proactive\/trigger\.mjs/u);
   assert.match(verifyScript, /package\/scripts\/review-trigger\/cli\.mjs/u);

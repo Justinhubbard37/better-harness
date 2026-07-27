@@ -25,6 +25,13 @@ const DOC_DIRS = [
 const ROOT_DOCS = ["AGENTS.md", "README.md"];
 const MD_TOKEN = /(?:\.\.?\/)*(?:[\w.-]+\/)*[\w.-]+\.md\b/g;
 
+test("doc-link graph uses the canonical CLI and POSIX repository paths", () => {
+  assert.equal(existsSync(path.join(repoRoot, "scripts", "doc-link-graph.mjs")), false);
+  const skillPath = path.join(repoRoot, "skills", "better-harness", "SKILL.md");
+  assert.equal(relId(skillPath), "skills/better-harness/SKILL.md");
+  assert.doesNotMatch(relId(skillPath), /\\/u);
+});
+
 function allRepoDocs() {
   const seeds = [];
   for (const dir of DOC_DIRS) {
@@ -109,7 +116,7 @@ test("generated mermaid graph in docs/ is current and parseable shape", () => {
   const expected = renderMermaid(graph, "skills/better-harness");
   const generatedPath = path.join(repoRoot, "docs/better-harness-doc-links.mmd");
   assert.ok(existsSync(generatedPath), "docs/better-harness-doc-links.mmd is missing; run: node scripts/doc-link-graph/cli.mjs skills/better-harness");
-  const actual = readFileSync(generatedPath, "utf8");
+  const actual = readFileSync(generatedPath, "utf8").replaceAll("\r\n", "\n");
   assert.equal(
     actual,
     expected,

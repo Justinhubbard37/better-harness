@@ -11,6 +11,7 @@ import {
   tabAvailableForScope,
 } from "../scripts/agent-customize/index.mjs";
 import { pluginMetadataEvidencePath } from "../scripts/agent-customize/core/items.mjs";
+import { qoderWorkspaceSlugs } from "../scripts/agent-customize/providers/qoder.mjs";
 import { collectProviderInventory as collectPracticeInventory } from "../scripts/coding-agent-practices/inventory.mjs";
 
 async function writeText(filePath, text) {
@@ -32,8 +33,15 @@ function workspaceProjectSlug(workspace) {
 }
 
 function qoderWorkspaceSlug(workspace) {
-  return path.resolve(workspace).replace(/[\\/]+/gu, "-");
+  return path.resolve(workspace).replace(/:/gu, "-").replace(/[\\/]+/gu, "-");
 }
+
+test("Qoder runtime cache slugs cover both Windows drive conventions", () => {
+  assert.deepEqual(qoderWorkspaceSlugs("C:\\workspace\\project"), [
+    "C--workspace-project",
+    "C-workspace-project",
+  ]);
+});
 
 test("plugin metadata evidence follows candidate precedence and preserves the root fallback", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-plugin-evidence-"));
@@ -165,10 +173,10 @@ async function makeCursorFixture() {
 }
 
 async function makeQoderFixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-agent-customize-qoder-"));
-  const qoderHome = path.join(root, ".qoder");
-  const sharedClientCacheRoot = path.join(root, "SharedClientCache");
-  const workspace = path.join(root, "workspace", "better-harness");
+  const root = await mkdtemp(path.join(os.tmpdir(), "bhq-"));
+  const qoderHome = path.join(root, "q");
+  const sharedClientCacheRoot = path.join(root, "s");
+  const workspace = path.join(root, "w");
 
   const betterHarnessRoot = path.join(
     qoderHome,

@@ -36,7 +36,7 @@ Add more only when there is a concrete consumer:
 
 - `scripts/` only for repeated deterministic automation.
 - extra references only when the first reference grows into independent topics.
-- `.agents/skills/<name>/` only as a wrapper, mirror, or host-only skill with `mirror.json`.
+- `.agents/skills/<name>/` only as a wrapper, generated mirror, or host-only skill; use `SKILL.md` as its entrypoint.
 - `agents/openai.yaml` only as concise UI metadata, not behavior ownership.
 - validation gates as target-owned commands or portable Node/Python checks, not ad-hoc Unix-only `grep`/`find` snippets.
 

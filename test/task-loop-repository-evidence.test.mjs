@@ -17,7 +17,7 @@ test("repository evidence gives Bavi a useful static baseline without inventing 
     packageManifest: {
       scripts: {
         test: "node --test",
-        "pack:verify": "node scripts/package/verify-pack.mjs",
+        "pack:verify": "node scripts/npm-package/verify-pack.mjs",
       },
     },
     locale: "zh-CN",

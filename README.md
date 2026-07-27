@@ -139,14 +139,13 @@ owner, and validation route.
 
 Pick your coding agent — you can be looking at your first report in minutes:
 
-| Coding agent      | Setup |
+| Coding agent | Setup |
 | --- | --- |
-| **Claude Code**   | Add the repository marketplace, install `better-harness@better-harness`, start a new session, then use the report prompt below. |
+| **Claude Code** | Add the repository marketplace, install `better-harness@better-harness`, start a new session, then use the report prompt below. |
 | **Codex Desktop** | Add the repository under **Settings > Plugins > + Add > From Marketplace**, install Better Harness, start a new task, then use the report prompt below. |
-| **Codex CLI**     | Add the Git marketplace, then run `codex plugin add better-harness@better-harness`. |
-| **Qoder**         | Nothing to install — Better Harness is built in. Open your repository and use the report prompt below. |
-| **Qoder CLI**     | Add the Git marketplace, install `better-harness@better-harness`, start a new session, then use the report prompt below. |
-| **Cursor**        | Load the plugin from source — see [Installation](#installation). |
+| **Codex CLI** | Add the Git marketplace, then run `codex plugin add better-harness@better-harness`. |
+| **Qoder Desktop / CLI** | Nothing to install when Qoder Desktop is installed — Better Harness is built in and available to both. Open your repository and use the report prompt below. |
+| **Cursor** | Load the plugin from source — see [Installation](#installation). |
 
 Once installed, ask Better Harness to generate the host's durable report:
 
@@ -163,9 +162,10 @@ differences.
 
 ## Installation
 
-Installation differs by coding agent. If you use more than one, install Better
-Harness separately for each one. After installing or updating a plugin, start a
-new session or task so the host reloads its plugin inventory.
+Installation differs by coding agent. Install Better Harness separately for
+each host, except that Qoder CLI can use the version bundled with Qoder Desktop.
+After installing or updating a plugin, start a new session or task so the host
+reloads its plugin inventory.
 
 ### Claude Code
 
@@ -263,8 +263,16 @@ entry point:
 
 #### Qoder CLI
 
-Qoder CLI uses its own plugin installation. Add this repository as a
-marketplace, then install Better Harness:
+If Qoder Desktop is installed, Better Harness is already available in Qoder
+CLI. No marketplace or plugin installation is required. Start a new Qoder CLI
+session in the repository you want to review and run the report prompt:
+
+```text
+/better-harness review this project's AI coding workflow and generate a report
+```
+
+Only when using Qoder CLI without Qoder Desktop, add this repository as a
+marketplace and install Better Harness manually:
 
 ```bash
 qodercli plugin marketplace add \
@@ -272,18 +280,13 @@ qodercli plugin marketplace add \
 qodercli plugin install better-harness@better-harness
 ```
 
-Verify the installation:
+Verify the manual installation:
 
 ```bash
 qodercli plugin list
 ```
 
-Then start a new Qoder CLI session in the repository you want to review and run
-the report prompt:
-
-```text
-/better-harness review this project's AI coding workflow and generate a report
-```
+Then start a new Qoder CLI session before using `/better-harness`.
 
 ### Cursor
 

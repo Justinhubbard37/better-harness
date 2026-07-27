@@ -45,7 +45,6 @@ Legend:
 .agents/
   skills/<skill>/                      # [active] host-local only; shared logic -> root skills/
     SKILL.md
-    mirror.json                        # required; minimum shape below
     references/ scripts/               # host-only depth for this skill
 
 skills/<skill>/                        # [active] canonical shared workflows
@@ -79,10 +78,9 @@ scripts/
     schema.json
     fixtures/
     lib/                               # helpers scoped to this capability
-  agent-skills/validate-mirrors.mjs    # [target] mirror.json validator
   knowledge-base-registry/             # [target] compiler; requires matching spec
   runtime-smoke/<host>/                # [target] host runtime health checks
-  package/                             # [active] current bundle and verify tooling
+  npm-package/                         # [active] current bundle and verify tooling
   packaging/                           # [active] source-local generated host artifacts
     build-host-plugin.mjs              # assemble an existing thin host shell plus runtime roots
     verify-host-plugin.mjs             # reject host/package/state leakage and non-portable links
@@ -210,7 +208,8 @@ Use the tree first. These rules resolve common collisions:
 - Host plugin directories such as `.claude-plugin/`, `.qoder-plugin/`,
   `.cursor-plugin/`, and `.codex-plugin/` are install/discovery shells for one
   host. Existing active shells may be hand-maintained narrowly, but the Qoder
-  npm/runtime package ships only `.qoder-plugin/`. New host shells start from the
+  public npm package ships all four plugin metadata roots, while the Qoder
+  runtime bundle ships only `.qoder-plugin/`. New host shells start from the
   `docs/adapters/README.md` matrix; split to `docs/adapters/<host>.md` and add a
   source-local `scripts/packaging/` builder only for an accepted host-artifact
   contract. New host identities still require the matrix split triggers.
@@ -245,7 +244,7 @@ Use the tree first. These rules resolve common collisions:
 - `scripts/<capability>/platforms/<host>.mjs` collects or normalizes
   per-capability host evidence. `scripts/npm-package/` owns current repository
   package assembly and verification. `scripts/packaging/` owns source-local
-  generated host artifacts and stays excluded from Qoder package/runtime
+  generated host artifacts and stays excluded from public package/runtime
   outputs. Do not collapse these concerns.
 - Report skeletons and output modes live under
   `templates/reporting/`. Keep `report-structure.md` and the runtime contracts
@@ -262,24 +261,10 @@ Use the tree first. These rules resolve common collisions:
   package, or test an asset. Casual prose mentions do not count toward the 2+
   consumer rule.
 
-Allowed `.agents/skills/<skill>/mirror.json` `mirror_type` values until the
-validator exists:
-
-- `host-only`: no canonical root skill yet; requires `host_only_rationale`.
-- `wrapper`: wraps canonical root `skills/` behavior; requires `source`.
-- `generated-mirror`: generated from canonical source; requires `source` and
-  `generated_by`.
-
-Unknown values are rejected until this ADR or a successor updates the enum.
-Minimum host-only shape:
-
-```json
-{
-  "schemaVersion": 1,
-  "mirror_type": "host-only",
-  "host_only_rationale": "Why this skill is not canonical root skills/ content."
-}
-```
+Repo-local `.agents/skills/<skill>/` directories use `SKILL.md` as their
+entrypoint. Host-only ownership, wrapper routing, and generated-file provenance
+belong in the skill instructions or beside the generator; this repository does
+not require a separate mirror sidecar schema.
 
 Knowledge-base activation stages:
 
@@ -317,8 +302,8 @@ Adding support for a new host must route every artifact to an owner:
 - `.host-plugin/` or equivalent generated shell: install/discovery metadata
   only; default to no new shell unless an independent install or release
   lifecycle exists.
-- `.agents/skills/<skill>/`: host-local wrappers or mirrors only, with
-  `mirror.json`; promote shared workflow judgment to root `skills/`.
+- `.agents/skills/<skill>/`: host-local skills, wrappers, or generated mirrors
+  only; promote shared workflow judgment to root `skills/`.
 - `scripts/<capability>/platforms/<host>.mjs`: only when a capability needs
   host-specific evidence collection or normalization.
 - `scripts/npm-package/`: current package bundle and verification owner.
@@ -336,10 +321,6 @@ Adding support for a new host must route every artifact to an owner:
   `schema.json` matching the minimum shape above, fixtures, a namespace
   uniqueness check for community assets, and a migration note until the registry
   exists.
-- `scripts/agent-skills/validate-mirrors.mjs` is acceptable only when it passes
-  against every existing `.agents/skills/*/mirror.json` and fails fixtures for a
-  missing `schemaVersion`, missing `mirror_type`, and missing rationale or
-  source pointer.
 - `docs/adapters/README.md` must keep the host matrix scan-friendly, name
   canonical roots, and include smoke commands or "not yet available" notes. A
   split `docs/adapters/<host>.md` must link back to the matrix and explain which
@@ -366,8 +347,4 @@ for unavailable reviewers.
 Acceptance requires no `P1` or `P2` findings in the recorded review output.
 Store review JSON under `.harness/state/` or paste the structured summary in
 the change evidence. The runner is currently a host-local `.agents/skills/`
-workflow; promotion to root `skills/` requires a separate mirror or promotion
-change. Until
-`scripts/agent-skills/validate-mirrors.mjs` exists, mirror validation is manual:
-inspect `.agents/skills/*/mirror.json` for `schemaVersion`, `mirror_type`, and
-the required rationale or source pointer.
+workflow; promotion to root `skills/` requires a separate promotion change.

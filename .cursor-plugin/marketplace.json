@@ -1,11 +1,11 @@
 {
-  "name": "better-harness-dev",
+  "name": "better-harness",
   "owner": {
     "name": "Qoder",
     "email": "dev@qoder.com"
   },
   "metadata": {
-    "description": "Development marketplace for Better Harness AI delivery readiness."
+    "description": "Better Harness plugins for AI delivery readiness."
   },
   "plugins": [
     {
