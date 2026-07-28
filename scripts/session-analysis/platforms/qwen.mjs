@@ -173,11 +173,11 @@ function transcriptEvents(raw, sourceRef, options) {
     });
   } else if (rawType === "tool_result") {
     const tcr = raw?.toolCallResult ?? {};
-    const callId = tcr.callId ?? null;
+    const fr = parts.find((part) => part?.functionResponse)?.functionResponse;
+    const callId = tcr.callId ?? fr?.id ?? null;
     const hasError = Boolean(tcr.errorType) || (tcr.error && Object.keys(tcr.error).length > 0);
     const success = !hasError && tcr.status !== "error" && tcr.status !== "failed";
-    const output = tcr.resultDisplay ?? "";
-    const fr = parts.find((part) => part?.functionResponse)?.functionResponse;
+    const output = tcr.resultDisplay ?? fr?.response?.output ?? "";
     const event = {
       ...base,
       type: "tool.result",
