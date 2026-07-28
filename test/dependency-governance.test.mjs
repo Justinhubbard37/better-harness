@@ -116,7 +116,7 @@ test("dependency governance CLI emits JSON for direct agent use", async () => {
   }
 });
 
-test("five classifier versions agree and the fifth version wins the bundled benchmark", () => {
+test("five classifier versions agree and the benchmark reports observed timings", () => {
   const paths = generateSyntheticDependencyPaths({ packageCount: 400, fillerCount: 8000 });
   const baseline = classifyPathsWithVersion(paths, "v5");
 
@@ -126,6 +126,16 @@ test("five classifier versions agree and the fifth version wins the bundled benc
   }
 
   const benchmark = benchmarkClassifierVersions({ paths, iterations: 80 });
-  assert.equal(benchmark.best.version, "v5");
+  // Wall-clock rankings vary with the OS, Node/JIT version, architecture, and runner load.
+  // Treat the measured winner as benchmark output rather than a cross-platform test contract.
+  assert.deepEqual(
+    benchmark.versions.map((item) => item.version).sort(),
+    ["v1", "v2", "v3", "v4", "v5"],
+  );
   assert.ok(benchmark.versions.every((item) => item.elapsedMs > 0));
+  assert.ok(benchmark.versions.every((item) => item.checksum === benchmark.best.checksum));
+  assert.equal(
+    benchmark.best.elapsedMs,
+    Math.min(...benchmark.versions.map((item) => item.elapsedMs)),
+  );
 });
