@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { evaluateHtmlReport, renderHtml } from "../scripts/harness-analysis/renderers/html.mjs";
 import { renderCanvasTsx } from "../scripts/harness-analysis/renderers/qoder-canvas.mjs";
 import { buildTaskLoopSourceCandidate } from "../scripts/harness-analysis/task-loop-source.mjs";
 import { applyEpisodeReviews } from "../scripts/harness-analysis/episode-evidence-review.mjs";
@@ -553,6 +554,18 @@ test("render command writes disk-openable HTML artifacts", async () => {
     assert.match(html, /data-section="methodology"/u);
     assert.doesNotMatch(html, /<script[^>]+src=/u);
     assert.doesNotMatch(html, /<link[^>]+href=/u);
+    const findingCards = html.match(/class="finding-card"/gu) ?? [];
+    const findingDialogs = html.match(/data-finding-dialog-id=/gu) ?? [];
+    const copyActions = html.match(/data-copy-finding=/gu) ?? [];
+    const detailActions = html.match(/data-view-finding-dialog=/gu) ?? [];
+    assert.equal(findingCards.length, 2);
+    assert.equal(findingDialogs.length, 2);
+    assert.equal(copyActions.length, 4);
+    assert.equal(detailActions.length, 2);
+    assert.match(html, /Copy AI Fix/u);
+    assert.match(html, /View details/u);
+    assert.doesNotMatch(html, /<details class="finding"/u);
+    assert.doesNotMatch(html, /<details class="finding" open/u);
   });
 });
 
@@ -608,4 +621,47 @@ test("HTML mode mirrors the reviewed Agent Work Loop reader sections without Can
     assert.equal(existsSync(path.join(runDir, "canvas.json")), false);
     assert.equal(existsSync(path.join(runDir, "report.canvas.tsx")), false);
   });
+});
+
+test("HTML validator rejects incomplete finding action contracts", () => {
+  const reportData = {
+    ...sampleFindings(),
+    language: "en",
+    target: { name: "render-fixture", path: "/tmp/render-fixture" },
+  };
+  const html = renderHtml(reportData);
+  assert.equal(evaluateHtmlReport(html, reportData).status, "pass");
+
+  const mutations = [
+    ["interaction controller", html.replace(/<script id="harness-report-interactions">[\s\S]*?<\/script>/u, "")],
+    ["copy status", html.replace(/<div id="copy-status"[\s\S]*?<\/div>/u, "")],
+    ["manual copy fallback", html.replace(/<dialog id="manual-copy-dialog"[\s\S]*?<\/dialog>/u, "")],
+    ["finding copy action", html.replace(/<button[^>]+data-copy-finding=[\s\S]*?<\/button>/u, "")],
+    ["finding detail action", html.replace(/<button[^>]+data-view-finding-dialog=[\s\S]*?<\/button>/u, "")],
+    ["cross-bound finding copy action", html.replace(
+      'data-copy-finding="ff-runtime-validation"',
+      'data-copy-finding="aia-workflow-evidence"',
+    )],
+    ["cross-bound finding dialog", html.replace(
+      'data-finding-dialog-id="ff-runtime-validation"',
+      'data-finding-dialog-id="aia-workflow-evidence"',
+    )],
+    ["mismatched finding detail action", html.replace(
+      'data-view-finding-dialog="finding-dialog-1"',
+      'data-view-finding-dialog="finding-dialog-2"',
+    )],
+    ["host bridge", html.replace(
+      '<script id="harness-report-interactions">',
+      '<script id="harness-report-interactions">window.openai;',
+    )],
+    ["host deep link", html.replace(
+      '<script id="harness-report-interactions">',
+      '<script id="harness-report-interactions">const unsupportedRoute="codex://prompt";',
+    )],
+  ];
+
+  for (const [label, mutatedHtml] of mutations) {
+    const result = evaluateHtmlReport(mutatedHtml, reportData);
+    assert.equal(result.status, "fail", `${label} mutation must fail validation`);
+  }
 });
