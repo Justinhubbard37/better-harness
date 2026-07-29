@@ -65,14 +65,18 @@ pointer to the real plugin root.
 ## External Context
 
 Use MCP when Qwen Code needs context or actions outside the repository. MCP
-configuration lives in `~/.mcp.json` (user) or `<project>/.mcp.json` (project).
-Start with one or two MCP tools that remove a real repeated manual step.
+servers are configured in `~/.qwen/settings.json` under `mcpServers` (user) or
+`<project>/.mcp.json` (project). Project-level `.qwen/settings.json` can also
+carry `mcpServers`. Start with one or two MCP tools that remove a real repeated
+manual step.
 
 ## Session Controls
 
 Keep one Qwen Code session per coherent unit of work. Session transcripts are
 recorded as JSONL under `~/.qwen/projects/<workspace-slug>/chats/`. The slug
-replaces path separators (and `.`/`_`) with `-`. Use worktrees when concurrent
+replaces every non-alphanumeric character with `-` (matching Qwen's native
+`sanitizeCwd`; on Windows the path is lowercased first). Use worktrees when
+concurrent
 sessions could edit the same files. Use subagents for bounded exploration,
 testing, or independent review.
 

@@ -767,9 +767,17 @@ async function makeQwenFixture() {
       ],
     },
   });
-  await writeJson(path.join(root, ".mcp.json"), {
+  await writeJson(path.join(qwenHome, "settings.json"), {
     mcpServers: {
       localMcp: { command: "node", args: ["server.mjs"] },
+    },
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: "^Bash$",
+          hooks: [{ type: "command", command: "~/.qwen/hooks/guard-bash.sh" }],
+        },
+      ],
     },
   });
 
@@ -1594,7 +1602,7 @@ test("Qwen provider collects user and project MCPs, skills, hooks, and rules", a
       filterManageItems(inventory, { tab: "hooks", scopeKind: "user" })
         .map((item) => item.command)
         .sort(),
-      ["node hooks/audit-delivery.mjs", "~/.qwen/hooks/guard-prompt.sh"],
+      ["node hooks/audit-delivery.mjs", "~/.qwen/hooks/guard-bash.sh", "~/.qwen/hooks/guard-prompt.sh"],
     );
     assert.deepEqual(
       filterManageItems(inventory, { tab: "hooks", scopeKind: "project" }).map((item) => item.command),

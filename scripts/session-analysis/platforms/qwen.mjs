@@ -269,7 +269,7 @@ export class QwenSessionAnalyzer extends SessionAnalyzer {
     const since = normalizeCliDate(options.since, false);
     const until = normalizeCliDate(options.until, true);
     const workspace = normalizeWorkspace(options.workspace);
-    const home = path.resolve(expandHome(options.home ?? options.qwenHome ?? options["qwen-home"] ?? "~/.qwen"));
+    const home = path.resolve(expandHome(options.home ?? options.qwenHome ?? options["qwen-home"] ?? process.env.QWEN_HOME ?? "~/.qwen"));
     // Qwen separates config home (QWEN_HOME / ~/.qwen) from runtime data
     // (QWEN_RUNTIME_DIR). Session transcripts live under the runtime dir.
     const runtimeDir = path.resolve(expandHome(

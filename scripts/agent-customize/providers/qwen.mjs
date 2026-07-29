@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -32,7 +33,7 @@ const QWEN_EXTENSION_INSTALL_FILE = ".qwen-extension-install.json";
 const QWEN_EXTENSION_ENABLEMENT_FILE = "extension-enablement.json";
 
 function defaultQwenHome() {
-  return path.join(os.homedir(), ".qwen");
+  return process.env.QWEN_HOME ?? path.join(os.homedir(), ".qwen");
 }
 
 function ensureLeadingAndTrailingSlash(dirPath) {
@@ -60,12 +61,42 @@ function isExtensionEnabled(enablementConfig, extensionName, workspace) {
   let enabled = true;
   const allOverrides = extensionConfig?.overrides ?? [];
   const lexicalPath = ensureLeadingAndTrailingSlash(workspace);
+  let canonicalPath = lexicalPath;
+  try { canonicalPath = ensureLeadingAndTrailingSlash(realpathSync.native(path.resolve(workspace))); } catch {}
   for (const rule of allOverrides) {
-    if (overrideMatchesPath(rule, lexicalPath)) {
+    if (overrideMatchesPath(rule, lexicalPath) || overrideMatchesPath(rule, canonicalPath)) {
       enabled = !rule.startsWith("!");
     }
   }
   return enabled;
+}
+
+function flattenSettingsHooks(settingsHooks) {
+  if (!settingsHooks || typeof settingsHooks !== "object" || Array.isArray(settingsHooks)) return [];
+  const items = [];
+  for (const [, definitions] of Object.entries(settingsHooks)) {
+    if (!Array.isArray(definitions)) continue;
+    for (const def of definitions) {
+      if (!Array.isArray(def?.hooks)) continue;
+      for (const hook of def.hooks) {
+        if (hook?.command) items.push({ command: hook.command, type: hook.type ?? "command" });
+        else if (hook?.url) items.push({ command: hook.url, type: "http" });
+      }
+    }
+  }
+  return items;
+}
+
+function normalizeSettingsMcp(name, config, scope, sourceLabel, evidencePath, rootForEvidence) {
+  return {
+    name,
+    scope,
+    sourceLabel,
+    command: config.command ?? null,
+    args: config.args ?? [],
+    url: config.url ?? config.httpUrl ?? null,
+    evidence: evidence(evidencePath, rootForEvidence),
+  };
 }
 
 function qwenMarkdownRuleSource(workspace, sourceLabel, precedence = "after-provider-rules") {
@@ -237,36 +268,23 @@ async function collectQwenPlugins(records, workspace) {
 }
 
 async function collectQwenUserPrimitives(qwenHome) {
-  const mcpPath = path.join(path.dirname(qwenHome), ".mcp.json");
-  const mcps = await pathExists(mcpPath)
-    ? (await collectMcpFromConfig(mcpPath, "user", "User", qwenHome)) ?? []
-    : (await collectMcpItems(qwenHome, "user", "User", qwenHome)) ?? [];
-  const settings = (await readJson(path.join(qwenHome, "settings.json"))) ?? {};
+  const settingsPath = path.join(qwenHome, "settings.json");
+  const settings = (await readJson(settingsPath)) ?? {};
+  const mcps = [];
   if (settings.mcpServers && typeof settings.mcpServers === "object") {
     for (const [name, config] of Object.entries(settings.mcpServers)) {
-      if (!mcps.some((m) => m.name === name)) {
-        mcps.push({
-          name,
-          scope: "user",
-          sourceLabel: "User",
-          command: config.command ?? null,
-          args: config.args ?? [],
-          evidence: evidence(path.join(qwenHome, "settings.json"), qwenHome),
-        });
-      }
+      mcps.push(normalizeSettingsMcp(name, config, "user", "User", settingsPath, qwenHome));
     }
   }
   const hooks = await collectHookItems(qwenHome, "user", "User", qwenHome);
-  if (Array.isArray(settings.hooks)) {
-    for (const hook of settings.hooks) {
-      if (hook?.command && !hooks.some((h) => h.command === hook.command)) {
-        hooks.push({
-          command: hook.command,
-          scope: "user",
-          sourceLabel: "User",
-          evidence: evidence(path.join(qwenHome, "settings.json"), qwenHome),
-        });
-      }
+  for (const hook of flattenSettingsHooks(settings.hooks)) {
+    if (!hooks.some((h) => h.command === hook.command)) {
+      hooks.push({
+        command: hook.command,
+        scope: "user",
+        sourceLabel: "User",
+        evidence: evidence(settingsPath, qwenHome),
+      });
     }
   }
   return {
@@ -282,31 +300,30 @@ async function collectQwenUserPrimitives(qwenHome) {
 async function collectQwenWorkspacePrimitives(workspace) {
   const sourceLabel = await workspaceSourceLabel(workspace);
   const project = await collectWorkspaceRootPrimitives(path.join(workspace, ".qwen"), sourceLabel, workspace);
-  const settings = (await readJson(path.join(workspace, ".qwen", "settings.json"))) ?? {};
+  const projectMcpPath = path.join(workspace, ".mcp.json");
+  if (await pathExists(projectMcpPath)) {
+    const projectMcps = (await collectMcpFromConfig(projectMcpPath, "project", sourceLabel, workspace)) ?? [];
+    for (const mcp of projectMcps) {
+      if (!project.mcps.some((m) => m.name === mcp.name)) project.mcps.push(mcp);
+    }
+  }
+  const settingsPath = path.join(workspace, ".qwen", "settings.json");
+  const settings = (await readJson(settingsPath)) ?? {};
   if (settings.mcpServers && typeof settings.mcpServers === "object") {
     for (const [name, config] of Object.entries(settings.mcpServers)) {
       if (!project.mcps.some((m) => m.name === name)) {
-        project.mcps.push({
-          name,
-          scope: "project",
-          sourceLabel,
-          command: config.command ?? null,
-          args: config.args ?? [],
-          evidence: evidence(path.join(workspace, ".qwen", "settings.json"), workspace),
-        });
+        project.mcps.push(normalizeSettingsMcp(name, config, "project", sourceLabel, settingsPath, workspace));
       }
     }
   }
-  if (Array.isArray(settings.hooks)) {
-    for (const hook of settings.hooks) {
-      if (hook?.command && !project.hooks.some((h) => h.command === hook.command)) {
-        project.hooks.push({
-          command: hook.command,
-          scope: "project",
-          sourceLabel,
-          evidence: evidence(path.join(workspace, ".qwen", "settings.json"), workspace),
-        });
-      }
+  for (const hook of flattenSettingsHooks(settings.hooks)) {
+    if (!project.hooks.some((h) => h.command === hook.command)) {
+      project.hooks.push({
+        command: hook.command,
+        scope: "project",
+        sourceLabel,
+        evidence: evidence(settingsPath, workspace),
+      });
     }
   }
   return {
