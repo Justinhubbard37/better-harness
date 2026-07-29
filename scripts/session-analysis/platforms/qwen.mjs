@@ -24,10 +24,11 @@ function isWorkspaceMatch(candidate, workspace) {
 export function workspaceToQwenSlugVariants(workspace) {
   const expanded = expandHome(workspace ?? process.cwd());
   const normalized = path.win32.isAbsolute(expanded) ? path.win32.normalize(expanded) : normalizeWorkspace(expanded);
-  return [...new Set([
-    normalized.replace(/[:_.]/g, "-").replace(/[\\/]+/g, "-"),
-    normalized.replace(/[:.]/g, "").replace(/[_.\\/]+/g, "-"),
-  ])];
+  // Match Qwen's sanitizeCwd: replace every non-alphanumeric char with "-".
+  // On Windows Qwen lowercases first; emit both variants for cross-platform discovery.
+  const slug = normalized.replace(/[^a-zA-Z0-9]/g, "-");
+  const slugLower = slug.toLowerCase();
+  return [...new Set([slug, slugLower])];
 }
 
 function inferSessionId(raw, fallback = null) {
@@ -176,7 +177,7 @@ function transcriptEvents(raw, sourceRef, options) {
     const fr = parts.find((part) => part?.functionResponse)?.functionResponse;
     const callId = tcr.callId ?? fr?.id ?? null;
     const hasError = Boolean(tcr.errorType) || (tcr.error && Object.keys(tcr.error).length > 0);
-    const success = !hasError && tcr.status !== "error" && tcr.status !== "failed";
+    const success = !hasError && tcr.status !== "error" && tcr.status !== "failed" && tcr.status !== "cancelled";
     const output = tcr.resultDisplay ?? fr?.response?.output ?? "";
     const event = {
       ...base,
@@ -267,10 +268,17 @@ export class QwenSessionAnalyzer extends SessionAnalyzer {
     const since = normalizeCliDate(options.since, false);
     const until = normalizeCliDate(options.until, true);
     const workspace = normalizeWorkspace(options.workspace);
+    const home = path.resolve(expandHome(options.home ?? options.qwenHome ?? options["qwen-home"] ?? "~/.qwen"));
+    // Qwen separates config home (QWEN_HOME / ~/.qwen) from runtime data
+    // (QWEN_RUNTIME_DIR). Session transcripts live under the runtime dir.
+    const runtimeDir = path.resolve(expandHome(
+      options.runtimeDir ?? options["runtime-dir"] ?? process.env.QWEN_RUNTIME_DIR ?? home,
+    ));
     return {
       platform: "qwen",
       workspace,
-      home: path.resolve(expandHome(options.home ?? options.qwenHome ?? options["qwen-home"] ?? "~/.qwen")),
+      home,
+      runtimeDir,
       _workspaceSlugVariants: workspaceToQwenSlugVariants(workspace),
       since: since.label,
       sinceTime: since.time,
@@ -282,7 +290,7 @@ export class QwenSessionAnalyzer extends SessionAnalyzer {
   }
 
   async discoverSourceRoots(scope) {
-    const projectPaths = scope._workspaceSlugVariants.map((slug) => path.join(scope.home, "projects", slug, "chats"));
+    const projectPaths = scope._workspaceSlugVariants.map((slug) => path.join(scope.runtimeDir, "projects", slug, "chats"));
     const roots = [
       {
         id: "qwen-projects",

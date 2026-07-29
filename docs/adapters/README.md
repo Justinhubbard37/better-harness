@@ -22,7 +22,7 @@ repository's native marketplace manifest.
 | Codex | Analysis-capable source-local host | `.codex-plugin/` | `scripts/agent-customize/providers/codex.mjs` | `scripts/session-analysis/platforms/codex.mjs` | self-contained HTML + Markdown | `.codex` + `.agents` + `AGENTS.md` | `harness prepare --platform codex` -> finalize with `html-report` validation |
 | Qoder | First-class product host | `.qoder-plugin/` | `scripts/agent-customize/providers/qoder.mjs` | `scripts/session-analysis/platforms/qoder.mjs` | `better-harness` | `.qoder/rules` + `AGENTS.md` + output templates | `better-harness harness render --mode qoder-canvas --validate` |
 | Cursor | Analysis-capable source-local host | `.cursor-plugin/` | `scripts/agent-customize/providers/cursor.mjs` | `scripts/session-analysis/platforms/cursor.mjs` | self-contained HTML + Markdown | `.cursor` + `.codex` compatibility + `AGENTS.md` | `agent --plugin-dir . --mode ask --print` -> Cursor evidence bundle -> validated `html` render |
-| Qwen Code | Analysis-capable source-local host | `.qwen-plugin/` | `scripts/agent-customize/providers/qwen.mjs` | `scripts/session-analysis/platforms/qwen.mjs` | self-contained HTML + Markdown | `.qwen` + `QWEN.md` + `AGENTS.md` | `harness prepare --platform qwen` -> finalize with `html-report` validation |
+| Qwen Code | Analysis-capable source-local host | `qwen-extension.json` | `scripts/agent-customize/providers/qwen.mjs` | `scripts/session-analysis/platforms/qwen.mjs` | self-contained HTML + Markdown | `.qwen` + `QWEN.md` + `AGENTS.md` | `harness prepare --platform qwen` -> finalize with `html-report` validation |
 
 ## Discovery And Evidence
 
@@ -52,8 +52,8 @@ repository's native marketplace manifest.
 - Qwen Code configured assets are inventoried through
   `scripts/agent-customize/providers/qwen.mjs`. Session evidence comes from
   `scripts/session-analysis/platforms/qwen.mjs`, which reads workspace-matching
-  JSONL transcripts under `~/.qwen/projects/<slug>/chats/`. The `.qwen-plugin/`
-  shell is install/discovery metadata included in the public npm package; it
+  JSONL transcripts under `~/.qwen/projects/<slug>/chats/`. The `qwen-extension.json`
+  manifest is native Qwen install/discovery metadata included in the public npm package; it
   does not own Qwen evidence collection.
 
 ## Output Modes

@@ -702,16 +702,11 @@ async function makeQwenFixture() {
     type: "link",
     originSource: "QwenCode",
   });
-  await writeJson(path.join(deliveryPluginSource, ".qwen-plugin", "plugin.json"), {
+  await writeJson(path.join(deliveryPluginSource, "qwen-extension.json"), {
     name: deliveryPluginName,
     version: "1.0.0",
+    displayName: "Delivery",
     description: "Delivery workflow plugin.",
-    author: { name: "Qoder" },
-    interface: {
-      displayName: "Delivery",
-      shortDescription: "Run delivery workflows.",
-      developerName: "Qoder",
-    },
     skills: "./skills/",
   });
   await writeText(
@@ -741,12 +736,11 @@ async function makeQwenFixture() {
     type: "link",
     originSource: "QwenCode",
   });
-  await writeJson(path.join(disabledPluginSource, ".qwen-plugin", "plugin.json"), {
+  await writeJson(path.join(disabledPluginSource, "qwen-extension.json"), {
     name: disabledPluginName,
     version: "0.1.0",
+    displayName: "Disabled Extension",
     description: "Disabled extension.",
-    author: { name: "Qoder" },
-    interface: { displayName: "Disabled Extension", developerName: "Qoder" },
   });
   await writeText(
     path.join(disabledPluginSource, "skills", "disabled-skill", "SKILL.md"),
@@ -754,7 +748,7 @@ async function makeQwenFixture() {
   );
 
   await writeJson(path.join(qwenHome, "extensions", "extension-enablement.json"), {
-    [disabledPluginName]: { disabled: true, overrides: [] },
+    [disabledPluginName]: { overrides: ["!/*"] },
   });
 
   await writeText(
@@ -1550,7 +1544,7 @@ test("collectAgentCustomizeInventory returns Qwen installed plugins from extensi
     assert.equal(delivery.hooks[0].command, "node hooks/audit-delivery.mjs");
     assert.equal(
       delivery.evidence.path,
-      path.join(delivery.rootPath, ".qwen-plugin", "plugin.json"),
+      path.join(delivery.rootPath, "qwen-extension.json"),
     );
     assert.equal(delivery.enabled, true);
 

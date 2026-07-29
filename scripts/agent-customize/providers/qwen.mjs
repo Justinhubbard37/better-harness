@@ -27,12 +27,45 @@ import {
   workspaceSourceLabel,
 } from "../core/items.mjs";
 
-const QWEN_PLUGIN_MANIFEST = [".qwen-plugin", "plugin.json"];
+const QWEN_EXTENSION_MANIFEST = ["qwen-extension.json"];
 const QWEN_EXTENSION_INSTALL_FILE = ".qwen-extension-install.json";
 const QWEN_EXTENSION_ENABLEMENT_FILE = "extension-enablement.json";
 
 function defaultQwenHome() {
   return path.join(os.homedir(), ".qwen");
+}
+
+function ensureLeadingAndTrailingSlash(dirPath) {
+  let result = dirPath.replace(/\\/g, "/");
+  if (result.charAt(0) !== "/") result = "/" + result;
+  if (result.charAt(result.length - 1) !== "/") result = result + "/";
+  return result;
+}
+
+function overrideMatchesPath(rule, checkPath) {
+  const isDisable = rule.startsWith("!");
+  let base = isDisable ? rule.substring(1) : rule;
+  const includeSubdirs = base.endsWith("*");
+  if (includeSubdirs) base = base.substring(0, base.length - 1);
+  base = ensureLeadingAndTrailingSlash(base);
+  const glob = `${base}${includeSubdirs ? "*" : ""}`;
+  const regexString = glob
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/(\/?)\*/g, "($1.*)?");
+  return new RegExp(`^${regexString}$`).test(checkPath);
+}
+
+function isExtensionEnabled(enablementConfig, extensionName, workspace) {
+  const extensionConfig = enablementConfig?.[extensionName];
+  let enabled = true;
+  const allOverrides = extensionConfig?.overrides ?? [];
+  const lexicalPath = ensureLeadingAndTrailingSlash(workspace);
+  for (const rule of allOverrides) {
+    if (overrideMatchesPath(rule, lexicalPath)) {
+      enabled = !rule.startsWith("!");
+    }
+  }
+  return enabled;
 }
 
 function qwenMarkdownRuleSource(workspace, sourceLabel, precedence = "after-provider-rules") {
@@ -66,7 +99,7 @@ function normalizeProvidedQwenRecord(record) {
     source: record.source ?? "user",
     installMatch: record.installMatch ?? "provided",
     type: record.type ?? "link",
-    enablement: record.enablement ?? null,
+    enablementConfig: record.enablementConfig ?? null,
   };
 }
 
@@ -103,7 +136,7 @@ async function readQwenInstalledPluginState(options = {}) {
       source: installMarker.originSource ?? "user",
       installMatch: "qwen-extension-install",
       type: installMarker.type ?? "link",
-      enablement: enablement[name] ?? null,
+      enablementConfig: enablement,
     });
   }
   return {
@@ -113,32 +146,45 @@ async function readQwenInstalledPluginState(options = {}) {
   };
 }
 
-async function collectQwenPluginMcpItems(pluginRoot, sourceLabel) {
-  for (const candidate of [path.join(pluginRoot, ".mcp.json"), path.join(pluginRoot, "mcp.json")]) {
-    if (await pathExists(candidate)) {
-      return collectMcpFromConfig(candidate, "plugin", sourceLabel, pluginRoot);
+async function collectQwenPluginMcpItems(pluginRoot, sourceLabel, manifest) {
+  const items = [];
+  if (manifest?.mcpServers && typeof manifest.mcpServers === "object") {
+    for (const [name, config] of Object.entries(manifest.mcpServers)) {
+      items.push({
+        name,
+        scope: "plugin",
+        sourceLabel,
+        command: config.command ?? null,
+        args: config.args ?? [],
+        evidence: evidence(path.join(pluginRoot, "qwen-extension.json"), pluginRoot),
+      });
     }
   }
-  return [];
+  for (const candidate of [path.join(pluginRoot, ".mcp.json"), path.join(pluginRoot, "mcp.json")]) {
+    if (await pathExists(candidate)) {
+      items.push(...(await collectMcpFromConfig(candidate, "plugin", sourceLabel, pluginRoot)));
+    }
+  }
+  return items;
 }
 
-async function collectQwenPlugin(record) {
+async function collectQwenPlugin(record, workspace) {
   const pluginRoot = path.resolve(expandHome(record.installPath));
   if (!(await pathExists(pluginRoot))) {
     return null;
   }
-  const metadataEvidencePath = await pluginMetadataEvidencePath(pluginRoot, [QWEN_PLUGIN_MANIFEST, ["package.json"]]);
-  const manifest = (await readJson(path.join(pluginRoot, ...QWEN_PLUGIN_MANIFEST))) ?? {};
+  const metadataEvidencePath = await pluginMetadataEvidencePath(pluginRoot, [QWEN_EXTENSION_MANIFEST, ["package.json"]]);
+  const manifest = (await readJson(path.join(pluginRoot, ...QWEN_EXTENSION_MANIFEST))) ?? {};
   const packageJson = (await readJson(path.join(pluginRoot, "package.json"))) ?? {};
   const readme = await readText(path.join(pluginRoot, "README.md"), 6000);
   const heading = readme.match(/^#\s+(.+)$/mu)?.[1]?.trim();
   const rawDisplayName =
-    manifest.interface?.displayName ||
     manifest.displayName ||
     packageJson.displayName ||
     heading ||
     titleCase(manifest.name || packageJson.name || record.name);
   const displayName = normalizePluginDisplayName(rawDisplayName, record.name);
+  const enabled = isExtensionEnabled(record.enablementConfig, record.name, workspace);
   const plugin = {
     id: record.id,
     qwenExtensionId: record.name,
@@ -148,23 +194,19 @@ async function collectQwenPlugin(record) {
     sourceLabel: displayName,
     name: manifest.name || packageJson.name || record.name,
     displayName,
-    description:
-      manifest.interface?.shortDescription ||
-      manifest.description ||
-      packageJson.description ||
-      "",
-    publisher: { displayName: manifest.author?.name || manifest.interface?.developerName || titleCase(record.marketplaceName) },
+    description: manifest.description || packageJson.description || "",
+    publisher: { displayName: titleCase(record.marketplaceName) },
     version: record.version || manifest.version || packageJson.version,
     installSources: record.sources,
     installSource: record.source,
     installMatch: record.installMatch,
     installType: record.type,
     installRecordPath: record.installMarkerPath,
-    enabled: record.enablement ? record.enablement.disabled !== true : true,
+    enabled,
     evidence: evidence(metadataEvidencePath, path.dirname(path.dirname(pluginRoot))),
   };
   plugin.skills = await collectSkillFiles(path.join(pluginRoot, "skills"), "plugin", displayName, pluginRoot);
-  plugin.mcpServers = await collectQwenPluginMcpItems(pluginRoot, displayName);
+  plugin.mcpServers = await collectQwenPluginMcpItems(pluginRoot, displayName, manifest);
   plugin.rules = await collectRuleSources([
     directoryRuleSource(path.join(pluginRoot, "rules"), "plugin", displayName, pluginRoot),
   ]);
@@ -177,10 +219,10 @@ async function collectQwenPlugin(record) {
   return plugin;
 }
 
-async function collectQwenPlugins(records) {
+async function collectQwenPlugins(records, workspace) {
   const plugins = [];
   for (const record of records) {
-    const plugin = await collectQwenPlugin(record);
+    const plugin = await collectQwenPlugin(record, workspace);
     if (plugin) {
       plugins.push(plugin);
     }
@@ -199,12 +241,40 @@ async function collectQwenUserPrimitives(qwenHome) {
   const mcps = await pathExists(mcpPath)
     ? (await collectMcpFromConfig(mcpPath, "user", "User", qwenHome)) ?? []
     : (await collectMcpItems(qwenHome, "user", "User", qwenHome)) ?? [];
+  const settings = (await readJson(path.join(qwenHome, "settings.json"))) ?? {};
+  if (settings.mcpServers && typeof settings.mcpServers === "object") {
+    for (const [name, config] of Object.entries(settings.mcpServers)) {
+      if (!mcps.some((m) => m.name === name)) {
+        mcps.push({
+          name,
+          scope: "user",
+          sourceLabel: "User",
+          command: config.command ?? null,
+          args: config.args ?? [],
+          evidence: evidence(path.join(qwenHome, "settings.json"), qwenHome),
+        });
+      }
+    }
+  }
+  const hooks = await collectHookItems(qwenHome, "user", "User", qwenHome);
+  if (Array.isArray(settings.hooks)) {
+    for (const hook of settings.hooks) {
+      if (hook?.command && !hooks.some((h) => h.command === hook.command)) {
+        hooks.push({
+          command: hook.command,
+          scope: "user",
+          sourceLabel: "User",
+          evidence: evidence(path.join(qwenHome, "settings.json"), qwenHome),
+        });
+      }
+    }
+  }
   return {
     skills: await collectSkillFiles(path.join(qwenHome, "skills"), "user", "User", qwenHome),
     subagents: await collectMarkdownItems(path.join(qwenHome, "agents"), "subagent", "user", "User", qwenHome),
     rules: await collectRuleSources([directoryRuleSource(path.join(qwenHome, "rules"), "user", "User", qwenHome)]),
     commands: await collectMarkdownItems(path.join(qwenHome, "commands"), "command", "user", "User", qwenHome),
-    hooks: await collectHookItems(qwenHome, "user", "User", qwenHome),
+    hooks,
     mcps,
   };
 }
@@ -212,6 +282,33 @@ async function collectQwenUserPrimitives(qwenHome) {
 async function collectQwenWorkspacePrimitives(workspace) {
   const sourceLabel = await workspaceSourceLabel(workspace);
   const project = await collectWorkspaceRootPrimitives(path.join(workspace, ".qwen"), sourceLabel, workspace);
+  const settings = (await readJson(path.join(workspace, ".qwen", "settings.json"))) ?? {};
+  if (settings.mcpServers && typeof settings.mcpServers === "object") {
+    for (const [name, config] of Object.entries(settings.mcpServers)) {
+      if (!project.mcps.some((m) => m.name === name)) {
+        project.mcps.push({
+          name,
+          scope: "project",
+          sourceLabel,
+          command: config.command ?? null,
+          args: config.args ?? [],
+          evidence: evidence(path.join(workspace, ".qwen", "settings.json"), workspace),
+        });
+      }
+    }
+  }
+  if (Array.isArray(settings.hooks)) {
+    for (const hook of settings.hooks) {
+      if (hook?.command && !project.hooks.some((h) => h.command === hook.command)) {
+        project.hooks.push({
+          command: hook.command,
+          scope: "project",
+          sourceLabel,
+          evidence: evidence(path.join(workspace, ".qwen", "settings.json"), workspace),
+        });
+      }
+    }
+  }
   return {
     ...project,
     rules: [
@@ -237,7 +334,7 @@ export async function collectQwenCustomizeInventory(options = {}) {
     ? await readQwenInstalledPluginState({ ...options, qwenHome })
     : { records: [], source: "not-authorized", installRecordFiles: [] };
   const [plugins, user, project] = await Promise.all([
-    includeUserHome ? collectQwenPlugins(installState.records ?? []) : [],
+    includeUserHome ? collectQwenPlugins(installState.records ?? [], workspace) : [],
     includeUserHome ? collectQwenUserPrimitives(qwenHome) : emptyPrimitives(),
     collectQwenWorkspacePrimitives(workspace),
   ]);

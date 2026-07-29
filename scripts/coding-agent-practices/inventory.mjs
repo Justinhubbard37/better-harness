@@ -447,6 +447,7 @@ function providerScope(options = {}, platform = options.platform ?? "qoder") {
     codexAppPath: options.codexAppPath ?? options["codex-app-path"],
     claudeHome: options.claudeHome ?? options["claude-home"],
     claudeStatePath: options.claudeStatePath ?? options["claude-state"] ?? options["claude-state-path"],
+    qwenHome: options.qwenHome ?? options["qwen-home"],
   };
 }
 
@@ -535,7 +536,7 @@ function customizeSurface({ provider, group, scope, type, label, basePath, items
 async function buildConfiguredAssetSurfaces(inventory, scope) {
   const provider = scope.platform;
   const projectBase = scope.workspace;
-  const userBase = inventory.cursorHome ?? inventory.qoderHome ?? inventory.codexHome ?? inventory.claudeHome;
+  const userBase = inventory.cursorHome ?? inventory.qoderHome ?? inventory.codexHome ?? inventory.claudeHome ?? inventory.qwenHome;
   const surfaceTypes = [
     ["skills", "skills", "Skills"],
     ["subagents", "agents", "Agents"],
@@ -637,6 +638,7 @@ export async function collectProviderInventory(options = {}) {
     codexAppPath: scope.codexAppPath,
     claudeHome: scope.claudeHome,
     claudeStatePath: scope.claudeStatePath,
+    qwenHome: scope.qwenHome,
     includeUserHome: scope.includeUserHome,
     includeGlobalHooks: scope.includeGlobalHooks,
   });
