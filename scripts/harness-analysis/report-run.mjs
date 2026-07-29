@@ -34,12 +34,19 @@ function clone(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
 
+const REPORT_PLATFORMS = ["qoder", "codex", "claude", "cursor", "qwen", "copilot"];
+
 function reportPlatform(value = "qoder") {
   const platform = String(value || "qoder").toLowerCase();
-  if (!["qoder", "codex", "claude", "cursor", "qwen", "copilot"].includes(platform)) {
-    throw Object.assign(new Error(`unsupported Harness report platform: ${platform}`), {
-      code: "UNSUPPORTED_REPORT_PLATFORM",
-    });
+  if (!REPORT_PLATFORMS.includes(platform)) {
+    throw Object.assign(
+      new Error(
+        `unsupported Harness report platform: ${platform}. Supported platforms: ${REPORT_PLATFORMS.join(", ")}.`,
+      ),
+      {
+        code: "UNSUPPORTED_REPORT_PLATFORM",
+      },
+    );
   }
   return platform;
 }
