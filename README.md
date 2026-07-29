@@ -20,6 +20,7 @@
 </p>
 
 <p align="center">
+  <a href="https://qoderai.github.io/better-harness/">Website</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="#see-it-in-action">Demo</a> ·
   <a href="#why-better-harness">Why</a> ·
@@ -44,11 +45,12 @@ prioritized findings with an impact, expected output, scoped repair, and
 acceptance checks.
 
 <p align="center">
-  <a href="assets/demo/better-harness-report.html"><img src="assets/demo/better-harness-findings-report.png" alt="Better Harness HTML report showing an evidence-bounded finding with its impact, expected output, scoped AI fix, and acceptance checks" width="900"></a>
+  <a href="https://qoderai.github.io/better-harness/demo/better-harness-report/"><img src="assets/demo/better-harness-findings-report.png" alt="Better Harness HTML report showing an evidence-bounded finding with its impact, expected output, scoped AI fix, and acceptance checks" width="900"></a>
 </p>
 
 <p align="center">
-  <sub><a href="assets/demo/better-harness-report.html">Open the complete self-contained English HTML report</a>.</sub>
+  <sub><a href="https://qoderai.github.io/better-harness/demo/better-harness-report/">Open the complete self-contained English HTML report</a>
+  (<a href="assets/demo/better-harness-report.html">source</a>).</sub>
 </p>
 
 After you have comparable reports over time, the history view shows how the five

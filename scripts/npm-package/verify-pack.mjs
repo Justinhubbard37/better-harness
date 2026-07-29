@@ -210,6 +210,20 @@ const forbiddenPrefixes = [
   "package/scripts/packaging/",
   "package/skills/loop-blueprint/",
   "package/skills/harness/",
+  // Docusaurus site machinery lives inside docs/ but must not ship with npm.
+  "package/docs/docs/",
+  "package/docs/i18n/",
+  "package/docs/src/",
+  "package/docs/static/",
+  "package/docs/scripts/",
+  "package/docs/build/",
+  "package/docs/.docusaurus/",
+  "package/docs/.gitignore",
+  "package/docs/node_modules/",
+  "package/docs/docusaurus.config.js",
+  "package/docs/package-lock.json",
+  "package/docs/sidebars.js",
+  "package/docs/package.json",
 ];
 
 for (const entry of required) {
@@ -327,6 +341,20 @@ const forbiddenBundlePrefixes = [
   "scripts/packaging/",
   "skills/loop-blueprint/",
   "skills/harness/",
+  // Keep the generated Qoder runtime free of the colocated Docusaurus app.
+  "docs/.docusaurus/",
+  "docs/.gitignore",
+  "docs/build/",
+  "docs/docs/",
+  "docs/i18n/",
+  "docs/node_modules/",
+  "docs/scripts/",
+  "docs/src/",
+  "docs/static/",
+  "docs/docusaurus.config.js",
+  "docs/package-lock.json",
+  "docs/package.json",
+  "docs/sidebars.js",
 ];
 
 for (const entry of requiredBundleEntries) {
