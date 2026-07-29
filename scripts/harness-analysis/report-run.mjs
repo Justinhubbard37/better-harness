@@ -161,6 +161,8 @@ export async function analyzeHarnessEvidence(options = {}) {
         claudeHome: options["claude-home"],
         cursorHome: options["cursor-home"],
         qwenHome: options["qwen-home"],
+        topology: options.topology,
+        analysisScope: options.analysisScope,
       })).source;
   const sourceErrors = validateHarnessReportSource(source);
   if (sourceErrors.length > 0) {

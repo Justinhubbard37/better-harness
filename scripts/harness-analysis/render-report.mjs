@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,9 +10,13 @@ import { canvasArtifactsFromReportData, readJsonFile, findingsJsonFromReportData
 import { repairFindingsJsonData } from "./repair-findings-json.mjs";
 import { allocateRunDir } from "./run-dir.mjs";
 import { evaluateFindingsJson, validateHarnessCanvasArtifacts } from "./validate-canvas.mjs";
+import { resolveWorkspaceTopology } from "../workspace-topology/index.mjs";
 import { evaluateHtmlReport, renderHtml } from "./renderers/html.mjs";
 import { renderMarkdown } from "./renderers/markdown.mjs";
-import { isAgentWorkLoopReport } from "./fluency-dimensions.mjs";
+import {
+  FINDING_TARGET_REPORT_CONTRACT_VERSION,
+  isAgentWorkLoopReport,
+} from "./fluency-dimensions.mjs";
 import {
   mergeTaskLoopCanvasData,
   projectTaskLoopFindings,
@@ -318,6 +322,35 @@ export async function renderReport(options) {
         direct: options.direct === true,
       })
     : rawInput;
+  const findings = Array.isArray(rawData?.findings) ? rawData.findings : [];
+  const hasStructuredFindingTarget = findings.some((finding) =>
+    finding && typeof finding === "object" && Object.hasOwn(finding, "target"));
+  if (hasStructuredFindingTarget && !options.target) {
+    throw Object.assign(new Error("--target is required when findings carry structured target metadata"), {
+      code: "MISSING_RENDER_TARGET",
+    });
+  }
+  const topology = options.topology
+    ?? (options.target
+      ? (await resolveWorkspaceTopology({ workspace: options.target })).topology
+      : undefined);
+  if (options.target && topology) {
+    const requestedTarget = await realpath(path.resolve(options.target));
+    const topologyTarget = path.resolve(topology.requestedWorkspace);
+    if (requestedTarget !== topologyTarget) {
+      throw Object.assign(new Error("--target does not match the frozen workspace topology"), {
+        code: "RENDER_WORKSPACE_TOPOLOGY_MISMATCH",
+      });
+    }
+  }
+  const requiresPackageFindingTarget = topology?.target?.kind === "workspace-member"
+    && Number.isInteger(rawData?.summary?.reportContractVersion)
+    && rawData.summary.reportContractVersion >= FINDING_TARGET_REPORT_CONTRACT_VERSION;
+  if ((hasStructuredFindingTarget || requiresPackageFindingTarget) && topology?.status !== "complete") {
+    throw Object.assign(new Error("structured package findings require a complete workspace topology"), {
+      code: "RENDER_WORKSPACE_TOPOLOGY_INCOMPLETE",
+    });
+  }
   const repaired = repairFindingsJsonData(rawData, {
     targetPath: options.target ?? rawData.summary?.project?.path ?? rawData.summary?.projectName,
   });
@@ -326,6 +359,7 @@ export async function renderReport(options) {
     language: options.language,
     target: options.target,
     dataPath: inputPath,
+    topology,
   });
   const outputLocation = resolveReportOutputLocation(options);
   const allocatedRunDir = outputLocation.runDir === null;
