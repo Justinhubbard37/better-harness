@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -315,8 +316,13 @@ export class QwenSessionAnalyzer extends SessionAnalyzer {
   async discoverSessions(scope, roots) {
     const sessions = new Map();
     const transcriptRoot = roots.find((root) => root.kind === "qwen-project-jsonl");
+    const seenRoots = new Set();
     for (const rootPath of transcriptRoot?.paths ?? []) {
       if (!await pathExists(rootPath)) continue;
+      let realRoot;
+      try { realRoot = realpathSync.native(rootPath); } catch { realRoot = path.resolve(rootPath); }
+      if (seenRoots.has(realRoot)) continue;
+      seenRoots.add(realRoot);
       const files = await walkFiles(rootPath, { maxDepth: 2, limit: 20_000, match: (file) => file.endsWith(".jsonl") });
       for (const filePath of files) {
         const probe = await probeTranscript(filePath, scope.workspace);
