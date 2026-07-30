@@ -1036,12 +1036,16 @@ export async function createTaskLoopSourceFromSessions(options = {}) {
   const analyzerOptions = {
     platform,
     workspace: options.workspace,
+    home: options.home,
     since: selectionProfile?.scope?.since ?? options.since,
     until: snapshotUntil,
     qoderHome: options.qoderHome ?? options["qoder-home"],
     codexHome: options.codexHome ?? options["codex-home"],
     claudeHome: options.claudeHome ?? options["claude-home"],
     cursorHome: options.cursorHome ?? options["cursor-home"],
+    qwenHome: options.qwenHome ?? options["qwen-home"],
+    copilotHome: options.copilotHome ?? options["copilot-home"],
+    piHome: options.piHome ?? options["pi-home"],
     includeGlobalCapabilities: options.includeGlobalCapabilities
       ?? options["include-global-capabilities"]
       ?? false,

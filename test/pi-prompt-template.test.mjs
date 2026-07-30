@@ -32,6 +32,7 @@ function substituteArgs(content, args) {
 
 test("the /better-harness prompt template uses a supported Pi default-value placeholder", () => {
   const template = readFileSync(templatePath, "utf8");
+  assert.match(template, /^argument-hint: '[^']+'$/mu, "argument-hint must be a YAML string for Pi autocomplete");
   assert.match(template, /\$\{@:-[^}]+\}/u, "template should carry a ${@:-default} placeholder");
 });
 

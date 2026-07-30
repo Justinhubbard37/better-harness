@@ -16,12 +16,13 @@ providers, real session-evidence adapters, and output modes. Canonical product
 judgment stays in `skills/`, `models/`, `references/`, `templates/`, and
 `scripts/<capability>/`.
 
-The `@qoderai/better-harness` npm package includes the Qoder, Claude Code,
-Codex, Cursor, Qwen, Copilot, and Pi plugin metadata roots. The generated
-Qoder runtime bundle includes only the Qoder shell, `.qoder-plugin/`; non-Qoder
-generated host artifacts remain source-local. Claude Code installs its shell
-through the repository's native marketplace manifest. Pi installs the repository
-as a pi package through the `pi` manifest in `package.json`.
+The `@qoderai/better-harness` npm package includes six filesystem metadata
+roots for Qoder, Claude Code, Codex, Cursor, Qwen, and Copilot, plus Pi install
+metadata in the existing `package.json`. The generated Qoder runtime bundle
+includes only the Qoder shell, `.qoder-plugin/`; non-Qoder generated host
+artifacts remain source-local. Claude Code installs its shell through the
+repository's native marketplace manifest. Pi installs the repository as a pi
+package through the `pi` manifest in `package.json`.
 
 | Host | Positioning | Shell | Configured Assets | Session Evidence | Default Output | Rules / Prompts | Smoke |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -31,7 +32,6 @@ as a pi package through the `pi` manifest in `package.json`.
 | Cursor | Analysis-capable source-local host | `.cursor-plugin/` | `scripts/agent-customize/providers/cursor.mjs` | `scripts/session-analysis/platforms/cursor.mjs` | self-contained HTML + Markdown | `.cursor` + `.codex` compatibility + `AGENTS.md` | `agent --plugin-dir . --mode ask --print` -> Cursor evidence bundle -> validated `html` render |
 | Qwen Code | Analysis-capable source-local host | `qwen-extension.json` | `scripts/agent-customize/providers/qwen.mjs` | `scripts/session-analysis/platforms/qwen.mjs` | self-contained HTML + Markdown | `.qwen` + `QWEN.md` + `AGENTS.md` | `harness prepare --platform qwen` -> finalize with `html-report` validation |
 | GitHub Copilot | Analysis-capable source-local host | `.github/plugin/` | `scripts/agent-customize/providers/copilot.mjs` | `scripts/session-analysis/platforms/copilot.mjs` | self-contained HTML + Markdown | `.github` + `AGENTS.md` + `~/.copilot` | `copilot plugin marketplace add .` -> `copilot plugin install better-harness@better-harness` -> configured-asset baseline -> validated `html` render |
-
 | Pi | Analysis-capable source-local host | `pi` manifest in `package.json` | `scripts/agent-customize/providers/pi.mjs` | `scripts/session-analysis/platforms/pi.mjs` | self-contained HTML + Markdown | `.pi` + `.agents` + `AGENTS.md` | `pi install <source>` or `pi -e <source>` -> `/better-harness` prompt template -> validated `html` render |
 
 ## Discovery And Evidence

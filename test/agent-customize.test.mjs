@@ -1983,6 +1983,80 @@ test("Pi fails closed on autoload:false and honors package resource filters", as
   }
 });
 
+test("Pi applies project autoload deltas over normalized user package identities", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-agent-customize-pi-delta-"));
+  const piHome = path.join(root, ".pi", "agent");
+  const workspace = path.join(root, "workspace");
+  try {
+    const packageRoot = path.join(piHome, "npm", "node_modules", "shared-pack");
+    await writeJson(path.join(packageRoot, "package.json"), { name: "shared-pack", version: "1.0.0" });
+    await writeText(path.join(packageRoot, "skills", "base", "SKILL.md"), "---\nname: base\ndescription: Base skill.\n---\n");
+    await writeText(path.join(packageRoot, "skills", "enabled", "SKILL.md"), "---\nname: enabled\ndescription: Enabled skill.\n---\n");
+    await writeText(path.join(packageRoot, "prompts", "base.md"), "# Base prompt\n");
+    await writeJson(path.join(piHome, "settings.json"), { packages: ["npm:shared-pack@1.0.0"] });
+    await writeJson(path.join(workspace, ".pi", "settings.json"), {
+      packages: [{
+        source: "npm:shared-pack@2.0.0",
+        autoload: false,
+        skills: ["skills/enabled/SKILL.md", "-skills/base/SKILL.md"],
+        prompts: [],
+      }],
+    });
+
+    const inventory = await collectAgentCustomizeInventory({ provider: "pi", piHome, workspace });
+    const packages = inventory.plugins.filter((plugin) => plugin.name === "shared-pack");
+    assert.equal(packages.length, 1, "npm identity should ignore the configured version");
+    assert.deepEqual(packages[0].installSources, ["project", "user"]);
+    assert.equal(packages[0].resourceState, "selective-autoload");
+    assert.deepEqual(packages[0].skills.map((skill) => skill.name), ["enabled"]);
+    assert.deepEqual(packages[0].commands.map((command) => command.name), ["base"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Pi package inventory covers flat skills, direct manifest files, and sanitized git identities", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-agent-customize-pi-resources-"));
+  const piHome = path.join(root, ".pi", "agent");
+  const workspace = path.join(root, "workspace");
+  try {
+    const flatRoot = path.join(piHome, "npm", "node_modules", "flat-pack");
+    await writeJson(path.join(flatRoot, "package.json"), {
+      name: "flat-pack",
+      version: "1.0.0",
+      pi: {
+        skills: ["./skills", "./single-skill.md", "-./skills/drop.md"],
+        prompts: ["./single-prompt.md"],
+      },
+    });
+    await writeText(path.join(flatRoot, "skills", "flat.md"), "---\nname: flat\ndescription: Flat skill.\n---\n");
+    await writeText(path.join(flatRoot, "skills", "drop.md"), "---\nname: drop\ndescription: Excluded skill.\n---\n");
+    await writeText(path.join(flatRoot, "skills", "nested", "SKILL.md"), "---\nname: nested\ndescription: Nested skill.\n---\n");
+    await writeText(path.join(flatRoot, "single-skill.md"), "---\nname: single-skill\ndescription: Direct skill.\n---\n");
+    await writeText(path.join(flatRoot, "single-prompt.md"), "# Single Prompt\n");
+
+    const gitRoot = path.join(piHome, "git", "github.com", "acme", "private-pack");
+    await writeJson(path.join(gitRoot, "package.json"), { name: "private-pack", version: "1.0.0" });
+    await writeText(path.join(gitRoot, "skills", "private", "SKILL.md"), "---\nname: private\ndescription: Private skill.\n---\n");
+    await writeJson(path.join(piHome, "settings.json"), {
+      packages: [
+        "npm:flat-pack",
+        "git:https://oauth2:secret-token@github.com/acme/private-pack.git@v1.0.0",
+      ],
+    });
+
+    const inventory = await collectAgentCustomizeInventory({ provider: "pi", piHome, workspace });
+    const flat = inventory.plugins.find((plugin) => plugin.name === "flat-pack");
+    assert.ok(flat);
+    assert.deepEqual(flat.skills.map((skill) => skill.name).sort(), ["flat", "nested", "single-skill"]);
+    assert.deepEqual(flat.commands.map((command) => command.name), ["single-prompt"]);
+    assert.ok(inventory.plugins.some((plugin) => plugin.name === "private-pack"));
+    assert.doesNotMatch(JSON.stringify(inventory), /secret-token/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Pi discovers ~/.agents/skills from the real user home under a relocated agent dir", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-agent-customize-pi-home-"));
   const userHome = path.join(root, "home");

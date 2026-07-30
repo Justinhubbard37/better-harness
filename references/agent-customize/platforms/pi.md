@@ -67,7 +67,12 @@ startup after the project is trusted.
   under `~/.pi/agent/npm/`, git clones under `~/.pi/agent/git/<host>/<path>`,
   and project-scoped installs under `.pi/npm/` and `.pi/git/`. A package
   declares resources through the `pi` key in `package.json` or conventional
-  `skills/`, `prompts/`, `extensions/`, and `themes/` directories.
+  `skills/`, `prompts/`, `extensions/`, and `themes/` directories. Package
+  Skills may use `SKILL.md`, a top-level `.md` file in a declared Skill
+  directory, or a directly declared Markdown file. Settings-level `autoload`
+  and resource filters determine which package Skills and prompts are effective;
+  a project `autoload: false` entry can act as a delta over the matching user
+  package.
 
 ## Session Evidence
 
@@ -82,7 +87,8 @@ configured presence never substitutes for observed session behavior.
 
 - Pi has no native MCP registry; MCP support arrives through extension
   packages. Bind MCP capability claims to extension evidence.
-- Package manifest glob filters and per-resource enable/disable state are not
-  inventoried; keep those claims out of readiness evidence.
+- Package manifest glob source expansion is not inventoried. Settings-level
+  effective state is applied, but disabled child resources are omitted rather
+  than represented as independently inspectable assets.
 - Skills and extensions can instruct or execute arbitrary actions. Review
   provenance before treating a configured asset as a safe, supported path.

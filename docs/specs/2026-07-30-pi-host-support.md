@@ -12,6 +12,12 @@ Make Pi (`pi.dev`, `@earendil-works/pi-coding-agent`) a first-class,
 evidence-safe Better Harness host alongside Qoder, Codex, Claude Code, Cursor,
 Qwen Code, and GitHub Copilot.
 
+This contribution reaches the **Verified install/discovery** capability level:
+native discovery, configured assets, session evidence, evidence-bundle routing,
+and portable report routing are verified. Pi remains outside the public
+Quickstart set until a full report render is validated end to end in Pi, as
+required by the repository's host contribution contract.
+
 Pi is a minimal terminal coding harness extended through TypeScript extensions,
 skills, prompt templates, themes, and pi packages. It already implements the
 Agent Skills standard and auto-discovers a package's `skills/` directory, so
@@ -52,18 +58,23 @@ blocks, and a finite `message.usage` object.
   standard directory is discovered from the real user home even when
   `PI_CODING_AGENT_DIR` relocates the agent dir.
 - **PHS-AC-4 (effective package state):** Package entries in object form honor
-  Pi's effective-state contract. `autoload: false` fails closed and publishes
-  no child resources; per-resource allowlists, `!` exclusions, `+`/`-` exact
-  overrides, and `[]` (load none) narrow the reported Skills and prompt
-  templates. A source declared in both project and user settings resolves to
-  the project entry.
+  Pi's effective-state contract. A standalone `autoload: false` entry with no
+  positive resource delta publishes no child resources; project
+  `autoload: false` entries can layer selective enable/disable deltas over the
+  matching user package. Per-resource allowlists, `!` exclusions, `+`/`-`
+  exact overrides, and `[]` (load none for normal autoload) narrow the reported
+  Skills and prompt templates. npm versions and git URL/ref variants use Pi's
+  normalized package identity, so a project declaration overrides or layers
+  over the matching user package instead of being reported twice.
 - **PHS-AC-5 (session evidence):** `session-analysis` supports `--platform pi`
   through a capability-owned platform module that reads workspace-matching
-  version-3 JSONL transcripts, verifies the session-header `cwd`, and resolves
-  the session directory as CLI over environment over settings over default. A
+  version-3 JSONL transcripts, requires the first parsed record to be the sole
+  authoritative session header, verifies its `cwd`, and resolves the session
+  directory as CLI over environment over settings over default. A
   custom session directory is treated as the exact flat JSONL directory whose
-  files are still qualified by the session-header cwd; the default tree nests
-  transcripts under workspace-keyed `--<cwd-slug>--` directories.
+  files are still qualified by the session-header cwd; relative custom paths
+  resolve from the target workspace. The default tree nests transcripts under
+  workspace-keyed `--<cwd-slug>--` directories.
 - **PHS-AC-6 (evidence boundaries):** Missing or malformed `message.usage`
   fields stay absent rather than becoming zero, so partial per-response usage
   is explicit. A parent session directory alone is not an evidence root: the
@@ -72,24 +83,29 @@ blocks, and a finite `message.usage` object.
   production facts.
 - **PHS-AC-7 (bundle propagation):** `harness evidence-bundle --platform pi`
   freezes a Pi context and returns all three lanes, and `--pi-home` routes
-  isolated configuration paths into the Agent Customize lane through both the
-  collector API and the `agent-customize` CLI.
-- **PHS-AC-8 (host routing):** The host adapter matrix carries a Pi row with
-  discovery paths, evidence sources, default output, and a smoke command.
-  Portable HTML routing includes Pi, and Qoder remains the only Canvas host.
+  isolated configuration paths into the Agent Customize lane, selection
+  profile, and task-loop analysis through both the collector API and the
+  relevant CLIs.
+- **PHS-AC-8 (host routing):** The canonical host adapter matrix carries a Pi
+  row with discovery paths, evidence sources, default output, and a smoke
+  command. Canonical portable HTML routing includes Pi, and Qoder remains the
+  only Canvas host. Public Quickstart surfaces remain unchanged until Pi has an
+  end-to-end report-render smoke.
 - **PHS-AC-9 (support-declaration consistency):** `pi` is a member of the
   canonical supported-platform set, so the provider registry, session platform
   loader, CLI help, report gate, asset-baseline gate, and adapter matrix all
   agree (A-06).
 - **PHS-AC-10 (provider behavior):** Deterministic fixtures cover Pi asset
   inventory, autoload/filter effective state, relocated-agent-dir user-home
-  discovery, transcript normalization, custom-directory and precedence
-  resolution, foreign-workspace rejection, and partial/malformed usage. The
-  supported prompt-template argument syntax is exercised by an expansion smoke
-  test.
+  discovery, flat and direct-file package Skills, normalized package identity,
+  transcript normalization, custom-directory and precedence resolution,
+  malformed/foreign header rejection, and partial/malformed usage. The
+  supported prompt-template argument syntax is exercised by an expansion
+  smoke test.
 - **PHS-AC-11 (documentation integrity):** Markdown links and the generated
-  documentation routing graph remain current, and both READMEs document the
-  `pi install` path.
+  documentation routing graph remain current, and the detailed Installation
+  sections in both READMEs document the `pi install` path without promoting Pi
+  into the public Quickstart set.
 
 ## Non-goals
 
@@ -103,6 +119,9 @@ blocks, and a finite `message.usage` object.
 - Add a `scripts/packaging/` Pi host-artifact builder. Pi installs from the
   existing package manifest and needs no generated shell.
 - Add Pi metadata to the Qoder runtime bundle.
+- Promote Pi to the README Quickstart list, Docusaurus home-page cards,
+  installation tabs, or public adapter matrix before a full report render is
+  validated end to end in Pi.
 - Treat configured Pi assets, zero candidates, or a loaded Skill as proof of
   runtime quality or Skill invocation.
 
@@ -127,10 +146,12 @@ blocks, and a finite `message.usage` object.
    agent-lint usage. (PHS-AC-7, PHS-AC-9)
 5. Add `references/agent-customize/platforms/pi.md`, a Pi asset route, and a Pi
    section in Session Diagnostics. (PHS-AC-3, PHS-AC-5)
-6. Add the Pi host matrix row, keep the metadata-root counts across the
-   architecture, community, glossary, and concepts docs, and route Pi through
-   portable HTML reporting. (PHS-AC-8)
-7. Document the `pi install` path in both READMEs. (PHS-AC-11)
+6. Add the Pi row to the canonical adapter matrix, keep the metadata-root
+   counts across the architecture, community, glossary, and concepts docs, and
+   route Pi through portable HTML reporting without changing the public
+   Quickstart set. (PHS-AC-8)
+7. Document the `pi install` path in the detailed Installation sections of both
+   READMEs. (PHS-AC-11)
 8. Extend tests and packaging verification for the new manifest, provider,
    platform, enums, and the supported-platform consistency set, plus an
    expansion smoke test for the prompt template. (PHS-AC-9, PHS-AC-10,
@@ -138,13 +159,23 @@ blocks, and a finite `message.usage` object.
 
 ## Test and Review Evidence
 
-- `node --test`
-- `node --test test/doc-link-graph.test.mjs`
-- `npm run pack:verify`
-- `pi install <repo>` then `/better-harness` (or `/skill:better-harness`),
-  expecting the reported Skill and prompt discovery.
-- `node scripts/better-harness.mjs harness evidence-bundle --platform pi
-  --workspace . --depth quick --format json`
+Confirmed on the final integration diff:
+
+- `npm run check`: 913/913 tests passed, then npm tarball and Qoder runtime
+  bundle verification passed.
+- `node --test test/agent-customize.test.mjs
+  test/session-analysis-providers.test.mjs test/task-loop-source.test.mjs
+  test/support-declarations.test.mjs`: 90/90 focused provider tests passed.
+- `node scripts/doc-link-graph/cli.mjs skills/better-harness` followed by
+  `node --test test/doc-link-graph.test.mjs`: generated graph current and 6/6
+  link-integrity tests passed.
+- The externally visible [PR #25 evidence](https://github.com/QoderAI/better-harness/pull/25)
+  records contributor-run native Pi 0.83.0 install/discovery, real local session
+  facts, configured-asset inventory, and a complete evidence bundle.
+
+Not observed on the final integration diff: a model-driven, end-to-end
+`/better-harness` report render inside an interactive Pi session. Public
+Quickstart promotion therefore remains deferred.
 
 ## Risk
 

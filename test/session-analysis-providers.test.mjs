@@ -813,6 +813,26 @@ test("Pi provider rejects a transcript whose header cwd belongs to another works
   assert.equal(result.sessions.length, 0);
 });
 
+test("Pi provider requires one authoritative first session header", async () => {
+  const root = await fixtureRoot("session-pi-header-boundary-");
+  const home = path.join(root, ".pi", "agent");
+  const workspace = path.join(root, "workspace", "target");
+  const dirName = workspaceToPiSessionDirVariants(workspace).exact;
+  await writeJsonl(path.join(home, "sessions", dirName, "late-header.jsonl"), [
+    { type: "message", id: "x1", timestamp: "2026-07-20T01:00:00.000Z", message: { role: "user", content: "foreign" } },
+    { type: "session", version: 3, id: "late", timestamp: "2026-07-20T01:00:01.000Z", cwd: workspace },
+  ]);
+  await writeJsonl(path.join(home, "sessions", dirName, "multiple-headers.jsonl"), [
+    { type: "session", version: 3, id: "spliced", timestamp: "2026-07-20T01:00:00.000Z", cwd: workspace },
+    { type: "message", id: "x2", timestamp: "2026-07-20T01:00:01.000Z", message: { role: "user", content: "target" } },
+    { type: "session", version: 3, id: "foreign", timestamp: "2026-07-20T01:00:02.000Z", cwd: path.join(root, "workspace", "other") },
+    { type: "message", id: "x3", timestamp: "2026-07-20T01:00:03.000Z", message: { role: "user", content: "foreign" } },
+  ]);
+
+  const result = await new PiSessionAnalyzer().analyze({ command: "sources", workspace, home });
+  assert.equal(result.sessions.length, 0);
+});
+
 test("Pi provider discovers subdirectory session dirs that share the workspace prefix", async () => {
   const root = await fixtureRoot("session-pi-subdir-");
   const home = path.join(root, ".pi", "agent");
@@ -831,6 +851,7 @@ test("Pi provider discovers subdirectory session dirs that share the workspace p
   ]);
   const result = await new PiSessionAnalyzer().analyze({ command: "sources", workspace, home });
   assert.equal(result.sessions.length, 1);
+  assert.equal(result.sources[0].path, path.join(home, "sessions", dirName));
 });
 
 test("Pi treats a configured session directory as the exact flat JSONL directory", async () => {
@@ -906,6 +927,23 @@ test("Pi resolves the session directory as CLI over environment over settings ov
   }
 });
 
+test("Pi resolves relative configured session directories from the target workspace", async () => {
+  const root = await fixtureRoot("session-pi-relative-dir-");
+  const home = path.join(root, ".pi", "agent");
+  const workspace = path.join(root, "workspace", "target");
+  const relativeDir = path.join(".pi", "custom-sessions");
+  const sessionId = "relative-session";
+  await writeJsonl(path.join(workspace, relativeDir, "relative.jsonl"), [
+    { type: "session", version: 3, id: sessionId, timestamp: "2026-07-20T01:00:00.000Z", cwd: workspace },
+  ]);
+  await mkdir(path.join(workspace, ".pi"), { recursive: true });
+  await writeFile(path.join(workspace, ".pi", "settings.json"), JSON.stringify({ sessionDir: relativeDir }));
+
+  const result = await new PiSessionAnalyzer().analyze({ command: "sources", workspace, home });
+  assert.equal(result.sources[0].path, path.join(workspace, relativeDir));
+  assert.deepEqual(result.sessions.map((session) => session.sessionId), [sessionId]);
+});
+
 test("Pi keeps partial and malformed usage explicit instead of zero-filling", async () => {
   const root = await fixtureRoot("session-pi-usage-");
   const home = path.join(root, ".pi", "agent");
@@ -952,6 +990,23 @@ test("Pi source roots stay absent without workspace-matching session directories
   ]);
 
   const result = await new PiSessionAnalyzer().analyze({ command: "sources", workspace, home });
+  assert.equal(result.sources[0].exists, false);
+  assert.equal(result.sessions.length, 0);
+});
+
+test("Pi custom session roots require a directory", async () => {
+  const root = await fixtureRoot("session-pi-custom-root-file-");
+  const home = path.join(root, ".pi", "agent");
+  const workspace = path.join(root, "workspace", "target");
+  const customPath = path.join(root, "not-a-directory.jsonl");
+  await writeFile(customPath, "{}\n");
+
+  const result = await new PiSessionAnalyzer().analyze({
+    command: "sources",
+    workspace,
+    home,
+    "session-dir": customPath,
+  });
   assert.equal(result.sources[0].exists, false);
   assert.equal(result.sessions.length, 0);
 });

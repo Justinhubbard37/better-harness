@@ -1,7 +1,8 @@
 import os from "node:os";
+import { readdir } from "node:fs/promises";
 import path from "node:path";
 
-import { pathExists } from "../../session-analysis/fs.mjs";
+import { pathExists, pathStat } from "../../session-analysis/fs.mjs";
 import { expandHome, normalizeWorkspace } from "../../session-analysis/paths.mjs";
 import { MANAGE_TABS } from "../constants.mjs";
 import {
@@ -16,9 +17,11 @@ import {
   listDirectories,
   normalizePluginDisplayName,
   readJson,
+  readMarkdownName,
   readText,
   sortByName,
   titleCase,
+  withoutExtension,
   workspaceSourceLabel,
 } from "../core/items.mjs";
 
@@ -37,7 +40,7 @@ function packageSourceString(entry) {
 // carrying autoload and per-resource filters. Keep the whole effective-state
 // contract: autoload and filters decide what Pi actually loads.
 function normalizePiPackageEntry(entry) {
-  const source = packageSourceString(entry);
+  const source = packageSourceString(entry)?.trim();
   if (!source) return null;
   if (typeof entry === "string") {
     return { source, autoload: true, filters: {} };
@@ -109,20 +112,52 @@ function applyPiResourceFilter(items, packageRoot, filter) {
   });
 }
 
+// With autoload:false Pi treats resource patterns as a delta: no patterns
+// change nothing, plain/+ patterns enable matches, and !/- patterns disable
+// matches. A project delta can layer over the effective user package state.
+function applyPiResourceDelta(items, packageRoot, baseItems, filter = []) {
+  const enabled = new Set(baseItems.map((item) => item.filePath));
+  for (const rawPattern of filter) {
+    if (typeof rawPattern !== "string" || rawPattern.length === 0) continue;
+    const marker = /^[!+-]/u.test(rawPattern) ? rawPattern[0] : "";
+    const pattern = marker ? rawPattern.slice(1) : rawPattern;
+    const exact = marker === "+" || marker === "-";
+    const nextEnabled = marker !== "!" && marker !== "-";
+    const normalized = toPosixPath(pattern);
+    for (const item of items) {
+      const candidates = piItemCandidates(item, packageRoot);
+      const matches = exact
+        ? candidates.includes(normalized)
+        : matchesPiPattern(pattern, candidates);
+      if (!matches) continue;
+      if (nextEnabled) enabled.add(item.filePath);
+      else enabled.delete(item.filePath);
+    }
+  }
+  return items.filter((item) => enabled.has(item.filePath));
+}
+
 // Manifest arrays are resource sources; plain directory entries are walked
 // and `!` exclusions are honored as a filter layer. Glob source expansion
 // beyond declared directories stays unexpanded (fail closed) rather than
 // over-reporting resources Pi may not load.
-function manifestExclusions(manifest, key) {
+function manifestOverrides(manifest, key) {
   const declared = Array.isArray(manifest?.[key]) ? manifest[key] : [];
-  return declared.filter((entry) => typeof entry === "string" && entry.startsWith("!")).map((entry) => entry.slice(1));
+  return declared.filter((entry) => typeof entry === "string" && /^[!+-]/u.test(entry));
 }
 
 function normalizeGitClonePath(source) {
-  let value = source;
+  let value = source.trim();
   if (value.startsWith("git:")) value = value.slice("git:".length);
-  value = value.replace(/^(?:https?|ssh|git):\/\//u, "");
-  value = value.replace(/^git@([^:]+):/u, "$1/");
+  if (/^(?:https?|ssh|git):\/\//u.test(value)) {
+    try {
+      const url = new URL(value);
+      value = `${url.hostname}/${url.pathname.replace(/^\//u, "")}`;
+    } catch {
+      value = value.replace(/^(?:https?|ssh|git):\/\//u, "").replace(/^[^@/]+@/u, "");
+    }
+  }
+  value = value.replace(/^[^@/]+@([^:]+):/u, "$1/");
   const at = value.lastIndexOf("@");
   if (at > value.lastIndexOf("/")) value = value.slice(0, at);
   value = value.replace(/\.git$/u, "");
@@ -135,17 +170,20 @@ export function resolvePiPackageRecord(source, { scopeRoot, settingsDir, scope }
     const versionAt = spec.lastIndexOf("@");
     if (versionAt > 0) spec = spec.slice(0, versionAt);
     return {
-      id: `pi/${scope}/${source}`,
+      id: `pi/${scope}/npm:${spec}`,
+      identity: `npm:${spec}`,
       name: spec,
       source,
       sourceKind: "npm",
       installPath: path.join(scopeRoot, "npm", "node_modules", ...spec.split("/")),
     };
   }
-  if (source.startsWith("git:") || /^(?:https?|ssh|git):\/\//u.test(source)) {
+  if (source.startsWith("git:") || /^(?:https?|ssh|git):\/\//u.test(source) || /^[^@\s]+@[^:\s]+:.+/u.test(source)) {
     const clonePath = normalizeGitClonePath(source);
+    const identity = `git:${clonePath.split(path.sep).join("/")}`;
     return {
-      id: `pi/${scope}/${source}`,
+      id: `pi/${scope}/${identity}`,
+      identity,
       name: path.basename(clonePath),
       source,
       sourceKind: "git",
@@ -156,7 +194,8 @@ export function resolvePiPackageRecord(source, { scopeRoot, settingsDir, scope }
     ? path.resolve(expandHome(source))
     : path.resolve(settingsDir, source);
   return {
-    id: `pi/${scope}/${source}`,
+    id: `pi/${scope}/local:${localPath}`,
+    identity: `local:${localPath}`,
     name: path.basename(localPath),
     source,
     sourceKind: "local",
@@ -164,7 +203,7 @@ export function resolvePiPackageRecord(source, { scopeRoot, settingsDir, scope }
   };
 }
 
-async function manifestResourceDirs(manifest, packageRoot, key, conventional) {
+function manifestResourcePaths(manifest, packageRoot, key, conventional) {
   const declared = Array.isArray(manifest?.[key]) ? manifest[key] : null;
   if (!declared) {
     return [path.join(packageRoot, conventional)];
@@ -177,7 +216,55 @@ async function manifestResourceDirs(manifest, packageRoot, key, conventional) {
   return dirs;
 }
 
-async function collectPiPackagePlugin(record, scope, entryConfig = { autoload: true, filters: {} }) {
+async function piMarkdownItem(filePath, kind, scope, sourceLabel, rootForEvidence) {
+  const stat = await pathStat(filePath);
+  if (!stat?.isFile() || path.extname(filePath).toLowerCase() !== ".md") return [];
+  const fallback = kind === "skill" && path.basename(filePath) === "SKILL.md"
+    ? path.basename(path.dirname(filePath))
+    : withoutExtension(filePath);
+  const metadata = await readMarkdownName(filePath, fallback, { useHeading: kind === "skill" });
+  return [{
+    id: `${scope}:${kind}:${filePath}`,
+    kind,
+    scope,
+    sourceLabel,
+    filePath,
+    name: fallback,
+    declaredName: metadata.name && metadata.name !== fallback ? metadata.name : undefined,
+    description: metadata.description,
+    evidence: evidence(filePath, rootForEvidence),
+  }];
+}
+
+async function collectPiSkillPath(resourcePath, scope, sourceLabel, packageRoot) {
+  const stat = await pathStat(resourcePath);
+  if (!stat) return [];
+  if (stat.isFile()) return piMarkdownItem(resourcePath, "skill", scope, sourceLabel, packageRoot);
+  if (!stat.isDirectory()) return [];
+  const nested = await collectSkillFiles(resourcePath, scope, sourceLabel, packageRoot);
+  let entries = [];
+  try { entries = await readdir(resourcePath, { withFileTypes: true }); } catch { return nested; }
+  const flat = (await Promise.all(entries
+    .filter((entry) => entry.isFile() && entry.name !== "SKILL.md" && entry.name.endsWith(".md"))
+    .map((entry) => piMarkdownItem(path.join(resourcePath, entry.name), "skill", scope, sourceLabel, packageRoot))))
+    .flat();
+  return [...nested, ...flat].sort(sortByName);
+}
+
+async function collectPiPromptPath(resourcePath, scope, sourceLabel, packageRoot) {
+  const stat = await pathStat(resourcePath);
+  if (!stat) return [];
+  if (stat.isFile()) return piMarkdownItem(resourcePath, "command", scope, sourceLabel, packageRoot);
+  if (!stat.isDirectory()) return [];
+  return collectMarkdownItems(resourcePath, "command", scope, sourceLabel, packageRoot);
+}
+
+async function collectPiPackagePlugin(
+  record,
+  scope,
+  entryConfig = { autoload: true, filters: {} },
+  { baseConfig, installSources = [scope] } = {},
+) {
   const packageRoot = record.installPath;
   if (!(await pathExists(packageRoot))) {
     return null;
@@ -193,7 +280,7 @@ async function collectPiPackagePlugin(record, scope, entryConfig = { autoload: t
     : packageRoot;
   const plugin = {
     id: record.id,
-    piPackageSource: record.source,
+    piPackageSource: record.identity,
     rootPath: packageRoot,
     scope: "plugin",
     sourceLabel: displayName,
@@ -202,45 +289,53 @@ async function collectPiPackagePlugin(record, scope, entryConfig = { autoload: t
     description: packageJson.description || "",
     publisher: { displayName: "Pi Package" },
     version: packageJson.version,
-    installSources: [scope],
+    installSources,
     installSource: scope,
     installMatch: `pi-settings-${record.sourceKind}`,
     installType: record.sourceKind,
-    enabled: entryConfig.autoload !== false,
+    enabled: entryConfig.autoload !== false || Boolean(baseConfig),
     evidence: evidence(metadataPath, path.dirname(packageRoot)),
   };
-  if (entryConfig.autoload === false) {
-    // Pi does not auto-load this package's resources; publishing them as
-    // enabled configured assets would overstate the effective state.
-    plugin.skills = [];
-    plugin.commands = [];
-    plugin.rules = [];
-    plugin.subagents = [];
-    plugin.hooks = [];
-    plugin.mcpServers = [];
-    plugin.resourceState = "not-autoloaded";
-    return plugin;
-  }
-  const skillDirs = await manifestResourceDirs(manifest, packageRoot, "skills", "skills");
-  const promptDirs = await manifestResourceDirs(manifest, packageRoot, "prompts", "prompts");
+  const skillPaths = manifestResourcePaths(manifest, packageRoot, "skills", "skills");
+  const promptPaths = manifestResourcePaths(manifest, packageRoot, "prompts", "prompts");
   const collectedSkills = (await Promise.all(
-    skillDirs.map((dir) => collectSkillFiles(dir, "plugin", displayName, packageRoot)),
+    skillPaths.map((resourcePath) => collectPiSkillPath(resourcePath, "plugin", displayName, packageRoot)),
   )).flat();
   const collectedPrompts = (await Promise.all(
-    promptDirs.map((dir) => collectMarkdownItems(dir, "command", "plugin", displayName, packageRoot)),
+    promptPaths.map((resourcePath) => collectPiPromptPath(resourcePath, "plugin", displayName, packageRoot)),
   )).flat();
-  const manifestSkillExclusions = manifestExclusions(manifest, "skills");
-  const manifestPromptExclusions = manifestExclusions(manifest, "prompts");
-  plugin.skills = applyPiResourceFilter(
-    collectedSkills.filter((item) => !manifestSkillExclusions.some((pattern) => matchesPiPattern(pattern, piItemCandidates(item, packageRoot)))),
+  const skillOverrides = manifestOverrides(manifest, "skills");
+  const promptOverrides = manifestOverrides(manifest, "prompts");
+  const manifestSkills = applyPiResourceFilter(
+    collectedSkills,
     packageRoot,
-    entryConfig.filters.skills,
-  ).sort(sortByName);
-  plugin.commands = applyPiResourceFilter(
-    collectedPrompts.filter((item) => !manifestPromptExclusions.some((pattern) => matchesPiPattern(pattern, piItemCandidates(item, packageRoot)))),
+    skillOverrides.length > 0 ? skillOverrides : undefined,
+  );
+  const manifestPrompts = applyPiResourceFilter(
+    collectedPrompts,
     packageRoot,
-    entryConfig.filters.prompts,
-  ).sort(sortByName);
+    promptOverrides.length > 0 ? promptOverrides : undefined,
+  );
+  const baseSkills = baseConfig
+    ? (baseConfig.autoload === false
+      ? applyPiResourceDelta(manifestSkills, packageRoot, [], baseConfig.filters.skills)
+      : applyPiResourceFilter(manifestSkills, packageRoot, baseConfig.filters.skills))
+    : [];
+  const basePrompts = baseConfig
+    ? (baseConfig.autoload === false
+      ? applyPiResourceDelta(manifestPrompts, packageRoot, [], baseConfig.filters.prompts)
+      : applyPiResourceFilter(manifestPrompts, packageRoot, baseConfig.filters.prompts))
+    : [];
+  plugin.skills = (entryConfig.autoload === false
+    ? applyPiResourceDelta(manifestSkills, packageRoot, baseSkills, entryConfig.filters.skills)
+    : applyPiResourceFilter(manifestSkills, packageRoot, entryConfig.filters.skills)).sort(sortByName);
+  plugin.commands = (entryConfig.autoload === false
+    ? applyPiResourceDelta(manifestPrompts, packageRoot, basePrompts, entryConfig.filters.prompts)
+    : applyPiResourceFilter(manifestPrompts, packageRoot, entryConfig.filters.prompts)).sort(sortByName);
+  if (entryConfig.autoload === false) {
+    plugin.enabled = plugin.skills.length > 0 || plugin.commands.length > 0 || Boolean(baseConfig?.autoload);
+    plugin.resourceState = plugin.enabled ? "selective-autoload" : "not-autoloaded";
+  }
   plugin.rules = [];
   plugin.subagents = [];
   plugin.hooks = [];
@@ -255,6 +350,7 @@ async function collectPiExtensionPlugins(piHome) {
     const name = path.basename(extensionDir);
     const record = {
       id: `pi/user/extensions/${name}`,
+      identity: `extension:${extensionDir}`,
       name,
       source: extensionDir,
       sourceKind: "extension-dir",
@@ -270,9 +366,10 @@ async function collectPiExtensionPlugins(piHome) {
   return plugins;
 }
 
-async function collectPiPackagePlugins(settings, settingsPath, scopeRoot, scope) {
+function collectPiPackageEntries(settings, settingsPath, scopeRoot, scope) {
   const entries = Array.isArray(settings?.packages) ? settings.packages : [];
-  const plugins = [];
+  const records = [];
+  const seen = new Set();
   for (const entry of entries) {
     const entryConfig = normalizePiPackageEntry(entry);
     if (!entryConfig) continue;
@@ -281,7 +378,39 @@ async function collectPiPackagePlugins(settings, settingsPath, scopeRoot, scope)
       settingsDir: path.dirname(settingsPath),
       scope,
     });
-    const plugin = await collectPiPackagePlugin(record, scope, entryConfig);
+    if (seen.has(record.identity)) continue;
+    seen.add(record.identity);
+    records.push({ record, entryConfig, scope });
+  }
+  return records;
+}
+
+async function collectEffectivePiPackagePlugins(userEntries, projectEntries) {
+  const userByIdentity = new Map(userEntries.map((entry) => [entry.record.identity, entry]));
+  const consumedUsers = new Set();
+  const plugins = [];
+  for (const projectEntry of projectEntries) {
+    const userEntry = userByIdentity.get(projectEntry.record.identity);
+    if (userEntry) consumedUsers.add(projectEntry.record.identity);
+    const isDelta = projectEntry.entryConfig.autoload === false && userEntry;
+    const plugin = await collectPiPackagePlugin(
+      isDelta ? userEntry.record : projectEntry.record,
+      "project",
+      projectEntry.entryConfig,
+      isDelta
+        ? { baseConfig: userEntry.entryConfig, installSources: ["project", "user"] }
+        : { installSources: ["project"] },
+    );
+    if (plugin) plugins.push(plugin);
+  }
+  for (const userEntry of userEntries) {
+    if (consumedUsers.has(userEntry.record.identity)) continue;
+    const plugin = await collectPiPackagePlugin(
+      userEntry.record,
+      "user",
+      userEntry.entryConfig,
+      { installSources: ["user"] },
+    );
     if (plugin) plugins.push(plugin);
   }
   return plugins;
@@ -363,20 +492,22 @@ export async function collectPiCustomizeInventory(options = {}) {
   const projectSettingsPath = path.join(workspace, ".pi", "settings.json");
   const userSettings = includeUserHome ? (await readJson(userSettingsPath)) ?? {} : {};
   const projectSettings = (await readJson(projectSettingsPath)) ?? {};
-  const [userPackagePlugins, extensionPlugins, projectPackagePlugins, user, project] = await Promise.all([
-    includeUserHome ? collectPiPackagePlugins(userSettings, userSettingsPath, piHome, "user") : [],
+  const userPackageEntries = includeUserHome
+    ? collectPiPackageEntries(userSettings, userSettingsPath, piHome, "user")
+    : [];
+  const projectPackageEntries = collectPiPackageEntries(
+    projectSettings,
+    projectSettingsPath,
+    path.join(workspace, ".pi"),
+    "project",
+  );
+  const [packagePlugins, extensionPlugins, user, project] = await Promise.all([
+    collectEffectivePiPackagePlugins(userPackageEntries, projectPackageEntries),
     includeUserHome ? collectPiExtensionPlugins(piHome) : [],
-    collectPiPackagePlugins(projectSettings, projectSettingsPath, path.join(workspace, ".pi"), "project"),
     includeUserHome ? collectPiUserPrimitives(piHome, userHome) : emptyPrimitives(),
     collectPiWorkspacePrimitives(workspace),
   ]);
-  // Pi resolves the same source declared in both scopes to the project entry.
-  const bySource = new Map();
-  for (const plugin of [...projectPackagePlugins, ...userPackagePlugins, ...extensionPlugins]) {
-    const key = plugin.piPackageSource ?? plugin.id;
-    if (!bySource.has(key)) bySource.set(key, plugin);
-  }
-  const plugins = [...bySource.values()].sort(sortByName);
+  const plugins = [...packagePlugins, ...extensionPlugins].sort(sortByName);
   return {
     generatedAt: new Date().toISOString(),
     provider: "pi",

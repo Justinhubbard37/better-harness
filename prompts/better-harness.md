@@ -1,6 +1,6 @@
 ---
 description: Review this project's AI coding workflow with Better Harness and generate a durable report.
-argument-hint: [review request, e.g. "review this project's AI coding workflow and generate a report"]
+argument-hint: '[review request]'
 ---
 
 Use the `better-harness` skill for this request. Read the skill's SKILL.md

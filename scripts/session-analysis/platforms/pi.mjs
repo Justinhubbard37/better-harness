@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { SessionAnalyzer } from "../../session-analysis.mjs";
 import { parseArgs, parseBooleanFlag } from "../cli.mjs";
-import { forEachJsonLine, pathExists, walkFiles } from "../fs.mjs";
+import { forEachJsonLine, isDirectory, pathExists, walkFiles } from "../fs.mjs";
 import { expandHome, normalizeWorkspace } from "../paths.mjs";
 import {
   emitProviderResult,
@@ -226,11 +226,26 @@ async function probeTranscript(filePath, workspace) {
     firstSeen: null,
     lastSeen: null,
     workspaceMatch: false,
+    validHeader: false,
   };
+  let firstRecord = true;
   await forEachJsonLine(filePath, (raw) => {
-    if (raw?.type === "session") {
-      if (raw.id) summary.sessionId = raw.id;
-      if (isWorkspaceMatch(raw.cwd, workspace)) summary.workspaceMatch = true;
+    if (firstRecord) {
+      firstRecord = false;
+      // Pi requires the first parsed record to be the session header. Do not
+      // let a later injected header qualify an otherwise foreign transcript.
+      if (raw?.type !== "session" || typeof raw.id !== "string" || !isWorkspaceMatch(raw.cwd, workspace)) {
+        return false;
+      }
+      summary.validHeader = true;
+      summary.workspaceMatch = true;
+      summary.sessionId = raw.id;
+    } else if (raw?.type === "session") {
+      // Multiple headers are not a valid Pi session and can splice content
+      // from different workspaces, so reject the whole file fail-closed.
+      summary.validHeader = false;
+      summary.workspaceMatch = false;
+      return false;
     }
     mergeTimeRange(summary, inferTimestamp(raw));
   });
@@ -282,6 +297,11 @@ async function readSettingsSessionDir(settingsPath) {
   }
 }
 
+function resolvePiSessionDir(value, workspace) {
+  const expanded = expandHome(value);
+  return path.resolve(path.isAbsolute(expanded) ? expanded : path.join(workspace, expanded));
+}
+
 // Pi treats --session-dir, PI_CODING_AGENT_SESSION_DIR, and the settings
 // `sessionDir` key as the exact directory that contains session JSONL files.
 // Only the built-in default is a cwd-keyed tree of --<cwd-slug>-- children
@@ -290,15 +310,15 @@ async function readSettingsSessionDir(settingsPath) {
 async function resolveSessionDirContract(options, home, workspace) {
   const cliDir = options.sessionsDir ?? options["sessions-dir"] ?? options["session-dir"] ?? options.sessionDir;
   if (cliDir) {
-    return { mode: "custom", dir: path.resolve(expandHome(cliDir)) };
+    return { mode: "custom", dir: resolvePiSessionDir(cliDir, workspace) };
   }
   if (process.env.PI_CODING_AGENT_SESSION_DIR) {
-    return { mode: "custom", dir: path.resolve(expandHome(process.env.PI_CODING_AGENT_SESSION_DIR)) };
+    return { mode: "custom", dir: resolvePiSessionDir(process.env.PI_CODING_AGENT_SESSION_DIR, workspace) };
   }
   const settingsDir = (await readSettingsSessionDir(path.join(workspace, ".pi", "settings.json")))
     ?? (await readSettingsSessionDir(path.join(home, "settings.json")));
   if (settingsDir) {
-    return { mode: "custom", dir: path.resolve(expandHome(settingsDir)) };
+    return { mode: "custom", dir: resolvePiSessionDir(settingsDir, workspace) };
   }
   return { mode: "default", dir: path.join(home, "sessions") };
 }
@@ -335,11 +355,16 @@ export class PiSessionAnalyzer extends SessionAnalyzer {
 
   async discoverSourceRoots(scope) {
     const custom = scope.sessionDirMode === "custom";
+    const matchingDirs = custom
+      ? []
+      : await listSessionDirectories(scope.sessionsDir, scope._workspaceDirVariants);
     const root = {
       id: "pi-sessions",
       kind: "pi-session-jsonl",
       role: "session-transcript",
-      path: custom ? scope.sessionsDir : path.join(scope.sessionsDir, scope._workspaceDirVariants.exact),
+      path: custom
+        ? scope.sessionsDir
+        : (matchingDirs[0] ?? path.join(scope.sessionsDir, scope._workspaceDirVariants.exact)),
       paths: [scope.sessionsDir],
       optional: false,
       enabled: true,
@@ -351,8 +376,8 @@ export class PiSessionAnalyzer extends SessionAnalyzer {
     // in the default tree, existence requires at least one workspace-keyed
     // session directory; a custom flat directory must itself exist.
     const exists = custom
-      ? await pathExists(scope.sessionsDir)
-      : (await listSessionDirectories(scope.sessionsDir, scope._workspaceDirVariants)).length > 0;
+      ? await isDirectory(scope.sessionsDir)
+      : matchingDirs.length > 0;
     return [{ ...root, exists }];
   }
 
@@ -379,7 +404,7 @@ export class PiSessionAnalyzer extends SessionAnalyzer {
           // Both modes qualify each transcript by the session-header cwd, so a
           // shared custom directory never leaks foreign-workspace sessions.
           const probe = await probeTranscript(filePath, scope.workspace);
-          if (!probe.workspaceMatch || !withinTimeRange(probe.lastSeen ?? probe.firstSeen, scope)) continue;
+          if (!probe.validHeader || !probe.workspaceMatch || !withinTimeRange(probe.lastSeen ?? probe.firstSeen, scope)) continue;
           addRef(sessions, probe.sessionId, scope.workspace, {
             kind: transcriptRoot.kind,
             role: transcriptRoot.role,
