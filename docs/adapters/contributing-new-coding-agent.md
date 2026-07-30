@@ -134,7 +134,7 @@ sessions, reports, and packaging have different owners. Search for the existing
 host set before editing:
 
 ```bash
-rg -n "qoder|codex|claude|cursor|qwen|copilot" scripts test references templates docs package.json
+rg -n "qoder|codex|claude|cursor|qwen|copilot|pi" scripts test references templates docs package.json
 ```
 
 Use the results as an inventory, not a replacement template. Typical registration

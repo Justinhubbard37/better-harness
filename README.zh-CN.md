@@ -325,6 +325,31 @@ qwen extensions install QoderAI/better-harness
 Qwen Code 产出自包含的 `report.html`，并配套 `report.md` 与 `findings.json`。
 会话证据覆盖范围取决于 Qwen Code 可用的会话记录路径；缺失或不完整的证据保持显式标注。
 
+### Pi
+
+将本仓库作为 [pi package](https://pi.dev/docs/latest/packages) 安装：
+
+```bash
+pi install https://github.com/QoderAI/better-harness
+```
+
+或在不修改设置的情况下单次试用：
+
+```bash
+pi -e git:github.com/QoderAI/better-harness
+```
+
+Pi 通过 `package.json` 中的 `pi` manifest 发现 `better-harness` Skill 和
+`/better-harness` 提示模板。在需要审查的仓库中启动新的 Pi 会话，运行报告提示词：
+
+```text
+/better-harness 审查此项目的 AI 编码工作流并生成报告
+```
+
+Pi 默认在仓库的 `.pi/better-harness` 报告根目录下生成自包含的 `report.html`
+及配套的 `report.md` 和 `findings.json`。Pi 会话证据读自
+`~/.pi/agent/sessions/` 下与工作区匹配的 JSONL 会话记录；缺失的证据会被明确标注而不会被推断。
+
 <a id="develop-and-package-from-source"></a>
 
 ## 从源码开发和打包

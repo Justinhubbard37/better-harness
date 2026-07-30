@@ -343,6 +343,34 @@ Qwen Code produces a self-contained `report.html` with paired `report.md` and
 `findings.json`. Session evidence coverage depends on Qwen Code's available
 transcript paths; missing or partial evidence remains explicit.
 
+### Pi
+
+Install the repository as a [pi package](https://pi.dev/docs/latest/packages):
+
+```bash
+pi install https://github.com/QoderAI/better-harness
+```
+
+Or try it for a single run without changing settings:
+
+```bash
+pi -e git:github.com/QoderAI/better-harness
+```
+
+Pi discovers the `better-harness` Skill and the `/better-harness` prompt
+template through the `pi` manifest in `package.json`. Start a new Pi session
+in the repository you want to review and run the report prompt:
+
+```text
+/better-harness review this project's AI coding workflow and generate a report
+```
+
+Pi defaults to a self-contained `report.html` with paired `report.md` and
+`findings.json` under the repository's `.pi/better-harness` report root. Pi
+session evidence is read from workspace-matching JSONL transcripts under
+`~/.pi/agent/sessions/`; missing evidence stays explicit rather than being
+inferred.
+
 ## Develop and package from source
 
 Development requires Node.js `>=22.20.0 <25.0.0` and npm
