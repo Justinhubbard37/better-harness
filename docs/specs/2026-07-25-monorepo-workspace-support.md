@@ -3,7 +3,8 @@
 ## Traceability
 
 - Spec ID: `2026-07-25-monorepo-workspace-support`
-- Status: Implemented and locally validated.
+- Status: In progress; AC1-AC13 are implemented, and AC14-AC15 cover the
+  current review hardening before merge.
 - Implementation branch: `feat/monorepo-workspace-topology`
 - Story: unavailable; this is a maintainer-requested product correctness change.
 - AI involvement: Codex implemented the change and used independent delegated
@@ -280,6 +281,16 @@ Git root exists), so an inherited root owner remains openable without `..`.
   symlinks, as one filesystem identity without changing stable public routes.
   `workspace-topology` parses `--json=<true|false>` and
   `--help=<true|false>` as booleans and rejects unsupported boolean values.
+- **AC14 — Supported-host topology parity:** Every provider accepted by the
+  Evidence Bundle and report pipeline retains its applicable instruction
+  inventory and consumes the frozen topology for package session attribution.
+  Syncing a newly supported host from `main` must not silently restore flat-CWD
+  collection or return an empty topology-backed instruction graph.
+- **AC15 — Frozen binding and hermetic fixtures:** Topology validation proves
+  that `target.route` resolves from `gitRoot` to `requestedWorkspace`, and the
+  Evidence Bundle accepts only the exact analysis scope derived from that
+  topology. Git-backed fixtures produce the same tracked instruction inventory
+  when a developer has global ignore rules such as `*.local.md`.
 
 ## Non-goals
 
@@ -351,6 +362,18 @@ Git root exists), so an inherited root owner remains openable without `..`.
 - Run Change Traceability Review in Review Readiness mode over the full local
   diff, including generated files and staged/unstaged separation.
 
+### Slice 6 — Current-main review hardening
+
+- Merge the current `main` host-adapter changes without dropping topology,
+  report, fixture, or CLI contracts on either side of the conflict.
+- Define topology instruction semantics for every currently supported host and
+  make each session adapter bind the frozen workspace scope before discovery,
+  qualification, and hydration.
+- Validate topology/workspace/analysis-scope identity at the public contract
+  boundary rather than relying on individual downstream consumers.
+- Isolate temporary Git repositories from developer-global ignore rules when a
+  fixture intentionally commits a normally local-only instruction file.
+
 ## Test and Review Evidence
 
 | AC | Required automated evidence |
@@ -363,6 +386,8 @@ Git root exists), so an inherited root owner remains openable without `..`.
 | AC9 | Finding schema, report projection, renderer, persistence, and wrong-package rejection tests. |
 | AC12 | Skill contract assertions and doc-link graph validation. |
 | AC13 | `test/core-change-watch-scope.test.mjs`, `test/harness-report-render-cli.test.mjs`, and `test/workspace-topology.test.mjs` covering canonical aliases, render target identity, and explicit boolean flag values. |
+| AC14 | Topology-backed Agent lint and session-provider tests for Qwen Code, GitHub Copilot, and Pi, plus existing Qoder, Codex, Claude, and Cursor coverage. |
+| AC15 | Negative topology/Evidence Bundle contract tests for mismatched routes and pathspecs; Git fixture tests run with a global `*.local.md` ignore rule. |
 
 Baseline and final commands:
 
@@ -395,6 +420,13 @@ npm run preview
   direct diagnostic commands remain independently runnable.
 - **Spec drift:** implementation slices must map changed modules and tests back
   to AC ids during Review Readiness.
+- **Host drift:** the set of supported Evidence Bundle/report/session providers
+  must stay aligned with topology instruction and workspace-match semantics;
+  unsupported topology behavior fails unavailable instead of falling back to a
+  flat workspace silently.
+- **Injected context drift:** a caller-supplied topology or analysis scope is
+  rejected unless its absolute target identity, route, kind, and literal Git
+  pathspecs are the exact derived values.
 
 ## Evidence Log
 
