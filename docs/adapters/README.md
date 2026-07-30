@@ -1,9 +1,11 @@
 # Host Adapter Matrix
 
 This is the single entry point for Claude Code, Codex, Qoder, Cursor, Qwen,
-GitHub Copilot, and Pi host boundaries. Do not create `docs/adapters/claude-code.md`,
-`docs/adapters/codex.md`, `docs/adapters/qoder.md`, `docs/adapters/cursor.md`,
-`docs/adapters/qwen.md`, `docs/adapters/copilot.md`, or `docs/adapters/pi.md` by default.
+GitHub Copilot, Pi, and Kimi Code host boundaries. Do not create
+`docs/adapters/claude-code.md`, `docs/adapters/codex.md`,
+`docs/adapters/qoder.md`, `docs/adapters/cursor.md`, `docs/adapters/qwen.md`,
+`docs/adapters/copilot.md`, `docs/adapters/pi.md`, or
+`docs/adapters/kimi-code.md` by default.
 
 Adding another host? Follow
 [Contributing a New Coding Agent Host](contributing-new-coding-agent.md) before
@@ -16,13 +18,15 @@ providers, real session-evidence adapters, and output modes. Canonical product
 judgment stays in `skills/`, `models/`, `references/`, `templates/`, and
 `scripts/<capability>/`.
 
-The `@qoderai/better-harness` npm package includes six filesystem metadata
-roots for Qoder, Claude Code, Codex, Cursor, Qwen, and Copilot, plus Pi install
-metadata in the existing `package.json`. The generated Qoder runtime bundle
-includes only the Qoder shell, `.qoder-plugin/`; non-Qoder generated host
-artifacts remain source-local. Claude Code installs its shell through the
-repository's native marketplace manifest. Pi installs the repository as a pi
-package through the `pi` manifest in `package.json`.
+The `@qoderai/better-harness` npm package includes seven filesystem metadata
+roots for Qoder, Claude Code, Codex, Cursor, Qwen, Copilot, and Kimi Code,
+plus Pi install metadata in the existing `package.json`.
+The generated Qoder runtime bundle includes only the Qoder shell,
+`.qoder-plugin/`; non-Qoder generated host artifacts remain source-local.
+Claude Code installs its shell through the repository's native marketplace
+manifest. Pi installs the repository as a pi package through the `pi` manifest
+in `package.json`. Kimi Code installs the repository as a plugin through the
+`.kimi-plugin/plugin.json` manifest.
 
 | Host | Positioning | Shell | Configured Assets | Session Evidence | Default Output | Rules / Prompts | Smoke |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -33,6 +37,7 @@ package through the `pi` manifest in `package.json`.
 | Qwen Code | Analysis-capable source-local host | `qwen-extension.json` | `scripts/agent-customize/providers/qwen.mjs` | `scripts/session-analysis/platforms/qwen.mjs` | self-contained HTML + Markdown | `.qwen` + `QWEN.md` + `AGENTS.md` | `harness prepare --platform qwen` -> finalize with `html-report` validation |
 | GitHub Copilot | Analysis-capable source-local host | `.github/plugin/` | `scripts/agent-customize/providers/copilot.mjs` | `scripts/session-analysis/platforms/copilot.mjs` | self-contained HTML + Markdown | `.github` + `AGENTS.md` + `~/.copilot` | `copilot plugin marketplace add .` -> `copilot plugin install better-harness@better-harness` -> configured-asset baseline -> validated `html` render |
 | Pi | Analysis-capable source-local host | `pi` manifest in `package.json` | `scripts/agent-customize/providers/pi.mjs` | `scripts/session-analysis/platforms/pi.mjs` | self-contained HTML + Markdown | `.pi` + `.agents` + `AGENTS.md` | `pi install <source>` or `pi -e <source>` -> `/better-harness` prompt template -> validated `html` render |
+| Kimi Code | Analysis-capable source-local host | `.kimi-plugin/plugin.json` | `scripts/agent-customize/providers/kimi.mjs` | `scripts/session-analysis/platforms/kimi.mjs` | self-contained HTML + Markdown | `AGENTS.md` + `~/.kimi-code/skills` + project `.kimi-code/skills`/`.kimi/skills` + `~/.kimi-code/mcp.json` | `harness evidence-bundle --platform kimi` -> validated `html` render |
 
 ## Discovery And Evidence
 
@@ -93,6 +98,23 @@ package through the `pi` manifest in `package.json`.
   discovers the canonical root `skills/` directory and the `prompts/`
   templates through the `pi` manifest in `package.json`; that manifest is
   install/discovery metadata and does not own Pi evidence collection.
+- Kimi Code configured assets are inventoried through
+  `scripts/agent-customize/providers/kimi.mjs`: user-level
+  `~/.kimi-code/skills/**/SKILL.md` and `~/.kimi-code/mcp.json`, plus
+  project-level `AGENTS.md`/`CLAUDE.md` and the probed skill roots
+  `.kimi-code/skills/**/SKILL.md` and `.kimi/skills/**/SKILL.md`. The
+  repository's `.kimi-plugin/plugin.json` manifest makes Better Harness
+  installable through Kimi Code's `/plugins` manager. Kimi Code also
+  supports hooks, custom agents, plugin-declared slash commands, and
+  plugin-bundled skills (installed per user under
+  `~/.kimi-code/plugins/managed/`); the provider inventories those surfaces
+  for plugins recorded in `~/.kimi-code/plugins/installed.json` (assets only
+  for `enabled: true` records), while memory has no Kimi Code equivalent.
+  Session evidence comes
+  from `scripts/session-analysis/platforms/kimi.mjs`, which reads
+  `~/.kimi-code/sessions/<wd_*>/ses{sion}_*/agents/*/wire.jsonl` and resolves
+  the workspace-to-`wd_*` mapping through `workspaces.json` and
+  `session_index.jsonl` (falling back to `wd_<name>_*` directory prefixes).
 
 ## Output Modes
 
@@ -100,7 +122,7 @@ Canonical templates live under `templates/reporting/`.
 
 - `qoder-canvas.md`: Qoder Canvas output contract, covering renderer-owned
   `findings.json`, Canvas-only `canvas.json`, and `report.canvas.tsx`.
-- `html-visual.md`: portable Claude Code/Codex/Cursor/Qwen/Copilot/Pi visual output contract, covering
+- `html-visual.md`: portable Claude Code/Codex/Cursor/Qwen/Copilot/Pi/Kimi Code visual output contract, covering
   `findings.json`, `report.md`, and `report.html`.
 - Markdown-only output has no visual companion.
 

@@ -76,7 +76,7 @@ scripts/
   core-change-watch/               # [active] static structure/core-path/history evidence
   session-analysis.mjs                 # [active] thin shim; new exports -> scripts/session-analysis/
   session-analysis/                    # [active] session evidence collection/normalization
-    platforms/<host>.mjs               # Qoder/Codex/Claude/Cursor/Qwen/Copilot/Pi host adapters
+    platforms/<host>.mjs               # Qoder/Codex/Claude/Cursor/Qwen/Copilot/Pi/Kimi host adapters
     ides/<ide>/                        # target editor-local evidence not covered by host adapters
   <business-capability>/               # [target] new capability owner
     cli.mjs                            # use cli.mjs for new capabilities
@@ -214,7 +214,7 @@ Use the tree first. These rules resolve common collisions:
   `.cursor-plugin/`, `.codex-plugin/`, and `.github/plugin/` are
   install/discovery shells for one host. Existing active shells may be
   hand-maintained narrowly, but the Qoder
-  public npm package ships all six plugin metadata roots, while the Qoder
+  public npm package ships all seven plugin metadata roots, while the Qoder
   runtime bundle ships only `.qoder-plugin/`. New host shells start from the
   `docs/adapters/README.md` matrix; split to `docs/adapters/<host>.md` and add a
   source-local `scripts/packaging/` builder only for an accepted host-artifact

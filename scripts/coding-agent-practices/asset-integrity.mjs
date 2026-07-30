@@ -340,7 +340,7 @@ export function formatAssetIntegrityMarkdown(result) {
   return `${lines.join("\n")}\n`;
 }
 
-const USAGE = `Usage: better-harness coding-agent-practices asset-integrity [qoder|codex|claude|cursor|qwen|copilot|pi] [options]
+const USAGE = `Usage: better-harness coding-agent-practices asset-integrity [qoder|codex|claude|cursor|qwen|copilot|pi|kimi] [options]
 
 Run a read-only metadata integrity review for Memory titles, enabled Plugins,
 and Hooks. Memory bodies are never read.
@@ -352,6 +352,7 @@ Options:
   --claude-home <dir>        Claude config root override
   --claude-state <file>      Claude state-file override
   --cursor-home <dir>        Cursor home override
+  --kimi-home <dir>          Kimi Code data root override
   --shared-cache <dir>       Qoder shared-cache override
   --include-memories         Include generated Memory title metadata
   --include-user-home        Include user/global asset metadata
@@ -368,8 +369,8 @@ async function runCli(argv) {
   }
   const { command, options } = parseArgs(argv);
   const provider = options.provider ?? options.platform ?? command ?? "qoder";
-  if (!["qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi"].includes(provider)) {
-    throw new Error(`Unsupported provider: ${provider}. Supported providers: qoder, codex, claude, cursor, qwen, copilot, pi.`);
+  if (!["qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "kimi"].includes(provider)) {
+    throw new Error(`Unsupported provider: ${provider}. Supported providers: qoder, codex, claude, cursor, qwen, copilot, pi, kimi.`);
   }
   const includeUserHome = options.includeUserHome ?? options["include-user-home"] ?? false;
   const includeMemories = options.includeMemories ?? options["include-memories"] ?? false;

@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { realpath, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 
@@ -56,7 +56,9 @@ export async function forEachJsonLine(filePath, onRecord, options = {}) {
 export async function walkFiles(root, options = {}) {
   const maxDepth = options.maxDepth ?? Infinity;
   const limit = options.limit ?? Infinity;
+  const followSymlinks = Boolean(options.followSymlinks);
   const files = [];
+  const visitedDirs = new Set();
 
   async function visit(dir, depth) {
     if (files.length >= limit || depth > maxDepth) {
@@ -77,13 +79,49 @@ export async function walkFiles(root, options = {}) {
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         await visit(fullPath, depth + 1);
-      } else if (entry.isFile() && (!options.match || options.match(fullPath))) {
-        files.push(fullPath);
+      } else if (entry.isFile()) {
+        if (!options.match || options.match(fullPath)) {
+          files.push(fullPath);
+        }
+      } else if (followSymlinks && entry.isSymbolicLink()) {
+        // A symlink (including a Windows junction) Dirent is neither file nor
+        // directory, so stat the target to resolve its type. Stat failures
+        // (broken links, etc.) are silently skipped.
+        let targetStat;
+        try {
+          targetStat = await stat(fullPath);
+        } catch {
+          continue;
+        }
+        if (targetStat.isDirectory()) {
+          // Track visited directories by realpath so symlink loops cannot
+          // recurse forever.
+          let real;
+          try {
+            real = await realpath(fullPath);
+          } catch {
+            continue;
+          }
+          if (visitedDirs.has(real)) {
+            continue;
+          }
+          visitedDirs.add(real);
+          await visit(fullPath, depth + 1);
+        } else if (targetStat.isFile() && (!options.match || options.match(fullPath))) {
+          files.push(fullPath);
+        }
       }
     }
   }
 
   if (await isDirectory(root)) {
+    if (followSymlinks) {
+      try {
+        visitedDirs.add(await realpath(root));
+      } catch {
+        // A realpath failure does not affect the traversal itself.
+      }
+    }
     await visit(root, 0);
   }
   return files;

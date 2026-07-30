@@ -56,6 +56,7 @@ function verifyReleaseVersionAlignment() {
     [".github/plugin/plugin.json", readJson(".github/plugin/plugin.json").version],
     [".github/plugin/marketplace.json", readJson(".github/plugin/marketplace.json").plugins?.[0]?.version],
     ["qwen-extension.json", readJson("qwen-extension.json").version],
+    [".kimi-plugin/plugin.json", readJson(".kimi-plugin/plugin.json").version],
   ];
   for (const [source, version] of versions) {
     if (version !== packageVersion) {
@@ -142,6 +143,7 @@ const required = [
   "package/.github/plugin/plugin.json",
   "package/.github/plugin/marketplace.json",
   "package/.qoder-plugin/plugin.json",
+  "package/.kimi-plugin/plugin.json",
   "package/qwen-extension.json",
   "package/prompts/better-harness.md",
   "package/case-studies/factory/model/factory-readiness.md",
@@ -337,6 +339,7 @@ const forbiddenBundlePrefixes = [
   ".codex-plugin/",
   ".cursor-plugin/",
   ".github/plugin/",
+  ".kimi-plugin/",
   "qwen-extension.json",
   "prompts/",
   "test/",
