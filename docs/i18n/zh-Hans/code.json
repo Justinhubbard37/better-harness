@@ -29,47 +29,95 @@
   "homepage.dimensions.learningCapture.question": {
     "message": "下一个任务能否从这一个任务中受益？"
   },
+  "homepage.hosts.claudeCode.method": {
+    "message": "Marketplace 插件"
+  },
   "homepage.hosts.claudeCode.setup": {
     "message": "添加仓库 marketplace，然后安装插件。"
   },
+  "homepage.hosts.codex.method": {
+    "message": "Desktop + CLI Marketplace"
+  },
   "homepage.hosts.codex.setup": {
-    "message": "从 Desktop 设置或 CLI 添加 Git marketplace。"
+    "message": "选择 Desktop 或 CLI，获取对应的准确入口。"
+  },
+  "homepage.hosts.qoder.method": {
+    "message": "Desktop 内置"
   },
   "homepage.hosts.qoder.setup": {
     "message": "内置于 Qoder Desktop；Qoder CLI 可复用桌面版，也可单独安装。"
   },
+  "homepage.hosts.cursor.method": {
+    "message": "源码本地插件"
+  },
   "homepage.hosts.cursor.setup": {
     "message": "使用 --plugin-dir 加载源码本地插件。"
+  },
+  "homepage.hosts.qwenCode.method": {
+    "message": "扩展"
   },
   "homepage.hosts.qwenCode.setup": {
     "message": "作为 Qwen Code 扩展安装。"
   },
+  "homepage.hosts.githubCopilot.method": {
+    "message": "CLI Marketplace"
+  },
   "homepage.hosts.githubCopilot.setup": {
     "message": "添加 Marketplace 并安装插件。"
   },
-  "homepage.hero.tagline": {
-    "message": "看清你的 AI 编码工作流——并一步一步把它变好。"
+  "homepage.hosts.output.html": {
+    "message": "HTML + Markdown 报告"
+  },
+  "homepage.hosts.output.canvas": {
+    "message": "Canvas 报告"
+  },
+  "homepage.hosts.setupAction": {
+    "message": "查看配置步骤"
+  },
+  "homepage.hero.eyebrow": {
+    "message": "Better Harness · 开源 AI 编码工作流审查工具"
+  },
+  "homepage.hero.title": {
+    "message": "用证据审查 AI 编码工作流，而不是靠猜。"
   },
   "homepage.hero.lead": {
-    "message": "Better Harness 审视编码智能体如何理解任务、进行修改、验证结果、安全交付并沉淀经验——然后指出下一步该改进什么，每条结论都绑定可见证据。"
+    "message": "在你现有的 Coding Agent 中运行 Better Harness，检查它如何理解任务、实施改动、验证结果、安全交付并沉淀经验。每项发现都与可见证据关联。"
+  },
+  "homepage.hero.chooseHost": {
+    "message": "选择你的 Coding Agent"
   },
   "homepage.hero.viewDemo": {
     "message": "查看示例报告"
   },
-  "homepage.hero.getStarted": {
-    "message": "快速开始"
+  "homepage.hero.trustLabel": {
+    "message": "项目信任信息"
+  },
+  "homepage.hero.trust.openSource": {
+    "message": "开源 · MIT"
+  },
+  "homepage.hero.trust.hostSpecific": {
+    "message": "按宿主提供准确步骤"
+  },
+  "homepage.hero.trust.evidence": {
+    "message": "未观察到的证据会明确标注"
+  },
+  "homepage.hero.previewLinkLabel": {
+    "message": "打开 Better Harness 示例报告"
+  },
+  "homepage.hero.previewLabel": {
+    "message": "示例发现 · 证据边界明确"
+  },
+  "homepage.hero.previewCaption": {
+    "message": "把证据、影响、范围明确的修复方案和验收检查放进一份可评审的报告。"
   },
   "homepage.demo.title": {
-    "message": "看看实际效果"
+    "message": "把证据变成下一项具体改进"
   },
   "homepage.demo.intro": {
-    "message": "使用{entrypointLink}审查当前任务及其周边的项目 Harness。报告会明确标出缺失的证据，并把有据可依的差距转化为按优先级排序的发现，每条都包含影响、期望产出、限定范围的修复方案和验收检查。"
-  },
-  "homepage.demo.entrypointLabel": {
-    "message": "对应宿主文档中的入口"
+    "message": "Better Harness 不会把没有依据的判断写进评分，而是把观察到的工作流缺口整理成团队可以检查、讨论和验证的发现。"
   },
   "homepage.demo.openReport": {
-    "message": "打开自包含的英文示例报告"
+    "message": "查看自包含的英文示例报告"
   },
   "homepage.demo.reportAlt": {
     "message": "Better Harness 示例 HTML 报告，展示一条有证据边界的发现及其影响、预期产出、限定范围的 AI 修复和验收检查"
@@ -77,8 +125,35 @@
   "homepage.demo.historyAlt": {
     "message": "Better Harness 报告历史的静态最终帧，展示五个 Agent Work Loop 维度随时间的变化"
   },
+  "homepage.demo.historyTitle": {
+    "message": "追踪已记录的长期变化"
+  },
   "homepage.demo.historyCaption": {
     "message": "这张静态最终帧汇总了历史 Harness 报告，展示的是已记录的趋势，而非改进的因果证明。"
+  },
+  "homepage.proof.evidence.title": {
+    "message": "可见证据"
+  },
+  "homepage.proof.evidence.description": {
+    "message": "看清每项发现由哪些项目或会话信号支撑。"
+  },
+  "homepage.proof.impact.title": {
+    "message": "影响优先级"
+  },
+  "homepage.proof.impact.description": {
+    "message": "先处理对工作流影响最大的缺口。"
+  },
+  "homepage.proof.repair.title": {
+    "message": "修复边界"
+  },
+  "homepage.proof.repair.description": {
+    "message": "让建议改动始终限定在已观察到的问题范围内。"
+  },
+  "homepage.proof.acceptance.title": {
+    "message": "验收检查"
+  },
+  "homepage.proof.acceptance.description": {
+    "message": "明确需要哪些证据，才能让改进进入评审。"
   },
   "homepage.how.title": {
     "message": "Better Harness 如何工作"
@@ -96,13 +171,16 @@
     "message": "Better Harness 架构：六个公开快速开始宿主与能力层的 Pi 进入三个独立证据智能体，再进行统一分析、宿主中立输出和修复"
   },
   "homepage.quickstart.title": {
-    "message": "快速开始"
+    "message": "选择你的 Coding Agent"
   },
   "homepage.quickstart.intro": {
-    "message": "选择你的编码智能体，查看对应的准确安装、验证和调用步骤。"
+    "message": "从你正在使用的宿主开始。每条路径都会给出准确的安装、验证、调用和报告输出说明。"
+  },
+  "homepage.meta.title": {
+    "message": "审查并改进 AI 编码工作流"
   },
   "homepage.meta.description": {
-    "message": "Better Harness 审视编码智能体如何理解任务、进行修改、验证结果、安全交付并沉淀经验——每条结论都绑定可见证据。"
+    "message": "开源、基于证据地审查编码智能体如何理解任务、实施改动、验证结果、安全交付并沉淀经验。"
   },
   "theme.ErrorPageContent.title": {
     "message": "页面已崩溃。",

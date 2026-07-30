@@ -5,28 +5,24 @@
 </p>
 
 <p align="center">
-  <strong>看清你的 AI 编码工作流如何运转，并一步步把它变得更好。</strong>
+  <strong>用证据审查 AI 编码工作流，而不是靠猜。</strong>
 </p>
 
 <p align="center">
-  Better Harness 审视编码智能体理解任务、实施变更、验证结果、安全交付和沉淀经验的全过程，
-  再指出下一步的改进方向；每项发现都有可见证据作为依据。
+  Better Harness 是一款开源审查工具，通过你正在使用的 Coding Agent 运行，
+  把观察到的工作流缺口整理成按优先级排列的发现、范围明确的修复方案和验收检查；
+  没有观察到的证据会明确标注。
 </p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT 许可证"></a>
-  <a href="package.json"><img src="https://img.shields.io/badge/node-%3E%3D22.20.0-brightgreen.svg" alt="Node.js >= 22.20.0"></a>
 </p>
 
 <p align="center">
-  <a href="#quick-start">快速开始</a> ·
-  <a href="#see-it-in-action">实际效果</a> ·
-  <a href="#why-better-harness">为什么选择 Better Harness</a> ·
-  <a href="#what-is-open">开放了什么</a> ·
-  <a href="#installation">安装</a> ·
-  <a href="docs/adapters/README.md">宿主支持</a> ·
-  <a href="roadmap.md">路线图</a> ·
-  <a href="docs/community.md">参与贡献</a>
+  <a href="https://qoderai.github.io/better-harness/zh-Hans/?utm_source=github&utm_medium=referral&utm_campaign=repository_landing&utm_content=readme_hero">中文网站</a> ·
+  <a href="#quick-start">选择 Coding Agent</a> ·
+  <a href="#see-it-in-action">示例报告</a> ·
+  <a href="https://qoderai.github.io/better-harness/zh-Hans/docs/introduction">文档</a>
 </p>
 
 <a id="quick-start"></a>
@@ -35,11 +31,8 @@
 
 用以下 Coding Agent 审查你的工作流：[Claude Code](#claude-code)、[Codex Desktop](#codex-desktop)、[Codex CLI](#codex-cli)、[Qoder Desktop/CLI](#qoder)、[Cursor](#cursor)、[Qwen Code](#qwen-code)、[GitHub Copilot CLI](#github-copilot)。
 
-安装完成后，让 Better Harness 生成当前宿主支持的持久化报告：
-
-```text
-/better-harness 审查此项目的 AI 编码工作流并生成报告
-```
+选择你正在使用的宿主，查看对应的安装、验证、调用和报告输出说明。
+不同宿主的入口并不完全相同，请直接使用对应章节给出的命令。
 
 Better Harness 会将行为断言限定在相关的任务过程片段（Task Episode）及其周边项目机制内。
 Qoder 生成 Canvas 报告；Claude Code、Codex、Cursor、Qwen Code 和 GitHub Copilot 生成自包含的 HTML 报告及配套 Markdown。
@@ -54,20 +47,21 @@ Qoder 生成 Canvas 报告；Claude Code、Codex、Cursor、Qwen Code 和 GitHub
 每项发现都包含影响、预期输出、范围明确的修复方案与验收检查。
 
 <p align="center">
-  <a href="assets/demo/better-harness-report.html"><img src="assets/demo/better-harness-findings-report.png" alt="Better Harness HTML 报告，展示一项由证据支持的发现及其影响、预期输出、范围明确的 AI 修复方案和验收检查" width="900"></a>
+  <a href="https://qoderai.github.io/better-harness/demo/better-harness-report/"><img src="assets/demo/better-harness-findings-report.png" alt="Better Harness HTML 报告，展示一项由证据支持的发现及其影响、预期输出、范围明确的 AI 修复方案和验收检查" width="900"></a>
 </p>
 
 <p align="center">
-  <sub><a href="assets/demo/better-harness-report.html">打开完整的自包含英文 HTML 报告</a>。</sub>
+  <sub><a href="https://qoderai.github.io/better-harness/demo/better-harness-report/">打开完整的自包含英文 HTML 报告</a>
+  （<a href="assets/demo/better-harness-report.html">源文件</a>）。</sub>
 </p>
 
 当你积累了多份可比较的历史报告后，历史视图会展示智能体工作闭环五个维度的变化：
 
 <p align="center">
-  <a href="dev/terminal-demo/README.md"><img src="assets/demo/twenty-history.gif" alt="Better Harness 终端历史演示，展示智能体工作闭环五个维度随时间的变化" width="900"></a>
+  <a href="dev/terminal-demo/README.md"><img src="assets/demo/twenty-history.png" alt="Better Harness 报告历史的静态最终帧，展示智能体工作闭环五个维度随时间的变化" width="900"></a>
 </p>
 
-动画会回放历史 Harness 报告。它展示的是已记录的趋势，并不能证明改进之间存在因果关系。
+这张静态最终帧汇总了历史 Harness 报告。它展示的是已记录的趋势，并不能证明改进之间存在因果关系。
 [查看演示录制方式](dev/terminal-demo/README.md)。
 
 <a id="why-better-harness"></a>

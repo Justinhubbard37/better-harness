@@ -93,7 +93,7 @@ test("checked-in demo report identifies the sample and provides site exits", asy
   assert.match(html, /window\.location\.pathname\.slice\(0, markerIndex\)/u);
 });
 
-test("homepage uses accurate host copy, static media, and AA hero colors", async () => {
+test("homepage leads search visitors from proof to a host-specific setup", async () => {
   const [source, styles, theme, translations] = await Promise.all([
     readFile(path.join(process.cwd(), "docs", "src", "pages", "index.js"), "utf8"),
     readFile(path.join(process.cwd(), "docs", "src", "pages", "index.module.css"), "utf8"),
@@ -105,24 +105,44 @@ test("homepage uses accurate host copy, static media, and AA hero colors", async
     source,
     /Built into Qoder Desktop; Qoder CLI can reuse it or install separately\./u,
   );
-  assert.match(source, /View sample report/u);
-  assert.match(source, /to="\/docs\/installation"/u);
+  assert.match(source, /Review and Improve AI Coding Workflows/u);
+  assert.match(source, /Review your AI coding workflow—with evidence, not guesses\./u);
+  assert.match(source, /href="#choose-host"/u);
+  assert.match(source, /id="choose-host"/u);
+  assert.match(source, /Explore a sample report/u);
+  assert.match(source, /Open source · MIT/u);
+  assert.match(source, /Host-specific setup/u);
+  assert.match(source, /Missing evidence stays explicit/u);
+  assert.match(source, /Visible evidence/u);
+  assert.match(source, /Prioritized impact/u);
+  assert.match(source, /Bounded repair/u);
+  assert.match(source, /Acceptance checks/u);
+  assert.match(source, /host\.method/u);
+  assert.match(source, /host\.output/u);
+  assert.match(source, /View setup/u);
   assert.doesNotMatch(
     source,
     /View live demo report|REPORT_PROMPT|CodeBlock|<code>\/better-harness<\/code>/u,
   );
-  assert.match(source, /entrypoint documented for your host/u);
   assert.match(source, /\/demo\/twenty-history\.png/u);
   assert.doesNotMatch(source, /\/demo\/twenty-history\.gif/u);
+  assert.equal(
+    [...source.matchAll(/\/demo\/better-harness-findings-report\.png/gu)].length,
+    1,
+  );
 
   const imageTags = [...source.matchAll(/<img\b[\s\S]*?\/>/gu)].map(
     (match) => match[0],
   );
   assert.equal(imageTags.length, 3);
+  assert.match(imageTags[0], /loading="eager"/u);
+  assert.match(imageTags[0], /fetchPriority="high"/u);
+  for (const image of imageTags.slice(1)) {
+    assert.match(image, /loading="lazy"/u);
+  }
   for (const image of imageTags) {
     assert.match(image, /width="\d+"/u);
     assert.match(image, /height="\d+"/u);
-    assert.match(image, /loading="lazy"/u);
     assert.match(image, /decoding="async"/u);
     assert.match(image, /alt=\{translate\(/u);
   }
@@ -133,6 +153,11 @@ test("homepage uses accurate host copy, static media, and AA hero colors", async
   );
   assert.match(styles, /--ifm-hero-text-color:\s*#ffffff/u);
   assert.doesNotMatch(styles.match(/\.heroLead\s*\{[^}]*\}/u)?.[0] ?? "", /opacity/u);
+  const mobileDemoAction =
+    styles.match(/\.demoAction\s+:global\(\.button\)\s*\{[^}]*\}/u)?.[0] ?? "";
+  assert.match(mobileDemoAction, /width:\s*100%/u);
+  assert.match(mobileDemoAction, /white-space:\s*normal/u);
+  assert.match(mobileDemoAction, /overflow-wrap:\s*anywhere/u);
 
   const heroBackgrounds = [
     ...theme.matchAll(/--ifm-color-primary-darkest:\s*(#[0-9a-f]{6})/giu),
@@ -147,7 +172,12 @@ test("homepage uses accurate host copy, static media, and AA hero colors", async
 
   const zh = JSON.parse(translations);
   assert.match(zh["homepage.hosts.qoder.setup"].message, /Qoder CLI.*单独安装/u);
+  assert.equal(zh["homepage.hosts.qoder.method"].message, "Desktop 内置");
+  assert.equal(zh["homepage.hosts.output.canvas"].message, "Canvas 报告");
+  assert.equal(zh["homepage.hero.title"].message, "用证据审查 AI 编码工作流，而不是靠猜。");
+  assert.equal(zh["homepage.hero.chooseHost"].message, "选择你的 Coding Agent");
   assert.equal(zh["homepage.hero.viewDemo"].message, "查看示例报告");
+  assert.match(zh["homepage.proof.evidence.description"].message, /项目或会话信号/u);
   assert.match(zh["homepage.demo.historyCaption"].message, /静态最终帧/u);
 });
 

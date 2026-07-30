@@ -120,6 +120,15 @@ test("README.md Quickstart lists all seven product entries with valid installati
   assertHeadingOrder(content, "Quick start", "See it in action", "README.md");
   assertHeadingOrder(content, "Quick start", "Why Better Harness?", "README.md");
   assertHeadingOrder(content, "Quick start", "Architecture", "README.md");
+  const quickStart = content.slice(
+    content.indexOf("## Quick start"),
+    content.indexOf("## See it in action"),
+  );
+  assert.doesNotMatch(quickStart, /```text[\s\S]*\/better-harness/u);
+  assert.match(
+    content,
+    /qoderai\.github\.io\/better-harness\/\?utm_source=github&utm_medium=referral&utm_campaign=repository_landing&utm_content=readme_hero/u,
+  );
 });
 
 test("README.zh-CN.md Quickstart lists all seven product entries with valid installation anchors", () => {
@@ -131,6 +140,19 @@ test("README.zh-CN.md Quickstart lists all seven product entries with valid inst
   assertHeadingOrder(content, "快速开始", "看看实际效果", "README.zh-CN.md");
   assertHeadingOrder(content, "快速开始", "为什么选择 Better Harness？", "README.zh-CN.md");
   assertHeadingOrder(content, "快速开始", "架构", "README.zh-CN.md");
+  const quickStart = content.slice(
+    content.indexOf("## 快速开始"),
+    content.indexOf("## 看看实际效果"),
+  );
+  assert.doesNotMatch(quickStart, /```text[\s\S]*\/better-harness/u);
+  assert.match(
+    content,
+    /qoderai\.github\.io\/better-harness\/zh-Hans\/\?utm_source=github&utm_medium=referral&utm_campaign=repository_landing&utm_content=readme_hero/u,
+  );
+  assert.match(
+    content,
+    /https:\/\/qoderai\.github\.io\/better-harness\/demo\/better-harness-report\//u,
+  );
 });
 
 test("Docusaurus home page cards match public Quickstart host set and render in the right order", () => {
@@ -216,10 +238,15 @@ test("zh-Hans installation.mdx tabs match public Quickstart host anchors", () =>
 test("zh-Hans code.json has translations for all homepage host cards", () => {
   const codeJson = JSON.parse(readUtf8("docs", "i18n", "zh-Hans", "code.json"));
   for (const host of PUBLIC_QUICKSTART_HOSTS) {
-    const key = `homepage.hosts.${host.id}.setup`;
-    assert.ok(codeJson[key], `docs/i18n/zh-Hans/code.json missing ${key}`);
-    assert.ok(codeJson[key].message, `docs/i18n/zh-Hans/code.json ${key} has no message`);
+    for (const field of ["method", "setup"]) {
+      const key = `homepage.hosts.${host.id}.${field}`;
+      assert.ok(codeJson[key], `docs/i18n/zh-Hans/code.json missing ${key}`);
+      assert.ok(codeJson[key].message, `docs/i18n/zh-Hans/code.json ${key} has no message`);
+    }
   }
+  assert.ok(codeJson["homepage.hosts.output.html"]?.message);
+  assert.ok(codeJson["homepage.hosts.output.canvas"]?.message);
+  assert.ok(codeJson["homepage.hosts.setupAction"]?.message);
 });
 
 test("public adapter matrix documents exactly the six public Quickstart hosts", () => {

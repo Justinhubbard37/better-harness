@@ -5,41 +5,33 @@
 </p>
 
 <p align="center">
-  <strong>See how your AI coding workflow works—and make it better, one step at a time.</strong>
+  <strong>Review your AI coding workflow—with evidence, not guesses.</strong>
 </p>
 
 <p align="center">
-  Better Harness reviews how coding agents understand tasks, make changes, verify
-  results, deliver safely, and learn—then shows what to improve next, with every
-  finding tied to visible evidence.
+  Better Harness is an open-source review tool that runs through your Coding Agent
+  and turns observed workflow gaps into prioritized findings, bounded fixes, and
+  acceptance checks. Missing evidence stays explicit.
 </p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
-  <a href="package.json"><img src="https://img.shields.io/badge/node-%3E%3D22.20.0-brightgreen.svg" alt="Node.js >= 22.20.0"></a>
 </p>
 
 <p align="center">
-  <a href="https://qoderai.github.io/better-harness/">Website</a> ·
-  <a href="#quick-start">Quick Start</a> ·
-  <a href="#see-it-in-action">Demo</a> ·
-  <a href="#why-better-harness">Why</a> ·
-  <a href="#what-is-open">What's open</a> ·
-  <a href="#installation">Installation</a> ·
-  <a href="docs/adapters/README.md">Host support</a> ·
-  <a href="roadmap.md">Roadmap</a> ·
-  <a href="docs/community.md">Contribute</a>
+  <a href="https://qoderai.github.io/better-harness/?utm_source=github&utm_medium=referral&utm_campaign=repository_landing&utm_content=readme_hero">Website</a> ·
+  <a href="#quick-start">Choose your host</a> ·
+  <a href="#see-it-in-action">Sample report</a> ·
+  <a href="https://qoderai.github.io/better-harness/docs/introduction">Docs</a>
 </p>
 
 ## Quick start
 
 Review your coding workflow with: [Claude Code](#claude-code), [Codex Desktop](#codex-desktop), [Codex CLI](#codex-cli), [Qoder Desktop/CLI](#qoder), [Cursor](#cursor), [Qwen Code](#qwen-code), or [GitHub Copilot CLI](#github-copilot).
 
-Once installed, ask Better Harness to generate the host's durable report:
-
-```text
-/better-harness review this project's AI coding workflow and generate a report
-```
+Choose the host you already use to get its exact installation, verification,
+invocation, and report-output steps. Better Harness does not use one universal
+entrypoint across every host.
 
 Better Harness scopes behavior claims to relevant Task Episodes and the
 surrounding project mechanisms. Qoder produces a Canvas report; Claude Code,
@@ -67,11 +59,11 @@ After you have comparable reports over time, the history view shows how the five
 Agent Work Loop dimensions move:
 
 <p align="center">
-  <a href="dev/terminal-demo/README.md"><img src="assets/demo/twenty-history.gif" alt="Better Harness terminal history demo showing five Agent Work Loop dimensions over time" width="900"></a>
+  <a href="dev/terminal-demo/README.md"><img src="assets/demo/twenty-history.png" alt="Static final frame of Better Harness report history showing five Agent Work Loop dimensions over time" width="900"></a>
 </p>
 
-The animation replays historical Harness reports. It shows recorded trends, not
-causal proof of improvement. [See how the demo was recorded](dev/terminal-demo/README.md).
+The static final frame summarizes historical Harness reports. It shows recorded
+trends, not causal proof of improvement. [See how the demo was recorded](dev/terminal-demo/README.md).
 
 ## Why Better Harness?
 
