@@ -48,7 +48,8 @@ Better Harness 开放的是三个相互连接的层，而不只是一个斜杠�
 
 ## 下一步
 
-- 为你的编码智能体[安装 Better Harness](./installation.mdx)。
+- 先检查[前置条件](./installation.mdx#prerequisites)，再为你的编码智能体安装
+  Better Harness。
 - [生成你的第一份报告](./your-first-report.md)。
 - 理解每份报告背后的 [Agent Work Loop](./concepts/agent-work-loop.md)。
 

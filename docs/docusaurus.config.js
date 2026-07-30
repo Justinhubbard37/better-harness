@@ -49,6 +49,25 @@ const config = {
     ],
   ],
 
+  themes: [
+    [
+      "@easyops-cn/docusaurus-search-local",
+      {
+        indexDocs: true,
+        indexBlog: false,
+        indexPages: false,
+        language: ["en", "zh"],
+        hashed: "filename",
+        docsDir: [
+          "docs",
+          "i18n/zh-Hans/docusaurus-plugin-content-docs/current",
+        ],
+        searchBarPosition: "right",
+        searchBarShortcutKeymap: "mod+k",
+      },
+    ],
+  ],
+
   themeConfig:
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
@@ -69,6 +88,11 @@ const config = {
             href: "pathname:///demo/better-harness-report/",
             label: "Demo Report",
             position: "left",
+          },
+          {
+            href: `${GITHUB_URL}/issues/new/choose`,
+            label: "Report Issue",
+            position: "right",
           },
           {
             type: "localeDropdown",

@@ -11,7 +11,16 @@ only a thin adapter layer: host shells, configured-asset providers, session
 evidence adapters, and output modes. Canonical product judgment stays
 host-neutral.
 
-## Hosts at a glance
+## Support levels
+
+Better Harness currently declares seven capability-level host adapters. The
+table below intentionally lists the six hosts with public Quickstart paths. Pi
+has verified install/discovery and capability routing, but remains outside the
+public Quickstart until a full interactive report-loop smoke is observed. See
+the [canonical adapter matrix](https://github.com/QoderAI/better-harness/blob/main/docs/adapters/README.md)
+for the complete capability-level boundary.
+
+## Public Quickstart hosts
 
 | Host | Positioning | Shell | Session Evidence | Default Output |
 | --- | --- | --- | --- | --- |
@@ -23,8 +32,10 @@ host-neutral.
 | GitHub Copilot | Analysis-capable source-local host | `.github/plugin/` | Workspace-matched Copilot CLI transcripts; partial coverage stays explicit | Self-contained HTML + Markdown |
 
 The `@qoderai/better-harness` npm package includes all six plugin metadata
-roots. The generated Qoder runtime bundle includes only the Qoder shell;
-non-Qoder generated host artifacts remain source-local.
+roots. Pi reuses install metadata in the existing `package.json`, so it does
+not add a seventh filesystem metadata root. The generated Qoder runtime bundle
+includes only the Qoder shell; non-Qoder generated host artifacts remain
+source-local.
 
 ## Output modes
 
@@ -32,7 +43,7 @@ non-Qoder generated host artifacts remain source-local.
   `canvas.json`, and `report.canvas.tsx`.
 - **HTML visual** — portable Claude Code/Codex/Cursor/Qwen/Copilot contract
   covering `findings.json`, `report.md`, and a self-contained `report.html`
-  (see the [live demo](pathname:///demo/better-harness-report/)).
+  (see the [sample report](pathname:///demo/better-harness-report/)).
 - **Markdown-only** — no visual companion.
 
 ## Capability coverage

@@ -1,4 +1,7 @@
 .hero {
+  --ifm-hero-background-color: var(--ifm-color-primary-darkest);
+  --ifm-hero-text-color: #ffffff;
+
   padding: 4rem 0;
   text-align: center;
 }
@@ -7,7 +10,6 @@
   max-width: 46rem;
   margin: 0 auto 2rem;
   font-size: 1.05rem;
-  opacity: 0.92;
 }
 
 .buttons {
@@ -16,6 +18,33 @@
   justify-content: center;
   gap: 1rem;
   flex-wrap: wrap;
+}
+
+.heroPrimaryButton,
+.heroPrimaryButton:hover,
+.heroPrimaryButton:active {
+  color: var(--ifm-color-primary-darkest);
+  background: #ffffff;
+  border-color: #ffffff;
+}
+
+.heroSecondaryButton,
+.heroSecondaryButton:active {
+  color: #ffffff;
+  background: transparent;
+  border-color: #ffffff;
+}
+
+.heroSecondaryButton:hover {
+  color: var(--ifm-color-primary-darkest);
+  background: #ffffff;
+  border-color: #ffffff;
+}
+
+.heroPrimaryButton:focus-visible,
+.heroSecondaryButton:focus-visible {
+  outline: 3px solid #ffffff;
+  outline-offset: 3px;
 }
 
 .section {
@@ -34,6 +63,7 @@
 .demoFrame img {
   max-width: 900px;
   width: 100%;
+  height: auto;
   border-radius: var(--ifm-global-radius);
   box-shadow: var(--bh-shadow-lg);
 }

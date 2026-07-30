@@ -11,6 +11,10 @@
     "message": "Demo 报告",
     "description": "Navbar item with label Demo Report"
   },
+  "item.label.Report Issue": {
+    "message": "报告问题",
+    "description": "Navbar item with label Report Issue"
+  },
   "item.label.Roadmap": {
     "message": "路线图",
     "description": "Navbar item with label Roadmap"

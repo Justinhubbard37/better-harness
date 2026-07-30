@@ -54,7 +54,8 @@ only a comparable later result can prove that the loop improved.
 
 ## Next steps
 
-- [Install Better Harness](./installation.mdx) for your coding agent.
+- Check the [prerequisites](./installation.mdx#prerequisites), then install
+  Better Harness for your coding agent.
 - [Generate your first report](./your-first-report.md).
 - Understand the [Agent Work Loop](./concepts/agent-work-loop.md) behind every
   report.

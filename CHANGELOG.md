@@ -5,6 +5,8 @@ observable behavior and compatibility, not every internal refactor.
 
 ## Unreleased
 
+## 0.4.0 - 2026-07-30
+
 ### Added
 
 - WorkBuddy is now a supported analysis-capable source-local host. It gains a

@@ -36,7 +36,7 @@
     "message": "从 Desktop 设置或 CLI 添加 Git marketplace。"
   },
   "homepage.hosts.qoder.setup": {
-    "message": "内置于 Qoder Desktop 和 CLI——无需安装。"
+    "message": "内置于 Qoder Desktop；Qoder CLI 可复用桌面版，也可单独安装。"
   },
   "homepage.hosts.cursor.setup": {
     "message": "使用 --plugin-dir 加载源码本地插件。"
@@ -54,7 +54,7 @@
     "message": "Better Harness 审视编码智能体如何理解任务、进行修改、验证结果、安全交付并沉淀经验——然后指出下一步该改进什么，每条结论都绑定可见证据。"
   },
   "homepage.hero.viewDemo": {
-    "message": "查看在线 Demo 报告"
+    "message": "查看示例报告"
   },
   "homepage.hero.getStarted": {
     "message": "快速开始"
@@ -63,13 +63,22 @@
     "message": "看看实际效果"
   },
   "homepage.demo.intro": {
-    "message": "让 {command} 审查当前任务及其周边的项目 Harness。报告会明确标出缺失的证据，并把有据可依的差距转化为按优先级排序的发现，每条都包含影响、期望产出、限定范围的修复方案和验收检查。"
+    "message": "使用{entrypointLink}审查当前任务及其周边的项目 Harness。报告会明确标出缺失的证据，并把有据可依的差距转化为按优先级排序的发现，每条都包含影响、期望产出、限定范围的修复方案和验收检查。"
+  },
+  "homepage.demo.entrypointLabel": {
+    "message": "对应宿主文档中的入口"
   },
   "homepage.demo.openReport": {
-    "message": "打开完整的自包含英文 HTML 报告"
+    "message": "打开自包含的英文示例报告"
   },
-  "homepage.demo.gifCaption": {
-    "message": "动画回放的是历史 Harness 报告，展示已记录的趋势，而非改进的因果证明。"
+  "homepage.demo.reportAlt": {
+    "message": "Better Harness 示例 HTML 报告，展示一条有证据边界的发现及其影响、预期产出、限定范围的 AI 修复和验收检查"
+  },
+  "homepage.demo.historyAlt": {
+    "message": "Better Harness 报告历史的静态最终帧，展示五个 Agent Work Loop 维度随时间的变化"
+  },
+  "homepage.demo.historyCaption": {
+    "message": "这张静态最终帧汇总了历史 Harness 报告，展示的是已记录的趋势，而非改进的因果证明。"
   },
   "homepage.how.title": {
     "message": "Better Harness 如何工作"
@@ -81,13 +90,16 @@
     "message": "Agent Work Loop（智能体工作循环）"
   },
   "homepage.how.architectureCaption": {
-    "message": "三个证据域在统一分析之前保持相互独立；每个结果都保留可见的证据来源、负责人和验证路径。"
+    "message": "七个能力层宿主适配器进入同一条证据流水线。其中六个已有公开快速开始路径；Pi 仍待完整报告闭环冒烟验证。"
+  },
+  "homepage.how.architectureAlt": {
+    "message": "Better Harness 架构：六个公开快速开始宿主与能力层的 Pi 进入三个独立证据智能体，再进行统一分析、宿主中立输出和修复"
   },
   "homepage.quickstart.title": {
     "message": "快速开始"
   },
   "homepage.quickstart.intro": {
-    "message": "选择你的编码智能体——几分钟内就能看到第一份报告。安装完成后，让宿主生成持久化报告："
+    "message": "选择你的编码智能体，查看对应的准确安装、验证和调用步骤。"
   },
   "homepage.meta.description": {
     "message": "Better Harness 审视编码智能体如何理解任务、进行修改、验证结果、安全交付并沉淀经验——每条结论都绑定可见证据。"

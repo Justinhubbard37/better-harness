@@ -10,7 +10,14 @@ Better Harness 运行在你现有的编码智能体内。宿主差异只进入�
 宿主 shell、已配置资产 provider、会话证据适配器和输出模式。规范的产品判断
 保持与宿主无关。
 
-## 宿主一览
+## 支持层级
+
+Better Harness 当前声明了七个能力层宿主适配器。下表特意只列出已有
+公开快速开始路径的六个宿主。Pi 已验证安装/发现与能力路由，但在完成一次
+交互式完整报告闭环冒烟验证前，仍不进入公开快速开始。完整能力层边界见
+[规范适配器矩阵](https://github.com/QoderAI/better-harness/blob/main/docs/adapters/README.md)。
+
+## 公开快速开始宿主
 
 | 宿主 | 定位 | Shell | 会话证据 | 默认输出 |
 | --- | --- | --- | --- | --- |
@@ -22,7 +29,8 @@ Better Harness 运行在你现有的编码智能体内。宿主差异只进入�
 | GitHub Copilot | 具备分析能力的源码本地宿主 | `.github/plugin/` | 工作区匹配的 Copilot CLI 转录；部分覆盖保持显式标注 | 自包含 HTML + Markdown |
 
 `@qoderai/better-harness` npm 包含全部六个插件元数据根目录。生成的 Qoder
-运行时 bundle 只包含 Qoder shell；非 Qoder 的生成宿主产物保持源码本地。
+运行时 bundle 只包含 Qoder shell。Pi 复用现有 `package.json` 中的安装元数据，
+因此不会新增第七个文件系统元数据根目录；非 Qoder 的生成宿主产物保持源码本地。
 
 ## 输出模式
 
@@ -30,7 +38,7 @@ Better Harness 运行在你现有的编码智能体内。宿主差异只进入�
   `canvas.json` 和 `report.canvas.tsx`。
 - **HTML 可视化** —— 面向 Claude Code/Codex/Cursor/Qwen/Copilot 的可移植契约，覆盖
   `findings.json`、`report.md` 和自包含的 `report.html`
-  （见[在线 Demo](pathname:///demo/better-harness-report/)）。
+  （见[示例报告](pathname:///demo/better-harness-report/)）。
 - **纯 Markdown** —— 无视觉版本。
 
 ## 能力覆盖
