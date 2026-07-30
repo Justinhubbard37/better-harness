@@ -28,7 +28,20 @@ export function parseArgs(argv = []) {
     const body = arg.slice(2);
     const equal = body.indexOf("=");
     if (equal !== -1) {
-      options[body.slice(0, equal)] = body.slice(equal + 1);
+      const name = body.slice(0, equal);
+      const value = body.slice(equal + 1);
+      if (name === "json" || name === "help") {
+        const normalized = value.toLowerCase();
+        if (normalized !== "true" && normalized !== "false") {
+          throw Object.assign(
+            new Error(`--${name} expects true or false`),
+            { code: "INVALID_BOOLEAN_OPTION" },
+          );
+        }
+        options[name] = normalized === "true";
+      } else {
+        options[name] = value;
+      }
       continue;
     }
     if (body === "json" || body === "help") {

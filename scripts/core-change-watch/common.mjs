@@ -284,7 +284,19 @@ function canonicalAbsolutePath(value) {
     missingSegments.unshift(path.basename(existingAncestor));
     existingAncestor = parent;
   }
-  return path.resolve(realpathSync(existingAncestor), ...missingSegments);
+  const nativeRealpath = typeof realpathSync.native === "function"
+    ? realpathSync.native(existingAncestor)
+    : realpathSync(existingAncestor);
+  return path.resolve(nativeRealpath, ...missingSegments);
+}
+
+function canonicalPathIdentity(value) {
+  const canonical = canonicalAbsolutePath(value);
+  return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+}
+
+function sameCanonicalPath(left, right) {
+  return canonicalPathIdentity(left) === canonicalPathIdentity(right);
 }
 
 function unwrapAnalysisScope(value) {
@@ -329,7 +341,9 @@ function normalizeRepoRelativePath(value, {
 }
 
 function routeForTarget(repoRoot, targetRoot) {
-  const relative = path.relative(repoRoot, targetRoot);
+  const canonicalRepoRoot = canonicalAbsolutePath(repoRoot);
+  const canonicalTargetRoot = canonicalAbsolutePath(targetRoot);
+  const relative = path.relative(canonicalRepoRoot, canonicalTargetRoot);
   if (relative === "") {
     return ".";
   }
@@ -528,7 +542,7 @@ export function assertCompatibleAnalysisScope(actual, expected, owner = "analysi
   const expectedValue = unwrapAnalysisScope(expected);
   const expectedRepoRoot = expectedValue?.repoRoot;
   const sameRepoRoot = actualRepoRoot === undefined || expectedRepoRoot === undefined
-    || canonicalAbsolutePath(actualRepoRoot) === canonicalAbsolutePath(expectedRepoRoot);
+    || sameCanonicalPath(actualRepoRoot, expectedRepoRoot);
   if (!sameRepoRoot
     || actualScope.kind !== expectedScope.kind
     || actualScope.route !== expectedScope.route) {
@@ -544,7 +558,7 @@ export function listTrackedFiles(repoRoot, analysisScope = null) {
   const resolvedRepoRoot = canonicalAbsolutePath(repoRoot);
   const scopeValue = unwrapAnalysisScope(analysisScope);
   if (scopeValue?.repoRoot !== undefined
-    && canonicalAbsolutePath(scopeValue.repoRoot) !== resolvedRepoRoot) {
+    && !sameCanonicalPath(scopeValue.repoRoot, resolvedRepoRoot)) {
     throw analysisScopeError(
       `tracked-file Git root ${resolvedRepoRoot} does not match analysis scope Git root ${scopeValue.repoRoot}`,
       "ANALYSIS_SCOPE_MISMATCH",
@@ -561,7 +575,7 @@ export function listUntrackedFiles(repoRoot, analysisScope = null) {
   const resolvedRepoRoot = canonicalAbsolutePath(repoRoot);
   const scopeValue = unwrapAnalysisScope(analysisScope);
   if (scopeValue?.repoRoot !== undefined
-    && canonicalAbsolutePath(scopeValue.repoRoot) !== resolvedRepoRoot) {
+    && !sameCanonicalPath(scopeValue.repoRoot, resolvedRepoRoot)) {
     throw analysisScopeError(
       `untracked-file Git root ${resolvedRepoRoot} does not match analysis scope Git root ${scopeValue.repoRoot}`,
       "ANALYSIS_SCOPE_MISMATCH",

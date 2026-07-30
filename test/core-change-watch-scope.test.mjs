@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -76,6 +76,30 @@ test("analysis scope resolves repo and nested targets to one public contract", a
     );
   } finally {
     await rm(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("analysis scope treats real-path aliases as one repository identity", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "better-harness-scope-canonical-"));
+  const linksRoot = await mkdtemp(path.join(tmpdir(), "better-harness-scope-links-"));
+  const repoLink = path.join(linksRoot, "repo-link");
+  const packageRoot = path.join(repoRoot, "packages", "app");
+  try {
+    await mkdir(packageRoot, { recursive: true });
+    runGit(repoRoot, ["init", "--quiet"]);
+    await symlink(repoRoot, repoLink, "dir");
+
+    const scope = resolveAnalysisScope({
+      repoRoot: repoLink,
+      targetRoot: packageRoot,
+    });
+
+    assert.equal(scope.route, "packages/app");
+    assert.equal(scope.repoRoot, await realpath(repoRoot));
+    assert.equal(scope.targetRoot, await realpath(packageRoot));
+  } finally {
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(linksRoot, { recursive: true, force: true });
   }
 });
 

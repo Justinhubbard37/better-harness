@@ -275,6 +275,11 @@ Git root exists), so an inherited root owner remains openable without `..`.
   conventions.
 - **AC12 — Skill contract:** `/better-harness` Step 1 states the resolved target
   kind and route, and instructs repairs to use the finding owner route.
+- **AC13 — Canonical path and flag identity:** Analysis scope and render target
+  checks treat real-path aliases, including Windows 8.3/long-name variants and
+  symlinks, as one filesystem identity without changing stable public routes.
+  `workspace-topology` parses `--json=<true|false>` and
+  `--help=<true|false>` as booleans and rejects unsupported boolean values.
 
 ## Non-goals
 
@@ -335,6 +340,10 @@ Git root exists), so an inherited root owner remains openable without `..`.
 
 ### Slice 5 — Verification and readiness
 
+- Canonicalize both sides of filesystem-identity comparisons while keeping
+  reader-visible workspace paths and Git routes deterministic.
+- Add strict boolean parsing for the topology CLI and regression tests for
+  explicit false values.
 - Run AC-focused tests and all existing capability tests.
 - Run `npm test`, `npm run pack:verify`, and `npm run preview`.
 - Smoke-test `http://localhost:58575/health` and `/canvas-module.js`; inspect
@@ -353,6 +362,7 @@ Git root exists), so an inherited root owner remains openable without `..`.
 | AC8, AC10 | Evidence Bundle dependency-spy tests proving one topology resolution, object identity/binding, lead propagation, and partial/failed coverage. |
 | AC9 | Finding schema, report projection, renderer, persistence, and wrong-package rejection tests. |
 | AC12 | Skill contract assertions and doc-link graph validation. |
+| AC13 | `test/core-change-watch-scope.test.mjs`, `test/harness-report-render-cli.test.mjs`, and `test/workspace-topology.test.mjs` covering canonical aliases, render target identity, and explicit boolean flag values. |
 
 Baseline and final commands:
 
@@ -388,6 +398,15 @@ npm run preview
 
 ## Evidence Log
 
+- 2026-07-30 review hardening: PR review identified non-canonical render target
+  comparison and string-truthy boolean flags. Windows CI exposed 25 cascading
+  failures where NTFS 8.3 and long-name paths represented the same temporary
+  repository. AC13 now uses native real-path identity on both sides, preserves
+  stable routes, and parses explicit boolean values strictly. Focused review
+  and CI regressions passed `102/102`, the full suite passed `926/926`, pack
+  verification passed with 316 npm and 342 runtime-zip entries, doc-link checks
+  passed `6/6`, and both preview endpoints loaded. The Windows result remains
+  external PR check evidence rather than a locally inferred claim.
 - 2026-07-25: initial representative-monorepo spike recorded E1–E5.
 - 2026-07-29: source audit added E6/E7 and found that provider session matchers
   are private, root transcript discovery precedes hydration, project scoping is

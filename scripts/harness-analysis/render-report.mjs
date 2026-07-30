@@ -28,6 +28,12 @@ import {
   QODER_CANVAS_FILE,
   renderQoderCanvas,
 } from "./renderers/qoder-canvas.mjs";
+
+function filesystemPathIdentity(value) {
+  const normalized = path.normalize(value);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
 const HELP = `Usage: better-harness harness render (--source <report.source.json> | --findings <findings.json>) --mode <qoder-canvas|markdown|html> --out <dir> --target <path> [options]
 
 Render reviewed findings data into deterministic report artifacts.
@@ -335,9 +341,11 @@ export async function renderReport(options) {
       ? (await resolveWorkspaceTopology({ workspace: options.target })).topology
       : undefined);
   if (options.target && topology) {
-    const requestedTarget = await realpath(path.resolve(options.target));
-    const topologyTarget = path.resolve(topology.requestedWorkspace);
-    if (requestedTarget !== topologyTarget) {
+    const [requestedTarget, topologyTarget] = await Promise.all([
+      realpath(path.resolve(options.target)),
+      realpath(path.resolve(topology.requestedWorkspace)),
+    ]);
+    if (filesystemPathIdentity(requestedTarget) !== filesystemPathIdentity(topologyTarget)) {
       throw Object.assign(new Error("--target does not match the frozen workspace topology"), {
         code: "RENDER_WORKSPACE_TOPOLOGY_MISMATCH",
       });

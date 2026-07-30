@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { evaluateHtmlReport, renderHtml } from "../scripts/harness-analysis/renderers/html.mjs";
+import { renderReport } from "../scripts/harness-analysis/render-report.mjs";
 import { renderCanvasTsx } from "../scripts/harness-analysis/renderers/qoder-canvas.mjs";
 import { buildTaskLoopSourceCandidate } from "../scripts/harness-analysis/task-loop-source.mjs";
 import { applyEpisodeReviews } from "../scripts/harness-analysis/episode-evidence-review.mjs";
@@ -478,6 +479,32 @@ test("render rejects structured target metadata when topology discovery is parti
 
     assert.equal(result.status, 1);
     assert.equal(parseRun(result.stdout).error.code, "RENDER_WORKSPACE_TOPOLOGY_INCOMPLETE");
+  });
+});
+
+test("render canonicalizes both target and frozen topology workspace identities", async () => {
+  await withTempDir("better-harness-render-target-alias-", async (root) => {
+    await createRenderMonorepo(root);
+    const packageRoot = path.join(root, "packages", "a");
+    const packageLink = path.join(root, "package-a-link");
+    const findingsPath = path.join(root, "target.findings.json");
+    await symlink(packageRoot, packageLink, "dir");
+    await writeJson(findingsPath, targetFindingData());
+
+    await assert.rejects(
+      () => renderReport({
+        findings: findingsPath,
+        mode: "markdown",
+        out: path.join(root, "runs"),
+        target: packageRoot,
+        topology: {
+          status: "partial",
+          requestedWorkspace: packageLink,
+          target: { kind: "workspace-member" },
+        },
+      }),
+      (error) => error.code === "RENDER_WORKSPACE_TOPOLOGY_INCOMPLETE",
+    );
   });
 });
 

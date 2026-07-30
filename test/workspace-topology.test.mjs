@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { main as topologyMain } from "../scripts/workspace-topology/cli.mjs";
+import { main as topologyMain, parseArgs as parseTopologyArgs } from "../scripts/workspace-topology/cli.mjs";
 import {
   WORKSPACE_TOPOLOGY_KIND,
   findingTargetErrors,
@@ -403,6 +403,37 @@ test("workspace topology CLI help avoids probing and JSON output is parser-safe"
   assert.equal(helpStatus, 0);
   assert.equal(called, false);
   assert.match(help, /--workspace/);
+
+  assert.deepEqual(parseTopologyArgs(["--json=false", "--help=true"]), {
+    json: false,
+    help: true,
+  });
+  assert.throws(
+    () => parseTopologyArgs(["--json=1"]),
+    (error) => error.code === "INVALID_BOOLEAN_OPTION",
+  );
+
+  let falseFlagOutput = "";
+  const falseFlagStatus = await topologyMain([
+    "--workspace", "/unused",
+    "--json=false",
+    "--help=false",
+  ], {
+    resolveWorkspaceTopology: async () => ({
+      topology: {
+        status: "complete",
+        target: { kind: "standalone", route: "." },
+        gitRoot: null,
+        members: { items: [], total: 0 },
+        instructionScopes: { items: [], total: 0 },
+        discovery: { inventoryMode: "filesystem", scanned: 0, omitted: 0 },
+      },
+      analysisScope: { kind: "repo", route: "." },
+    }),
+    stdout: { write: (value) => { falseFlagOutput += value; } },
+  });
+  assert.equal(falseFlagStatus, 0);
+  assert.match(falseFlagOutput, /^Workspace topology: complete/u);
 
   const repo = await makeGitRepo({ "README.md": "# fixture\n" });
   try {
