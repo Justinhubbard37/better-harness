@@ -3,8 +3,7 @@
 ## Traceability
 
 - Spec ID: `2026-07-25-monorepo-workspace-support`
-- Status: Implemented and locally validated through AC15; external CI remains
-  to be rerun for the updated PR head.
+- Status: Implemented and locally validated through AC15.
 - Implementation branch: `feat/monorepo-workspace-topology`
 - Story: unavailable; this is a maintainer-requested product correctness change.
 - AI involvement: Codex implemented the change and used independent delegated

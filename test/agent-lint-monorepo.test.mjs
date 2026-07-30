@@ -18,7 +18,7 @@ function git(cwd, args) {
     encoding: "utf8",
     env: {
       ...process.env,
-      GIT_CONFIG_GLOBAL: os.devNull,
+      GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : os.devNull,
       GIT_CONFIG_NOSYSTEM: "1",
       XDG_CONFIG_HOME: path.join(cwd, ".git-test-xdg"),
     },
