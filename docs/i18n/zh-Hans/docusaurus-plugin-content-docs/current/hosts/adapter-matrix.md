@@ -18,15 +18,18 @@ Better Harness 运行在你现有的编码智能体内。宿主差异只进入�
 | Claude Code | 具备分析能力的源码本地宿主 | `.claude-plugin/` | 匹配当前工作区的本地 Claude 转录（存在时） | 自包含 HTML + Markdown |
 | Codex | 具备分析能力的源码本地宿主 | `.codex-plugin/` | Codex 会话 | 自包含 HTML + Markdown |
 | Cursor | 具备分析能力的源码本地宿主 | `.cursor-plugin/` | 工作区匹配的转录、元数据和审计日志；部分覆盖保持显式标注 | 自包含 HTML + Markdown |
+| Qwen Code | 具备分析能力的源码本地宿主 | `qwen-extension.json` | `~/.qwen/projects/<slug>/chats/` 下工作区匹配的 JSONL 转录 | 自包含 HTML + Markdown |
+| GitHub Copilot | 具备分析能力的源码本地宿主 | `.github/plugin/` | `~/.copilot/session-state/<id>/events.jsonl` 下工作区匹配的转录 | 自包含 HTML + Markdown |
+| Pi | 具备分析能力的源码本地宿主 | `package.json` 中的 `pi` manifest | `~/.pi/agent/sessions/` 下工作区匹配的 JSONL 转录 | 自包含 HTML + Markdown |
 
-`@qoderai/better-harness` npm 包含全部四个插件元数据根目录。生成的 Qoder
+`@qoderai/better-harness` npm 包含全部六个插件元数据根目录。生成的 Qoder
 运行时 bundle 只包含 Qoder shell；非 Qoder 的生成宿主产物保持源码本地。
 
 ## 输出模式
 
 - **Qoder Canvas** —— 渲染器负责的 `findings.json`、仅 Canvas 使用的
   `canvas.json` 和 `report.canvas.tsx`。
-- **HTML 可视化** —— 面向 Claude Code/Codex/Cursor 的可移植契约，覆盖
+- **HTML 可视化** —— 面向 Claude Code/Codex/Cursor/Qwen/Copilot/Pi 的可移植契约，覆盖
   `findings.json`、`report.md` 和自包含的 `report.html`
   （见[在线 Demo](pathname:///demo/better-harness-report/)）。
 - **纯 Markdown** —— 无视觉版本。

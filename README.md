@@ -153,6 +153,7 @@ Pick your coding agent — you can be looking at your first report in minutes:
 | **Qoder Desktop / CLI** | Nothing to install when Qoder Desktop is installed — Better Harness is built in and available to both. Open your repository and use the report prompt below. |
 | **GitHub Copilot CLI** | Add the repository marketplace, install `better-harness@better-harness`, start a new session, then use the report prompt below. |
 | **Cursor** | Load the plugin from source — see [Installation](#installation). |
+| **Pi** | Install the repository as a pi package: `pi install https://github.com/QoderAI/better-harness`, start a new session, then use `/better-harness` or `/skill:better-harness`. |
 
 Once installed, ask Better Harness to generate the host's durable report:
 
@@ -162,8 +163,8 @@ Once installed, ask Better Harness to generate the host's durable report:
 
 Better Harness scopes behavior claims to relevant Task Episodes and the
 surrounding project mechanisms. Qoder produces a Canvas report; Claude Code,
-Codex, Cursor, Qwen Code, and GitHub Copilot produce self-contained HTML with
-paired Markdown. Missing or partial evidence remains explicit. See the
+Codex, Cursor, Qwen Code, GitHub Copilot, and Pi produce self-contained HTML
+with paired Markdown. Missing or partial evidence remains explicit. See the
 [Host Adapter Matrix](docs/adapters/README.md) for current coverage and output
 differences.
 
@@ -335,6 +336,34 @@ Copilot session evidence is supported through workspace-matched Copilot CLI
 transcripts under `~/.copilot/session-state/`. Copilot records no per-response
 token usage, and VS Code Copilot Chat has no supported durable transcript; both
 remain explicit evidence boundaries.
+
+### Pi
+
+Install the repository as a [pi package](https://pi.dev/docs/latest/packages):
+
+```bash
+pi install https://github.com/QoderAI/better-harness
+```
+
+Or try it for a single run without changing settings:
+
+```bash
+pi -e git:github.com/QoderAI/better-harness
+```
+
+Pi discovers the `better-harness` skill and the `/better-harness` prompt
+template through the `pi` manifest in `package.json`. Start a new Pi session
+in the repository you want to review and run the report prompt:
+
+```text
+/better-harness review this project's AI coding workflow and generate a report
+```
+
+Pi defaults to a self-contained `report.html` with paired `report.md` and
+`findings.json` under the repository's `.pi/better-harness` report root. Pi
+session evidence is read from workspace-matching JSONL transcripts under
+`~/.pi/agent/sessions/`; missing evidence stays explicit rather than being
+inferred.
 
 ## Develop and package from source
 

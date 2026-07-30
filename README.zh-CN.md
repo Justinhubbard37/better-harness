@@ -147,6 +147,7 @@ Better Harness 开放了三个相互关联的层次，而不只是一个斜杠�
 | **Qoder Desktop / CLI** | 安装 Qoder Desktop 后无需额外安装——Better Harness 已内置，并可在桌面端和 CLI 中使用。打开仓库并使用下方的报告提示词。 |
 | **GitHub Copilot CLI** | 添加本仓库 Marketplace，安装 `better-harness@better-harness`，启动新会话，然后使用下方的报告提示词。 |
 | **Cursor** | 从源码加载插件——参见[安装](#installation)。 |
+| **Pi** | 以 pi package 安装本仓库：`pi install https://github.com/QoderAI/better-harness`，启动新会话，然后使用 `/better-harness` 或 `/skill:better-harness`。 |
 
 安装完成后，让 Better Harness 生成当前宿主支持的持久化报告：
 
@@ -155,7 +156,7 @@ Better Harness 开放了三个相互关联的层次，而不只是一个斜杠�
 ```
 
 Better Harness 会将行为断言限定在相关的任务过程片段（Task Episode）及其周边项目机制内。
-Qoder 生成 Canvas 报告；Claude Code、Codex、Cursor、Qwen Code 和 GitHub Copilot 生成自包含的 HTML 报告及配套 Markdown。
+Qoder 生成 Canvas 报告；Claude Code、Codex、Cursor、Qwen Code、GitHub Copilot 和 Pi 生成自包含的 HTML 报告及配套 Markdown。
 缺失或不完整的证据会被明确标注。有关当前覆盖范围和输出差异，请参阅
 [宿主适配器矩阵](docs/adapters/README.md)。
 
@@ -318,6 +319,31 @@ copilot plugin list
 Copilot 会话证据来自 `~/.copilot/session-state/` 下与工作区匹配的 Copilot CLI 会话记录。
 Copilot 不记录逐次响应的 token 用量，VS Code Copilot Chat 也没有受支持的持久化会话记录；
 两者均作为明确的证据边界保留。
+
+### Pi
+
+将本仓库作为 [pi package](https://pi.dev/docs/latest/packages) 安装：
+
+```bash
+pi install https://github.com/QoderAI/better-harness
+```
+
+或在不修改设置的情况下单次试用：
+
+```bash
+pi -e git:github.com/QoderAI/better-harness
+```
+
+Pi 通过 `package.json` 中的 `pi` manifest 发现 `better-harness` 技能和
+`/better-harness` 提示模板。在需要审查的仓库中启动新的 Pi 会话，运行报告提示词：
+
+```text
+/better-harness 审查此项目的 AI 编码工作流并生成报告
+```
+
+Pi 默认在仓库的 `.pi/better-harness` 报告根目录下生成自包含的 `report.html`
+及配套的 `report.md` 和 `findings.json`。Pi 会话证据读自
+`~/.pi/agent/sessions/` 下与工作区匹配的 JSONL 会话记录；缺失的证据会被明确标注而不会被推断。
 
 <a id="develop-and-package-from-source"></a>
 

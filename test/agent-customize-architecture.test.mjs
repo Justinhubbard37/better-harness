@@ -54,7 +54,7 @@ test("host architecture docs keep matrix, providers, and thin shells separate", 
   assert.match(adapterReadme, /# Host Adapter Matrix/u);
   assert.match(adapterReadme, /`docs\/adapters\/qoder\.md`/u);
   assert.match(adapterReadme, /Codex \| Analysis-capable source-local host \| `\.codex-plugin\/`/u);
-  assert.match(adapterReadme, /npm package includes the Qoder, Claude Code,\s+Codex, Cursor, Qwen, and GitHub Copilot plugin metadata roots/u);
+  assert.match(adapterReadme, /npm package includes the Qoder, Claude Code,\s+Codex, Cursor, Qwen, Copilot, and Pi plugin metadata roots/u);
   assert.match(adapterReadme, /generated\s+Qoder runtime bundle includes only the Qoder shell/u);
   assert.match(adapterReadme, /Cursor \| Analysis-capable source-local host[^\n]+platforms\/cursor\.mjs/u);
   assert.doesNotMatch(adapterReadme, /Cursor has no session-evidence adapter/u);
