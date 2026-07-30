@@ -128,7 +128,7 @@ async function assertOutputTargets(actualOutput, workspacePath, {
   topology,
 } = {}) {
   const workspaceRealPath = await realpath(workspacePath);
-  const homeRealPath = await realpath(os.homedir());
+  let homeRealPath;
   const topologyRoot = topology?.gitRoot ?? topology?.requestedWorkspace ?? workspaceRealPath;
   const projectRealPath = findingTarget ? await realpath(topologyRoot) : workspaceRealPath;
   const ownerRoot = findingTarget?.ownerRoute === null || findingTarget?.ownerRoute === undefined
@@ -138,8 +138,10 @@ async function assertOutputTargets(actualOutput, workspacePath, {
   for (const [index, output] of actualOutput.entries()) {
     if (!output?.path) continue;
     const logicalPath = String(output.path);
-    const root = output.scope === "Global" ? homeRealPath : projectRealPath;
-    const relativePath = output.scope === "Global" ? logicalPath.slice(2) : logicalPath;
+    const isGlobal = output.scope === "Global";
+    if (isGlobal) homeRealPath ??= await realpath(os.homedir());
+    const root = isGlobal ? homeRealPath : projectRealPath;
+    const relativePath = isGlobal ? logicalPath.slice(2) : logicalPath;
     const targetPath = path.resolve(root, ...relativePath.split("/"));
     const targetStat = await stat(targetPath).catch(() => null);
     if (!targetStat?.isFile()) throw new Error(`actualOutput[${index}].path must resolve to an existing file`);
