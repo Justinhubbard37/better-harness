@@ -120,6 +120,11 @@ test("homepage leads search visitors from proof to a host-specific setup", async
   assert.match(source, /host\.method/u);
   assert.match(source, /host\.output/u);
   assert.match(source, /View setup/u);
+  assert.match(source, /View support details/u);
+  assert.match(source, /Verified Quickstart/u);
+  assert.match(source, /Adapter support/u);
+  assert.equal([...source.matchAll(/supportLevel: "quickstart"/gu)].length, 6);
+  assert.equal([...source.matchAll(/supportLevel: "adapter"/gu)].length, 2);
   assert.doesNotMatch(
     source,
     /View live demo report|REPORT_PROMPT|CodeBlock|<code>\/better-harness<\/code>/u,
@@ -158,6 +163,10 @@ test("homepage leads search visitors from proof to a host-specific setup", async
   assert.match(mobileDemoAction, /width:\s*100%/u);
   assert.match(mobileDemoAction, /white-space:\s*normal/u);
   assert.match(mobileDemoAction, /overflow-wrap:\s*anywhere/u);
+  assert.match(
+    styles,
+    /@media \(min-width: 1200px\)[\s\S]*grid-template-columns:\s*repeat\(4, 1fr\)/u,
+  );
 
   const heroBackgrounds = [
     ...theme.matchAll(/--ifm-color-primary-darkest:\s*(#[0-9a-f]{6})/giu),
@@ -174,6 +183,10 @@ test("homepage leads search visitors from proof to a host-specific setup", async
   assert.match(zh["homepage.hosts.qoder.setup"].message, /Qoder CLI.*单独安装/u);
   assert.equal(zh["homepage.hosts.qoder.method"].message, "Desktop 内置");
   assert.equal(zh["homepage.hosts.output.canvas"].message, "Canvas 报告");
+  assert.match(zh["homepage.hosts.pi.setup"].message, /完整交互式报告闭环/u);
+  assert.match(zh["homepage.hosts.workBuddy.setup"].message, /WorkBuddy 自有路径/u);
+  assert.equal(zh["homepage.hosts.status.quickstart"].message, "已验证快速开始");
+  assert.equal(zh["homepage.hosts.status.adapter"].message, "适配器支持");
   assert.equal(zh["homepage.hero.title"].message, "用证据审查 AI 编码工作流，而不是靠猜。");
   assert.equal(zh["homepage.hero.chooseHost"].message, "选择你的 Coding Agent");
   assert.equal(zh["homepage.hero.viewDemo"].message, "查看示例报告");
@@ -181,7 +194,7 @@ test("homepage leads search visitors from proof to a host-specific setup", async
   assert.match(zh["homepage.demo.historyCaption"].message, /静态最终帧/u);
 });
 
-test("architecture and public matrices explain the seven/six support boundary", async () => {
+test("architecture and public matrices explain the eight/six/two support boundary", async () => {
   const [architecture, matrix, matrixZh] = await Promise.all([
     readFile(
       path.join(process.cwd(), "assets", "better-harness-architecture-en.svg"),
@@ -206,18 +219,18 @@ test("architecture and public matrices explain the seven/six support boundary", 
     ),
   ]);
 
-  assert.match(architecture, /7 CAPABILITY ADAPTERS/u);
-  assert.match(architecture, /6 public Quickstart hosts/u);
-  assert.match(architecture, /Pi capability adapter/u);
+  assert.match(architecture, /8 CAPABILITY ADAPTERS/u);
+  assert.match(architecture, /6 verified Quickstart hosts/u);
+  assert.match(architecture, /Pi \+ WorkBuddy adapters/u);
   assert.match(architecture, /Qoder Canvas · portable HTML/u);
   assert.match(architecture, /Better Harness Skill Workflow/u);
   assert.doesNotMatch(architecture, />\/better-harness<\/text>/u);
   assert.doesNotMatch(architecture, /Claude · Codex · Qoder · Cursor<\/text>/u);
 
-  assert.match(matrix, /seven capability-level host adapters/u);
-  assert.match(matrix, /six hosts with public Quickstart paths/u);
-  assert.match(matrix, /Pi[\s\S]*remains outside the\npublic Quickstart/u);
-  assert.match(matrixZh, /七个能力层宿主适配器/u);
-  assert.match(matrixZh, /公开快速开始路径的六个宿主/u);
-  assert.match(matrixZh, /Pi[\s\S]*仍不进入公开快速开始/u);
+  assert.match(matrix, /eight capability-level host adapters/u);
+  assert.match(matrix, /Six\nhave verified public Quickstart paths/u);
+  assert.match(matrix, /Pi and WorkBuddy are visible as adapter\nsupport/u);
+  assert.match(matrixZh, /八个能力层宿主适配器/u);
+  assert.match(matrixZh, /六个已有验证过的公开\n快速开始路径/u);
+  assert.match(matrixZh, /Pi 与 WorkBuddy 以适配器支持展示/u);
 });

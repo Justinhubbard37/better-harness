@@ -115,6 +115,22 @@ function hosts() {
     id: "homepage.hosts.output.canvas",
     message: "Canvas report",
   });
+  const verifiedStatus = translate({
+    id: "homepage.hosts.status.quickstart",
+    message: "Verified Quickstart",
+  });
+  const adapterStatus = translate({
+    id: "homepage.hosts.status.adapter",
+    message: "Adapter support",
+  });
+  const setupAction = translate({
+    id: "homepage.hosts.setupAction",
+    message: "View setup",
+  });
+  const supportAction = translate({
+    id: "homepage.hosts.supportAction",
+    message: "View support details",
+  });
 
   return [
     {
@@ -129,6 +145,10 @@ function hosts() {
         message: "Add the repository marketplace, then install the plugin.",
       }),
       anchor: "claude-code",
+      supportLevel: "quickstart",
+      status: verifiedStatus,
+      action: setupAction,
+      to: "/docs/installation?host=claude-code#claude-code",
     },
     {
       name: "Codex",
@@ -142,6 +162,10 @@ function hosts() {
         message: "Choose Desktop or CLI for the correct entrypoint.",
       }),
       anchor: "codex",
+      supportLevel: "quickstart",
+      status: verifiedStatus,
+      action: setupAction,
+      to: "/docs/installation?host=codex#codex",
     },
     {
       name: "Qoder",
@@ -156,6 +180,10 @@ function hosts() {
           "Built into Qoder Desktop; Qoder CLI can reuse it or install separately.",
       }),
       anchor: "qoder",
+      supportLevel: "quickstart",
+      status: verifiedStatus,
+      action: setupAction,
+      to: "/docs/installation?host=qoder#qoder",
     },
     {
       name: "Cursor",
@@ -169,6 +197,10 @@ function hosts() {
         message: "Load the source-local plugin with --plugin-dir.",
       }),
       anchor: "cursor",
+      supportLevel: "quickstart",
+      status: verifiedStatus,
+      action: setupAction,
+      to: "/docs/installation?host=cursor#cursor",
     },
     {
       name: "Qwen Code",
@@ -182,6 +214,10 @@ function hosts() {
         message: "Install as a Qwen Code extension.",
       }),
       anchor: "qwen-code",
+      supportLevel: "quickstart",
+      status: verifiedStatus,
+      action: setupAction,
+      to: "/docs/installation?host=qwen-code#qwen-code",
     },
     {
       name: "GitHub Copilot",
@@ -195,6 +231,46 @@ function hosts() {
         message: "Add the marketplace and install the plugin.",
       }),
       anchor: "github-copilot",
+      supportLevel: "quickstart",
+      status: verifiedStatus,
+      action: setupAction,
+      to: "/docs/installation?host=github-copilot#github-copilot",
+    },
+    {
+      name: "Pi",
+      method: translate({
+        id: "homepage.hosts.pi.method",
+        message: "Package + CLI extension",
+      }),
+      output: htmlOutput,
+      setup: translate({
+        id: "homepage.hosts.pi.setup",
+        message:
+          "Install and evidence adapters are available; a full interactive report smoke remains pending.",
+      }),
+      anchor: "pi",
+      supportLevel: "adapter",
+      status: adapterStatus,
+      action: supportAction,
+      to: "/docs/hosts/adapter-matrix#pi",
+    },
+    {
+      name: "WorkBuddy",
+      method: translate({
+        id: "homepage.hosts.workBuddy.method",
+        message: "Skill / marketplace path",
+      }),
+      output: htmlOutput,
+      setup: translate({
+        id: "homepage.hosts.workBuddy.setup",
+        message:
+          "Evidence and report adapters are available; installation stays on WorkBuddy-owned paths.",
+      }),
+      anchor: "workbuddy",
+      supportLevel: "adapter",
+      status: adapterStatus,
+      action: supportAction,
+      to: "/docs/hosts/adapter-matrix#workbuddy",
     },
   ];
 }
@@ -406,7 +482,7 @@ function HowItWorks() {
             alt={translate({
               id: "homepage.how.architectureAlt",
               message:
-                "Better Harness architecture: six public Quickstart hosts plus Pi at the capability layer feed three independent evidence agents, unified analysis, host-neutral outputs, and repair",
+                "Better Harness architecture: six public Quickstart hosts plus Pi and WorkBuddy adapter support feed three independent evidence agents, unified analysis, host-neutral outputs, and repair",
             })}
             width="1800"
             height="1360"
@@ -416,9 +492,9 @@ function HowItWorks() {
         </p>
         <p className={styles.demoCaption}>
           <Translate id="homepage.how.architectureCaption">
-            Seven capability-level host adapters feed the same evidence
-            pipeline. Six have public Quickstart paths; Pi remains pending a
-            full report-loop smoke.
+            Eight capability-level host adapters feed the same evidence
+            pipeline. Six have verified Quickstart paths; Pi and WorkBuddy keep
+            their current adapter-support boundaries explicit.
           </Translate>
         </p>
       </div>
@@ -440,8 +516,8 @@ function QuickStart() {
         </h2>
         <p>
           <Translate id="homepage.quickstart.intro">
-            Start from the host you already use. Each path shows the exact
-            installation, verification, invocation, and report output.
+            Eight host adapters are supported. Six have verified setup paths;
+            Pi and WorkBuddy link to their current support boundaries.
           </Translate>
         </p>
         <div className={styles.hostGrid}>
@@ -449,17 +525,26 @@ function QuickStart() {
             <Link
               key={host.name}
               className={styles.hostCard}
-              to={`/docs/installation?host=${host.anchor}#${host.anchor}`}
+              to={host.to}
+              data-support-level={host.supportLevel}
             >
               <h3>{host.name}</h3>
               <div className={styles.hostMeta}>
                 <span>{host.method}</span>
                 <span>{host.output}</span>
+                <span
+                  className={clsx(
+                    styles.hostStatus,
+                    host.supportLevel === "quickstart"
+                      ? styles.hostStatusVerified
+                      : styles.hostStatusAdapter,
+                  )}
+                >
+                  {host.status}
+                </span>
               </div>
               <p>{host.setup}</p>
-              <span className={styles.hostAction}>
-                <Translate id="homepage.hosts.setupAction">View setup</Translate>
-              </span>
+              <span className={styles.hostAction}>{host.action}</span>
             </Link>
           ))}
         </div>

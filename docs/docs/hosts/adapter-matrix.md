@@ -13,23 +13,24 @@ host-neutral.
 
 ## Support levels
 
-Better Harness currently declares seven capability-level host adapters. The
-table below intentionally lists the six hosts with public Quickstart paths. Pi
-has verified install/discovery and capability routing, but remains outside the
-public Quickstart until a full interactive report-loop smoke is observed. See
-the [canonical adapter matrix](https://github.com/QoderAI/better-harness/blob/main/docs/adapters/README.md)
-for the complete capability-level boundary.
+Better Harness currently declares eight capability-level host adapters. Six
+have verified public Quickstart paths. Pi and WorkBuddy are visible as adapter
+support because their installation and end-to-end evidence boundaries differ
+from that six-host set. The [canonical adapter matrix](https://github.com/QoderAI/better-harness/blob/main/docs/adapters/README.md)
+remains the complete capability-level source of truth.
 
-## Public Quickstart hosts
+## Supported host adapters
 
-| Host | Positioning | Shell | Session Evidence | Default Output |
-| --- | --- | --- | --- | --- |
-| Qoder | First-class product host | `.qoder-plugin/` | Qoder sessions | Qoder Canvas report |
-| Claude Code | Analysis-capable source-local host | `.claude-plugin/` | Workspace-matching local Claude transcripts when present | Self-contained HTML + Markdown |
-| Codex | Analysis-capable source-local host | `.codex-plugin/` | Codex sessions | Self-contained HTML + Markdown |
-| Cursor | Analysis-capable source-local host | `.cursor-plugin/` | Workspace-matched transcripts, metadata, and audit logs; partial coverage stays explicit | Self-contained HTML + Markdown |
-| Qwen Code | Analysis-capable source-local host | `qwen-extension.json` | Workspace-matching local Qwen transcripts when present | Self-contained HTML + Markdown |
-| GitHub Copilot | Analysis-capable source-local host | `.github/plugin/` | Workspace-matched Copilot CLI transcripts; partial coverage stays explicit | Self-contained HTML + Markdown |
+| Host | Public entry | Positioning | Shell | Session Evidence | Default Output |
+| --- | --- | --- | --- | --- | --- |
+| Qoder | Verified Quickstart | First-class product host | `.qoder-plugin/` | Qoder sessions | Qoder Canvas report |
+| Claude Code | Verified Quickstart | Analysis-capable source-local host | `.claude-plugin/` | Workspace-matching local Claude transcripts when present | Self-contained HTML + Markdown |
+| Codex | Verified Quickstart | Analysis-capable source-local host | `.codex-plugin/` | Codex sessions | Self-contained HTML + Markdown |
+| Cursor | Verified Quickstart | Analysis-capable source-local host | `.cursor-plugin/` | Workspace-matched transcripts, metadata, and audit logs; partial coverage stays explicit | Self-contained HTML + Markdown |
+| Qwen Code | Verified Quickstart | Analysis-capable source-local host | `qwen-extension.json` | Workspace-matching local Qwen transcripts when present | Self-contained HTML + Markdown |
+| GitHub Copilot | Verified Quickstart | Analysis-capable source-local host | `.github/plugin/` | Workspace-matched Copilot CLI transcripts; partial coverage stays explicit | Self-contained HTML + Markdown |
+| Pi | Adapter support | Analysis-capable source-local host | `pi` manifest in `package.json` | Workspace-matching local Pi sessions | Self-contained HTML + Markdown |
+| WorkBuddy | Adapter support | Analysis-capable source-local host | None; skills use WorkBuddy-owned paths | Workspace-matching WorkBuddy JSONL transcripts | Self-contained HTML + Markdown |
 
 The `@qoderai/better-harness` npm package includes all six plugin metadata
 roots. Pi reuses install metadata in the existing `package.json`, so it does
@@ -41,10 +42,27 @@ source-local.
 
 - **Qoder Canvas** — renderer-owned `findings.json`, Canvas-only
   `canvas.json`, and `report.canvas.tsx`.
-- **HTML visual** — portable Claude Code/Codex/Cursor/Qwen/Copilot contract
+- **HTML visual** — portable Claude Code/Codex/Cursor/Qwen/Copilot/Pi/WorkBuddy contract
   covering `findings.json`, `report.md`, and a self-contained `report.html`
   (see the [sample report](pathname:///demo/better-harness-report/)).
 - **Markdown-only** — no visual companion.
+
+## Adapter support boundaries
+
+### Pi {#pi}
+
+Pi can install the repository through `pi install <source>` or load it with
+`pi -e <source>`. Package discovery, configured assets, workspace-matched
+session evidence, and portable HTML routing are implemented. Pi remains outside
+the verified Quickstart set until a complete interactive report-loop smoke is
+observed.
+
+### WorkBuddy {#workbuddy}
+
+WorkBuddy configured assets, workspace-matched session evidence, and portable
+HTML routing are implemented. This repository does not ship a WorkBuddy install
+shell, plugin manifest, or npm-packaged host artifact; installation remains on
+WorkBuddy's own `~/.workbuddy/skills` or marketplace surfaces.
 
 ## Capability coverage
 
