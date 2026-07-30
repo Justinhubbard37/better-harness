@@ -195,8 +195,9 @@ function candidateConventionRoute(instructionRoute, manifestParents) {
 
 function scopeActivation(provider, ownerRoute, targetRoute) {
   const appliesToTarget = routeContains(ownerRoute, targetRoute);
-  if (provider === "codex") return appliesToTarget ? "effective" : "candidate";
-  if (provider === "claude") return appliesToTarget ? "effective" : "candidate";
+  if (new Set(["codex", "claude", "qwen", "copilot", "pi"]).has(provider)) {
+    return appliesToTarget ? "effective" : "candidate";
+  }
   if (provider === "qoder") return ownerRoute === "." ? "effective" : "candidate";
   return "candidate";
 }
@@ -297,7 +298,9 @@ export async function discoverWorkspaceStructure({
     return base === "AGENTS.md"
       || base === "CLAUDE.md"
       || base === "CLAUDE.local.md"
+      || base === "QWEN.md"
       || item.route === ".github/copilot-instructions.md"
+      || (item.route.startsWith(".github/instructions/") && item.route.endsWith(".instructions.md"))
       || ((item.route.includes("/.claude/rules/") || item.route.startsWith(".claude/rules/"))
         && new Set([".md", ".mdc"]).has(extension))
       || ((item.route.includes("/.cursor/rules/") || item.route.startsWith(".cursor/rules/"))
@@ -311,13 +314,25 @@ export async function discoverWorkspaceStructure({
     let ownerRoute = dirnameRoute(item.route);
     const rows = [];
     if (base === "AGENTS.md") {
-      rows.push(["codex", ownerRoute], ["qoder", ownerRoute], ["cursor", ownerRoute]);
+      rows.push(
+        ["codex", ownerRoute],
+        ["qoder", ownerRoute],
+        ["cursor", ownerRoute],
+        ["qwen", ownerRoute],
+        ["copilot", ownerRoute],
+        ["pi", ownerRoute],
+      );
     } else if (base === "CLAUDE.md" || base === "CLAUDE.local.md") {
       if (item.route === ".claude/CLAUDE.md") ownerRoute = ".";
       rows.push(["claude", ownerRoute]);
+    } else if (base === "QWEN.md") {
+      rows.push(["qwen", ownerRoute]);
     } else if (item.route === ".github/copilot-instructions.md") {
       ownerRoute = ".";
-      rows.push(["cursor", ownerRoute]);
+      rows.push(["cursor", ownerRoute], ["copilot", ownerRoute]);
+    } else if (item.route.startsWith(".github/instructions/") && item.route.endsWith(".instructions.md")) {
+      ownerRoute = ".";
+      rows.push(["copilot", ownerRoute]);
     } else if (item.route.includes("/.claude/rules/") || item.route.startsWith(".claude/rules/")) {
       ownerRoute = normalizeRoute(item.route.split("/.claude/rules/")[0] || ".");
       rows.push(["claude", ownerRoute]);
@@ -332,13 +347,15 @@ export async function discoverWorkspaceStructure({
       instructionScopes.push({
         route: item.route,
         provider,
-        activation: item.route === ".github/copilot-instructions.md"
+        activation: provider === "cursor" && item.route === ".github/copilot-instructions.md"
+          ? "candidate"
+          : item.route.startsWith(".github/instructions/")
           ? "candidate"
           : scopeActivation(provider, scopeRoute, targetRoute),
       });
     }
 
-    if (base === "AGENTS.md" || base === "CLAUDE.md") {
+    if (base === "AGENTS.md" || base === "CLAUDE.md" || base === "QWEN.md") {
       const conventionRoute = candidateConventionRoute(item.route, packageMarkerParents);
       if (conventionRoute) {
         const covered = [...members.values()].some((member) => routeContains(member.route, conventionRoute));

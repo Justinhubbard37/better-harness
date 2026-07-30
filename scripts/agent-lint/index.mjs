@@ -482,7 +482,9 @@ async function collectNestedEntrypoints(workspace, maxEntrypointDepth, provider)
 }
 
 function topologyScopeOwnerRoute(route) {
-  if (route === ".claude/CLAUDE.md" || route === ".github/copilot-instructions.md") return ".";
+  if (route === ".claude/CLAUDE.md"
+    || route === ".github/copilot-instructions.md"
+    || route.startsWith(".github/instructions/")) return ".";
   for (const marker of ["/.claude/rules/", "/.cursor/rules/", "/.qoder/rules/"]) {
     const normalized = `/${route}`;
     const index = normalized.indexOf(marker);
@@ -497,12 +499,16 @@ function topologyScopeOwnerRoute(route) {
 function topologyScopeSourceKind(route) {
   const base = path.posix.basename(route);
   if (route === ".github/copilot-instructions.md") return "copilot-instructions";
+  if (route.startsWith(".github/instructions/") && route.endsWith(".instructions.md")) {
+    return "copilot-instructions";
+  }
   if (route.includes("/.claude/rules/") || route.startsWith(".claude/rules/")) return "claude-rule";
   if (route.includes("/.cursor/rules/") || route.startsWith(".cursor/rules/")) return "cursor-rule";
   if (route.includes("/.qoder/rules/") || route.startsWith(".qoder/rules/")) return "qoder-rule";
   if (base === "AGENTS.md") return route === "AGENTS.md" ? "agents-md" : "nested-agent-guide";
   if (base === "CLAUDE.md") return route === "CLAUDE.md" ? "claude-md" : "nested-agent-guide";
   if (base === "CLAUDE.local.md") return "claude-local";
+  if (base === "QWEN.md") return "qwen-md-context";
   return "nested-agent-guide";
 }
 

@@ -144,7 +144,21 @@ test("evidence bundle rejects a frozen topology for a different workspace", () =
     workspace: ".",
     topology: mismatched,
     analysisScope: resolution.analysisScope,
-  }, NOW), (error) => error?.code === "EVIDENCE_WORKSPACE_TOPOLOGY_MISMATCH");
+  }, NOW), (error) => error?.code === "INVALID_WORKSPACE_TOPOLOGY"
+    && /target\.route must resolve from gitRoot to requestedWorkspace/u.test(error.message));
+});
+
+test("evidence bundle rejects analysis pathspecs that are not derived from the frozen topology", () => {
+  const resolution = topologyResolution(".");
+  assert.throws(() => freezeEvidenceBundleContext({
+    workspace: ".",
+    topology: resolution.topology,
+    analysisScope: {
+      kind: "repo",
+      route: ".",
+      pathspecs: [":(top,literal)scripts"],
+    },
+  }, NOW), (error) => error?.code === "EVIDENCE_ANALYSIS_SCOPE_MISMATCH");
 });
 
 test("normal bundles fail closed and redact collector error details", async () => {

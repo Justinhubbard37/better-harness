@@ -18,6 +18,15 @@ import {
   workspaceToQoderSlug,
 } from "../scripts/session-analysis/platforms/qoder.mjs";
 import {
+  QwenSessionAnalyzer,
+  workspaceToQwenSlugVariants,
+} from "../scripts/session-analysis/platforms/qwen.mjs";
+import { CopilotSessionAnalyzer } from "../scripts/session-analysis/platforms/copilot.mjs";
+import {
+  PiSessionAnalyzer,
+  workspaceToPiSessionDirVariants,
+} from "../scripts/session-analysis/platforms/pi.mjs";
+import {
   bindSessionWorkspaceCwds,
   hydrateWorkspaceSelection,
   markSessionReadCoverage,
@@ -153,6 +162,88 @@ function cursorRows(paths = [], prompt = null) {
     });
   }
   return rows;
+}
+
+function qwenRows(sessionId, cwd, paths = [], prompt = null) {
+  const rows = [{
+    type: "user",
+    sessionId,
+    cwd,
+    timestamp: "2026-07-20T10:00:00.000Z",
+    message: { role: "user", parts: [{ text: prompt ?? "Inspect the selected workspace" }] },
+  }];
+  for (const [index, filePath] of paths.entries()) {
+    rows.push({
+      type: "assistant",
+      sessionId,
+      cwd,
+      timestamp: `2026-07-20T10:00:${String(index + 2).padStart(2, "0")}.000Z`,
+      message: {
+        role: "model",
+        parts: [{ functionCall: { id: `tool-${index + 1}`, name: "Read", args: { path: filePath } } }],
+      },
+    });
+  }
+  return rows;
+}
+
+function copilotRows(sessionId, cwd, paths = [], prompt = null) {
+  const rows = [
+    {
+      type: "session.start",
+      timestamp: "2026-07-20T10:00:00.000Z",
+      data: { sessionId, context: { cwd } },
+    },
+    {
+      type: "user.message",
+      timestamp: "2026-07-20T10:00:01.000Z",
+      data: { content: prompt ?? "Inspect the selected workspace" },
+    },
+  ];
+  for (const [index, filePath] of paths.entries()) {
+    rows.push({
+      type: "tool.execution_start",
+      timestamp: `2026-07-20T10:00:${String(index + 2).padStart(2, "0")}.000Z`,
+      data: { toolCallId: `tool-${index + 1}`, toolName: "Read", arguments: { path: filePath } },
+    });
+  }
+  return rows;
+}
+
+function piRows(sessionId, cwd, paths = [], prompt = null) {
+  const rows = [
+    { type: "session", version: 3, id: sessionId, cwd, timestamp: "2026-07-20T10:00:00.000Z" },
+    {
+      type: "message",
+      id: `${sessionId}-user`,
+      timestamp: "2026-07-20T10:00:01.000Z",
+      message: { role: "user", content: [{ type: "text", text: prompt ?? "Inspect the selected workspace" }] },
+    },
+  ];
+  if (paths.length > 0) {
+    rows.push({
+      type: "message",
+      id: `${sessionId}-assistant`,
+      timestamp: "2026-07-20T10:00:02.000Z",
+      message: {
+        role: "assistant",
+        content: paths.map((filePath, index) => ({
+          type: "toolCall",
+          id: `tool-${index + 1}`,
+          name: "read",
+          arguments: { path: filePath },
+        })),
+      },
+    });
+  }
+  return rows;
+}
+
+async function writeCopilotSession(home, sessionId, cwd, rows) {
+  const sessionDir = path.join(home, "session-state", sessionId);
+  await mkdir(sessionDir, { recursive: true });
+  await writeFile(path.join(sessionDir, "workspace.yaml"), `id: ${sessionId}\ncwd: ${cwd}\n`);
+  await writeJsonl(path.join(sessionDir, "events.jsonl"), rows);
 }
 
 async function writeCursorMeta(home, sessionId, cwd) {
@@ -581,4 +672,125 @@ test("Cursor requires chat metadata CWD and does not scan sibling transcript ide
     JSON.stringify(facts.sessionWorkspaceMatch),
     new RegExp(`${path.basename(workspace)}|${path.basename(sibling)}|private`, "u"),
   );
+});
+
+test("Qwen scans package and Git-root transcript identities with topology qualification", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "session-qwen-root-cwd-"));
+  const gitRoot = path.join(fixture, "repo");
+  const workspace = path.join(gitRoot, "packages", "app");
+  const sibling = path.join(gitRoot, "packages", "other");
+  const home = path.join(fixture, ".qwen");
+  const topology = memberTopology(gitRoot, workspace);
+  const transcript = (identity, sessionId) => path.join(
+    home,
+    "projects",
+    workspaceToQwenSlugVariants(identity)[0],
+    "chats",
+    `${sessionId}.jsonl`,
+  );
+  await writeJsonl(transcript(workspace, "direct-private"), qwenRows("direct-private", workspace));
+  await writeJsonl(
+    transcript(gitRoot, "root-target-private"),
+    qwenRows("root-target-private", gitRoot, [path.join(workspace, "src", "a.ts")]),
+  );
+  await writeJsonl(
+    transcript(gitRoot, "root-mixed-private"),
+    qwenRows("root-mixed-private", gitRoot, [path.join(workspace, "src", "a.ts"), path.join(sibling, "b.ts")]),
+  );
+  await writeJsonl(
+    transcript(gitRoot, "root-prompt-private"),
+    qwenRows("root-prompt-private", gitRoot, [], `Read ${path.join(workspace, "prompt-only.ts")}`),
+  );
+
+  const analyzer = new QwenSessionAnalyzer();
+  const legacy = await analyzer.analyze({ command: "sessions", workspace, home });
+  assert.deepEqual(legacy.sessions.map((session) => session.sessionId), ["direct-private"]);
+
+  const result = await analyzer.analyze({ command: "sessions", workspace, home, topology });
+  assert.deepEqual(
+    Object.fromEntries(result.sessions.map((session) => [session.sessionId, session.workspaceMatch])),
+    { "direct-private": "direct-cwd", "root-target-private": "root-cwd" },
+  );
+  assert.equal(result.sessionWorkspaceMatch.preflight.omitted.mixedActivity, 1);
+  assert.equal(result.sessionWorkspaceMatch.preflight.omitted.noTargetActivity, 1);
+});
+
+test("Copilot qualifies Git-root sessions from trusted tool paths", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "session-copilot-root-cwd-"));
+  const gitRoot = path.join(fixture, "repo");
+  const workspace = path.join(gitRoot, "packages", "app");
+  const sibling = path.join(gitRoot, "packages", "other");
+  const home = path.join(fixture, ".copilot");
+  const topology = memberTopology(gitRoot, workspace);
+  await writeCopilotSession(home, "direct-private", workspace, copilotRows("direct-private", workspace));
+  await writeCopilotSession(
+    home,
+    "root-target-private",
+    gitRoot,
+    copilotRows("root-target-private", gitRoot, [path.join(workspace, "src", "a.ts")]),
+  );
+  await writeCopilotSession(
+    home,
+    "root-mixed-private",
+    gitRoot,
+    copilotRows("root-mixed-private", gitRoot, [path.join(workspace, "src", "a.ts"), path.join(sibling, "b.ts")]),
+  );
+  await writeCopilotSession(
+    home,
+    "root-prompt-private",
+    gitRoot,
+    copilotRows("root-prompt-private", gitRoot, [], `Read ${path.join(workspace, "prompt-only.ts")}`),
+  );
+
+  const analyzer = new CopilotSessionAnalyzer();
+  const legacy = await analyzer.analyze({ command: "sessions", workspace, home });
+  assert.deepEqual(legacy.sessions.map((session) => session.sessionId), ["direct-private"]);
+
+  const result = await analyzer.analyze({ command: "sessions", workspace, home, topology });
+  assert.deepEqual(
+    Object.fromEntries(result.sessions.map((session) => [session.sessionId, session.workspaceMatch])),
+    { "direct-private": "direct-cwd", "root-target-private": "root-cwd" },
+  );
+  assert.equal(result.sessionWorkspaceMatch.preflight.omitted.mixedActivity, 1);
+  assert.equal(result.sessionWorkspaceMatch.preflight.omitted.noTargetActivity, 1);
+});
+
+test("Pi scans package and Git-root session directories with topology qualification", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "session-pi-root-cwd-"));
+  const gitRoot = path.join(fixture, "repo");
+  const workspace = path.join(gitRoot, "packages", "app");
+  const sibling = path.join(gitRoot, "packages", "other");
+  const home = path.join(fixture, ".pi", "agent");
+  const topology = memberTopology(gitRoot, workspace);
+  const transcript = (identity, sessionId) => path.join(
+    home,
+    "sessions",
+    workspaceToPiSessionDirVariants(identity).exact,
+    `2026-07-20T10-00-00-000Z_${sessionId}.jsonl`,
+  );
+  await writeJsonl(transcript(workspace, "direct-private"), piRows("direct-private", workspace));
+  await writeJsonl(
+    transcript(gitRoot, "root-target-private"),
+    piRows("root-target-private", gitRoot, [path.join(workspace, "src", "a.ts")]),
+  );
+  await writeJsonl(
+    transcript(gitRoot, "root-mixed-private"),
+    piRows("root-mixed-private", gitRoot, [path.join(workspace, "src", "a.ts"), path.join(sibling, "b.ts")]),
+  );
+  await writeJsonl(
+    transcript(gitRoot, "root-prompt-private"),
+    piRows("root-prompt-private", gitRoot, [], `Read ${path.join(workspace, "prompt-only.ts")}`),
+  );
+
+  const analyzer = new PiSessionAnalyzer();
+  const legacy = await analyzer.analyze({ command: "sessions", workspace, home });
+  assert.deepEqual(legacy.sessions.map((session) => session.sessionId), ["direct-private"]);
+
+  const result = await analyzer.analyze({ command: "sessions", workspace, home, topology });
+  assert.deepEqual(
+    Object.fromEntries(result.sessions.map((session) => [session.sessionId, session.workspaceMatch])),
+    { "direct-private": "direct-cwd", "root-target-private": "root-cwd" },
+  );
+  assert.equal(result.sessionWorkspaceMatch.preflight.omitted.mixedActivity, 1);
+  assert.equal(result.sessionWorkspaceMatch.preflight.omitted.noTargetActivity, 1);
 });

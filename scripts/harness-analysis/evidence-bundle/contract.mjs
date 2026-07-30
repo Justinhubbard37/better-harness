@@ -1,7 +1,10 @@
 import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 
-import { validateWorkspaceTopology } from "../../workspace-topology/index.mjs";
+import {
+  analysisScopeFromTopology,
+  validateWorkspaceTopology,
+} from "../../workspace-topology/index.mjs";
 
 export const EVIDENCE_BUNDLE_KIND = "better-harness.evidence-bundle";
 export const EVIDENCE_BUNDLE_SCHEMA_VERSION = 2;
@@ -81,8 +84,12 @@ export function freezeEvidenceBundleContext(options = {}, now = new Date()) {
         code: "INVALID_EVIDENCE_ANALYSIS_SCOPE",
       });
     }
-    if (analysisScope.route !== topology.target.route
-      || !Array.isArray(analysisScope.pathspecs)) {
+    const expectedScope = analysisScopeFromTopology(topology);
+    if (analysisScope.kind !== expectedScope.kind
+      || analysisScope.route !== expectedScope.route
+      || !Array.isArray(analysisScope.pathspecs)
+      || analysisScope.pathspecs.length !== expectedScope.pathspecs.length
+      || analysisScope.pathspecs.some((item, index) => item !== expectedScope.pathspecs[index])) {
       throw Object.assign(new Error("analysisScope is not bound to topology target"), {
         code: "EVIDENCE_ANALYSIS_SCOPE_MISMATCH",
       });

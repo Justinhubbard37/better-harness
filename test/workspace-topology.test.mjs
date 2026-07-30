@@ -19,6 +19,12 @@ function git(cwd, args) {
   const result = spawnSync("git", args, {
     cwd,
     encoding: "utf8",
+    env: {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: os.devNull,
+      GIT_CONFIG_NOSYSTEM: "1",
+      XDG_CONFIG_HOME: path.join(cwd, ".git-test-xdg"),
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.status !== 0) {
@@ -61,10 +67,12 @@ test("workspace topology resolves manifest members, instruction scopes, ignored 
     }),
     "AGENTS.md": "# root\n",
     "CLAUDE.local.md": "# root local Claude\n",
+    "QWEN.md": "# root Qwen\n",
     ".claude/rules/root.mdc": "# root Claude rule\n",
     ".cursor/rules/root.md": "# root Cursor rule\n",
     ".qoder/rules/root.mdc": "# root Qoder rule\n",
     ".github/copilot-instructions.md": "# root Copilot instructions\n",
+    ".github/instructions/backend.instructions.md": "---\napplyTo: src/**\n---\n# backend\n",
     ".ci/AGENTS.md": "# operational scope\n",
     "packages/a/package.json": JSON.stringify({ name: "a" }),
     "packages/a/AGENTS.md": "# package a\n",
@@ -114,16 +122,23 @@ test("workspace topology resolves manifest members, instruction scopes, ignored 
       && item.activation === "candidate"));
     for (const [route, provider] of [
       ["CLAUDE.local.md", "claude"],
+      ["QWEN.md", "qwen"],
       [".claude/rules/root.mdc", "claude"],
       [".cursor/rules/root.md", "cursor"],
       [".qoder/rules/root.mdc", "qoder"],
       [".github/copilot-instructions.md", "cursor"],
+      [".github/copilot-instructions.md", "copilot"],
+      [".github/instructions/backend.instructions.md", "copilot"],
       ["packages/a/.claude/rules/local.md", "claude"],
       ["packages/a/.cursor/rules/local.mdc", "cursor"],
       ["packages/a/.qoder/rules/local.mdc", "qoder"],
     ]) {
       assert.ok(rootResult.topology.instructionScopes.items.some((item) =>
         item.route === route && item.provider === provider), `${provider}:${route}`);
+    }
+    for (const provider of ["qwen", "copilot", "pi"]) {
+      assert.ok(rootResult.topology.instructionScopes.items.some((item) =>
+        item.route === "AGENTS.md" && item.provider === provider && item.activation === "effective"));
     }
 
     const packageResult = await resolveWorkspaceTopology({
@@ -227,6 +242,21 @@ test("finding target rejects traversal and cross-package topology mismatches", (
     packageRoute: "packages/a",
     ownerRoute: "packages/a",
   }, { topology }).join("; "), /packageRoute does not match/u);
+});
+
+test("workspace topology rejects a target route that does not identify the requested workspace", async () => {
+  const resolved = await resolveWorkspaceTopology({ workspace: process.cwd() });
+  const mismatched = structuredClone(resolved.topology);
+  mismatched.target = {
+    kind: "repo-subtree",
+    route: "scripts",
+    memberRoute: null,
+    memberMatch: "none",
+  };
+  assert.throws(
+    () => validateWorkspaceTopology(mismatched),
+    /target\.route must resolve from gitRoot to requestedWorkspace/u,
+  );
 });
 
 test("workspace topology combines pnpm, Go, and Cargo members with exclusions", async () => {

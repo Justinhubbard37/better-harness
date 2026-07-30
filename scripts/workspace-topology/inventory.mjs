@@ -41,6 +41,7 @@ function isStructuralRoute(route) {
     "AGENTS.md",
     "CLAUDE.md",
     "CLAUDE.local.md",
+    "QWEN.md",
     "Cargo.toml",
     "go.mod",
     "go.work",
@@ -48,6 +49,7 @@ function isStructuralRoute(route) {
     "pnpm-workspace.yaml",
   ]).has(base)
     || route === ".github/copilot-instructions.md"
+    || (route.startsWith(".github/instructions/") && route.endsWith(".instructions.md"))
     || route.includes("/.claude/rules/")
     || route.startsWith(".claude/rules/")
     || route.includes("/.cursor/rules/")
@@ -57,9 +59,10 @@ function isStructuralRoute(route) {
 }
 
 const STRUCTURAL_PATHSPECS = Object.freeze([
-  "AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", "Cargo.toml", "go.mod", "go.work",
+  "AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", "QWEN.md", "Cargo.toml", "go.mod", "go.work",
   "package.json", "pnpm-workspace.yaml", ".github/copilot-instructions.md",
   ":(top,glob)**/AGENTS.md", ":(top,glob)**/CLAUDE.md", ":(top,glob)**/CLAUDE.local.md",
+  ":(top,glob)**/QWEN.md", ":(top,glob).github/instructions/**/*.instructions.md",
   ":(top,glob)**/Cargo.toml", ":(top,glob)**/go.mod", ":(top,glob)**/go.work",
   ":(top,glob)**/package.json", ":(top,glob)**/pnpm-workspace.yaml",
   ":(top,glob)**/.claude/rules/**", ":(top,glob)**/.cursor/rules/**",

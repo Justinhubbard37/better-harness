@@ -12,11 +12,27 @@ const TARGET_KINDS = new Set([
 const MEMBER_MATCHES = new Set(["exact", "descendant", "none"]);
 const STATUS_VALUES = new Set(["complete", "partial"]);
 const MEMBER_KINDS = new Set(["manifest", "convention"]);
-const INSTRUCTION_PROVIDERS = new Set(["codex", "qoder", "claude", "cursor"]);
+const INSTRUCTION_PROVIDERS = new Set([
+  "codex",
+  "qoder",
+  "claude",
+  "cursor",
+  "qwen",
+  "copilot",
+  "pi",
+]);
 const INSTRUCTION_ACTIVATIONS = new Set(["effective", "candidate"]);
 
 function contractError(message, code = "INVALID_WORKSPACE_TOPOLOGY") {
   return Object.assign(new Error(message), { code });
+}
+
+function sameAbsolutePath(left, right) {
+  const leftPath = path.resolve(String(left));
+  const rightPath = path.resolve(String(right));
+  return process.platform === "win32"
+    ? leftPath.toLowerCase() === rightPath.toLowerCase()
+    : leftPath === rightPath;
 }
 
 export function normalizeRoute(value, name = "route") {
@@ -145,6 +161,20 @@ export function workspaceTopologyErrors(topology) {
     if (target.kind !== "workspace-member"
       && (target.memberRoute !== null || target.memberMatch !== "none")) {
       errors.push(`${target.kind} target must not declare member ownership`);
+    }
+    if (topology.gitRoot !== null
+      && path.isAbsolute(String(topology.gitRoot ?? ""))
+      && path.isAbsolute(String(topology.requestedWorkspace ?? ""))) {
+      try {
+        const expectedWorkspace = target.route === "."
+          ? topology.gitRoot
+          : path.resolve(topology.gitRoot, ...normalizeRoute(target.route, "target.route").split("/"));
+        if (!sameAbsolutePath(expectedWorkspace, topology.requestedWorkspace)) {
+          errors.push("target.route must resolve from gitRoot to requestedWorkspace");
+        }
+      } catch {
+        // Canonical route errors above already describe this failure.
+      }
     }
   }
 

@@ -169,6 +169,7 @@ export function ownerRouteForPath(topology, filePath) {
 export {
   WORKSPACE_TOPOLOGY_KIND,
   WORKSPACE_TOPOLOGY_SCHEMA_VERSION,
+  analysisScopeFromTopology,
   normalizeRoute,
   routeContains,
   validateWorkspaceTopology,

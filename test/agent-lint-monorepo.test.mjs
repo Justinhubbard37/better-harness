@@ -16,6 +16,12 @@ function git(cwd, args) {
   const result = spawnSync("git", args, {
     cwd,
     encoding: "utf8",
+    env: {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: os.devNull,
+      GIT_CONFIG_NOSYSTEM: "1",
+      XDG_CONFIG_HOME: path.join(cwd, ".git-test-xdg"),
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.status !== 0) {
@@ -36,9 +42,11 @@ async function makeMonorepo() {
     "AGENTS.md": "# Root agents\n",
     "CLAUDE.md": "# Root Claude\n",
     "CLAUDE.local.md": "# Root local Claude\n",
+    "QWEN.md": "# Root Qwen\n",
     ".claude/rules/root.mdc": "# Root Claude rule\n",
     ".cursor/rules/root.md": "# Root Cursor rule\n",
     ".github/copilot-instructions.md": "# Root Copilot instructions\n",
+    ".github/instructions/backend.instructions.md": "---\napplyTo: packages/a/**\n---\n# Backend\n",
     ".qoder/rules/root.md": "# Root Qoder rule\n",
     ".qoder/rules/root.mdc": "# Root Qoder mdc rule\n",
     ".ci/AGENTS.md": "# CI agents\n",
@@ -119,6 +127,31 @@ test("topology-backed root discovery inventories provider scopes without a neste
     assert.ok(cursorRoutes.includes("packages/a/.cursor/rules/local.mdc"));
     assert.ok(cursorRoutes.includes(".github/copilot-instructions.md"));
     assert.ok(!cursorRoutes.includes("CLAUDE.local.md"));
+
+    const qwenRoutes = (await discoverAgentEntrypoints({
+      workspace: path.join(repo, "packages/a"),
+      provider: "qwen",
+      topology,
+    })).map((entrypoint) => entrypoint.relativePath);
+    assert.ok(qwenRoutes.includes("AGENTS.md"));
+    assert.ok(qwenRoutes.includes("QWEN.md"));
+
+    const copilotRoutes = (await discoverAgentEntrypoints({
+      workspace: path.join(repo, "packages/a"),
+      provider: "copilot",
+      topology,
+    })).map((entrypoint) => entrypoint.relativePath);
+    assert.ok(copilotRoutes.includes("AGENTS.md"));
+    assert.ok(copilotRoutes.includes(".github/copilot-instructions.md"));
+    assert.ok(copilotRoutes.includes(".github/instructions/backend.instructions.md"));
+
+    const piRoutes = (await discoverAgentEntrypoints({
+      workspace: path.join(repo, "packages/a"),
+      provider: "pi",
+      topology,
+    })).map((entrypoint) => entrypoint.relativePath);
+    assert.ok(piRoutes.includes("AGENTS.md"));
+    assert.ok(!piRoutes.includes("CLAUDE.md"));
   } finally {
     await rm(repo, { recursive: true, force: true });
   }

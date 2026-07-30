@@ -3,8 +3,8 @@
 ## Traceability
 
 - Spec ID: `2026-07-25-monorepo-workspace-support`
-- Status: In progress; AC1-AC13 are implemented, and AC14-AC15 cover the
-  current review hardening before merge.
+- Status: Implemented and locally validated through AC15; external CI remains
+  to be rerun for the updated PR head.
 - Implementation branch: `feat/monorepo-workspace-topology`
 - Story: unavailable; this is a maintainer-requested product correctness change.
 - AI involvement: Codex implemented the change and used independent delegated
@@ -35,7 +35,7 @@ The 2026-07-25 spike found:
 | E1 | `asset-baseline --workspace <root>` with Qoder | Nested `AGENTS.md` files were not represented in the effective asset baseline. |
 | E2 | `discoverAgentEntrypoints` with Codex | The filesystem walk included ignored `.build/**` and `out*/**` copies, skipped tracked `build/**` source, and had no file cap. |
 | E3 | Package-target asset baseline | Root instructions and provider assets disappeared because owner routes outside the requested workspace were discarded. |
-| E4 | Session matching on all four providers | Matching was based on direct CWD prefixes. Package targets missed root-CWD sessions, while admitting a whole mixed session would contaminate package facts. |
+| E4 | Provider session matching | Matching was based on direct CWD prefixes. Package targets missed root-CWD sessions, while admitting a whole mixed session would contaminate package facts. |
 | E5 | `core-change-watch` | `resolveRepoRoot` widened tracked files, history, diff, drift, and companion candidates to the whole repository. |
 | E6 | Evidence Bundle lead | Specialist lanes and the lead analyzer independently rescanned the same flat workspace, so fixing only the lanes would not fix the final report. |
 | E7 | Finding validation | Durable finding contracts did not contain a structured target/package route, while rejecting unsupported fields. |
@@ -184,8 +184,11 @@ The initial capability matrix follows the current provider contracts:
 |----------|--------------------------------|
 | Codex | Root-to-target `AGENTS.md` ancestry. |
 | Claude | Ancestor `CLAUDE.md`; descendant instructions remain on-demand/candidate until file activity establishes their scope. |
-| Cursor | Scoped `.cursor/rules`; nested `AGENTS.md` remains candidate unless the installed provider contract proves activation. |
+| Cursor | Scoped `.cursor/rules`; nested `AGENTS.md` and root Copilot instructions remain candidate unless the installed provider contract proves activation. |
 | Qoder | Root project `AGENTS.md` and project Rules; nested `AGENTS.md` remains candidate unless the installed provider contract proves activation. |
+| Qwen Code | Root-to-target `QWEN.md` and `AGENTS.md` ancestry. |
+| GitHub Copilot | Root-to-target `AGENTS.md` ancestry and root `.github/copilot-instructions.md`; path-scoped `.github/instructions/*.instructions.md` remains candidate until `applyTo` matching is represented structurally. |
+| Pi | Root-to-target `AGENTS.md` ancestry. |
 
 Assets preserve both ownership and applicability:
 
@@ -253,7 +256,7 @@ Git root exists), so an inherited root owner remains openable without `..`.
   nested guides with owner routes. Package-target baselines retain the ordered
   root-to-target inheritance chain without double counting and distinguish
   effective from candidate assets.
-- **AC5 — Session bridging:** All four providers retain direct-CWD behavior,
+- **AC5 — Session bridging:** All supported providers retain direct-CWD behavior,
   discover root-CWD candidates before selection, include target-only activity as
   `root-cwd`, and omit mixed, ambiguous, or truncated candidates from package
   facts.
@@ -380,7 +383,7 @@ Git root exists), so an inherited root owner remains openable without `..`.
 |----|-----------------------------|
 | AC1–AC3, AC11 | `test/workspace-topology.test.mjs`, including root/member/subtree/standalone, manifest variants, ignored/untracked files, cap boundaries, symlink escape, special characters, and CLI JSON. |
 | AC4 | Agent lint, agent customize, and asset baseline tests with root/intermediate/package assets, candidate activation, owner routes, and no duplicates. |
-| AC5 | Shared matcher tests plus four-provider root-CWD fixtures covering direct, target-only, no-target, mixed, truncated, and post-hydration foreign activity. |
+| AC5 | Shared matcher tests plus supported-provider root-CWD fixtures covering direct, target-only, no-target, mixed, truncated, and post-hydration foreign activity. |
 | AC6–AC7 | Real temporary Git repository and command-spy tests covering history, diff, untracked, rename boundary, companions, noisy sibling, and tracked `build/**`. |
 | AC8, AC10 | Evidence Bundle dependency-spy tests proving one topology resolution, object identity/binding, lead propagation, and partial/failed coverage. |
 | AC9 | Finding schema, report projection, renderer, persistence, and wrong-package rejection tests. |
@@ -430,6 +433,17 @@ npm run preview
 
 ## Evidence Log
 
+- 2026-07-30 current-main hardening: merged `origin/main` and preserved both
+  sides of the four overlapping report/session/test contracts. Topology and
+  session attribution now cover Codex, Qoder, Claude, Cursor, Qwen Code,
+  GitHub Copilot, and Pi. Frozen topology and analysis-scope mismatches fail
+  closed, and temporary Git fixtures ignore developer-global Git configuration.
+  The conflict-focused suite passed `58/58`, the expanded topology/session
+  suite passed `62/62`, the broad affected suite passed `228/228`, and the
+  default-environment full suite passed `977/977`. Pack verification passed
+  with 331 npm and 354 runtime-zip entries, direct doc/Skill checks passed
+  `18/18`, preview `/health` returned `ok`, and `/canvas-module.js` returned
+  JavaScript with HTTP 200.
 - 2026-07-30 review hardening: PR review identified non-canonical render target
   comparison and string-truthy boolean flags. Windows CI exposed 25 cascading
   failures where NTFS 8.3 and long-name paths represented the same temporary
