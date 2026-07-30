@@ -42,3 +42,9 @@ TODO 列表和完成定义维护在仓库
 
 规范矩阵、发现规则和拆分触发条件见
 [`docs/adapters/README.md`](https://github.com/QoderAI/better-harness/blob/main/docs/adapters/README.md)。
+
+## 贡献新的宿主
+
+请从[贡献新的 Coding Agent 宿主](./contributing-new-coding-agent)开始。
+该指南会分别处理原生 Shell、已配置资产、会话、输出和打包声明，并链接
+Qwen Code 与 GitHub Copilot PR 作为复盘示例。

@@ -45,3 +45,9 @@ table, TODO list, and definition of done live in the repository
 
 The canonical matrix, discovery rules, and split triggers live in
 [`docs/adapters/README.md`](https://github.com/QoderAI/better-harness/blob/main/docs/adapters/README.md).
+
+## Contributing another host
+
+Start with [Contributing a Coding Agent Host](./contributing-new-coding-agent).
+It separates native shell, configured-asset, session, output, and packaging
+claims and links Qwen Code and GitHub Copilot pull requests as worked examples.
