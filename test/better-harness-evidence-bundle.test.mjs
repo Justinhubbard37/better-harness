@@ -10,8 +10,14 @@ import {
 import { availableLane } from "../scripts/harness-analysis/evidence-bundle/contract.mjs";
 import { collectSessionEvidence } from "../scripts/harness-analysis/evidence-bundle/session-evidence.mjs";
 import { collectAgentCustomize } from "../scripts/harness-analysis/evidence-bundle/agent-customize.mjs";
+import { EVIDENCE_BUNDLE_HELP } from "../scripts/harness-analysis/evidence-bundle/cli.mjs";
 
 const NOW = new Date("2026-07-24T08:00:00.000Z");
+
+test("evidence-bundle help advertises WorkBuddy and its isolated home override", () => {
+  assert.match(EVIDENCE_BUNDLE_HELP, /pi, or workbuddy/u);
+  assert.match(EVIDENCE_BUNDLE_HELP, /--workbuddy-home <dir>/u);
+});
 
 function topologyResolution(workspace = ".", status = "complete") {
   const absolute = path.resolve(workspace);
@@ -345,5 +351,28 @@ test("Pi agentCustomize lane routes the provider and isolated config paths", asy
   assert.equal(lane.status, "available");
   assert.equal(received.provider, "pi");
   assert.equal(received["pi-home"], "/tmp/fixture-pi-home");
+  assert.equal(received["include-user-home"], true);
+});
+
+test("WorkBuddy agentCustomize lane routes the provider and isolated config paths", async () => {
+  const context = freezeEvidenceBundleContext({
+    workspace: ".",
+    platform: "workbuddy",
+    depth: "quick",
+    "include-user-home": true,
+  }, NOW);
+  let received;
+  const lane = await collectAgentCustomize(context, {
+    "workbuddy-home": "/tmp/fixture-workbuddy-home",
+  }, {
+    collectAssetBaseline: async (options) => {
+      received = options;
+      return { kind: "agent-asset-baseline", status: "complete" };
+    },
+  });
+
+  assert.equal(lane.status, "available");
+  assert.equal(received.provider, "workbuddy");
+  assert.equal(received["workbuddy-home"], "/tmp/fixture-workbuddy-home");
   assert.equal(received["include-user-home"], true);
 });
