@@ -19,8 +19,8 @@ import { createCodexCliJsonModelClient } from "./codex-json-model.mjs";
 
 export const SESSION_ANALYSIS_HELP = `Usage: better-harness session-analysis [command] [options]
 
-Inspect local Qoder, Codex, Claude, Cursor, or Qwen session evidence. The default
-command is sessions and the default platform is qoder. Help exits before
+Inspect local Qoder, Codex, Claude, Cursor, Qwen, Copilot, or Pi session evidence. The
+default command is sessions and the default platform is qoder. Help exits before
 reading HOME or workspace.
 
 Commands:
@@ -35,13 +35,16 @@ Commands:
   events        Show normalized events selected with --session-id
 
 Options:
-  --platform <qoder|codex|claude|cursor|qwen>
+  --platform <qoder|codex|claude|cursor|qwen|copilot|pi>
                             Session host (default: qoder)
   --workspace <dir>         Workspace scope (default: current directory)
   --qoder-home <dir>        Qoder data root (default: ~/.qoder)
   --codex-home <dir>        Codex data root (default: ~/.codex)
   --claude-home <dir>       Claude Code data root (default: ~/.claude)
   --cursor-home <dir>       Cursor data root (default: ~/.cursor)
+  --qwen-home <dir>         Qwen Code data root (default: ~/.qwen)
+  --copilot-home <dir>      Copilot CLI data root (default: ~/.copilot)
+  --pi-home <dir>           Pi agent data root (default: ~/.pi/agent)
   --include-cache           Include optional Qoder cache evidence
   --include-global-capabilities
                             Include optional user-global Qoder evidence
@@ -264,7 +267,21 @@ async function loadPlatform(platform = "qoder") {
       main: module.main,
     };
   }
-  throw new Error(`Unsupported platform: ${platform}. Supported platforms: qoder, codex, claude, cursor, qwen.`);
+  if (platform === "copilot") {
+    const module = await import("./platforms/copilot.mjs");
+    return {
+      Analyzer: module.CopilotSessionAnalyzer,
+      main: module.main,
+    };
+  }
+  if (platform === "pi") {
+    const module = await import("./platforms/pi.mjs");
+    return {
+      Analyzer: module.PiSessionAnalyzer,
+      main: module.main,
+    };
+  }
+  throw new Error(`Unsupported platform: ${platform}. Supported platforms: qoder, codex, claude, cursor, qwen, copilot, pi.`);
 }
 
 export async function createAnalyzer(platform = "qoder") {
@@ -278,7 +295,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
   if (command === "claude-facets") {
     if (options.help === true) {
       stdout.write([
-        "Usage: session-analysis claude-facets --platform <qoder|codex|claude|cursor|qwen> --workspace <path> [options]",
+        "Usage: session-analysis claude-facets --platform <qoder|codex|claude|cursor|qwen|copilot|pi> --workspace <path> [options]",
         "",
         "Options:",
         "  --limit <1-5>                 Maximum semantic facets (default: 5)",

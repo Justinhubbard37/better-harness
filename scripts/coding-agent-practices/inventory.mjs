@@ -379,7 +379,7 @@ async function collectCodexMemories(scope) {
 }
 
 function makeSessionSourceHints(scope) {
-  if (!["qoder", "codex", "claude", "cursor", "qwen"].includes(scope.platform)) {
+  if (!["qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi"].includes(scope.platform)) {
     return [];
   }
   return [
@@ -448,6 +448,8 @@ function providerScope(options = {}, platform = options.platform ?? "qoder") {
     claudeHome: options.claudeHome ?? options["claude-home"],
     claudeStatePath: options.claudeStatePath ?? options["claude-state"] ?? options["claude-state-path"],
     qwenHome: options.qwenHome ?? options["qwen-home"],
+    copilotHome: options.copilotHome ?? options["copilot-home"],
+    piHome: options.piHome ?? options["pi-home"],
   };
 }
 
@@ -539,7 +541,7 @@ function customizeSurface({ provider, group, scope, type, label, basePath, items
 async function buildConfiguredAssetSurfaces(inventory, scope) {
   const provider = scope.platform;
   const projectBase = scope.workspace;
-  const userBase = inventory.cursorHome ?? inventory.qoderHome ?? inventory.codexHome ?? inventory.claudeHome ?? inventory.qwenHome;
+  const userBase = inventory.cursorHome ?? inventory.qoderHome ?? inventory.codexHome ?? inventory.claudeHome ?? inventory.qwenHome ?? inventory.copilotHome ?? inventory.piHome;
   const surfaceTypes = [
     ["skills", "skills", "Skills"],
     ["subagents", "agents", "Agents"],
@@ -657,6 +659,8 @@ export async function collectProviderInventory(options = {}) {
     claudeHome: scope.claudeHome,
     claudeStatePath: scope.claudeStatePath,
     qwenHome: scope.qwenHome,
+    copilotHome: scope.copilotHome,
+    piHome: scope.piHome,
     includeUserHome: scope.includeUserHome,
     includeGlobalHooks: scope.includeGlobalHooks,
   });
@@ -910,12 +914,12 @@ export function formatInventoryMarkdown(result) {
   return `${lines.join("\n")}\n`;
 }
 
-const USAGE = `Usage: better-harness coding-agent-practices inventory [qoder|codex|claude|cursor|qwen] [options]
+const USAGE = `Usage: better-harness coding-agent-practices inventory [qoder|codex|claude|cursor|qwen|copilot|pi] [options]
 
 Inspect configured coding-agent assets and practice evidence for one platform.
 
 Options:
-  --platform <qoder|codex|claude|cursor|qwen>  Select the platform (default: qoder; may also be the first positional)
+  --platform <qoder|codex|claude|cursor|qwen|copilot|pi>  Select the platform (default: qoder; may also be the first positional)
   --workspace <dir>                Workspace root to inspect (default: current directory)
   --json                           Emit JSON (default)
   --format <json|markdown>         Output format
@@ -937,9 +941,9 @@ async function runCli(argv) {
   }
   const { command, options } = parseArgs(argv);
   const platform = options.platform ?? command ?? "qoder";
-  if (!["cursor", "qoder", "codex", "claude", "qwen"].includes(platform)) {
+  if (!["cursor", "qoder", "codex", "claude", "qwen", "copilot", "pi"].includes(platform)) {
     throw new Error(
-      `Unsupported platform: ${platform}. Supported platforms: cursor, qoder, codex, claude, qwen.\n\n${USAGE}`,
+      `Unsupported platform: ${platform}. Supported platforms: cursor, qoder, codex, claude, qwen, copilot, pi.\n\n${USAGE}`,
     );
   }
   const result = platform === "qoder"

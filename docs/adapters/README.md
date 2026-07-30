@@ -1,20 +1,28 @@
 # Host Adapter Matrix
 
-This is the single entry point for Claude Code, Codex, Qoder, Cursor, and Qwen
-host boundaries. Do not create `docs/adapters/claude-code.md`,
+This is the single entry point for Claude Code, Codex, Qoder, Cursor, Qwen,
+GitHub Copilot, and Pi host boundaries. Do not create `docs/adapters/claude-code.md`,
 `docs/adapters/codex.md`, `docs/adapters/qoder.md`, `docs/adapters/cursor.md`,
-or `docs/adapters/qwen.md` by default.
+`docs/adapters/qwen.md`, `docs/adapters/copilot.md`, or `docs/adapters/pi.md` by default.
+
+Adding another host? Follow
+[Contributing a New Coding Agent Host](contributing-new-coding-agent.md) before
+editing the matrix. The guide separates shell, configured-asset, session,
+output, and packaging claims and links reviewed Qwen Code and GitHub Copilot
+pull requests as worked examples.
 
 Host differences enter only this matrix, capability-local configured-asset
 providers, real session-evidence adapters, and output modes. Canonical product
 judgment stays in `skills/`, `models/`, `references/`, `templates/`, and
 `scripts/<capability>/`.
 
-The `@qoderai/better-harness` npm package includes the Qoder, Claude Code,
-Codex, Cursor, and Qwen plugin metadata roots. The generated Qoder runtime
-bundle includes only the Qoder shell, `.qoder-plugin/`; non-Qoder generated host
+The `@qoderai/better-harness` npm package includes six filesystem metadata
+roots for Qoder, Claude Code, Codex, Cursor, Qwen, and Copilot, plus Pi install
+metadata in the existing `package.json`. The generated Qoder runtime bundle
+includes only the Qoder shell, `.qoder-plugin/`; non-Qoder generated host
 artifacts remain source-local. Claude Code installs its shell through the
-repository's native marketplace manifest.
+repository's native marketplace manifest. Pi installs the repository as a pi
+package through the `pi` manifest in `package.json`.
 
 | Host | Positioning | Shell | Configured Assets | Session Evidence | Default Output | Rules / Prompts | Smoke |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -23,6 +31,8 @@ repository's native marketplace manifest.
 | Qoder | First-class product host | `.qoder-plugin/` | `scripts/agent-customize/providers/qoder.mjs` | `scripts/session-analysis/platforms/qoder.mjs` | `better-harness` | `.qoder/rules` + `AGENTS.md` + output templates | `better-harness harness render --mode qoder-canvas --validate` |
 | Cursor | Analysis-capable source-local host | `.cursor-plugin/` | `scripts/agent-customize/providers/cursor.mjs` | `scripts/session-analysis/platforms/cursor.mjs` | self-contained HTML + Markdown | `.cursor` + `.codex` compatibility + `AGENTS.md` | `agent --plugin-dir . --mode ask --print` -> Cursor evidence bundle -> validated `html` render |
 | Qwen Code | Analysis-capable source-local host | `qwen-extension.json` | `scripts/agent-customize/providers/qwen.mjs` | `scripts/session-analysis/platforms/qwen.mjs` | self-contained HTML + Markdown | `.qwen` + `QWEN.md` + `AGENTS.md` | `harness prepare --platform qwen` -> finalize with `html-report` validation |
+| GitHub Copilot | Analysis-capable source-local host | `.github/plugin/` | `scripts/agent-customize/providers/copilot.mjs` | `scripts/session-analysis/platforms/copilot.mjs` | self-contained HTML + Markdown | `.github` + `AGENTS.md` + `~/.copilot` | `copilot plugin marketplace add .` -> `copilot plugin install better-harness@better-harness` -> configured-asset baseline -> validated `html` render |
+| Pi | Analysis-capable source-local host | `pi` manifest in `package.json` | `scripts/agent-customize/providers/pi.mjs` | `scripts/session-analysis/platforms/pi.mjs` | self-contained HTML + Markdown | `.pi` + `.agents` + `AGENTS.md` | `pi install <source>` or `pi -e <source>` -> `/better-harness` prompt template -> validated `html` render |
 
 ## Discovery And Evidence
 
@@ -55,6 +65,34 @@ repository's native marketplace manifest.
   JSONL transcripts under `~/.qwen/projects/<slug>/chats/`. The `qwen-extension.json`
   manifest is native Qwen install/discovery metadata included in the public npm package; it
   does not own Qwen evidence collection.
+- GitHub Copilot configured assets are inventoried through
+  `scripts/agent-customize/providers/copilot.mjs`, covering `AGENTS.md`,
+  `.github/copilot-instructions.md`, `.github/instructions/`, `.github/skills/`,
+  `.agents/skills/`, `.github/agents/`, `.github/prompts/`, `.github/hooks/`,
+  `.mcp.json`, `.github/mcp.json`, and the user-scope `~/.copilot` equivalents.
+  Installed-Plugin records come from the `installedPlugins` array in
+  `~/.copilot/config.json` and stay separate from marketplace catalogs and
+  runtime-use claims. Session evidence comes from
+  `scripts/session-analysis/platforms/copilot.mjs`, which reads
+  workspace-matching `~/.copilot/session-state/<id>/events.jsonl` bound through
+  each session's `workspace.yaml`. Copilot transcripts record no per-response
+  model token usage, and a matched session directory without `events.jsonl`
+  stays an explicit partial coverage boundary. `~/.copilot/session-store.db` is
+  documented as automatically managed and is not an evidence source. The
+  `.github/plugin/` shell is native Copilot install/discovery metadata included
+  in the public npm package; it does not own Copilot evidence collection.
+
+- Pi configured assets are inventoried through
+  `scripts/agent-customize/providers/pi.mjs`, covering `~/.pi/agent`
+  (settings-declared pi packages, skills, prompt templates, extensions, the
+  global `AGENTS.md` context file), the shared `.agents/skills` directories,
+  and project `.pi` assets. Session evidence comes from
+  `scripts/session-analysis/platforms/pi.mjs`, which reads workspace-matching
+  JSONL transcripts under `~/.pi/agent/sessions/--<cwd-slug>--/` and honors the
+  `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR` overrides. Pi
+  discovers the canonical root `skills/` directory and the `prompts/`
+  templates through the `pi` manifest in `package.json`; that manifest is
+  install/discovery metadata and does not own Pi evidence collection.
 
 ## Output Modes
 
@@ -62,7 +100,7 @@ Canonical templates live under `templates/reporting/`.
 
 - `qoder-canvas.md`: Qoder Canvas output contract, covering renderer-owned
   `findings.json`, Canvas-only `canvas.json`, and `report.canvas.tsx`.
-- `html-visual.md`: portable Claude Code/Codex/Cursor/Qwen visual output contract, covering
+- `html-visual.md`: portable Claude Code/Codex/Cursor/Qwen/Copilot/Pi visual output contract, covering
   `findings.json`, `report.md`, and `report.html`.
 - Markdown-only output has no visual companion.
 
