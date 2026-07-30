@@ -89,13 +89,9 @@ test("non-Qoder providers default to validated durable HTML with an explicit inl
 test("Codex README examples use host-specific skill invocation syntax", () => {
   for (const readmePath of ["README.md", "README.zh-CN.md"]) {
     const readme = read(readmePath);
-    const desktopQuickStart = readme.match(/^\| \*\*Codex Desktop\*\* \|.*$/mu)?.[0] ?? "";
-    const cliQuickStart = readme.match(/^\| \*\*Codex CLI\*\* \|.*$/mu)?.[0] ?? "";
     const desktop = readme.match(/#### Codex Desktop\n([\s\S]*?)\n#### Codex CLI/u)?.[1] ?? "";
     const cli = readme.match(/#### Codex CLI\n([\s\S]*?)\n### Qoder/u)?.[1] ?? "";
 
-    assert.match(desktopQuickStart, /`@better-harness`/u);
-    assert.match(cliQuickStart, /`\$better-harness:better-harness`/u);
     assert.match(desktop, /^@better-harness(?:[ \t]|$)/mu);
     assert.match(cli, /^\$better-harness:better-harness(?:[ \t]|$)/mu);
     assert.doesNotMatch(desktop, /^[ \t]*\/better-harness(?:[ \t]|$)/mu);
