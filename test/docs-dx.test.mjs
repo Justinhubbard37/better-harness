@@ -19,7 +19,7 @@ const ZH_DOCS_ROOT = [
   "current",
 ];
 
-test("Docusaurus uses credential-free bilingual local search and a visible issue route", () => {
+test("Docusaurus uses credential-free local search for docs and blog plus a visible issue route", () => {
   const packageJson = JSON.parse(readUtf8("docs", "package.json"));
   const config = readUtf8("docs", "docusaurus.config.js");
   const navbarZh = JSON.parse(
@@ -33,7 +33,7 @@ test("Docusaurus uses credential-free bilingual local search and a visible issue
   assert.match(config, /themes:\s*\[/u);
   assert.match(config, /"@easyops-cn\/docusaurus-search-local"/u);
   assert.match(config, /indexDocs:\s*true/u);
-  assert.match(config, /indexBlog:\s*false/u);
+  assert.match(config, /indexBlog:\s*true/u);
   assert.match(config, /indexPages:\s*false/u);
   assert.match(config, /language:\s*\["en",\s*"zh"\]/u);
   assert.match(config, /hashed:\s*"filename"/u);

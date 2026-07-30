@@ -41,7 +41,15 @@ const config = {
           sidebarPath: "./sidebars.js",
           editUrl: `${GITHUB_URL}/edit/main/docs/`,
         },
-        blog: false,
+        blog: {
+          path: "blog",
+          routeBasePath: "blog",
+          blogTitle: "Better Harness Blog",
+          blogDescription:
+            "Engineering practices for reliable coding-agent workflows.",
+          showReadingTime: true,
+          editUrl: `${GITHUB_URL}/edit/main/docs/`,
+        },
         theme: {
           customCss: "./src/css/custom.css",
         },
@@ -54,7 +62,7 @@ const config = {
       "@easyops-cn/docusaurus-search-local",
       {
         indexDocs: true,
-        indexBlog: false,
+        indexBlog: true,
         indexPages: false,
         language: ["en", "zh"],
         hashed: "filename",
@@ -83,6 +91,11 @@ const config = {
             sidebarId: "docs",
             position: "left",
             label: "Docs",
+          },
+          {
+            to: "/blog",
+            label: "Blog",
+            position: "left",
           },
           {
             href: "pathname:///demo/better-harness-report/",
@@ -118,6 +131,7 @@ const config = {
             items: [
               { label: "Introduction", to: "/docs/introduction" },
               { label: "Installation", to: "/docs/installation" },
+              { label: "Blog", to: "/blog" },
               { label: "Agent Work Loop", to: "/docs/concepts/agent-work-loop" },
             ],
           },
