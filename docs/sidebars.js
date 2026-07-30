@@ -22,7 +22,10 @@ const sidebars = {
     {
       type: "category",
       label: "Hosts",
-      items: ["hosts/adapter-matrix"],
+      items: [
+        "hosts/adapter-matrix",
+        "hosts/contributing-new-coding-agent",
+      ],
     },
     {
       type: "category",

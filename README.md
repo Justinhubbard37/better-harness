@@ -351,7 +351,7 @@ smallest surface that matches the improvement you want to make:
 | --- | --- | --- |
 | Workflow guidance and engineering practices | [`skills/`](skills/) or [`references/`](references/) | Add sourced guidance for a language, framework, review pattern, or recurring agent workflow. |
 | Review models and executable analysis | [`models/`](models/) or [`scripts/`](scripts/) | Add an evidence-backed review lens, detector, or agent-friendly analysis command with fixtures and tests. |
-| Delivery controls and host support | [`hooks/`](hooks/) or the [host adapter matrix](docs/adapters/README.md) | Add a narrow lifecycle check or document and validate evidence support for another coding-agent host. |
+| Delivery controls and host support | [`hooks/`](hooks/) or the [new Coding Agent guide](docs/adapters/contributing-new-coding-agent.md) | Add a narrow lifecycle check or document and validate evidence support for another Coding Agent host. |
 | Reports and visual language | [`templates/reporting/`](templates/reporting/) or [`templates/style/`](templates/style/) | Add a report mode, reusable reporting contract, or directive-only visual style with validation evidence. |
 | Examples and operating models | [`case-studies/`](case-studies/) | Share a redacted, evidence-bounded example of how a team applies agent review and delivery practices. |
 
@@ -361,9 +361,12 @@ To get started:
    owner and understand its contract.
 2. Follow the [contribution guide](CONTRIBUTING.md) to set up the project and
    scope the change.
-3. Add tests, fixtures, or preview evidence when the contribution changes
+3. For host support, follow the
+   [new Coding Agent contribution guide](docs/adapters/contributing-new-coding-agent.md)
+   and update the [host adapter matrix](docs/adapters/README.md).
+4. Add tests, fixtures, or preview evidence when the contribution changes
    runtime behavior or rendered output.
-4. Open a focused pull request that explains what changed, why, and how it was
+5. Open a focused pull request that explains what changed, why, and how it was
    validated.
 
 Not sure where an idea belongs? [Open an issue](https://github.com/QoderAI/better-harness/issues)

@@ -5,6 +5,12 @@ host boundaries. Do not create `docs/adapters/claude-code.md`,
 `docs/adapters/codex.md`, `docs/adapters/qoder.md`, `docs/adapters/cursor.md`,
 or `docs/adapters/qwen.md` by default.
 
+Adding another host? Follow
+[Contributing a New Coding Agent Host](contributing-new-coding-agent.md) before
+editing the matrix. The guide separates shell, configured-asset, session,
+output, and packaging claims and links reviewed Qwen Code and GitHub Copilot
+pull requests as worked examples.
+
 Host differences enter only this matrix, capability-local configured-asset
 providers, real session-evidence adapters, and output modes. Canonical product
 judgment stays in `skills/`, `models/`, `references/`, `templates/`, and

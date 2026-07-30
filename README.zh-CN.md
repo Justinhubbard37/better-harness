@@ -338,7 +338,7 @@ Canvas 预览需要已安装的 Qoder 运行时，或显式指定 `--sdk-media`/
 | --- | --- | --- |
 | 工作流指导与工程实践 | [`skills/`](skills/) 或 [`references/`](references/) | 为某种语言、框架、审查模式或重复出现的智能体工作流添加有来源支撑的指南。 |
 | 审查模型与可执行分析 | [`models/`](models/) 或 [`scripts/`](scripts/) | 添加由证据支持的审查视角、检测器，或带 fixture 和测试的智能体友好分析命令。 |
-| 交付控制与宿主支持 | [`hooks/`](hooks/) 或[宿主适配器矩阵](docs/adapters/README.md) | 添加范围明确的生命周期检查，或记录并验证另一种编码智能体宿主的证据支持情况。 |
+| 交付控制与宿主支持 | [`hooks/`](hooks/) 或[新增 Coding Agent 指南](docs/adapters/contributing-new-coding-agent.md) | 添加范围明确的生命周期检查，或记录并验证另一种 Coding Agent 宿主的证据支持情况。 |
 | 报告与视觉语言 | [`templates/reporting/`](templates/reporting/) 或 [`templates/style/`](templates/style/) | 添加报告模式、可复用的报告契约，或带验证证据的纯指令式视觉样式。 |
 | 示例与运行模型 | [`case-studies/`](case-studies/) | 分享经过脱敏且以证据为边界的示例，展示团队如何应用智能体审查与交付实践。 |
 
@@ -346,8 +346,10 @@ Canvas 预览需要已安装的 Qoder 运行时，或显式指定 `--sdk-media`/
 
 1. 阅读[社区扩展地图](docs/community.md)，找到规范的归属位置并了解相应契约。
 2. 按照[贡献指南](CONTRIBUTING.md)设置项目并确定变更范围。
-3. 当贡献会改变运行时行为或渲染输出时，添加测试、fixture 或预览证据。
-4. 提交一个聚焦的 Pull Request，说明改了什么、为什么修改以及如何验证。
+3. 如需新增宿主支持，请遵循[新增 Coding Agent 贡献指南](docs/adapters/contributing-new-coding-agent.md)，
+   并更新[宿主适配器矩阵](docs/adapters/README.md)。
+4. 当贡献会改变运行时行为或渲染输出时，添加测试、fixture 或预览证据。
+5. 提交一个聚焦的 Pull Request，说明改了什么、为什么修改以及如何验证。
 
 不确定某个想法应该放在哪里？在创建新的顶层功能区，或修改公共报告、schema、打包或兼容性契约之前，
 请先[创建 issue](https://github.com/QoderAI/better-harness/issues)。
