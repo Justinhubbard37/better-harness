@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseArgs } from "../session-analysis/cli.mjs";
+import { parseArgs } from "../session-analysis/index.mjs";
 import { HOOK_RECOMMENDED_LIMIT, hookOverLimitSummary } from "./asset-eval/index.mjs";
 import { collectProviderInventory, collectQoderInventory } from "./inventory.mjs";
 

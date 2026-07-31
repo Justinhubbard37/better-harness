@@ -15,7 +15,7 @@ import path from "node:path";
 
 import { collectAgentCustomizeInventory } from "../../agent-customize/index.mjs";
 import { hookConfigurationDigest } from "../../agent-customize/core/items.mjs";
-import { expandHome } from "../../session-analysis/paths.mjs";
+import { expandHome } from "../../session-analysis/index.mjs";
 import { CHECKUP_KIND, CHECKUP_SCHEMA_VERSION } from "./contract.mjs";
 import { computePlanDigest } from "./plan.mjs";
 

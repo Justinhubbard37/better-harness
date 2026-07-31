@@ -4,7 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createAnalyzer } from "../session-analysis.mjs";
+import { createAnalyzer } from "./analyzer.mjs";
 import { parseArgs } from "./cli.mjs";
 import {
   buildSessionSelectionProfile,

@@ -3,7 +3,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { SessionAnalyzer } from "../../session-analysis.mjs";
+import { SessionAnalyzer } from "../analyzer.mjs";
 import { parseArgs, parseBooleanFlag } from "../cli.mjs";
 import { forEachJsonLine, pathExists, walkFiles } from "../fs.mjs";
 import { expandHome, normalizeWorkspace } from "../paths.mjs";

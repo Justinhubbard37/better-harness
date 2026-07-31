@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { parseArgs } from "../session-analysis/cli.mjs";
+import { parseArgs } from "../session-analysis/index.mjs";
 import { collectAgentCustomizeInventory, filterManageItems, groupManageItems } from "./index.mjs";
 
 function usage() {

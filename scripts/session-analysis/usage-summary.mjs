@@ -3,7 +3,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createAnalyzer } from "../session-analysis.mjs";
+import { createAnalyzer } from "./analyzer.mjs";
 import { parseArgs } from "./cli.mjs";
 
 const HELP = `Usage: better-harness session-analysis usage-summary [options]

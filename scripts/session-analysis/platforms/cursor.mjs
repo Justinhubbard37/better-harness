@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 
 import path from "node:path";
-import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import { SessionAnalyzer } from "../../session-analysis.mjs";
+import { SessionAnalyzer } from "../analyzer.mjs";
 import { parseArgs, parseBooleanFlag } from "../cli.mjs";
-import { forEachJsonLine, pathExists, walkFiles } from "../fs.mjs";
+import { forEachJsonLine, pathExists, readJson, walkFiles } from "../fs.mjs";
 import { expandHome, normalizeWorkspace } from "../paths.mjs";
 import {
   bindSessionWorkspaceCwds,
@@ -298,10 +297,6 @@ function finalizeSession(session) {
         .filter(([_cwd, priority]) => priority === strongest)
         .map(([cwd]) => cwd),
   );
-}
-
-async function readJson(filePath) {
-  return JSON.parse(await readFile(filePath, "utf8"));
 }
 
 async function inspectTranscriptCoverage(filePath) {

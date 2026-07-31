@@ -3,8 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { pathExists } from "../session-analysis/fs.mjs";
-import { expandHome, normalizeWorkspace } from "../session-analysis/paths.mjs";
+import { expandHome, normalizeWorkspace, pathExists } from "../session-analysis/index.mjs";
 
 const MARKDOWN_EXTENSIONS = new Set([".md", ".mdc", ".markdown"]);
 const EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", "vendor", "dist", "build", "target"]);

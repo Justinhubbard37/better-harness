@@ -3,7 +3,7 @@ import {
   bindSessionSelection,
   freezeSessionPopulation,
   sessionAdmissionBinding,
-} from "../../session-analysis/session-population.mjs";
+} from "../../session-analysis/index.mjs";
 import { availableLane } from "./contract.mjs";
 
 const SOURCE_COVERAGE_STATES = new Set([

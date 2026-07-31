@@ -1,4 +1,4 @@
-import { validateSemanticFacets } from "../../session-analysis/semantic-facets.mjs";
+import { validateSemanticFacets } from "../../session-analysis/index.mjs";
 import { validateCheckupReportEvidence } from "../../coding-agent-practices/checkup/contract.mjs";
 import { validateInterventionLedger } from "../intervention-ledger.mjs";
 import {

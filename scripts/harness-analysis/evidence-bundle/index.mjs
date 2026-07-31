@@ -1,5 +1,5 @@
 import { analyzeHarnessEvidence } from "../report-run.mjs";
-import { validateSessionPopulationBundle } from "../../session-analysis/session-population.mjs";
+import { validateSessionPopulationBundle } from "../../session-analysis/index.mjs";
 import { resolveWorkspaceTopology } from "../../workspace-topology/index.mjs";
 import { collectAgentCustomize } from "./agent-customize.mjs";
 import {

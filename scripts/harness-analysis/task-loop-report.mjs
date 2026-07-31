@@ -29,7 +29,7 @@ import {
   readerOverviewTextErrors,
   validateHarnessReportSource,
 } from "./report-source.mjs";
-import { projectSemanticFacets, validateSemanticFacets } from "../session-analysis/semantic-facets.mjs";
+import { projectSemanticFacets, validateSemanticFacets } from "../session-analysis/index.mjs";
 import { restoreProjectedInterventionLedger, summarizeLearningCapture } from "./intervention-ledger.mjs";
 import { findingTargetErrors } from "../workspace-topology/index.mjs";
 

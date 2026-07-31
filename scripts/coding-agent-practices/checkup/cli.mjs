@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { parseArgs, parseBooleanFlag } from "../../session-analysis/cli.mjs";
+import { parseArgs, parseBooleanFlag } from "../../session-analysis/index.mjs";
 import { applyCheckupPlan } from "./apply.mjs";
 import { buildCheckupPlan } from "./plan.mjs";
 import { runCheckupScan } from "./scan.mjs";

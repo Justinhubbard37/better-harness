@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
-import { pathExists, walkFiles } from "../../session-analysis/fs.mjs";
+import { pathExists, walkFiles } from "../../session-analysis/index.mjs";
 import { SCOPE_TITLES, TAB_TO_COLLECTION } from "../constants.mjs";
 
 const TEXT_FILE_EXTENSIONS = new Set([".md", ".mdc"]);

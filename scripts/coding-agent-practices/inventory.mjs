@@ -6,9 +6,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseArgs, parseBooleanFlag } from "../session-analysis/cli.mjs";
-import { pathExists, walkFiles } from "../session-analysis/fs.mjs";
-import { expandHome, normalizeWorkspace } from "../session-analysis/paths.mjs";
+import {
+  expandHome,
+  normalizeWorkspace,
+  parseArgs,
+  parseBooleanFlag,
+  pathExists,
+  walkFiles,
+} from "../session-analysis/index.mjs";
 import { collectAgentCustomizeInventory } from "../agent-customize/index.mjs";
 
 const MEMORY_CONFIG_KEYS = new Set([
