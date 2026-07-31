@@ -13,6 +13,7 @@ const SUPPORTED_PLATFORMS = ["qoder", "codex", "claude", "cursor", "qwen", "copi
 
 const cliPath = path.join(process.cwd(), "scripts", "better-harness.mjs");
 const adapterMatrixPath = path.join(process.cwd(), "docs", "adapters", "README.md");
+const reportRoutingPath = path.join(process.cwd(), "templates", "reporting", "routing.md");
 
 function runBetterHarness(args) {
   return spawnSync(process.execPath, [cliPath, ...args], {
@@ -27,6 +28,29 @@ function sortedSet(values) {
 
 function assertSameSet(actual, label) {
   assert.deepEqual(sortedSet(actual), sortedSet(SUPPORTED_PLATFORMS), `${label} disagrees with the supported platform set`);
+}
+
+function portableHtmlMatrixHosts(matrix) {
+  return matrix
+    .split("\n")
+    .map((line) => line.split("|").map((cell) => cell.trim()))
+    .filter((cells) => cells[6] === "self-contained HTML + Markdown")
+    .map((cells) => cells[1]);
+}
+
+function portableHtmlRouteHosts(routing) {
+  const declaration = routing.match(
+    /\| Portable HTML report \| Active host is (.+?), or a portable visual is explicitly requested \|/u,
+  )?.[1];
+  assert.ok(declaration, "reporting/routing.md does not declare a Portable HTML report route");
+  return new Set(declaration.split(/,\s*(?:or\s+)?/u).map((host) => host.trim()));
+}
+
+function missingPortableHtmlRouteHosts(matrix, routing) {
+  const htmlHosts = portableHtmlMatrixHosts(matrix);
+  assert.ok(htmlHosts.length > 0, "adapter matrix declares no self-contained HTML + Markdown hosts");
+  const routeHosts = portableHtmlRouteHosts(routing);
+  return htmlHosts.filter((host) => !routeHosts.has(host));
 }
 
 test("agent-customize provider registry declares exactly the supported platforms", () => {
@@ -118,4 +142,23 @@ test("host adapter matrix documents exactly the supported platforms", () => {
   const documentedPlatforms = [...matrix.matchAll(/session-analysis\/platforms\/([a-z-]+)\.mjs/gu)].map((match) => match[1]);
   assertSameSet(documentedProviders, "adapter matrix configured-asset providers");
   assertSameSet(documentedPlatforms, "adapter matrix session platforms");
+});
+
+test("adapter-matrix portable HTML hosts appear in the portable HTML report route", () => {
+  const matrix = readFileSync(adapterMatrixPath, "utf8");
+  const routing = readFileSync(reportRoutingPath, "utf8");
+
+  // Hosts whose matrix Default Output cell claims the portable HTML pipeline.
+  // One-directional on purpose: a host may drop the matrix claim first (for
+  // example a pending durable-report gap) without breaking report routing.
+  for (const host of missingPortableHtmlRouteHosts(matrix, routing)) {
+    assert.fail(`Portable HTML report route is missing matrix HTML host: ${host}`);
+  }
+
+  const prefixCollisionRouting = routing.replace(
+    ", or WorkBuddy, or a portable visual is explicitly requested",
+    ", or WorkBuddy Enterprise, or a portable visual is explicitly requested",
+  );
+  assert.notEqual(prefixCollisionRouting, routing, "prefix-collision fixture did not replace the WorkBuddy route entry");
+  assert.deepEqual(missingPortableHtmlRouteHosts(matrix, prefixCollisionRouting), ["WorkBuddy"]);
 });
