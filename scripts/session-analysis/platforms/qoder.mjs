@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { SessionAnalyzer } from "../../session-analysis.mjs";
+import { SessionAnalyzer } from "../analyzer.mjs";
 import { parseArgs, parseBooleanFlag } from "../cli.mjs";
-import { forEachJsonLine, pathExists, walkFiles } from "../fs.mjs";
+import { forEachJsonLine, pathExists, readJson, walkFiles } from "../fs.mjs";
 import { mapToSortedObject, stableId } from "../ids.mjs";
 import { expandHome, normalizeWorkspace } from "../paths.mjs";
 import {
@@ -58,10 +58,6 @@ const SOURCE_ROLES = Object.freeze({
   "cache-project-session": "cache-conversation",
   "global-project-jsonl": "user-global-project-session-store",
 });
-
-async function readJson(filePath) {
-  return JSON.parse(await readFile(filePath, "utf8"));
-}
 
 export function workspaceToQoderSlug(workspace) {
   return workspaceToQoderSlugVariants(workspace)[0];

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
@@ -36,9 +36,46 @@ function assertSuccessfulOutput(result, expected, label) {
   assert.equal(result.stdout, expected);
 }
 
+function moduleFiles(root) {
+  const files = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...moduleFiles(entryPath));
+    } else if (entry.isFile() && entry.name.endsWith(".mjs")) {
+      files.push(entryPath);
+    }
+  }
+  return files;
+}
+
 test("scripts refactor contract keeps one canonical doc-link graph CLI", () => {
   assert.equal(existsSync(path.join(ROOT, "scripts", "doc-link-graph.mjs")), false);
   assert.equal(existsSync(path.join(ROOT, "scripts", "doc-link-graph", "cli.mjs")), true);
+});
+
+test("scripts compose with session-analysis through its public surface", () => {
+  const scriptsRoot = path.join(ROOT, "scripts");
+  const capabilityRoot = path.join(scriptsRoot, "session-analysis");
+  const publicSurface = path.join(capabilityRoot, "index.mjs");
+  const rootShim = path.join(scriptsRoot, "session-analysis.mjs");
+  const importSpecifier = /(?:\bfrom\s*|\bimport\s*(?:\(\s*)?)["']([^"']+)["']/gu;
+  const violations = [];
+
+  for (const filePath of moduleFiles(scriptsRoot)) {
+    if (filePath === rootShim || filePath.startsWith(`${capabilityRoot}${path.sep}`)) continue;
+    const source = readFileSync(filePath, "utf8");
+    for (const match of source.matchAll(importSpecifier)) {
+      const specifier = match[1];
+      if (!specifier.startsWith(".")) continue;
+      const resolved = path.resolve(path.dirname(filePath), specifier);
+      if (resolved.startsWith(`${capabilityRoot}${path.sep}`) && resolved !== publicSurface) {
+        violations.push(`${path.relative(ROOT, filePath)} -> ${specifier}`);
+      }
+    }
+  }
+
+  assert.deepEqual(violations, []);
 });
 
 test("scripts refactor contract freezes human-readable CLI help", () => {

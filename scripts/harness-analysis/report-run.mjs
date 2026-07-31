@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseArgs } from "../session-analysis/cli.mjs";
+import { parseArgs } from "../session-analysis/index.mjs";
 import { formatHarnessEvidence } from "./evidence-brief.mjs";
 import { validateHarnessReportSource } from "./report-source/index.mjs";
 import { projectTaskLoopReportFacts, taskLoopCanvasFromSummaryFacts } from "./task-loop-report.mjs";

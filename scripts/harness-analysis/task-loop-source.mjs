@@ -18,23 +18,23 @@ import {
 } from "../coding-agent-practices/inventory.mjs";
 import { reviewAssetIntegrity } from "../coding-agent-practices/asset-integrity.mjs";
 import { projectCheckupReportEvidence } from "../coding-agent-practices/checkup/contract.mjs";
-import { buildTaskEpisodes, stableFingerprint } from "../session-analysis/episode-contract.mjs";
-import { buildObservationManifest } from "../session-analysis/observation-manifest.mjs";
-import { sanitizePrivateReviewText } from "../session-analysis/privacy-safe-text.mjs";
-import { sessionAnalysisRef } from "../session-analysis/session-ref.mjs";
-import {
-  bindSessionSelection,
-  leadAdmissionBinding,
-  sessionPopulationDiscovery,
-} from "../session-analysis/session-population.mjs";
-import { selectSessions } from "../session-analysis/selection.mjs";
 import {
   assertSessionSelectionBinding,
+  bindSessionSelection,
+  buildObservationManifest,
+  buildTaskEpisodes,
+  cloneSessionWithWorkspaceCwds,
+  leadAdmissionBinding,
   readSessionSelectionPlan,
   readSessionSelectionProfile,
   readSessionSelectionSnapshot,
   restoreSessionSelectionEntries,
-} from "../session-analysis/selection-plan.mjs";
+  sanitizePrivateReviewText,
+  selectSessions,
+  sessionAnalysisRef,
+  sessionPopulationDiscovery,
+  stableFingerprint,
+} from "../session-analysis/index.mjs";
 import {
   createHarnessReportSource,
   LEARNING_CAPTURE_FINDING_POLICY,
@@ -1102,7 +1102,9 @@ export async function createTaskLoopSourceFromSessions(options = {}) {
     ? sessionPopulationDiscovery(population)
     : await analyzer.analyze({ ...analyzerOptions, command: "sources" });
   const inventorySource = population?.sessions ?? discovery.sessions;
-  const sessionInventory = Object.freeze(inventorySource.map((session) => Object.freeze(structuredClone(session))));
+  const sessionInventory = Object.freeze(
+    inventorySource.map((session) => Object.freeze(cloneSessionWithWorkspaceCwds(session))),
+  );
   if (selectionProfile) {
     assertSessionSelectionBinding(selectionProfile, selectionPlan, { eligibleCount: sessionInventory.length });
   }

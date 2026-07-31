@@ -5,8 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { collectAgentCustomizeInventory } from "../agent-customize/index.mjs";
 import { runAgentLint } from "../agent-lint/index.mjs";
-import { parseArgs, parseBooleanFlag } from "../session-analysis/cli.mjs";
-import { normalizeWorkspace } from "../session-analysis/paths.mjs";
+import { normalizeWorkspace, parseArgs, parseBooleanFlag } from "../session-analysis/index.mjs";
 import { reviewAssetIntegrity } from "./asset-integrity.mjs";
 import { collectProviderInventory, collectQoderInventory } from "./inventory.mjs";
 

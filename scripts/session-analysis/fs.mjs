@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 
@@ -9,6 +9,10 @@ export async function pathStat(filePath) {
   } catch {
     return null;
   }
+}
+
+export async function readJson(filePath) {
+  return JSON.parse(await readFile(filePath, "utf8"));
 }
 
 export async function pathExists(filePath) {

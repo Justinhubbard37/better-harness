@@ -3,7 +3,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseArgs } from "../../session-analysis/cli.mjs";
+import { parseArgs } from "../../session-analysis/index.mjs";
 import { collectEvidenceBundle } from "./index.mjs";
 
 export const EVIDENCE_BUNDLE_HELP = `Usage: better-harness harness evidence-bundle --workspace <target> [options]

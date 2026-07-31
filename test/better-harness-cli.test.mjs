@@ -290,6 +290,86 @@ test("better-harness CLI describes one command as JSON without dispatching it", 
   assert.equal(payload.data.command.subcommands.some((subcommand) => subcommand.name === "diff-impact"), true);
 });
 
+test("better-harness CLI describes an exact group leaf as JSON without dispatching it", () => {
+  const result = runBetterHarness(["command", "describe", "harness", "render", "--json"]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, "");
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.format_version, "1.0");
+  assert.deepEqual(payload.data.command.path, ["harness", "render"]);
+  assert.equal(payload.data.command.name, "render");
+  assert.equal(payload.data.command.audience, "advanced");
+  assert.equal(payload.data.command.script, "scripts/harness-analysis/render-report.mjs");
+  assert.equal(payload.data.command.subcommands, undefined);
+});
+
+test("better-harness CLI describes a registered direct-command leaf", () => {
+  const result = runBetterHarness(["command", "describe", "session-analysis", "facts", "--json"]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, "");
+  const command = JSON.parse(result.stdout).data.command;
+  assert.deepEqual(command.path, ["session-analysis", "facts"]);
+  assert.equal(command.name, "facts");
+  assert.equal(command.audience, "advanced");
+  assert.equal(command.script, "scripts/session-analysis.mjs");
+});
+
+test("better-harness CLI renders the canonical leaf path in human descriptions", () => {
+  const result = runBetterHarness(["command", "describe", "harness", "render"]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, "");
+  assert.match(result.stdout, /^Command: harness render$/mu);
+  assert.match(result.stdout, /^Audience: advanced$/mu);
+  assert.match(result.stdout, /^Summary: Render reviewed findings data into report artifacts\.$/mu);
+  assert.match(result.stdout, /^Script: scripts\/harness-analysis\/render-report\.mjs$/mu);
+  assert.doesNotMatch(result.stdout, /^Subcommands:$/mu);
+
+  const sparse = runBetterHarness(["command", "describe", "core-change-watch", "project-profile"]);
+  assert.equal(sparse.status, 0, sparse.stderr);
+  assert.match(sparse.stdout, /^Command: core-change-watch project-profile$/mu);
+  assert.match(sparse.stdout, /^Script: scripts\/core-change-watch\/project-profile\.mjs$/mu);
+  assert.doesNotMatch(sparse.stdout, /undefined/u);
+});
+
+test("better-harness CLI rejects unknown describe leaves in human and JSON modes", () => {
+  const human = runBetterHarness(["command", "describe", "harness", "missing"]);
+  assert.equal(human.status, 1);
+  assert.equal(human.stdout, "");
+  assert.match(human.stderr, /^Unknown subcommand for harness: missing$/mu);
+
+  const machine = runBetterHarness(["command", "describe", "harness", "missing", "--json"]);
+  assert.equal(machine.status, 1);
+  assert.equal(machine.stderr, "");
+  const payload = JSON.parse(machine.stdout);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, "UNKNOWN_SUBCOMMAND");
+  assert.equal(payload.error.message, "Unknown subcommand for harness: missing");
+});
+
+test("better-harness CLI rejects extra describe path segments in human and JSON modes", () => {
+  const human = runBetterHarness(["command", "describe", "harness", "render", "extra"]);
+  assert.equal(human.status, 1);
+  assert.equal(human.stdout, "");
+  assert.match(human.stderr, /^Invalid command path: harness render extra$/mu);
+
+  const machine = runBetterHarness(["command", "describe", "harness", "render", "extra", "--json"]);
+  assert.equal(machine.status, 1);
+  assert.equal(machine.stderr, "");
+  const payload = JSON.parse(machine.stdout);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.error.code, "INVALID_COMMAND_PATH");
+  assert.equal(payload.error.message, "Invalid command path: harness render extra");
+
+  const unknownParent = runBetterHarness(["command", "describe", "missing", "leaf", "extra", "--json"]);
+  assert.equal(unknownParent.status, 1);
+  assert.equal(unknownParent.stderr, "");
+  assert.equal(JSON.parse(unknownParent.stdout).error.code, "INVALID_COMMAND_PATH");
+});
+
 test("better-harness CLI describes command aliases as their canonical command", () => {
   const result = runBetterHarness(["command", "describe", "customize", "--json"]);
 
@@ -509,6 +589,43 @@ test("better-harness CLI preserves delegated cloc JSON output and spaced paths",
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("cloc CLI runs from a spaced symlink installation path", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness cloc install-"));
+  const linkedClocDir = path.join(root, "linked cloc");
+  const workspace = path.join(root, "workspace with spaces");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFixtureFile(workspace, "src/app.mjs", "export const value = 1;\n");
+  try {
+    await symlink(
+      path.join(process.cwd(), "scripts", "cloc"),
+      linkedClocDir,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+  } catch (error) {
+    t.skip(`symlink unavailable: ${error.message}`);
+    return;
+  }
+
+  const result = spawnSync(process.execPath, [
+    path.join(linkedClocDir, "cli.mjs"),
+    "--cwd",
+    workspace,
+    "--json",
+    "--workers",
+    "1",
+    "--no-git",
+  ], {
+    cwd: workspace,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.notEqual(result.stdout.trim(), "", "cloc CLI must not silently skip direct execution");
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.kind, "cloc");
+  assert.equal(report.totals.files, 1);
 });
 
 test("better-harness CLI preserves deterministic delegated stdout byte-for-byte", () => {

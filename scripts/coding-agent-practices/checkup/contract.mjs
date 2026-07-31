@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
-import { expandHome } from "../../session-analysis/paths.mjs";
+import { expandHome } from "../../session-analysis/index.mjs";
 
 export const CHECKUP_KIND = "harness-customization-checkup";
 export const CHECKUP_SCHEMA_VERSION = 1;

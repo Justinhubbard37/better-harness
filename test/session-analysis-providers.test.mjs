@@ -4,8 +4,17 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { createAnalyzer } from "../scripts/session-analysis.mjs";
-import { createAnalyzer as createCapabilityAnalyzer } from "../scripts/session-analysis/index.mjs";
+import {
+  createAnalyzer,
+  main as rootMain,
+  SessionAnalyzer,
+} from "../scripts/session-analysis.mjs";
+import {
+  createAnalyzer as createCapabilityAnalyzer,
+  main as capabilityMain,
+  SessionAnalyzer as CapabilitySessionAnalyzer,
+  SESSION_ANALYSIS_HELP,
+} from "../scripts/session-analysis/index.mjs";
 import {
   ClaudeSessionAnalyzer,
   workspaceToClaudeSlugVariants,
@@ -42,6 +51,9 @@ async function writeJsonl(filePath, rows) {
 }
 
 test("root dispatcher creates Claude and Cursor provider analyzers", async () => {
+  assert.strictEqual(createAnalyzer, createCapabilityAnalyzer);
+  assert.strictEqual(rootMain, capabilityMain);
+  assert.strictEqual(SessionAnalyzer, CapabilitySessionAnalyzer);
   assert.ok(await createAnalyzer("claude") instanceof ClaudeSessionAnalyzer);
   assert.ok(await createAnalyzer("cursor") instanceof CursorSessionAnalyzer);
   assert.ok(await createAnalyzer("qwen") instanceof QwenSessionAnalyzer);
@@ -54,6 +66,20 @@ test("root dispatcher creates Claude and Cursor provider analyzers", async () =>
   assert.ok(await createCapabilityAnalyzer("copilot") instanceof CopilotSessionAnalyzer);
   assert.ok(await createCapabilityAnalyzer("pi") instanceof PiSessionAnalyzer);
   assert.ok(await createCapabilityAnalyzer("workbuddy") instanceof WorkbuddySessionAnalyzer);
+});
+
+test("public session-analysis main preserves the bare help alias", async () => {
+  let output = "";
+  const result = await capabilityMain(["help"], {
+    stdout: {
+      write(value) {
+        output += value;
+      },
+    },
+  });
+
+  assert.equal(result, 0);
+  assert.equal(output, SESSION_ANALYSIS_HELP);
 });
 
 test("Claude, Cursor, and Qwen workspace slugs cover Unix and Windows layouts", () => {

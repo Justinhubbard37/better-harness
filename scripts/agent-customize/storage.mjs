@@ -4,8 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 
-import { pathExists } from "../session-analysis/fs.mjs";
-import { expandHome } from "../session-analysis/paths.mjs";
+import { expandHome, pathExists } from "../session-analysis/index.mjs";
 
 const execFileAsync = promisify(execFile);
 const STORAGE_PREFIX = "cursor.plugins.installedIds";
