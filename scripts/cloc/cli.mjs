@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 
+import { realpathSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { analyzeCloc } from "./analyze.mjs";
 
 function parseArgs(argv = process.argv.slice(2)) {
@@ -64,7 +68,17 @@ export async function main(argv = process.argv.slice(2)) {
   printTextReport(report);
 }
 
-if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replaceAll("\\", "/"))) {
+function isDirectEntrypoint(entrypoint) {
+  if (!entrypoint) return false;
+  const currentFile = fileURLToPath(import.meta.url);
+  try {
+    return realpathSync(entrypoint) === realpathSync(currentFile);
+  } catch {
+    return path.resolve(entrypoint) === path.resolve(currentFile);
+  }
+}
+
+if (isDirectEntrypoint(process.argv[1])) {
   main().catch((error) => {
     process.stderr.write(`cloc failed: ${error.stack ?? error.message}\n`);
     process.exitCode = 1;

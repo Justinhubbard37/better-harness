@@ -1,10 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import {
   chmod,
   copyFile,
+  lstat,
   mkdir,
   readFile,
+  realpath,
   rename,
   rm,
   stat,
@@ -73,7 +76,68 @@ export function resolveSourceRef(sourceRef, options = {}) {
   if (!ALLOWED_SOURCE_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
     throw new Error("source patch target must be a supported instruction or hook source file");
   }
-  return { filePath, workspace, key: sourceKey(sourceRef) };
+  return { filePath, root, workspace, key: sourceKey(sourceRef) };
+}
+
+async function assertSafeSourceTarget({ filePath, root }) {
+  const canonicalRoot = await realpath(root);
+  const relativeTarget = path.relative(path.resolve(root), filePath);
+  let current = path.resolve(root);
+  for (const part of relativeTarget.split(path.sep)) {
+    current = path.join(current, part);
+    const metadata = await lstat(current);
+    if (metadata.isSymbolicLink()) {
+      throw new Error("source patch target path must not contain a symbolic link");
+    }
+  }
+  const canonicalTarget = await realpath(filePath);
+  const canonicalRelative = path.relative(canonicalRoot, canonicalTarget);
+  if (canonicalRelative === "" || canonicalRelative === ".." || canonicalRelative.startsWith(`..${path.sep}`) || path.isAbsolute(canonicalRelative)) {
+    throw new Error("source patch target escapes its declared base");
+  }
+}
+
+function isWithinCanonicalRoot(root, target, { allowRoot = false } = {}) {
+  const relative = path.relative(root, target);
+  if (relative === "") return allowRoot;
+  return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+async function ensureSafeBackupDirectory({ directoryPath, root }) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedDirectory = path.resolve(directoryPath);
+  const relativeDirectory = path.relative(resolvedRoot, resolvedDirectory);
+  if (!isWithinCanonicalRoot(resolvedRoot, resolvedDirectory)) {
+    throw new Error("backup path escapes the workspace");
+  }
+
+  const canonicalRoot = await realpath(resolvedRoot);
+  let current = resolvedRoot;
+  for (const part of relativeDirectory.split(path.sep)) {
+    current = path.join(current, part);
+    let metadata;
+    try {
+      metadata = await lstat(current);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      try {
+        await mkdir(current);
+      } catch (mkdirError) {
+        if (mkdirError.code !== "EEXIST") throw mkdirError;
+      }
+      metadata = await lstat(current);
+    }
+    if (metadata.isSymbolicLink()) {
+      throw new Error("backup path must not contain a symbolic link");
+    }
+    if (!metadata.isDirectory()) {
+      throw new Error("backup path components must be directories");
+    }
+    const canonicalCurrent = await realpath(current);
+    if (!isWithinCanonicalRoot(canonicalRoot, canonicalCurrent, { allowRoot: true })) {
+      throw new Error("backup path escapes the workspace");
+    }
+  }
 }
 
 function replaceLines(content, patch) {
@@ -160,6 +224,7 @@ async function atomicReplace(filePath, content) {
 export async function applySourcePatch(action, options = {}) {
   const sourceRef = action.mutation?.sourceRef;
   const resolved = resolveSourceRef(sourceRef, options);
+  await assertSafeSourceTarget(resolved);
   const content = await readFile(resolved.filePath, "utf8");
   const expectedFingerprint = action.sourceFingerprints?.[resolved.key];
   if (!expectedFingerprint || sha256(content) !== expectedFingerprint) {
@@ -172,8 +237,15 @@ export async function applySourcePatch(action, options = {}) {
   const backupRoot = path.join(resolved.workspace, ".better-harness-checkup-backups");
   const relativeBackup = backupName(sourceRef, options.now);
   const backupPath = path.join(backupRoot, relativeBackup);
-  await mkdir(path.dirname(backupPath), { recursive: true });
-  await copyFile(resolved.filePath, backupPath);
+  await ensureSafeBackupDirectory({ directoryPath: path.dirname(backupPath), root: resolved.workspace });
+  await assertSafeSourceTarget(resolved);
+  await ensureSafeBackupDirectory({ directoryPath: path.dirname(backupPath), root: resolved.workspace });
+  await copyFile(resolved.filePath, backupPath, fsConstants.COPYFILE_EXCL);
+  const canonicalWorkspace = await realpath(resolved.workspace);
+  const canonicalBackup = await realpath(backupPath);
+  if (!isWithinCanonicalRoot(canonicalWorkspace, canonicalBackup)) {
+    throw new Error("backup path escapes the workspace");
+  }
   await atomicReplace(resolved.filePath, replacement);
   const verifiedContent = await readFile(resolved.filePath, "utf8");
   let parser = "readable";
