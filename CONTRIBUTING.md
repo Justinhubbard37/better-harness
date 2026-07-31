@@ -17,6 +17,11 @@ it and agree that it may be distributed under the repository's [MIT License](LIC
 - Read [Architecture Principles](docs/ARCHITECTURE.md) and the root
   [agent instructions](AGENTS.md) before changing ownership boundaries or
   runtime behavior.
+- Read the
+  [Developer Experience System ADR](docs/adrs/developer-experience-system.md)
+  before changing public entrypoints, Quickstarts, CLI/help/error contracts,
+  Preview prerequisites, host support claims, diagnostics, privacy or support
+  behavior, release claims, or DX measures.
 - Follow [Contributing a New Coding Agent Host](docs/adapters/contributing-new-coding-agent.md)
   before adding or widening host support.
 
