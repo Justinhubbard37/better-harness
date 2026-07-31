@@ -7,6 +7,9 @@ observable behavior and compatibility, not every internal refactor.
 
 ### Fixed
 
+- Make `command describe` resolve exact registered leaf paths instead of
+  returning the parent command metadata.
+
 - The Portable HTML report route in `templates/reporting/routing.md` now
   lists WorkBuddy, so agents on WorkBuddy are routed to the self-contained
   HTML + Markdown output the 0.4.0 host adapter already ships. A derived

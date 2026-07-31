@@ -6,6 +6,7 @@ import {
   audienceIncludes,
   commandInventory,
   commandMetadata,
+  commandPathMetadata,
   directDispatchFor,
   groupCommand,
   listVisibleCommandNames,
@@ -157,7 +158,7 @@ function usage({ color = shouldUseColor(), audience = "workflow" } = {}) {
     "",
     style.bold("Discovery:"),
     commandRow("commands", "List available commands; add --json for machine-readable inventory", style),
-    commandRow("command describe", "Describe one command; add --json for the command contract", style),
+    commandRow("command describe", "Describe one command path; add --json for the command contract", style),
     commandRow("schema", "Emit the OpenCLI schema as JSON", style),
     commandRow("--help --audience advanced", "Include workflow and advanced commands", style),
     commandRow("--help --audience maintainer", "Include every registered command", style),
@@ -215,24 +216,28 @@ function groupUsage(name, group, { color = shouldUseColor(), audience = "workflo
 
 function commandDescription(command) {
   const lines = [
-    `Command: ${command.name}`,
+    `Command: ${(command.path ?? [command.name]).join(" ")}`,
     `Audience: ${command.audience}`,
-    `Summary: ${command.summary}`,
   ];
+  if (command.summary) {
+    lines.push(`Summary: ${command.summary}`);
+  }
   if (command.description && command.description !== command.summary) {
     lines.push(`Description: ${command.description}`);
   }
-  if (command.aliases.length > 0) {
+  if (command.aliases?.length > 0) {
     lines.push(`Aliases: ${command.aliases.map((alias) => alias.name).join(", ")}`);
   }
   if (command.kind === "direct") {
     lines.push(`Script: ${command.script}`);
-  } else {
+  } else if (command.kind === "group") {
     lines.push("Subcommands:");
     for (const subcommand of command.subcommands) {
       const summary = subcommand.summary ? ` - ${subcommand.summary}` : "";
       lines.push(`  ${subcommand.name.padEnd(24)} [${subcommand.audience}] ${subcommand.script}${summary}`);
     }
+  } else if (command.script) {
+    lines.push(`Script: ${command.script}`);
   }
   return `${lines.join("\n")}\n`;
 }
@@ -356,17 +361,35 @@ export function resolveDispatch(argv = []) {
       return rootError({
         code: "UNKNOWN_COMMAND_SUBCOMMAND",
         message: `Unknown subcommand for command: ${subcommand ?? ""}`.trim(),
-        hint: "Use `better-harness command describe <command> --json`.",
+        hint: "Use `better-harness command describe <command> [subcommand] --json`.",
         machine,
       });
     }
-    const [name] = rest;
-    const metadata = commandMetadata(name);
-    if (!metadata) {
+    const commandPath = rest.filter((value) => value !== "--json");
+    const [name, leafName] = commandPath;
+    if (commandPath.length > 2) {
+      return rootError({
+        code: "INVALID_COMMAND_PATH",
+        message: `Invalid command path: ${commandPath.join(" ")}`,
+        hint: "Use `better-harness command describe <command> [subcommand] --json`.",
+        machine,
+      });
+    }
+    const parentMetadata = commandMetadata(name);
+    if (!parentMetadata) {
       return rootError({
         code: "UNKNOWN_COMMAND",
         message: `Unknown command: ${name ?? ""}`.trim(),
         hint: "Use `better-harness commands --json` to list command names.",
+        machine,
+      });
+    }
+    const metadata = commandPathMetadata(name, leafName);
+    if (!metadata) {
+      return rootError({
+        code: "UNKNOWN_SUBCOMMAND",
+        message: `Unknown subcommand for ${parentMetadata.name}: ${leafName}`,
+        hint: `Use \`better-harness ${parentMetadata.name} --help\` to list subcommands.`,
         machine,
       });
     }
