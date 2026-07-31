@@ -22,6 +22,11 @@ import { buildTaskEpisodes, stableFingerprint } from "../session-analysis/episod
 import { buildObservationManifest } from "../session-analysis/observation-manifest.mjs";
 import { sanitizePrivateReviewText } from "../session-analysis/privacy-safe-text.mjs";
 import { sessionAnalysisRef } from "../session-analysis/session-ref.mjs";
+import {
+  bindSessionSelection,
+  leadAdmissionBinding,
+  sessionPopulationDiscovery,
+} from "../session-analysis/session-population.mjs";
 import { selectSessions } from "../session-analysis/selection.mjs";
 import {
   assertSessionSelectionBinding,
@@ -1092,8 +1097,12 @@ export async function createTaskLoopSourceFromSessions(options = {}) {
     topology: options.topology,
     analysisScope: options.analysisScope,
   };
-  const discovery = await analyzer.analyze({ ...analyzerOptions, command: "sources" });
-  const sessionInventory = Object.freeze(discovery.sessions.map((session) => Object.freeze(structuredClone(session))));
+  const population = options.sessionPopulation ?? null;
+  const discovery = population
+    ? sessionPopulationDiscovery(population)
+    : await analyzer.analyze({ ...analyzerOptions, command: "sources" });
+  const inventorySource = population?.sessions ?? discovery.sessions;
+  const sessionInventory = Object.freeze(inventorySource.map((session) => Object.freeze(structuredClone(session))));
   if (selectionProfile) {
     assertSessionSelectionBinding(selectionProfile, selectionPlan, { eligibleCount: sessionInventory.length });
   }
@@ -1234,7 +1243,24 @@ export async function createTaskLoopSourceFromSessions(options = {}) {
     memoryInventory: practiceInventory?.memories ?? { included: false, categories: [] },
   });
   assertStandardUsageComplete(source, selected, includeUsage);
-  return { source, selection: selected };
+  if (!population) return { source, selection: selected };
+  const selectionBinding = bindSessionSelection(population, selected.sessions, {
+    strategy: selected.strategy,
+    projectionPolicy: "lead-report-signal-v1",
+  });
+  const admittedEpisodes = Number(source.sessionEvents?.candidateEpisodeCount ?? 0);
+  const zeroSignalDiscardedEpisodes = Number(source.sessionEvents?.discardedEpisodeCount ?? 0);
+  const sessionBinding = {
+    population: population.binding,
+    selection: selectionBinding,
+    admission: leadAdmissionBinding({
+      projectedEpisodes: admittedEpisodes + zeroSignalDiscardedEpisodes,
+      admittedEpisodes,
+      zeroSignalDiscardedEpisodes,
+      retainedTaskEpisodes: source.taskEpisodes.length,
+    }, selectionBinding),
+  };
+  return { source, selection: selected, sessionBinding };
 }
 
 async function main(argv = process.argv.slice(2)) {

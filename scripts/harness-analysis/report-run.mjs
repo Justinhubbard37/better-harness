@@ -152,9 +152,9 @@ export async function analyzeHarnessEvidence(options = {}) {
       code: "CANVAS_REPLACE_REQUIRES_OUTPUT",
     });
   }
-  const source = options.sourceInput
-    ? clone(options.sourceInput)
-    : (await createTaskLoopSourceFromSessions({
+  const sourceResult = options.sourceInput
+    ? { source: clone(options.sourceInput), sessionBinding: options.sessionBinding ?? null }
+    : await createTaskLoopSourceFromSessions({
         workspace,
         platform,
         language,
@@ -170,10 +170,12 @@ export async function analyzeHarnessEvidence(options = {}) {
         qwenHome: options["qwen-home"],
         copilotHome: options["copilot-home"],
         piHome: options["pi-home"],
+        sessionPopulation: options.sessionPopulation,
         workbuddyHome: options["workbuddy-home"],
         topology: options.topology,
         analysisScope: options.analysisScope,
-      })).source;
+      });
+  const source = sourceResult.source;
   const sourceErrors = validateHarnessReportSource(source);
   if (sourceErrors.length > 0) {
     throw Object.assign(new Error(sourceErrors.join("; ")), {
@@ -198,6 +200,7 @@ export async function analyzeHarnessEvidence(options = {}) {
     schemaVersion: HARNESS_ANALYSIS_EVIDENCE_SCHEMA_VERSION,
     evidence,
     summaryFacts,
+    ...(sourceResult.sessionBinding ? { sessionBinding: sourceResult.sessionBinding } : {}),
     ...(canvasPath ? { canvasPath, canvasReplaced } : {}),
   };
 }

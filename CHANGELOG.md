@@ -42,6 +42,26 @@ observable behavior and compatibility, not every internal refactor.
   (`qoder, codex, claude, cursor, qwen, copilot, pi`) when it rejects an
   unsupported `--platform`, matching the session-analysis and asset-baseline
   gates. The existing error prefix and exit behavior are unchanged.
+- Core Change Watch now requires framework-specific evidence before labeling
+  Rails or FastAPI, exposes bounded root Just recipes as statically discovered
+  unverified argv entrypoints, and keeps historical-only files out of current
+  recommended reads and action targets.
+- Evidence bundles now discover and privacy-filter one frozen Session population
+  before either Session facts or lead analysis hydrates it. Versioned redacted
+  bindings fail closed on population, selection, or admission contradictions
+  while preserving bounded lead selection and explicit zero-signal filtering.
+- Self-contained HTML reports now expose every fluency-dimension score track as
+  a labeled progressbar with a zero-to-100 range and the displayed rounded
+  score. Report validation rejects incomplete, duplicated, invalid, or
+  score-mismatched dimension progressbar contracts.
+- Chinese self-contained HTML reports now use standards-based language
+  segmentation to keep bounded word-like phrases together while preserving
+  normal wrapping around Latin text, paths, URLs, and longer content. Runtimes
+  without segmentation support fall back to readable escaped text, and English
+  reports remain unchanged.
+- HTML Evidence cards now display machine-owned Task Episode coverage from a
+  summary-facts companion, with legacy at-a-glance coverage retained only as a
+  compatibility fallback.
 
 ## 0.3.0 - 2026-07-27
 
