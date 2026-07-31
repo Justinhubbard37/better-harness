@@ -591,6 +591,43 @@ test("better-harness CLI preserves delegated cloc JSON output and spaced paths",
   }
 });
 
+test("cloc CLI runs from a spaced symlink installation path", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness cloc install-"));
+  const linkedClocDir = path.join(root, "linked cloc");
+  const workspace = path.join(root, "workspace with spaces");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFixtureFile(workspace, "src/app.mjs", "export const value = 1;\n");
+  try {
+    await symlink(
+      path.join(process.cwd(), "scripts", "cloc"),
+      linkedClocDir,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+  } catch (error) {
+    t.skip(`symlink unavailable: ${error.message}`);
+    return;
+  }
+
+  const result = spawnSync(process.execPath, [
+    path.join(linkedClocDir, "cli.mjs"),
+    "--cwd",
+    workspace,
+    "--json",
+    "--workers",
+    "1",
+    "--no-git",
+  ], {
+    cwd: workspace,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.notEqual(result.stdout.trim(), "", "cloc CLI must not silently skip direct execution");
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.kind, "cloc");
+  assert.equal(report.totals.files, 1);
+});
+
 test("better-harness CLI preserves deterministic delegated stdout byte-for-byte", () => {
   const input = `${JSON.stringify({
     verdict: "consistent",
