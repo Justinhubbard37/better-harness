@@ -250,6 +250,10 @@ function isVersion(value) {
   return value === "--version" || value === "-V" || value === "version";
 }
 
+function hasHelpFlag(argv) {
+  return argv.some(isHelp);
+}
+
 function hasJsonFlag(argv) {
   return argv.includes("--json");
 }
@@ -337,6 +341,31 @@ export function resolveDispatch(argv = []) {
 
   if (isVersion(command)) {
     return { kind: "help", text: `${programName} ${packageVersion()}\n`, exitCode: 0 };
+  }
+
+  if (hasHelpFlag(argv)) {
+    const direct = directDispatchFor(command, subcommand);
+    if (direct) {
+      const metadata = commandMetadata(command);
+      const registeredSubcommand = metadata?.subcommands?.some((entry) => entry.name === subcommand);
+      return {
+        kind: "dispatch",
+        script: scriptPath(direct.script),
+        args: !direct.consumesSubcommand && registeredSubcommand ? [subcommand, "--help"] : ["--help"],
+      };
+    }
+
+    const group = groupCommand(command);
+    if (group && !isHelp(subcommand)) {
+      const script = group.subcommands.find((entry) => entry.name === subcommand)?.script;
+      if (script) {
+        return { kind: "dispatch", script: scriptPath(script), args: ["--help"] };
+      }
+    }
+
+    if (!group) {
+      return { kind: "help", text: usage(), exitCode: 0 };
+    }
   }
 
   if (command === "commands") {

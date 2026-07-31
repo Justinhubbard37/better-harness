@@ -4,6 +4,8 @@ import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promis
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { resolveDispatch } from "../scripts/better-harness-cli/cli.mjs";
+import { commandInventory } from "../scripts/better-harness-cli/registry.mjs";
 
 const cliPath = path.join(process.cwd(), "scripts", "better-harness.mjs");
 
@@ -18,6 +20,21 @@ function runBetterHarness(args, options = {}) {
 function listedSubcommands(output) {
   const section = output.match(/Subcommands:\n([\s\S]*?)(?:\n\nExamples:|\n\nDiscovery:|\n\nOptions:)/u)?.[1] ?? "";
   return [...section.matchAll(/^  ([a-z][a-z0-9-]+)\s{2,}/gmu)].map((match) => match[1]);
+}
+
+function registeredTerminalPaths() {
+  const paths = [];
+  for (const command of commandInventory().commands) {
+    if (command.kind === "group") {
+      paths.push(...command.subcommands.map((subcommand) => [command.name, subcommand.name]));
+      continue;
+    }
+
+    paths.push([command.name]);
+    paths.push(...command.aliases.map((alias) => [alias.name]));
+    paths.push(...command.subcommands.map((subcommand) => [command.name, subcommand.name]));
+  }
+  return paths;
 }
 
 function git(cwd, args) {
@@ -378,6 +395,24 @@ test("better-harness CLI describes command aliases as their canonical command", 
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.data.command.name, "agent-customize");
   assert.deepEqual(payload.data.command.aliases, [{ name: "customize", hidden: true }]);
+});
+
+test("better-harness CLI short-circuits help for every registered terminal path", () => {
+  for (const helpFlag of ["--help", "-h"]) {
+    for (const pathSegments of registeredTerminalPaths()) {
+      const args = [...pathSegments, "invalid-before-help", helpFlag];
+      const dispatch = resolveDispatch(args);
+
+      assert.equal(dispatch.kind, "dispatch", args.join(" "));
+      assert.equal(dispatch.args.includes("invalid-before-help"), false, args.join(" "));
+      assert.equal(dispatch.args.at(-1), "--help", args.join(" "));
+
+      const result = runBetterHarness(args);
+      assert.equal(result.status, 0, `${args.join(" ")}\n${result.stderr}`);
+      assert.equal(result.stderr, "", args.join(" "));
+      assert.notEqual(result.stdout, "", args.join(" "));
+    }
+  }
 });
 
 test("better-harness CLI group help projects workflow commands", () => {
