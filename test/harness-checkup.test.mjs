@@ -573,7 +573,7 @@ test("source patch apply verifies fingerprints, backs up, writes atomically, and
 });
 
 test("source patch resolution rejects traversal, generated runtime files, and plugin caches", () => {
-  const options = { workspace: "/tmp/workspace", qoderHome: "/tmp/qoder-home" };
+  const options = { workspace: "/tmp/workspace", provider: "qoder", qoderHome: "/tmp/qoder-home" };
   assert.throws(
     () => resolveSourceRef({ base: "workspace", relativePath: "../outside.json" }, options),
     /escapes/u,
@@ -586,6 +586,68 @@ test("source patch resolution rejects traversal, generated runtime files, and pl
     () => resolveSourceRef({ base: "provider-home", relativePath: "plugins/cache/tool/hooks.json" }, options),
     /generated, cached/u,
   );
+});
+
+test("non-qoder plans never emit qodercli and provider-home binds to the explicit host", () => {
+  const baseScan = buildFixtureScan();
+  for (const provider of ["codex", "cursor", "claude", "qwen", "copilot", "pi", "workbuddy"]) {
+    const scan = structuredClone(baseScan);
+    scan.provider = provider;
+    const plan = buildCheckupPlan(scan);
+    assert.equal(plan.provider, provider);
+    for (const action of plan.actions) {
+      assert.notEqual(action.mutation?.type, "qoder-cli");
+      assert.notEqual(action.mutation?.executable, "qodercli");
+      if (Array.isArray(action.mutation?.argv)) {
+        assert.equal(action.mutation.argv.includes("qodercli"), false);
+      }
+    }
+    assert.equal(
+      plan.actions.every((action) => action.mutation?.type === "manual-review"),
+      true,
+    );
+    assert.equal(plan.confirmation.applyAvailable, false);
+  }
+
+  const codexPath = resolveSourceRef(
+    { base: "provider-home", relativePath: "hooks.json", provider: "codex" },
+    { workspace: "/tmp/ws", provider: "codex", codexHome: "/tmp/codex-home-only", qoderHome: "/tmp/qoder-home-only" },
+  );
+  assert.equal(codexPath.filePath, path.resolve("/tmp/codex-home-only/hooks.json"));
+  assert.equal(codexPath.filePath.startsWith(path.resolve("/tmp/qoder-home-only")), false);
+
+  assert.throws(
+    () => resolveSourceRef(
+      { base: "provider-home", relativePath: "hooks.json" },
+      { workspace: "/tmp/ws", codexHome: "/tmp/codex-home-only", qoderHome: "/tmp/qoder-home-only" },
+    ),
+    /explicit provider/u,
+  );
+});
+
+test("apply rejects qoder-cli mutations when plan.provider is not qoder", async () => {
+  const plan = buildCheckupPlan(buildFixtureScan());
+  plan.provider = "codex";
+  plan.actions[0].mutation = {
+    type: "qoder-cli",
+    executable: "qodercli",
+    argv: ["skills", "disable", "stale-flow", "--scope", "workspace"],
+  };
+  plan.planDigest = computePlanDigest(plan);
+  let calls = 0;
+  const result = await applyCheckupPlan(plan, {
+    workspace: "/tmp/demo",
+    confirmationDigest: plan.planDigest,
+    selectedActionIds: [plan.actions[0].id],
+    currentPlan: plan,
+  }, {
+    executeQoder: async () => {
+      calls += 1;
+      return { ok: true, exitCode: 0 };
+    },
+  });
+  assert.equal(result.results[0].status, "failed");
+  assert.equal(calls, 0);
 });
 
 test("source patch rejects symbolic links in the target path", async (t) => {
