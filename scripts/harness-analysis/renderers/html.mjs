@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { isAgentWorkLoopReport } from "../fluency-dimensions.mjs";
 import { renderHtmlInteractionScript } from "./html-interactions.mjs";
 import { renderMarkdown } from "./markdown.mjs";
@@ -65,6 +67,48 @@ function serializeForScript(value) {
     .replace(/&/gu, "\\u0026")
     .replace(/\u2028/gu, "\\u2028")
     .replace(/\u2029/gu, "\\u2029");
+}
+
+function hasAiFixPrompt(finding) {
+  return typeof finding?.aiFixPrompt === "string" && finding.aiFixPrompt.trim().length > 0;
+}
+
+export function buildHtmlInteractionData(reportData) {
+  return {
+    findings: list(reportData?.findings)
+      .flatMap((finding, index) => (hasAiFixPrompt(finding)
+        ? [{ id: String(finding?.id ?? index), aiFixPrompt: finding.aiFixPrompt }]
+        : [])),
+  };
+}
+
+function finalReportRoute(workspacePath, findingsPath) {
+  if (!path.isAbsolute(workspacePath) || !path.isAbsolute(findingsPath)) return null;
+  const reportPath = path.join(path.dirname(findingsPath), "report.html");
+  const relative = path.relative(workspacePath, reportPath);
+  if (!relative || path.isAbsolute(relative)) return null;
+  const segments = relative.split(/[\\/]/u);
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) return null;
+  return segments.join("/");
+}
+
+export function buildHtmlReportActions(reportData, { findingsPath } = {}) {
+  const workspacePath = String(reportData?.target?.path ?? "");
+  const resolvedFindingsPath = String(findingsPath ?? "");
+  const reportRoute = finalReportRoute(workspacePath, resolvedFindingsPath);
+  if (!reportRoute) return { reportRoute: null, findings: [] };
+  return {
+    reportRoute,
+    findings: list(reportData?.findings)
+      .flatMap((finding, index) => (hasAiFixPrompt(finding)
+        ? [{
+            id: String(finding?.id ?? index),
+            expectedRevision: Number.isInteger(finding?.actualOutputRevision)
+              ? finding.actualOutputRevision
+              : 0,
+          }]
+        : [])),
+  };
 }
 
 function findingPromptParts(prompt, language) {
@@ -234,6 +278,7 @@ function renderFindings(reportData, language) {
   const findings = list(reportData.findings);
   if (findings.length === 0) return `<p class="empty">${renderVisibleText(copy(language, "No reviewed findings were retained.", "没有保留已复核 finding。"), language)}</p>`;
   return `<div class="finding-list">${findings.map((row, index) => {
+    const actionable = hasAiFixPrompt(row);
     const prompt = findingPromptParts(row.aiFixPrompt, language);
     const expected = textLines(row.expectedOutput ?? row.expectedOutcome);
     const refs = list(row.dimensionRefs).map((ref) => dimensions.get(ref) ?? ref);
@@ -254,7 +299,7 @@ function renderFindings(reportData, language) {
         <p class="finding-preview">${renderVisibleText(row.reason ?? "", language)}</p>
       </div>
       <div class="finding-actions">
-        <button type="button" class="action-button secondary" data-copy-finding="${escapeHtml(findingId)}" aria-label="${escapeHtml(`${copyLabel}: ${title}`)}">${renderVisibleText(copyLabel, language)}</button>
+        ${actionable ? `<button type="button" class="action-button secondary" data-copy-finding="${escapeHtml(findingId)}" aria-label="${escapeHtml(`${copyLabel}: ${title}`)}">${renderVisibleText(copyLabel, language)}</button>` : ""}
         <button type="button" class="action-button ghost" data-view-finding-dialog="${dialogId}" aria-label="${escapeHtml(`${detailsLabel}: ${title}`)}">${renderVisibleText(detailsLabel, language)}</button>
       </div>
       <dialog class="finding-dialog" id="${dialogId}" data-finding-dialog-id="${escapeHtml(findingId)}" aria-labelledby="${dialogTitleId}">
@@ -266,7 +311,7 @@ function renderFindings(reportData, language) {
         ${expected.length ? `<div class="dialog-section"><span class="label">${renderVisibleText(copy(language, "Expected Output", "预期结果"), language)}</span><ol>${expected.map((item) => `<li>${renderVisibleText(item, language)}</li>`).join("")}</ol></div>` : ""}
         ${prompt.checks.length ? `<div class="dialog-section"><span class="label">${renderVisibleText(copy(language, "Acceptance Checks", "验收检查"), language)}</span><ul>${prompt.checks.map((item) => `<li>${renderVisibleText(item, language)}</li>`).join("")}</ul></div>` : ""}
         <div class="dialog-actions">
-          <button type="button" class="action-button secondary" data-copy-finding="${escapeHtml(findingId)}" aria-label="${escapeHtml(`${copyLabel}: ${title}`)}">${renderVisibleText(copyLabel, language)}</button>
+          ${actionable ? `<button type="button" class="action-button secondary" data-copy-finding="${escapeHtml(findingId)}" aria-label="${escapeHtml(`${copyLabel}: ${title}`)}">${renderVisibleText(copyLabel, language)}</button>` : ""}
           <button type="button" class="action-button ghost" data-close-finding-dialog="${dialogId}">${renderVisibleText(closeLabel, language)}</button>
         </div>
       </dialog>
@@ -375,9 +420,11 @@ function renderHtmlBody(reportData) {
   ${section("methodology", copy(language, "05 · Boundary", "05 · 边界"), copy(language, "Evidence and methodology", "证据与方法"), renderEvidence(summary, language), copy(language, "Reader-safe evidence only.", "仅使用读者安全证据。"), language)}`;
 }
 
-export function renderHtml(reportData) {
+export function renderHtml(reportData, actionContext) {
   const language = reportData.language === "zh-CN" ? "zh-CN" : "en";
   const title = copy(reportData.language, "Harness Insights", "Harness 洞察");
+  const reportActions = buildHtmlReportActions(reportData, actionContext);
+  const interactionData = buildHtmlInteractionData(reportData);
   return `<!doctype html>
 <html lang="${language}" class="no-js">
 <head>
@@ -443,14 +490,15 @@ ${renderHtmlBody(reportData)}
     <button type="button" class="action-button ghost" data-close-finding-dialog="manual-copy-dialog">${renderVisibleText(copy(reportData.language, "Close", "关闭"), language)}</button>
   </div>
 </dialog>
-<script id="harness-report-data" type="application/json">${serializeForScript(reportData)}</script>
+<script id="harness-report-data" type="application/json">${serializeForScript(interactionData)}</script>
+<script id="harness-report-actions" type="application/json">${serializeForScript(reportActions)}</script>
 ${renderHtmlInteractionScript(reportData.language)}
 </body>
 </html>
 `;
 }
 
-export function evaluateHtmlReport(htmlText, reportData) {
+export function evaluateHtmlReport(htmlText, reportData, actionContext) {
   const text = String(htmlText ?? "");
   const errors = [];
   const warnings = [];
@@ -459,6 +507,7 @@ export function evaluateHtmlReport(htmlText, reportData) {
     ["viewport", /<meta\s+name="viewport"/iu],
     ["report landmark", /<main\s+id="harness-report"/iu],
     ["embedded report data", /<script\s+id="harness-report-data"\s+type="application\/json">/iu],
+    ["embedded report actions", /<script\s+id="harness-report-actions"\s+type="application\/json">/iu],
     ["interaction controller", /<script\s+id="harness-report-interactions">/iu],
     ["copy status", /id="copy-status"[^>]+role="status"[^>]+aria-live="polite"/iu],
     ["manual copy fallback", /<dialog\s+id="manual-copy-dialog"/iu],
@@ -485,6 +534,34 @@ export function evaluateHtmlReport(htmlText, reportData) {
   for (const [label, pattern] of forbidden) {
     if (pattern.test(text)) errors.push(`report.html contains forbidden ${label}`);
   }
+  const actionPayloadText = text.match(
+    /<script\s+id="harness-report-actions"\s+type="application\/json">([\s\S]*?)<\/script>/iu,
+  )?.[1];
+  if (actionPayloadText !== undefined) {
+    try {
+      const actualActions = JSON.parse(actionPayloadText);
+      const expectedActions = buildHtmlReportActions(reportData, actionContext);
+      if (JSON.stringify(actualActions) !== JSON.stringify(expectedActions)) {
+        errors.push("report.html finding action payload does not match the exact relative binding metadata");
+      }
+    } catch (error) {
+      errors.push(`report.html finding action payload is invalid: ${error.message}`);
+    }
+  }
+  const interactionPayloadText = text.match(
+    /<script\s+id="harness-report-data"\s+type="application\/json">([\s\S]*?)<\/script>/iu,
+  )?.[1];
+  if (interactionPayloadText !== undefined) {
+    try {
+      const actualData = JSON.parse(interactionPayloadText);
+      const expectedData = buildHtmlInteractionData(reportData);
+      if (JSON.stringify(actualData) !== JSON.stringify(expectedData)) {
+        errors.push("report.html interaction data does not match the minimal reviewed prompt projection");
+      }
+    } catch (error) {
+      errors.push(`report.html interaction data is invalid: ${error.message}`);
+    }
+  }
   const interactionController = text.match(
     /<script\s+id="harness-report-interactions">([\s\S]*?)<\/script>/iu,
   )?.[1] ?? "";
@@ -508,8 +585,9 @@ export function evaluateHtmlReport(htmlText, reportData) {
     errors.push(`report.html finding dialog count ${findingDialogs} does not match reviewed findings ${list(reportData?.findings).length}`);
   }
   const copyActions = (text.match(/data-copy-finding=/gu) ?? []).length;
-  if (copyActions !== list(reportData?.findings).length * 2) {
-    errors.push(`report.html copy action count ${copyActions} does not match expected ${list(reportData?.findings).length * 2}`);
+  const actionableFindings = list(reportData?.findings).filter(hasAiFixPrompt);
+  if (copyActions !== actionableFindings.length * 2) {
+    errors.push(`report.html copy action count ${copyActions} does not match expected ${actionableFindings.length * 2}`);
   }
   const detailActions = (text.match(/data-view-finding-dialog=/gu) ?? []).length;
   if (detailActions !== list(reportData?.findings).length) {
@@ -521,7 +599,7 @@ export function evaluateHtmlReport(htmlText, reportData) {
     const bindings = [
       ["card", `data-finding-id="${findingId}"`, 1],
       ["dialog", `data-finding-dialog-id="${findingId}"`, 1],
-      ["copy action", `data-copy-finding="${findingId}"`, 2],
+      ["copy action", `data-copy-finding="${findingId}"`, hasAiFixPrompt(finding) ? 2 : 0],
       ["detail action", `data-view-finding-dialog="${dialogId}"`, 1],
       ["close action", `data-close-finding-dialog="${dialogId}"`, 1],
     ];

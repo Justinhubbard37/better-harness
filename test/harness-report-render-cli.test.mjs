@@ -117,6 +117,15 @@ function sampleFindings() {
   };
 }
 
+function embeddedJson(html, id) {
+  const payload = html.match(new RegExp(
+    `<script id="${id}" type="application/json">([\\s\\S]*?)<\\/script>`,
+    "u",
+  ))?.[1];
+  assert.ok(payload, `missing embedded JSON payload: ${id}`);
+  return JSON.parse(payload);
+}
+
 function reviewedTaskLoopSource() {
   const source = buildTaskLoopSourceCandidate({
     scope: { platform: "qoder", workspace: "/tmp/render-source-project" },
@@ -755,6 +764,7 @@ test("render command writes disk-openable HTML artifacts", async () => {
     const html = readFileSync(path.join(payload.runDir, "report.html"), "utf8");
     assert.match(html, /<main id="harness-report" data-report-mode="codex-html">/u);
     assert.match(html, /<script id="harness-report-data" type="application\/json">/u);
+    assert.match(html, /<script id="harness-report-actions" type="application\/json">/u);
     assert.match(html, /data-section="fluency"/u);
     assert.match(html, /data-section="findings"/u);
     assert.match(html, /data-section="customize"/u);
@@ -773,7 +783,105 @@ test("render command writes disk-openable HTML artifacts", async () => {
     assert.match(html, /View details/u);
     assert.doesNotMatch(html, /<details class="finding"/u);
     assert.doesNotMatch(html, /<details class="finding" open/u);
+
+    const reviewed = JSON.parse(readFileSync(path.join(payload.runDir, "findings.json"), "utf8"));
+    assert.doesNotMatch(
+      readFileSync(path.join(payload.runDir, "findings.json"), "utf8"),
+      /better-harness-fix-output/u,
+    );
+    assert.doesNotMatch(
+      readFileSync(path.join(payload.runDir, "report.md"), "utf8"),
+      /better-harness-fix-output/u,
+    );
+    const actions = embeddedJson(html, "harness-report-actions");
+    const interactionData = embeddedJson(html, "harness-report-data");
+    assert.deepEqual(actions.findings.map((row) => row.id), reviewed.findings.map((row) => row.id));
+    assert.deepEqual(interactionData.findings, reviewed.findings.map((finding) => ({
+      id: finding.id,
+      aiFixPrompt: finding.aiFixPrompt,
+    })));
+    assert.deepEqual(actions.findings, reviewed.findings.map((finding) => ({
+      id: finding.id,
+      expectedRevision: 0,
+    })));
+    assert.deepEqual(Object.keys(actions).sort(), ["findings", "reportRoute"]);
+    assert.deepEqual(Object.keys(interactionData), ["findings"]);
+    for (const finding of interactionData.findings) {
+      assert.deepEqual(Object.keys(finding).sort(), ["aiFixPrompt", "id"]);
+    }
+    assert.equal(
+      actions.reportRoute,
+      path.relative(root, path.join(payload.runDir, "report.html")).replace(/\\/gu, "/"),
+    );
+    assert.equal(path.isAbsolute(actions.reportRoute), false);
+    assert.doesNotMatch(actions.reportRoute, /\.staging-/u);
+    assert.equal(Object.hasOwn(interactionData, "target"), false);
+    assert.equal(Object.hasOwn(interactionData, "dataPath"), false);
   });
+});
+
+test("HTML relative action metadata carries the finding's current repair revision", () => {
+  const reportData = {
+    ...sampleFindings(),
+    language: "en",
+    target: { name: "render-fixture", path: "/tmp/render-fixture" },
+  };
+  reportData.findings = reportData.findings.map((finding, index) => ({
+    ...finding,
+    ...(index === 0 ? { actualOutputRevision: 3 } : {}),
+  }));
+  const html = renderHtml(reportData, {
+    findingsPath: "/tmp/render-fixture/run/findings.json",
+  });
+  const action = embeddedJson(html, "harness-report-actions").findings[0];
+
+  assert.deepEqual(action, {
+    id: reportData.findings[0].id,
+    expectedRevision: 3,
+  });
+});
+
+test("HTML context-free rendering keeps raw prompt compatibility without local paths", () => {
+  const reportData = {
+    ...sampleFindings(),
+    language: "en",
+    target: { name: "render-fixture", path: "/tmp/render-fixture" },
+  };
+
+  const html = renderHtml(reportData);
+
+  assert.deepEqual(embeddedJson(html, "harness-report-actions"), {
+    reportRoute: null,
+    findings: [],
+  });
+  assert.deepEqual(
+    embeddedJson(html, "harness-report-data").findings.map((finding) => finding.id),
+    reportData.findings.map((finding) => finding.id),
+  );
+  assert.equal(evaluateHtmlReport(html, reportData).status, "pass");
+});
+
+test("HTML omits Copy controls and action metadata for empty AI fix prompts", () => {
+  const fixture = sampleFindings();
+  const reportData = {
+    ...fixture,
+    language: "en",
+    target: { name: "render-fixture", path: "/tmp/render-fixture" },
+    findings: fixture.findings.map((finding, index) => (
+      index === 0 ? { ...finding, aiFixPrompt: "  \n" } : finding
+    )),
+  };
+  const actionContext = { findingsPath: "/tmp/render-fixture/run/findings.json" };
+
+  const html = renderHtml(reportData, actionContext);
+  const actions = embeddedJson(html, "harness-report-actions");
+  const interactionData = embeddedJson(html, "harness-report-data");
+
+  assert.equal((html.match(/data-copy-finding=/gu) ?? []).length, 2);
+  assert.equal((html.match(/data-view-finding-dialog=/gu) ?? []).length, 2);
+  assert.deepEqual(actions.findings.map((finding) => finding.id), [reportData.findings[1].id]);
+  assert.deepEqual(interactionData.findings.map((finding) => finding.id), [reportData.findings[1].id]);
+  assert.equal(evaluateHtmlReport(html, reportData, actionContext).status, "pass");
 });
 
 test("HTML mode validates canonical compact Agent Work Loop findings without a Canvas sidecar", async () => {
@@ -1013,11 +1121,34 @@ test("HTML validator rejects incomplete finding action contracts", () => {
     language: "en",
     target: { name: "render-fixture", path: "/tmp/render-fixture" },
   };
-  const html = renderHtml(reportData);
-  assert.equal(evaluateHtmlReport(html, reportData).status, "pass");
+  const actionContext = { findingsPath: "/tmp/render-fixture/run/findings.json" };
+  const html = renderHtml(reportData, actionContext);
+  assert.equal(evaluateHtmlReport(html, reportData, actionContext).status, "pass");
 
   const mutations = [
     ["interaction controller", html.replace(/<script id="harness-report-interactions">[\s\S]*?<\/script>/u, "")],
+    ["finding action payload", html.replace(/<script id="harness-report-actions"[\s\S]*?<\/script>/u, "")],
+    ["interaction data payload", html.replace(/<script id="harness-report-data"[\s\S]*?<\/script>/u, "")],
+    ["cross-bound finding action payload", html.replace(
+      '"id":"ff-runtime-validation","expectedRevision"',
+      '"id":"aia-workflow-evidence","expectedRevision"',
+    )],
+    ["stale finding action revision", html.replace(
+      '"expectedRevision":0',
+      '"expectedRevision":7',
+    )],
+    ["absolute report route", html.replace(
+      /"reportRoute":"[^"]+"/u,
+      '"reportRoute":"C:/private/report.html"',
+    )],
+    ["escaping report route", html.replace(
+      /"reportRoute":"[^"]+"/u,
+      '"reportRoute":"../report.html"',
+    )],
+    ["cross-bound interaction data", html.replace(
+      '"id":"ff-runtime-validation","aiFixPrompt"',
+      '"id":"aia-workflow-evidence","aiFixPrompt"',
+    )],
     ["copy status", html.replace(/<div id="copy-status"[\s\S]*?<\/div>/u, "")],
     ["manual copy fallback", html.replace(/<dialog id="manual-copy-dialog"[\s\S]*?<\/dialog>/u, "")],
     ["finding copy action", html.replace(/<button[^>]+data-copy-finding=[\s\S]*?<\/button>/u, "")],
@@ -1045,7 +1176,7 @@ test("HTML validator rejects incomplete finding action contracts", () => {
   ];
 
   for (const [label, mutatedHtml] of mutations) {
-    const result = evaluateHtmlReport(mutatedHtml, reportData);
+    const result = evaluateHtmlReport(mutatedHtml, reportData, actionContext);
     assert.equal(result.status, "fail", `${label} mutation must fail validation`);
   }
 });
