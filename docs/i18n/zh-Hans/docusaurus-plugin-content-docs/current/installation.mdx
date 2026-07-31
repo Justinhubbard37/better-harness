@@ -16,7 +16,7 @@ import TabItem from '@theme/TabItem';
 ## 前置条件 {#prerequisites}
 
 通过宿主使用 Better Harness 时，请先安装下方任一受支持的编码智能体，并确认它
-能够打开要评审的仓库。宿主自身的系统要求和运行时仍然适用；除非对应标签页
+能够打开要分析的仓库。宿主自身的系统要求和运行时仍然适用；除非对应标签页
 明确使用源码检出，否则请按宿主步骤操作，不要运行本仓库的开发环境安装流程。
 
 只有使用独立 CLI、从源码检出运行 Better Harness 或参与本仓库开发时，才需要
@@ -68,11 +68,11 @@ Cursor 使用源码本地插件，还需要 Git 来克隆本仓库。
 claude plugin details better-harness@better-harness
 ```
 
-详情中应包含 `Skills (1) better-harness`。接着在要评审的仓库中开启新的
+详情中应包含 `Skills (1) better-harness`。接着在要分析的仓库中开启新的
 Claude 会话，运行报告提示词：
 
 ```text
-/better-harness review this project's AI coding workflow and generate a report
+/better-harness analyze this project's AI coding workflow and generate an evidence-backed report
 ```
 
 Claude Code 默认在仓库的 `.claude/better-harness` 报告根目录下产出自包含的
@@ -117,10 +117,10 @@ codex plugin add better-harness@better-harness
 ### 验证安装
 
 对于 Codex Desktop，请先在 **Settings &gt; Plugins** 中确认
-**Better Harness** 已安装，然后在要评审的仓库中开启新任务并运行：
+**Better Harness** 已安装，然后在要分析的仓库中开启新任务并运行：
 
 ```text
-@better-harness 审查此项目的 AI 编码工作流并生成报告
+@better-harness 分析此项目的 AI 编码工作流并生成基于证据的报告
 ```
 
 对于 Codex CLI，请确认已配置的 marketplace 能发现插件：
@@ -129,10 +129,10 @@ codex plugin add better-harness@better-harness
 codex plugin list --marketplace better-harness
 ```
 
-然后在要评审的仓库中开启新的 Codex 任务并运行：
+然后在要分析的仓库中开启新的 Codex 任务并运行：
 
 ```text
-$better-harness:better-harness 审查此项目的 AI 编码工作流并生成报告
+$better-harness:better-harness 分析此项目的 AI 编码工作流并生成基于证据的报告
 ```
 
 `marketplace add` 使用仓库 URL，而不是原始 `marketplace.json` URL。当前
@@ -147,10 +147,10 @@ Codex 版本使用 `plugin add` 和 `--marketplace`；使用 `plugin install` �
 Better Harness 已内置于 [Qoder](https://qoder.com/) 桌面应用，无需
 Marketplace 或本地插件安装。两个入口任选其一：
 
-1. **从会话进入：** 打开要评审的仓库，开启新会话，运行报告提示词：
+1. **从会话进入：** 打开要分析的仓库，开启新会话，运行报告提示词：
 
    ```text
-   /better-harness review this project's AI coding workflow and generate a report
+   /better-harness analyze this project's AI coding workflow and generate an evidence-backed report
    ```
 
 2. **从 Quest 进入（Qoder 1.18.0+）：** 打开 Quest，在左侧边栏选择
@@ -201,10 +201,10 @@ cursor-agent --plugin-dir /path/to/better-harness
 保持这个 Cursor Agent 会话处于打开状态，并运行：
 
 ```text
-/better-harness 审查此项目的 AI 编码工作流并生成报告
+/better-harness 分析此项目的 AI 编码工作流并生成基于证据的报告
 ```
 
-开始评审即表示源码本地 Skill 已在本次会话加载。Cursor 不会把这个检出目录安装
+开始分析即表示源码本地 Skill 已在本次会话加载。Cursor 不会把这个检出目录安装
 到全局；后续会话仍需使用相同的 `--plugin-dir` 参数启动。
 
 Cursor 会话证据通过与工作区匹配的转录、元数据和审计日志提供支持。部分或
@@ -223,10 +223,10 @@ qwen extensions install QoderAI/better-harness
 
 ### 验证安装
 
-在要审查的仓库中启动新的 Qwen Code 会话，然后运行报告提示词：
+在要分析的仓库中启动新的 Qwen Code 会话，然后运行报告提示词：
 
 ```text
-/better-harness 审查此项目的 AI 编码工作流并生成报告
+/better-harness 分析此项目的 AI 编码工作流并生成基于证据的报告
 ```
 
 Qwen Code 产出自包含的 `report.html`，并配套 `report.md` 与 `findings.json`。

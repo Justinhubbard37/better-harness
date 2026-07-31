@@ -105,7 +105,7 @@ test("first-report guidance no longer claims one invocation works for every host
     assert.match(content, /copilot skill list/u);
     assert.doesNotMatch(
       content,
-      /```text\s*\/better-harness review this project's AI coding workflow and generate a report\s*```/u,
+      /```text\s*\/better-harness analyze this project's AI coding workflow and generate an evidence-backed report\s*```/u,
     );
   }
   assert.match(firstReport, /\[sample report\]\(pathname:\/\/\/demo\/better-harness-report\/\)/u);

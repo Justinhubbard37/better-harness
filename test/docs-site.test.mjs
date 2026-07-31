@@ -105,8 +105,11 @@ test("homepage leads search visitors from proof to a host-specific setup", async
     source,
     /Built into Qoder Desktop; Qoder CLI can reuse it or install separately\./u,
   );
-  assert.match(source, /Review and Improve AI Coding Workflows/u);
-  assert.match(source, /Review your AI coding workflow—with evidence, not guesses\./u);
+  assert.match(source, /AI Coding Agent Workflow Insights/u);
+  assert.match(source, /Open-source insights for the Agent Work Loop/u);
+  assert.match(source, /Delegate coding to agents\. Improve the loop around them\./u);
+  assert.match(source, /project and session evidence into loop-level/u);
+  assert.doesNotMatch(source, /Open-source AI coding workflow review/u);
   assert.match(source, /href="#choose-host"/u);
   assert.match(source, /id="choose-host"/u);
   assert.match(source, /Explore a sample report/u);
@@ -187,7 +190,16 @@ test("homepage leads search visitors from proof to a host-specific setup", async
   assert.match(zh["homepage.hosts.workBuddy.setup"].message, /WorkBuddy 自有路径/u);
   assert.equal(zh["homepage.hosts.status.quickstart"].message, "已验证快速开始");
   assert.equal(zh["homepage.hosts.status.adapter"].message, "适配器支持");
-  assert.equal(zh["homepage.hero.title"].message, "用证据审查 AI 编码工作流，而不是靠猜。");
+  assert.equal(
+    zh["homepage.hero.eyebrow"].message,
+    "Better Harness · 开源 Agent Work Loop 洞察",
+  );
+  assert.equal(
+    zh["homepage.hero.title"].message,
+    "把编码交给 Agent，用证据改进它背后的工作流。",
+  );
+  assert.match(zh["homepage.hero.lead"].message, /项目与会话证据/u);
+  assert.equal(zh["homepage.meta.title"].message, "AI 编码智能体工作流洞察");
   assert.equal(zh["homepage.hero.chooseHost"].message, "选择你的 Coding Agent");
   assert.equal(zh["homepage.hero.viewDemo"].message, "查看示例报告");
   assert.match(zh["homepage.proof.evidence.description"].message, /项目或会话信号/u);

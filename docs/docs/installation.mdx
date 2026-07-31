@@ -17,7 +17,7 @@ the host reloads its plugin inventory.
 ## Prerequisites {#prerequisites}
 
 To use Better Harness from a host, install one of the supported coding agents
-below and make sure it can open the repository you want to review. The host's
+below and make sure it can open the repository you want to analyze. The host's
 own system requirements and runtime still apply; follow its tab without running
 the repository's development setup unless the tab explicitly uses a source
 checkout.
@@ -75,10 +75,10 @@ claude plugin details better-harness@better-harness
 ```
 
 The details should include `Skills (1) better-harness`. Then start a new
-Claude session in the repository you want to review and run the report prompt:
+Claude session in the repository you want to analyze and run the report prompt:
 
 ```text
-/better-harness review this project's AI coding workflow and generate a report
+/better-harness analyze this project's AI coding workflow and generate an evidence-backed report
 ```
 
 Claude Code defaults to a self-contained `report.html` with paired `report.md`
@@ -124,10 +124,10 @@ codex plugin add better-harness@better-harness
 
 For Codex Desktop, confirm that **Better Harness** appears installed under
 **Settings &gt; Plugins**. Then start a new task in the repository you want to
-review and run:
+analyze and run:
 
 ```text
-@better-harness review this project's AI coding workflow and generate a report
+@better-harness analyze this project's AI coding workflow and generate an evidence-backed report
 ```
 
 For Codex CLI, confirm that the configured marketplace exposes the plugin:
@@ -136,10 +136,10 @@ For Codex CLI, confirm that the configured marketplace exposes the plugin:
 codex plugin list --marketplace better-harness
 ```
 
-Then start a new Codex task in the repository you want to review and run:
+Then start a new Codex task in the repository you want to analyze and run:
 
 ```text
-$better-harness:better-harness review this project's AI coding workflow and generate a report
+$better-harness:better-harness analyze this project's AI coding workflow and generate an evidence-backed report
 ```
 
 Use the repository URL with `marketplace add`, not a raw `marketplace.json`
@@ -155,11 +155,11 @@ Better Harness is built into the [Qoder](https://qoder.com/) desktop app, so
 no Marketplace or local plugin installation is required there. Choose either
 entry point:
 
-1. **From a session:** Open the repository you want to review, start a new
+1. **From a session:** Open the repository you want to analyze, start a new
    session, and run the report prompt:
 
    ```text
-   /better-harness review this project's AI coding workflow and generate a report
+   /better-harness analyze this project's AI coding workflow and generate an evidence-backed report
    ```
 
 2. **From Quest (Qoder 1.18.0+):** Open Quest, then select
@@ -210,10 +210,10 @@ cursor-agent --plugin-dir /path/to/better-harness
 Keep that Cursor Agent session open and run:
 
 ```text
-/better-harness review this project's AI coding workflow and generate a report
+/better-harness analyze this project's AI coding workflow and generate an evidence-backed report
 ```
 
-Starting the review confirms that the source-local Skill loaded for that
+Starting the analysis confirms that the source-local Skill loaded for that
 session. Cursor does not install this checkout globally; start future sessions
 with the same `--plugin-dir` argument.
 
@@ -233,11 +233,11 @@ qwen extensions install QoderAI/better-harness
 
 ### Verify installation
 
-Start a new Qwen Code session in the repository you want to review and run the
+Start a new Qwen Code session in the repository you want to analyze and run the
 report prompt:
 
 ```text
-/better-harness review this project's AI coding workflow and generate a report
+/better-harness analyze this project's AI coding workflow and generate an evidence-backed report
 ```
 
 Qwen Code produces a self-contained `report.html` with paired `report.md` and

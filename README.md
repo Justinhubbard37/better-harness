@@ -5,13 +5,13 @@
 </p>
 
 <p align="center">
-  <strong>Review your AI coding workflow—with evidence, not guesses.</strong>
+  <strong>Delegate coding to agents. Improve the loop around them.</strong>
 </p>
 
 <p align="center">
-  Better Harness is an open-source review tool that runs through your Coding Agent
-  and turns observed workflow gaps into prioritized findings, bounded fixes, and
-  acceptance checks. Missing evidence stays explicit.
+  Better Harness provides open-source insights for the Agent Work Loop. It runs
+  through your Coding Agent and turns project and session evidence into prioritized
+  improvements and verifiable next steps. Missing evidence stays explicit.
 </p>
 
 <p align="center">
@@ -27,7 +27,7 @@
 
 ## Quick start
 
-Review your coding workflow with: [Claude Code](#claude-code), [Codex Desktop](#codex-desktop), [Codex CLI](#codex-cli), [Qoder Desktop/CLI](#qoder), [Cursor](#cursor), [Qwen Code](#qwen-code), or [GitHub Copilot CLI](#github-copilot).
+Analyze and improve your coding workflow with: [Claude Code](#claude-code), [Codex Desktop](#codex-desktop), [Codex CLI](#codex-cli), [Qoder Desktop/CLI](#qoder), [Cursor](#cursor), [Qwen Code](#qwen-code), or [GitHub Copilot CLI](#github-copilot).
 
 Choose the host you already use to get its exact installation, verification,
 invocation, and report-output steps. Better Harness does not use one universal
@@ -82,10 +82,11 @@ weak point:
 - 🧠 **Lessons lost** — the same friction comes back on the next task.
 
 Reviewing only the final diff misses these system-level problems. Better Harness
-reviews the workflow itself: it gathers project evidence (and session evidence
-where supported), evaluates five connected dimensions, and turns concrete gaps
-into prioritized findings — each tied to its evidence, expected outcome, repair
-boundary, and validation route, so a team can improve one issue at a time.
+analyzes the workflow around the diff: it gathers project evidence (and session
+evidence where supported), evaluates five connected dimensions, and turns
+concrete gaps into prioritized findings — each tied to its evidence, expected
+outcome, repair boundary, and validation route, so a team can improve one issue
+at a time.
 
 ## How Better Harness works
 
@@ -96,7 +97,7 @@ after the agent acts:
 
 - **Feedforward guides** — `AGENTS.md`, specs, Skills, and acceptance criteria
   steer the agent before it acts.
-- **Feedback sensors** — linters, tests, Hooks, and review agents observe results
+- **Feedback sensors** — linters, tests, Hooks, and evaluation agents observe results
   and help the agent self-correct.
 
 Across that loop, it evaluates five parts of delivery — the **Agent Work Loop**:
@@ -176,10 +177,10 @@ claude plugin details better-harness@better-harness
 ```
 
 The details should include `Skills (1) better-harness`. Then start a new Claude
-session in the repository you want to review and run the report prompt:
+session in the repository you want to analyze and run the report prompt:
 
 ```text
-/better-harness review this project's AI coding workflow and generate a report
+/better-harness analyze this project's AI coding workflow and generate an evidence-backed report
 ```
 
 Claude Code defaults to a self-contained `report.html` with paired `report.md`
@@ -200,11 +201,11 @@ stays explicit rather than being inferred.
    empty for this single-plugin repository.
 4. Select **Add marketplace**, then install **Better Harness** from the new
    marketplace.
-5. Start a new task in the repository you want to review and run the report
+5. Start a new task in the repository you want to analyze and run the report
    prompt:
 
 ```text
-@better-harness review this project's AI coding workflow and generate a report
+@better-harness analyze this project's AI coding workflow and generate an evidence-backed report
 ```
 
 Use `https://github.com/QoderAI/better-harness.git` with Git ref `main`.
@@ -230,11 +231,11 @@ codex plugin list --marketplace better-harness
 codex plugin add better-harness@better-harness
 ```
 
-Start a new Codex task in the repository you want to review and run the report
+Start a new Codex task in the repository you want to analyze and run the report
 prompt:
 
 ```text
-$better-harness:better-harness review this project's AI coding workflow and generate a report
+$better-harness:better-harness analyze this project's AI coding workflow and generate an evidence-backed report
 ```
 
 Use the repository URL with `marketplace add`, not a raw `marketplace.json`
@@ -247,11 +248,11 @@ Better Harness is built into the [Qoder](https://qoder.com/) desktop app, so no
 Marketplace or local plugin installation is required there. Choose either
 entry point:
 
-1. **From a session:** Open the repository you want to review, start a new
+1. **From a session:** Open the repository you want to analyze, start a new
    session, and run the report prompt:
 
    ```text
-   /better-harness review this project's AI coding workflow and generate a report
+   /better-harness analyze this project's AI coding workflow and generate an evidence-backed report
    ```
 
 2. **From Quest (Qoder 1.18.0+):** Open Quest, then select
@@ -261,10 +262,10 @@ entry point:
 
 If Qoder Desktop is installed, Better Harness is already available in Qoder
 CLI. No marketplace or plugin installation is required. Start a new Qoder CLI
-session in the repository you want to review and run the report prompt:
+session in the repository you want to analyze and run the report prompt:
 
 ```text
-/better-harness review this project's AI coding workflow and generate a report
+/better-harness analyze this project's AI coding workflow and generate an evidence-backed report
 ```
 
 Only when using Qoder CLI without Qoder Desktop, add this repository as a
@@ -329,11 +330,11 @@ Install Better Harness as a Qwen Code extension:
 qwen extensions install QoderAI/better-harness
 ```
 
-Start a new Qwen Code session in the repository you want to review and run the
+Start a new Qwen Code session in the repository you want to analyze and run the
 report prompt:
 
 ```text
-/better-harness review this project's AI coding workflow and generate a report
+/better-harness analyze this project's AI coding workflow and generate an evidence-backed report
 ```
 
 Qwen Code produces a self-contained `report.html` with paired `report.md` and
@@ -356,10 +357,10 @@ pi -e git:github.com/QoderAI/better-harness
 
 Pi discovers the `better-harness` Skill and the `/better-harness` prompt
 template through the `pi` manifest in `package.json`. Start a new Pi session
-in the repository you want to review and run the report prompt:
+in the repository you want to analyze and run the report prompt:
 
 ```text
-/better-harness review this project's AI coding workflow and generate a report
+/better-harness analyze this project's AI coding workflow and generate an evidence-backed report
 ```
 
 Pi defaults to a self-contained `report.html` with paired `report.md` and
@@ -407,10 +408,10 @@ smallest surface that matches the improvement you want to make:
 | What you can contribute | Start here | Example contribution |
 | --- | --- | --- |
 | Workflow guidance and engineering practices | [`skills/`](skills/) or [`references/`](references/) | Add sourced guidance for a language, framework, review pattern, or recurring agent workflow. |
-| Review models and executable analysis | [`models/`](models/) or [`scripts/`](scripts/) | Add an evidence-backed review lens, detector, or agent-friendly analysis command with fixtures and tests. |
+| Evaluation models and executable analysis | [`models/`](models/) or [`scripts/`](scripts/) | Add an evidence-backed evaluation lens, detector, or agent-friendly analysis command with fixtures and tests. |
 | Delivery controls and host support | [`hooks/`](hooks/) or the [new Coding Agent guide](docs/adapters/contributing-new-coding-agent.md) | Add a narrow lifecycle check or document and validate evidence support for another Coding Agent host. |
 | Reports and visual language | [`templates/reporting/`](templates/reporting/) or [`templates/style/`](templates/style/) | Add a report mode, reusable reporting contract, or directive-only visual style with validation evidence. |
-| Examples and operating models | [`case-studies/`](case-studies/) | Share a redacted, evidence-bounded example of how a team applies agent review and delivery practices. |
+| Examples and operating models | [`case-studies/`](case-studies/) | Share a redacted, evidence-bounded example of how a team applies Agent Work Loop analysis and delivery practices. |
 
 To get started:
 

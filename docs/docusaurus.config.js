@@ -12,7 +12,7 @@ const GITHUB_URL = "https://github.com/QoderAI/better-harness";
 const config = {
   title: "Better Harness",
   tagline:
-    "See how your AI coding workflow works—and make it better, one step at a time.",
+    "Open-source insights for the Agent Work Loop.",
   favicon: "img/favicon.svg",
 
   url: "https://qoderai.github.io",

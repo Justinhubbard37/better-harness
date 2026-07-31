@@ -284,20 +284,19 @@ function Hero() {
         <div className={styles.heroCopy}>
           <p className={styles.eyebrow}>
             <Translate id="homepage.hero.eyebrow">
-              Better Harness · Open-source AI coding workflow review
+              Better Harness · Open-source insights for the Agent Work Loop
             </Translate>
           </p>
           <h1 className={clsx("hero__title", styles.heroTitle)}>
             <Translate id="homepage.hero.title">
-              Review your AI coding workflow—with evidence, not guesses.
+              Delegate coding to agents. Improve the loop around them.
             </Translate>
           </h1>
           <p className={styles.heroLead}>
             <Translate id="homepage.hero.lead">
-              Run Better Harness inside your existing coding agent to see how
-              it understands tasks, makes changes, validates results, delivers
-              safely, and carries learning forward. Every finding stays tied to
-              visible evidence.
+              Better Harness turns project and session evidence into loop-level
+              insights, prioritized improvements, and verifiable next
+              steps—inside the coding agent you already use.
             </Translate>
           </p>
           <div className={styles.buttons}>
@@ -464,7 +463,7 @@ function HowItWorks() {
             }}
           >
             {
-              "Better Harness combines feedforward guides (AGENTS.md, specs, Skills, acceptance criteria) with feedback sensors (linters, tests, Hooks, review agents), and evaluates five parts of delivery—the {workLoopLink}:"
+              "Better Harness combines feedforward guides (AGENTS.md, specs, Skills, acceptance criteria) with feedback sensors (linters, tests, Hooks, evaluation agents), and evaluates five parts of delivery—the {workLoopLink}:"
             }
           </Translate>
         </p>
@@ -558,12 +557,12 @@ export default function Home() {
     <Layout
       title={translate({
         id: "homepage.meta.title",
-        message: "Review and Improve AI Coding Workflows",
+        message: "AI Coding Agent Workflow Insights",
       })}
       description={translate({
         id: "homepage.meta.description",
         message:
-          "Open-source, evidence-backed reviews of how coding agents understand tasks, make changes, validate results, deliver safely, and learn.",
+          "Open-source Agent Work Loop insights that turn coding-agent project and session evidence into prioritized, verifiable improvements.",
       })}
     >
       <Hero />

@@ -7,7 +7,7 @@ sidebar_position: 3
 # Your First Report
 
 Once Better Harness is [installed](./installation.mdx), open the repository
-you want to review and start a new session or task. Use the invocation shown in
+you want to analyze and start a new session or task. Use the invocation shown in
 your host's **Verify installation** section—the syntax is host-specific:
 
 - Claude Code, Qoder, Cursor, and Qwen Code use the documented
@@ -15,7 +15,7 @@ your host's **Verify installation** section—the syntax is host-specific:
 - Codex Desktop uses `@better-harness`; Codex CLI uses
   `$better-harness:better-harness`.
 - For GitHub Copilot, first confirm that `copilot skill list` includes
-  `better-harness`, then ask Copilot to use that Skill for the review. The site
+  `better-harness`, then ask Copilot to use that Skill for the analysis. The site
   does not claim an unverified slash-command alias.
 
 Better Harness scopes behavior claims to relevant Task Episodes and the
@@ -49,7 +49,7 @@ next step, so a score turns into a change:
 3. **Schedule follow-up.** A schedule-ready finding renders a row-scoped
    `/schedule /better-harness` handoff with cadence, validation, and a stop
    condition.
-4. **Confirm movement.** Re-run the review to check the change landed and the
+4. **Confirm movement.** Re-run the analysis to check the change landed and the
    capability signal moved.
 
 ## Static-only inspection

@@ -96,13 +96,13 @@
     "message": "适配器支持"
   },
   "homepage.hero.eyebrow": {
-    "message": "Better Harness · 开源 AI 编码工作流审查工具"
+    "message": "Better Harness · 开源 Agent Work Loop 洞察"
   },
   "homepage.hero.title": {
-    "message": "用证据审查 AI 编码工作流，而不是靠猜。"
+    "message": "把编码交给 Agent，用证据改进它背后的工作流。"
   },
   "homepage.hero.lead": {
-    "message": "在你现有的 Coding Agent 中运行 Better Harness，检查它如何理解任务、实施改动、验证结果、安全交付并沉淀经验。每项发现都与可见证据关联。"
+    "message": "Better Harness 在你已经使用的 Coding Agent 中运行，把项目与会话证据转化为工作循环洞察、改进优先级和可验证的下一步。"
   },
   "homepage.hero.chooseHost": {
     "message": "选择你的 Coding Agent"
@@ -180,7 +180,7 @@
     "message": "Better Harness 如何工作"
   },
   "homepage.how.intro": {
-    "message": "Better Harness 将前馈引导（AGENTS.md、规格、Skills、验收标准）与反馈传感器（Lint、测试、Hooks、评审智能体）结合起来，评估交付的五个环节——即 {workLoopLink}："
+    "message": "Better Harness 将前馈引导（AGENTS.md、规格、Skills、验收标准）与反馈传感器（Lint、测试、Hooks、评估智能体）结合起来，评估交付的五个环节——即 {workLoopLink}："
   },
   "homepage.how.workLoopLabel": {
     "message": "Agent Work Loop（智能体工作循环）"
@@ -198,10 +198,10 @@
     "message": "目前支持八个宿主适配器。其中六个已有验证过的配置路径；Pi 与 WorkBuddy 会进入各自当前的支持边界说明。"
   },
   "homepage.meta.title": {
-    "message": "审查并改进 AI 编码工作流"
+    "message": "AI 编码智能体工作流洞察"
   },
   "homepage.meta.description": {
-    "message": "开源、基于证据地审查编码智能体如何理解任务、实施改动、验证结果、安全交付并沉淀经验。"
+    "message": "开源 Agent Work Loop 洞察，把编码智能体的项目与会话证据转化为有优先级、可验证的改进。"
   },
   "theme.ErrorPageContent.title": {
     "message": "页面已崩溃。",

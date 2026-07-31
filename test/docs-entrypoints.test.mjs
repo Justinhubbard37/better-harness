@@ -124,7 +124,7 @@ function checkReadmeQuickstart(filePath, introPattern, fileLabel) {
 test("README.md Quickstart lists all seven product entries with valid installation anchors", () => {
   const content = checkReadmeQuickstart(
     ["README.md"],
-    /Review your coding workflow with:[^\n]*/u,
+    /Analyze and improve your coding workflow with:[^\n]*/u,
     "README.md",
   );
   assertHeadingOrder(content, "Quick start", "See it in action", "README.md");
@@ -146,7 +146,7 @@ test("README.md Quickstart lists all seven product entries with valid installati
 test("README.zh-CN.md Quickstart lists all seven product entries with valid installation anchors", () => {
   const content = checkReadmeQuickstart(
     ["README.zh-CN.md"],
-    /用以下 Coding Agent 审查你的工作流：[^\n]*/u,
+    /使用以下 Coding Agent 分析并改进你的工作流：[^\n]*/u,
     "README.zh-CN.md",
   );
   assertHeadingOrder(content, "快速开始", "看看实际效果", "README.zh-CN.md");

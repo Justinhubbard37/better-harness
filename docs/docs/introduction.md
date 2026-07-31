@@ -6,9 +6,9 @@ sidebar_position: 1
 
 # Introduction
 
-**Better Harness** reviews how coding agents understand tasks, make changes,
-verify results, deliver safely, and learn—then shows what to improve next,
-with every finding tied to visible evidence.
+**Better Harness** provides open-source insights for the Agent Work Loop. It
+turns project and session evidence into prioritized improvements and verifiable
+next steps inside the coding agent you already use.
 
 ## Why Better Harness?
 
@@ -22,11 +22,11 @@ weak point:
 - 🧠 **Lessons lost** — the same friction comes back on the next task.
 
 Reviewing only the final diff misses these system-level problems. Better
-Harness reviews the workflow itself: it gathers project evidence (and session
-evidence where supported), evaluates five connected dimensions, and turns
-concrete gaps into prioritized findings — each tied to its evidence, expected
-outcome, repair boundary, and validation route, so a team can improve one
-issue at a time.
+Harness analyzes the workflow around the diff: it gathers project evidence
+(and session evidence where supported), evaluates five connected dimensions,
+and turns concrete gaps into prioritized findings — each tied to its evidence,
+expected outcome, repair boundary, and validation route, so a team can improve
+one issue at a time.
 
 ## What is open
 
