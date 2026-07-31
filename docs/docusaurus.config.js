@@ -53,6 +53,23 @@ const config = {
         theme: {
           customCss: "./src/css/custom.css",
         },
+        sitemap: {
+          // Keep low-value routes out of the sitemap: on-site search, thin
+          // blog taxonomy pages, and the zh-Hans blog until it carries real
+          // Chinese articles. src/theme/Root.js marks the same routes
+          // noindex,follow so the sitemap and robots signals stay aligned.
+          ignorePatterns: [
+            "/better-harness/search",
+            "/better-harness/blog/tags",
+            "/better-harness/blog/tags/**",
+            "/better-harness/blog/authors",
+            "/better-harness/blog/authors/**",
+            "/better-harness/blog/archive",
+            "/better-harness/zh-Hans/search",
+            "/better-harness/zh-Hans/blog",
+            "/better-harness/zh-Hans/blog/**",
+          ],
+        },
       }),
     ],
   ],

@@ -93,6 +93,65 @@ test("checked-in demo report identifies the sample and provides site exits", asy
   assert.match(html, /window\.location\.pathname\.slice\(0, markerIndex\)/u);
 });
 
+test("low-value routes stay out of the sitemap and are marked noindex", async () => {
+  const [config, root, blogListPage, demoHtml, favicon] = await Promise.all([
+    readFile(path.join(process.cwd(), "docs", "docusaurus.config.js"), "utf8"),
+    readFile(path.join(process.cwd(), "docs", "src", "theme", "Root.js"), "utf8"),
+    readFile(
+      path.join(process.cwd(), "docs", "src", "theme", "BlogListPage", "index.js"),
+      "utf8",
+    ),
+    readFile(
+      path.join(process.cwd(), "assets", "demo", "better-harness-report.html"),
+      "utf8",
+    ),
+    readFile(
+      path.join(process.cwd(), "docs", "static", "img", "favicon.svg"),
+      "utf8",
+    ),
+  ]);
+
+  // AC1: sitemap excludes search, thin blog taxonomy pages, and zh-Hans blog.
+  assert.match(config, /ignorePatterns/u);
+  for (const pattern of [
+    "/better-harness/search",
+    "/better-harness/blog/tags",
+    "/better-harness/blog/tags/**",
+    "/better-harness/blog/authors",
+    "/better-harness/blog/authors/**",
+    "/better-harness/blog/archive",
+    "/better-harness/zh-Hans/search",
+    "/better-harness/zh-Hans/blog",
+    "/better-harness/zh-Hans/blog/**",
+  ]) {
+    assert.ok(
+      config.includes(`"${pattern}"`),
+      `docusaurus.config.js sitemap ignorePatterns missing ${pattern}`,
+    );
+  }
+
+  // AC2: the same routes carry noindex,follow via the Root theme wrapper.
+  assert.match(root, /content="noindex, follow"/u);
+  assert.match(root, /route === "search"/u);
+  assert.match(root, /blog\/archive/u);
+  assert.match(root, /blog\/tags/u);
+  assert.match(root, /blog\/authors/u);
+  assert.match(root, /isUntranslatedBlogRoute/u);
+  assert.match(root, /currentLocale === defaultLocale/u);
+
+  // AC3: demo report is noindex,follow with a meta description.
+  assert.match(demoHtml, /<meta name="robots" content="noindex, follow">/u);
+  assert.match(demoHtml, /<meta name="description" content="[^"]+">/u);
+
+  // AC4: blog list page renders a visible H1 from the configured blog title.
+  assert.match(blogListPage, /<h1>\{blogTitle\}<\/h1>/u);
+
+  // AC5: favicon declares an intrinsic size of at least 48x48.
+  const faviconSize = favicon.match(/<svg[^>]*width="(\d+)" height="(\d+)"/u);
+  assert.ok(faviconSize, "favicon.svg missing explicit width/height");
+  assert.ok(Number(faviconSize[1]) >= 48 && Number(faviconSize[2]) >= 48);
+});
+
 test("homepage leads search visitors from proof to a host-specific setup", async () => {
   const [source, styles, theme, translations] = await Promise.all([
     readFile(path.join(process.cwd(), "docs", "src", "pages", "index.js"), "utf8"),
