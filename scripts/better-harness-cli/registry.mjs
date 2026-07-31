@@ -369,6 +369,21 @@ export function commandMetadata(name, { audience = "all" } = {}) {
   return filterCommandAudience(metadata, normalizedAudience);
 }
 
+export function commandPathMetadata(name, subcommandName, { audience = "all" } = {}) {
+  const command = commandMetadata(name, { audience });
+  if (!command || subcommandName === undefined) {
+    return command;
+  }
+  const subcommand = command.subcommands?.find((entry) => entry.name === subcommandName);
+  if (!subcommand) {
+    return undefined;
+  }
+  return {
+    ...subcommand,
+    path: [command.name, subcommand.name],
+  };
+}
+
 export function directDispatchFor(name, subcommandName) {
   const command = findCommand(name);
   if (command?.kind !== "direct") {
