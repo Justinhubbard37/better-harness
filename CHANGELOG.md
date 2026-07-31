@@ -5,6 +5,14 @@ observable behavior and compatibility, not every internal refactor.
 
 ## Unreleased
 
+### Fixed
+
+- Checkup plan/apply is provider-aware: only `provider=qoder` can emit or execute
+  `qodercli` disable mutations. Other hosts keep candidates as `manual-review`
+  until a provider-native apply contract exists. `provider-home` source
+  resolution and fingerprints bind to the explicit host home (for example
+  Codex uses `codexHome`, never Qoder home).
+
 ## 0.4.0 - 2026-07-30
 
 ### Added

@@ -10,13 +10,11 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 
 import { collectAgentCustomizeInventory } from "../../agent-customize/index.mjs";
 import { hookConfigurationDigest } from "../../agent-customize/core/items.mjs";
-import { expandHome } from "../../session-analysis/paths.mjs";
-import { CHECKUP_KIND, CHECKUP_SCHEMA_VERSION } from "./contract.mjs";
+import { CHECKUP_KIND, CHECKUP_SCHEMA_VERSION, resolveProviderHome } from "./contract.mjs";
 import { computePlanDigest } from "./plan.mjs";
 
 const ALLOWED_SOURCE_EXTENSIONS = new Set([".json", ".md", ".mdc", ".markdown"]);
@@ -54,14 +52,19 @@ function containedPath(root, relativePath) {
 
 export function resolveSourceRef(sourceRef, options = {}) {
   const workspace = path.resolve(options.workspace ?? process.cwd());
-  const providerHome = path.resolve(expandHome(
-    options.qoderHome ?? options["qoder-home"] ?? process.env.QODER_HOME ?? path.join(os.homedir(), ".qoder"),
-  ));
-  const root = sourceRef?.base === "workspace"
-    ? workspace
-    : sourceRef?.base === "provider-home"
-      ? providerHome
-      : null;
+  const provider = String(options.provider ?? sourceRef?.provider ?? "").toLowerCase();
+  let root = null;
+  if (sourceRef?.base === "workspace") {
+    root = workspace;
+  } else if (sourceRef?.base === "provider-home") {
+    if (!provider) {
+      throw new Error("provider-home source patches require an explicit provider");
+    }
+    if (sourceRef.provider && String(sourceRef.provider).toLowerCase() !== provider) {
+      throw new Error("sourceRef.provider does not match the apply provider");
+    }
+    root = resolveProviderHome(provider, options);
+  }
   if (!root) {
     throw new Error("source patches support only workspace and provider-home owners");
   }
@@ -73,7 +76,7 @@ export function resolveSourceRef(sourceRef, options = {}) {
   if (!ALLOWED_SOURCE_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
     throw new Error("source patch target must be a supported instruction or hook source file");
   }
-  return { filePath, workspace, key: sourceKey(sourceRef) };
+  return { filePath, workspace, key: sourceKey(sourceRef), provider: provider || null };
 }
 
 function replaceLines(content, patch) {
@@ -159,7 +162,10 @@ async function atomicReplace(filePath, content) {
 
 export async function applySourcePatch(action, options = {}) {
   const sourceRef = action.mutation?.sourceRef;
-  const resolved = resolveSourceRef(sourceRef, options);
+  const resolved = resolveSourceRef(sourceRef, {
+    ...options,
+    provider: options.provider ?? sourceRef?.provider,
+  });
   const content = await readFile(resolved.filePath, "utf8");
   const expectedFingerprint = action.sourceFingerprints?.[resolved.key];
   if (!expectedFingerprint || sha256(content) !== expectedFingerprint) {
@@ -311,6 +317,7 @@ export async function applyCheckupPlan(plan, options = {}, dependencies = {}) {
     throw new Error("current evidence or source fingerprints drifted after planning");
   }
 
+  const planProvider = String(plan.provider ?? "").toLowerCase();
   const executeQoder = dependencies.executeQoder ?? createQoderCliExecutor(dependencies.executorOptions);
   const queryQoder = dependencies.queryQoder ?? createQoderCliVerificationExecutor(dependencies.executorOptions);
   const results = [];
@@ -318,9 +325,15 @@ export async function applyCheckupPlan(plan, options = {}, dependencies = {}) {
     const action = actionById.get(actionId);
     try {
       if (action.mutation?.type === "source-patch") {
-        const result = await applySourcePatch(action, options);
+        const result = await applySourcePatch(action, {
+          ...options,
+          provider: planProvider,
+        });
         results.push({ actionId, operation: action.operation, ...result });
       } else if (action.mutation?.type === "qoder-cli") {
+        if (planProvider !== "qoder") {
+          throw new Error("qoder-cli mutations are only supported when plan.provider is qoder");
+        }
         const execution = await executeQoder(action.mutation, { workspace: options.workspace });
         if (!execution.ok) {
           throw new Error(`Qoder CLI operation failed with exit code ${execution.exitCode}`);
