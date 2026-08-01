@@ -76,26 +76,30 @@ test("Better Harness keeps one compact five-step owner", () => {
   assert.match(skill, /separate independent post-fix agent/);
 });
 
-test("non-Qoder providers default to validated durable HTML with an explicit inline opt-out", () => {
+test("Qoder and Cursor default to Canvas while portable providers retain durable HTML", () => {
   const skill = read("skills/better-harness/SKILL.md");
   const routing = read("templates/reporting/routing.md");
   const adapters = read("docs/adapters/README.md");
   const readme = read("README.md");
 
-  assert.match(skill, /Default Qoder to durable Canvas and other providers to durable HTML/);
+  assert.match(skill, /Default Qoder\/Cursor to durable Canvas; default others to durable HTML/);
   assert.match(skill, /explicit inline or no-files request writes nothing/);
   assert.match(skill, /Other providers: <mode>=html; <host-root>=<target>\/\.<provider>\/better-harness/);
   assert.doesNotMatch(skill, /(?:Claude Code|Codex): <mode>=html/);
-  assert.match(skill, /HTML artifacts: findings\.json, report\.md, report\.html/);
+  // The per-route artifact inventory is owned by routing.md, not duplicated in the
+  // byte-budgeted root Skill.
+  assert.match(routing, /renderer-owned `findings\.json`, `canvas\.json`, `report\.canvas\.tsx` \| `cursor-canvas\.md`/);
+  assert.match(routing, /renderer-owned `findings\.json`, `report\.md`, `report\.html` \| `html-visual\.md`/);
   assert.match(skill, /Succeed only on\s+`status: pass`/);
   assert.match(skill, /Never hand-write\s+Canvas, Markdown, or HTML/);
   assert.match(
     routing,
-    /Portable HTML report \| Active host is Claude Code, Codex, Cursor, Qwen Code, GitHub Copilot, Pi, or WorkBuddy, or a portable visual is explicitly requested \|/,
+    /Portable HTML report \| Active host is Claude Code, Codex, Qwen Code, GitHub Copilot, Pi, or WorkBuddy, or a portable visual is explicitly requested \|/,
   );
+  assert.match(routing, /Cursor Canvas report \| Active host is Cursor \|/);
   assert.match(routing, /Inline only \| Inline or no-files output is explicitly requested \| none; inline analysis writes nothing/);
   assert.match(adapters, /Claude Code[^\n]+scripts\/session-analysis\/platforms\/claude\.mjs[^\n]+self-contained HTML \+ Markdown/);
-  assert.match(adapters, /Cursor[^\n]+scripts\/session-analysis\/platforms\/cursor\.mjs[^\n]+self-contained HTML \+ Markdown/);
+  assert.match(adapters, /Cursor[^\n]+scripts\/session-analysis\/platforms\/cursor\.mjs[^\n]+cursor-canvas/);
   assert.match(adapters, /Pi[^\n]+scripts\/session-analysis\/platforms\/pi\.mjs[^\n]+self-contained HTML \+ Markdown/);
   assert.doesNotMatch(adapters, /Inline repository review only|No Claude\s+session-evidence adapter/);
   assert.match(readme, /Claude Code defaults to a self-contained `report\.html`/);
