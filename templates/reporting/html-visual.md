@@ -59,7 +59,7 @@ Mirror the Markdown report and the parity rules in
 conclusions.
 
 Keep first-screen labels short. Put long paths, command output, screenshots, and
-raw evidence anchors in an evidence table or appendix.
+raw evidence anchors in an evidence table or appendix. Render retained UTC activity dates left-to-right; use shared cell/tick grid columns and gaps, and keep long-range scrolling inside the chart.
 
 HTML cannot assume a host chat API, native prompt injection, or host-specific
 deep links. For each shared finding/action row, render compact `Copy AI Fix`
