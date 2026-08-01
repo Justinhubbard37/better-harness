@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
-import { resolveDispatch } from "../scripts/better-harness-cli/cli.mjs";
+import { main, resolveDispatch } from "../scripts/better-harness-cli/cli.mjs";
 import { commandInventory } from "../scripts/better-harness-cli/registry.mjs";
 
 const cliPath = path.join(process.cwd(), "scripts", "better-harness.mjs");
@@ -17,6 +17,27 @@ function runBetterHarness(args, options = {}) {
     encoding: "utf8",
     ...options,
   });
+}
+
+function runMainWithResult(args, childResult) {
+  const calls = [];
+  const stdout = [];
+  const stderr = [];
+  const exitCode = main(args, {
+    cwd: process.cwd(),
+    spawn(command, childArgs, options) {
+      calls.push({ command, childArgs, options });
+      return childResult;
+    },
+    stdout: { write: (value) => stdout.push(Buffer.from(value).toString("utf8")) },
+    stderr: { write: (value) => stderr.push(Buffer.from(value).toString("utf8")) },
+  });
+  return {
+    calls,
+    exitCode,
+    stdout: stdout.join(""),
+    stderr: stderr.join(""),
+  };
 }
 
 function helpGuardEnvironment(expectedOwner, expectedOwnerArgs) {
@@ -677,6 +698,114 @@ test("better-harness CLI emits JSON root errors in machine mode", () => {
   assert.equal(payload.error.message, "Unknown command: missing-capability");
   assert.match(payload.error.hint, /better-harness commands --json/);
   assert.doesNotMatch(payload.error.hint, /Usage:/);
+});
+
+test("better-harness CLI normalizes delegated spawn errors in human and machine modes", () => {
+  const childResult = {
+    error: new Error("spawn ENOENT at a private installation path"),
+    signal: null,
+    status: null,
+    stdout: Buffer.from('{"child":"partial"}\n'),
+    stderr: Buffer.from('{"second":"envelope"}\n'),
+  };
+  const machine = runMainWithResult(["cloc", "--json"], childResult);
+
+  assert.equal(machine.exitCode, 1);
+  assert.equal(machine.stderr, "");
+  const payload = JSON.parse(machine.stdout);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.format_version, "1.0");
+  assert.equal(payload.error.code, "DELEGATED_COMMAND_SPAWN_FAILED");
+  assert.match(payload.error.hint, /Verify the Better Harness installation/u);
+  assert.doesNotMatch(machine.stdout, /private installation path/u);
+  assert.doesNotMatch(machine.stdout, /child|second/u);
+  assert.deepEqual(machine.calls[0].options.stdio, ["inherit", "pipe", "pipe"]);
+
+  const human = runMainWithResult(["cloc"], childResult);
+  assert.equal(human.exitCode, 1);
+  assert.equal(human.stdout, "");
+  assert.match(human.stderr, /^Failed to start the delegated command: spawn ENOENT/u);
+  assert.equal(human.calls[0].options.stdio, "inherit");
+});
+
+test("better-harness CLI replaces signalled child fragments with one machine envelope", () => {
+  const machine = runMainWithResult(["cloc", "--json"], {
+    error: undefined,
+    signal: "SIGTERM",
+    status: null,
+    stdout: Buffer.from('{"child":"partial"}\n'),
+    stderr: Buffer.from('{"second":"envelope"}\n'),
+  });
+
+  assert.equal(machine.exitCode, 1);
+  assert.equal(machine.stderr, "");
+  const payload = JSON.parse(machine.stdout);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.format_version, "1.0");
+  assert.equal(payload.error.code, "DELEGATED_COMMAND_SIGNAL_TERMINATED");
+  assert.equal(payload.error.message, "The delegated command terminated with signal SIGTERM.");
+  assert.match(payload.error.hint, /Retry the command/u);
+  assert.doesNotMatch(machine.stdout, /child|second/u);
+
+  const human = runMainWithResult(["cloc"], {
+    error: undefined,
+    signal: "SIGTERM",
+    status: null,
+    stdout: null,
+    stderr: null,
+  });
+  assert.equal(human.exitCode, 1);
+  assert.equal(human.stdout, "");
+  assert.equal(human.stderr, "The delegated command terminated with signal SIGTERM.\n");
+
+  const passthrough = runMainWithResult(["cloc", "--", "--json"], {
+    error: undefined,
+    signal: "SIGTERM",
+    status: null,
+    stdout: null,
+    stderr: null,
+  });
+  assert.equal(passthrough.stdout, "");
+  assert.equal(passthrough.stderr, "The delegated command terminated with signal SIGTERM.\n");
+  assert.equal(passthrough.calls[0].options.stdio, "inherit");
+});
+
+test("better-harness CLI preserves normal machine child output and status byte-for-byte", () => {
+  const childStdout = Buffer.from('{"owner":"child"}\r\n');
+  const childStderr = Buffer.from("child diagnostic\r\n");
+  const result = runMainWithResult(["cloc", "--json"], {
+    error: undefined,
+    signal: null,
+    status: 7,
+    stdout: childStdout,
+    stderr: childStderr,
+  });
+
+  assert.equal(result.exitCode, 7);
+  assert.equal(result.stdout, childStdout.toString("utf8"));
+  assert.equal(result.stderr, childStderr.toString("utf8"));
+});
+
+test("better-harness CLI separates machine output overflow from spawn failure", () => {
+  const overflow = spawnSync(process.execPath, [
+    "-e",
+    "process.stdout.write('x'.repeat(1024 * 1024)); process.exit(0);",
+  ], { stdio: ["inherit", "pipe", "pipe"], maxBuffer: 1024 });
+  assert.equal(overflow.error?.code, "ENOBUFS");
+
+  const machine = runMainWithResult(["cloc", "--json"], overflow);
+  assert.equal(machine.exitCode, 1);
+  assert.equal(machine.stderr, "");
+  const payload = JSON.parse(machine.stdout);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.format_version, "1.0");
+  assert.equal(payload.error.code, "DELEGATED_COMMAND_OUTPUT_OVERFLOW");
+  assert.match(payload.error.hint, /rerun without `--json`/u);
+  assert.doesNotMatch(machine.stdout, /ENOBUFS|xxxx/u);
+
+  const human = runMainWithResult(["cloc"], overflow);
+  assert.equal(human.stdout, "");
+  assert.equal(human.stderr, "The delegated command produced more output than machine mode can buffer.\n");
 });
 
 test("better-harness CLI runs through a package-bin symlink", async (t) => {

@@ -15,6 +15,16 @@ observable behavior and compatibility, not every internal refactor.
 
 ### Fixed
 
+- Portable HTML finding-bound fixes now record against the HTML report contract
+  without requiring Qoder's `canvas.json`, and refresh `findings.json`,
+  `report.md`, and `report.html` to the same repair revision. Qoder split reports
+  retain their Canvas-sidecar validation boundary.
+
+- Root CLI delegation failures now keep machine mode parseable: spawn errors,
+  signal termination, and output-buffer exhaustion each emit one stable JSON
+  error document, while normal child stdout, stderr, and numeric exit status
+  remain capability-owned.
+
 - Checkup plan/apply is provider-aware: only `provider=qoder` can emit or execute
   `qodercli` disable mutations. Other hosts keep candidates as `manual-review`
   until a provider-native apply contract exists. `provider-home` source
