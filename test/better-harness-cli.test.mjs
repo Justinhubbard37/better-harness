@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
+import { resolveDispatch } from "../scripts/better-harness-cli/cli.mjs";
+import { commandInventory } from "../scripts/better-harness-cli/registry.mjs";
 
 const cliPath = path.join(process.cwd(), "scripts", "better-harness.mjs");
+const helpSideEffectGuardPath = path.join(process.cwd(), "test", "fixtures", "help-side-effect-guard.mjs");
 
 function runBetterHarness(args, options = {}) {
   return spawnSync(process.execPath, [cliPath, ...args], {
@@ -15,9 +19,95 @@ function runBetterHarness(args, options = {}) {
   });
 }
 
+function helpGuardEnvironment(expectedOwner, expectedOwnerArgs) {
+  const inheritedOptions = process.env.NODE_OPTIONS?.trim();
+  return {
+    ...process.env,
+    NODE_OPTIONS: [inheritedOptions, `--import=${pathToFileURL(helpSideEffectGuardPath).href}`]
+      .filter(Boolean)
+      .join(" "),
+    BETTER_HARNESS_HELP_GUARD_ALLOWED_ROOT: process.cwd(),
+    BETTER_HARNESS_HELP_GUARD_DISPATCHER: cliPath,
+    ...(expectedOwner
+      ? {
+        BETTER_HARNESS_HELP_GUARD_OWNER: expectedOwner,
+        BETTER_HARNESS_HELP_GUARD_OWNER_ARGS: JSON.stringify(expectedOwnerArgs),
+      }
+      : {}),
+  };
+}
+
+function runGuardedNode(args, { cwd, expectedOwner, expectedOwnerArgs } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, args, {
+      cwd,
+      env: helpGuardEnvironment(expectedOwner, expectedOwnerArgs),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill();
+      reject(new Error(`timed out while running node ${args.join(" ")}`));
+    }, 10_000);
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.stdin.on("error", () => {});
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("close", (status, signal) => {
+      clearTimeout(timeout);
+      resolve({ status, signal, stdout, stderr });
+    });
+  });
+}
+
+async function runGuardedBetterHarness(args, options) {
+  return runGuardedNode([cliPath, ...args], options);
+}
+
+function assertHelpGuardCanaries(cwd) {
+  const probes = [
+    ["read", "import { readFileSync } from 'node:fs'; readFileSync(process.cwd(), 'utf8');", "HELP_GUARD_READ"],
+    ["write", "import { writeFileSync } from 'node:fs'; writeFileSync('guard-probe.txt', 'x');", "HELP_GUARD_WRITE"],
+    ["stdin", "import { readFileSync } from 'node:fs'; readFileSync(0, 'utf8');", "HELP_GUARD_STDIN"],
+    ["process", "import { spawnSync } from 'node:child_process'; spawnSync('git', ['rev-parse', '--show-toplevel']);", "HELP_GUARD_PROCESS"],
+    ["network", "import { connect } from 'node:net'; connect({ host: '127.0.0.1', port: 1 });", "HELP_GUARD_NETWORK"],
+  ];
+  for (const [name, program, marker] of probes) {
+    const result = spawnSync(process.execPath, ["--input-type=module", "--eval", program], {
+      cwd,
+      env: helpGuardEnvironment(),
+      encoding: "utf8",
+    });
+    assert.notEqual(result.status, 0, name);
+    assert.match(result.stderr, new RegExp(marker), name);
+  }
+}
+
 function listedSubcommands(output) {
   const section = output.match(/Subcommands:\n([\s\S]*?)(?:\n\nExamples:|\n\nDiscovery:|\n\nOptions:)/u)?.[1] ?? "";
   return [...section.matchAll(/^  ([a-z][a-z0-9-]+)\s{2,}/gmu)].map((match) => match[1]);
+}
+
+function registeredTerminalPaths() {
+  const paths = [];
+  for (const command of commandInventory().commands) {
+    if (command.kind === "group") {
+      paths.push(...command.subcommands.map((subcommand) => [command.name, subcommand.name]));
+      continue;
+    }
+
+    paths.push([command.name]);
+    paths.push(...command.aliases.map((alias) => [alias.name]));
+    paths.push(...command.subcommands.map((subcommand) => [command.name, subcommand.name]));
+  }
+  return paths;
 }
 
 function git(cwd, args) {
@@ -378,6 +468,62 @@ test("better-harness CLI describes command aliases as their canonical command", 
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.data.command.name, "agent-customize");
   assert.deepEqual(payload.data.command.aliases, [{ name: "customize", hidden: true }]);
+});
+
+test("better-harness CLI short-circuits help for every registered terminal path", async () => {
+  const isolatedRoot = await mkdtemp(path.join(os.tmpdir(), "better-harness-leaf-help-"));
+  try {
+    assertHelpGuardCanaries(isolatedRoot);
+    for (const pathSegments of registeredTerminalPaths()) {
+      const canonicalArgs = [...pathSegments, "--help"];
+      const canonicalDispatch = resolveDispatch(canonicalArgs);
+      assert.equal(canonicalDispatch.kind, "dispatch", canonicalArgs.join(" "));
+      const canonical = await runGuardedBetterHarness(canonicalArgs, {
+        cwd: isolatedRoot,
+        expectedOwner: canonicalDispatch.script,
+        expectedOwnerArgs: canonicalDispatch.args,
+      });
+      assert.equal(canonical.status, 0, `${canonicalArgs.join(" ")}\n${canonical.stderr}`);
+      assert.equal(canonical.stderr, "", canonicalArgs.join(" "));
+      assert.notEqual(canonical.stdout, "", canonicalArgs.join(" "));
+
+      for (const helpFlag of ["--help", "-h"]) {
+        const args = [...pathSegments, "invalid-before-help", helpFlag];
+        const dispatch = resolveDispatch(args);
+
+        assert.equal(dispatch.kind, "dispatch", args.join(" "));
+        assert.equal(dispatch.script, canonicalDispatch.script, args.join(" "));
+        assert.equal(dispatch.args.includes("invalid-before-help"), false, args.join(" "));
+        assert.equal(dispatch.args.at(-1), "--help", args.join(" "));
+
+        const result = await runGuardedBetterHarness(args, {
+          cwd: isolatedRoot,
+          expectedOwner: dispatch.script,
+          expectedOwnerArgs: dispatch.args,
+        });
+        assert.equal(result.status, 0, `${args.join(" ")}\n${result.stderr}`);
+        assert.equal(result.stderr, "", args.join(" "));
+        assert.equal(result.stdout, canonical.stdout, args.join(" "));
+      }
+    }
+  } finally {
+    await rm(isolatedRoot, { recursive: true, force: true });
+  }
+});
+
+test("better-harness CLI preserves built-in discovery help and literal positional help", () => {
+  const commands = runBetterHarness(["commands", "--help", "--audience", "advanced"]);
+  assert.equal(commands.status, 0, commands.stderr);
+  assert.match(commands.stdout, /agent-customize/u);
+  assert.match(commands.stdout, /session-analysis/u);
+
+  const schema = runBetterHarness(["schema", "--help"]);
+  assert.equal(schema.status, 0, schema.stderr);
+  assert.equal(JSON.parse(schema.stdout).ok, true);
+
+  const positional = resolveDispatch(["cloc", "help"]);
+  assert.equal(positional.kind, "dispatch");
+  assert.deepEqual(positional.args, ["help"]);
 });
 
 test("better-harness CLI group help projects workflow commands", () => {
