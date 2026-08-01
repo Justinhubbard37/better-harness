@@ -52,10 +52,11 @@ unavailable zero device id and the opened handle can expose the real device id.
 
 ## Implementation Evidence
 
-- `sameFileIdentity` now rejects different non-zero device ids, then accepts
-  only matching non-zero inodes when both are available. A zero device id on
-  one observation no longer contradicts the matching inode. The existing
-  metadata fallback remains in place when inode identity is unavailable.
+- `sameFileIdentity` now rejects different non-zero device ids, then requires
+  matching inodes whenever either observation exposes one, so a zero inode on
+  only one side stays contradictory. A zero device id on one observation no
+  longer contradicts the matching inode. The existing metadata fallback applies
+  only when neither observation exposes an inode.
 - `node --test test/agent-guardrails-secret-scan.test.mjs` passed 18 tests with
   0 failures and 3 symlink-permission skips. The formerly failing clean explicit
   file case now reports complete coverage and exit 0.
