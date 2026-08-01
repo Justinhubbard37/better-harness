@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { PROVIDER_COLLECTORS } from "../scripts/agent-customize/providers/index.mjs";
+import { listHostProfiles } from "../scripts/host-support/index.mjs";
 import { createAnalyzer, SESSION_ANALYSIS_HELP } from "../scripts/session-analysis/index.mjs";
 
 // Canonical support declaration (roadmap A-06): CLI help, provider registry,
@@ -59,6 +60,17 @@ test("agent-customize provider registry declares exactly the supported platforms
   for (const platform of SUPPORTED_PLATFORMS) {
     const providerModule = path.join(process.cwd(), "scripts", "agent-customize", "providers", `${platform}.mjs`);
     assert.ok(existsSync(providerModule), `missing configured-asset provider module: ${providerModule}`);
+  }
+});
+
+test("shadow host-support profiles retain parity with canonical providers", () => {
+  const profiles = listHostProfiles();
+  assertSameSet(profiles.map((profile) => profile.provider), "host-support provider references");
+  assertSameSet(profiles.map((profile) => profile.hostId), "host-support host ids");
+
+  for (const profile of profiles) {
+    assert.ok(PROVIDER_COLLECTORS.has(profile.provider), `missing public inventory provider for ${profile.hostId}`);
+    assert.ok(profile.surfaces.length > 0, `host-support profile has no surfaces: ${profile.hostId}`);
   }
 });
 

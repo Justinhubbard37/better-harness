@@ -67,7 +67,8 @@ function pluginKey(value) {
 
 function normalizeInstallScope(value) {
   const scope = String(value ?? "user").trim().toLowerCase();
-  return scope === "project" || scope === "local" || scope === "workspace" ? "project" : "user";
+  if (scope === "workspace") return "project";
+  return scope || "unknown";
 }
 
 function pluginPathValues(value) {
@@ -326,9 +327,11 @@ function pluginSetting(id, settings) {
 }
 
 function pluginApplicable(record, workspace, settings, id) {
-  if (normalizeInstallScope(record.scope) === "user") return true;
+  const scope = normalizeInstallScope(record.scope);
+  if (scope === "user") return true;
+  if (!settings[scope]) return true;
   if (record.projectPath) return normalizeWorkspace(record.projectPath) === workspace;
-  return settings.local.get(id) === true || settings.project.get(id) === true;
+  return settings[scope].get(id) === true;
 }
 
 function normalizeProvidedRecord(id, record, index) {

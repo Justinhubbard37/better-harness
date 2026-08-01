@@ -34,6 +34,23 @@ Better Harness 当前声明了八个能力层宿主适配器，其中六个已�
 运行时 bundle 只包含 Qoder shell。Pi 复用现有 `package.json` 中的安装元数据，
 因此不会新增第七个文件系统元数据根目录；非 Qoder 的生成宿主产物保持源码本地。
 
+## 只读插件生命周期
+
+独立 CLI 可以规范化本地 Better Harness 安装证据，同时保留宿主能力差异：
+
+```bash
+better-harness plugin status --host all
+better-harness plugin verify --host all
+better-harness doctor --platform all
+```
+
+`plugin plan` 要求显式指定一个宿主，并输出带类型的原生 argv 或手工步骤，
+但不会执行。Qoder Desktop 保持内置分发，Codex Desktop 使用手工 UI 步骤；
+Cursor 在本机 help 合同过期期间保持安装不可用；Pi 持久化 surface 中缺少原生
+证据的操作保持不可用，临时 session surface 的更新/移除不适用；WorkBuddy 返回
+`PLUGIN_LIFECYCLE_UNSUPPORTED`。在 ADR-0002 仍为 proposed 期间，shadow host
+profile 不替代规范适配器矩阵。
+
 ## 输出模式
 
 - **Qoder Canvas** —— 渲染器负责的 `findings.json`、仅 Canvas 使用的
@@ -48,8 +65,11 @@ Better Harness 当前声明了八个能力层宿主适配器，其中六个已�
 ### Pi {#pi}
 
 Pi 可以通过 `pi install <source>` 安装本仓库，或使用 `pi -e <source>` 加载。
-包发现、已配置资产、工作区匹配的会话证据与可移植 HTML 路由均已实现。
-在观察到完整交互式报告闭环冒烟验证前，Pi 仍不进入已验证快速开始集合。
+生命周期状态把持久化的用户/项目包设置作为 `cli` inventory surface，把单次
+`pi -e` 激活作为独立的 `cli-session` session-only surface；空设置不能证明正在
+运行的会话没有加载该包。包发现、已配置资产、工作区匹配的会话证据与可移植
+HTML 路由均已实现。在观察到完整交互式报告闭环冒烟验证前，Pi 仍不进入已验证
+快速开始集合。
 
 ### WorkBuddy {#workbuddy}
 

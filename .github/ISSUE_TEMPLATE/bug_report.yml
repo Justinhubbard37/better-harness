@@ -63,7 +63,7 @@ body:
         - Bundled with Qoder Desktop
         - Host marketplace or plugin manager
         - Qwen Code extension
-        - Cursor source-local --plugin-dir
+        - Cursor session evidence (installation unavailable)
         - Pi package (pi install or pi -e)
         - npm package or standalone CLI
         - Source checkout

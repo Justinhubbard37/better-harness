@@ -67,10 +67,23 @@ test("installation prerequisites and verification paths stay aligned across loca
     assert.match(content, /claude plugin details better-harness@better-harness/u);
     assert.match(content, /codex plugin list --marketplace better-harness/u);
     assert.match(content, /qodercli plugin list/u);
+    assert.match(content, /qwen extensions list/u);
     assert.match(content, /copilot plugin list/u);
     assert.match(content, /copilot skill list/u);
-    assert.doesNotMatch(content, /qwen extensions list/u);
   }
+});
+
+test("Pi single-run README guidance keeps temporary loading in the same session", () => {
+  const readme = readUtf8("README.md");
+  const readmeZh = readUtf8("README.zh-CN.md");
+
+  for (const content of [readme, readmeZh]) {
+    assert.match(content, /pi -e git:github\.com\/QoderAI\/better-harness/u);
+  }
+  assert.match(readme, /run the report\n?prompt in that same Pi session/u);
+  assert.match(readme, /opening another session drops the temporary\npackage/u);
+  assert.match(readmeZh, /在同一 Pi 会话中运行报告\n提示词/u);
+  assert.match(readmeZh, /另开会话会丢失临时加载的包/u);
 });
 
 test("troubleshooting is bilingual, safe, linked, and routed through Getting Started", () => {
@@ -91,8 +104,18 @@ test("troubleshooting is bilingual, safe, linked, and routed through Getting Sta
     assert.match(content, /INVALID_CWD/u);
     assert.match(content, /--qoder-home/u);
     assert.match(content, /\.copilot\/better-harness/u);
+    assert.match(content, /qwen extensions list/u);
+    assert.doesNotMatch(content, /--plugin-dir/u);
     assert.doesNotMatch(content, /rm\s+-rf|Remove-Item|del\s+\/s/iu);
   }
+});
+
+test("Cursor adapter guidance does not advertise an unavailable install flag", () => {
+  const adapters = readUtf8("docs", "adapters", "README.md");
+
+  assert.match(adapters, /native `cursor-agent --help` contract check/u);
+  assert.match(adapters, /unavailable install plan/u);
+  assert.doesNotMatch(adapters, /--plugin-dir/u);
 });
 
 test("first-report guidance no longer claims one invocation works for every host", () => {
@@ -128,6 +151,7 @@ test("bug report intake does not hard-code a release and covers current host pat
     assert.match(issueForm, new RegExp(`- ${host.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}`));
   }
   assert.match(issueForm, /Host marketplace or plugin manager/u);
-  assert.match(issueForm, /Cursor source-local --plugin-dir/u);
+  assert.match(issueForm, /Cursor session evidence \(installation unavailable\)/u);
+  assert.doesNotMatch(issueForm, /--plugin-dir/u);
   assert.match(issueForm, /npm package or standalone CLI/u);
 });
