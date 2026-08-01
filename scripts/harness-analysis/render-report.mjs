@@ -178,7 +178,10 @@ async function writeArtifacts({ reportData, artifactDir, runDir }) {
     await writeJson(path.join(artifactDir, "findings.json"), findingsJson);
     artifacts.push(artifact("findings.json", runDir));
     await writeFile(path.join(artifactDir, "report.md"), renderMarkdown(reportData));
-    await writeFile(path.join(artifactDir, "report.html"), renderHtml(reportData));
+    await writeFile(
+      path.join(artifactDir, "report.html"),
+      renderHtml(reportData, { findingsPath: path.join(runDir, "findings.json") }),
+    );
     artifacts.push(artifact("report.md", runDir), artifact("report.html", runDir));
   }
 
@@ -240,7 +243,11 @@ async function validateArtifacts({ reportData, artifactDir, runDir, artifacts, o
       allowStandaloneTaskLoop: true,
     }));
     if (reportData.mode === "html") {
-      checks.push(evaluateHtmlReport(readFileSync(path.join(artifactDir, "report.html"), "utf8"), reportData));
+      checks.push(evaluateHtmlReport(
+        readFileSync(path.join(artifactDir, "report.html"), "utf8"),
+        reportData,
+        { findingsPath: path.join(runDir, "findings.json") },
+      ));
     }
   }
 

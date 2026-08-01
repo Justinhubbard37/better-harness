@@ -28,6 +28,17 @@ test("Better Harness keeps one compact five-step owner", () => {
   assert.match(description, /^Use when /);
   assert.match(description, /\/better-harness/);
   assert.match(description, /Invoke only via slash command/);
+  for (const keyword of [
+    "lifecycle controls",
+    "repeated work",
+    "project feedback",
+    "agent assets",
+    "session outcomes",
+    "repair planning",
+    "durable reports",
+    "finding-bound fixes",
+    "manual direct fixes",
+  ]) assert.match(description, new RegExp(keyword));
   assert.ok(skill.split("\n").length < 220, "root Skill must remain compact");
   assert.ok(Buffer.byteLength(skill) < 12_000, "root Skill must stay below the prompt budget");
 
@@ -62,6 +73,7 @@ test("Better Harness keeps one compact five-step owner", () => {
   assert.match(skill, /writes every distinct supported finding and freezes final severity/);
   assert.match(skill, /shape at most\s+three priority moves/);
   assert.match(skill, /Repair Progress; Loop Effectiveness waits/);
+  assert.match(skill, /separate independent post-fix agent/);
 });
 
 test("non-Qoder providers default to validated durable HTML with an explicit inline opt-out", () => {
@@ -385,7 +397,7 @@ test("finding-bound fixes remain slash-command owned and independently reassesse
   const canvas = read("templates/canvas/better-harness-insights.canvas.tsx");
   const html = read("scripts/harness-analysis/renderers/html.mjs");
 
-  assert.match(skill, /prompt contains `<better-harness-fix-output>`/);
+  assert.match(skill, /`<better-harness-fix-output>`: \[Finding-bound Fix\]/);
   assert.doesNotMatch(skill, /legacy fix callbacks/);
   assert.match(skill, /\[Finding-bound Fix\]\(references\/finding-bound-fix\.md\)/);
   assert.match(fix, /initiating handoff must explicitly invoke `\/better-harness`/);
@@ -409,6 +421,25 @@ test("finding-bound fixes remain slash-command owned and independently reassesse
   assert.doesNotMatch(canvas, /TaskLoopOutcomeMetrics/);
   assert.match(html, /Codex Evidence Score \(Loop Effectiveness\)/);
   assert.match(html, /Asset Health \/ Repair Progress/);
+});
+
+test("manual direct fixes do not require report callbacks or mutate report state", () => {
+  const skill = read("skills/better-harness/SKILL.md");
+  const directFixPath = "skills/better-harness/references/manual-direct-fix.md";
+  assertExistingFile(directFixPath);
+  const directFix = read(directFixPath);
+
+  assert.match(skill, /No callback plus leading `fix`, `repair`, or `\\u4fee\\u590d`:[\s\S]+\[Manual Direct Fix\]\(references\/manual-direct-fix\.md\)/i);
+  assert.match(skill, /Review\/evaluation\/reporting or mixed review-and-fix: Step 1/i);
+  assert.match(directFix, /first instruction is an explicit[\s\S]+`fix`, `repair`, or `\\u4fee\\u590d` \(Chinese `fix`\) directive/i);
+  assert.match(directFix, /`review my harness and fix issues` remains on the ordinary[\s\S]+review route/i);
+  assert.match(directFix, /concrete problem or requested outcome/i);
+  assert.match(directFix, /smallest relevant owner/i);
+  assert.match(directFix, /smallest relevant validation/i);
+  assert.match(directFix, /must not (?:search for|discover)[\s\S]+`findings\.json`/i);
+  assert.match(directFix, /must not (?:read|update)[\s\S]+`findings\.json`/i);
+  assert.match(directFix, /do not ask[\s\S]+`workspacePath`[\s\S]+`findingsPath`[\s\S]+`findingId`[\s\S]+`expectedRevision`/i);
+  assert.match(directFix, /must not claim[\s\S]+Repair Progress/i);
 });
 
 test("bug-diagnosis examples remain provider-neutral evidence-bound Skill shapes", () => {
