@@ -60,7 +60,9 @@ function safeContextSource(source, scope) {
 }
 
 function contextItemLabel(item, index, admittedSource) {
-  const sourceLabel = boundedText(admittedSource?.label ?? item?.source?.label, 160);
+  // Only an admitted source may name the item; a rejected source's label would
+  // re-expose a file the workspace boundary just excluded.
+  const sourceLabel = boundedText(admittedSource?.label, 160);
   if (sourceLabel && !path.isAbsolute(sourceLabel)) return sourceLabel;
   const candidate = boundedText(item?.label, 240);
   if (!candidate) return `Context item ${index + 1}`;
@@ -78,15 +80,10 @@ function projectContextUsageSnapshot(raw, { capturedAt, scope } = {}) {
   if (contextWindowSize <= 0 || totalTokensUsed <= 0) return null;
 
   const rawItems = Array.isArray(usage.items) ? usage.items.slice(0, CURSOR_CONTEXT_USAGE_ITEM_LIMIT) : [];
-  const itemIds = new Map(rawItems.map((item, index) => [String(item?.id ?? `item-${index + 1}`), `item-${index + 1}`]));
   const items = rawItems.map((item, index) => {
     const source = safeContextSource(item?.source, scope);
-    const parentId = item?.parentId === undefined || item?.parentId === null
-      ? null
-      : itemIds.get(String(item.parentId)) ?? null;
     return {
       id: `item-${index + 1}`,
-      parentId,
       categoryId: boundedText(item?.categoryId, 80) || "other",
       label: contextItemLabel(item, index, source),
       estimatedTokens: nonNegativeInteger(item?.estimatedTokens),
@@ -123,11 +120,15 @@ function projectContextUsageSnapshot(raw, { capturedAt, scope } = {}) {
   };
 }
 
-export async function readCursorContextUsage(scope) {
-  const canvasRoots = scope._workspaceSlugVariants
-    .map((slug) => path.join(scope.home, "projects", slug, "canvases"));
+export function cursorContextUsageCanvasRoots(scope) {
+  return scope._workspaceSlugVariants.map((slug) => path.join(scope.home, "projects", slug, "canvases"));
+}
+
+// A `canvases` directory is not itself Context Usage evidence; only a materialized
+// snapshot file is, so presence is reported from the files rather than the parent.
+export async function findCursorContextUsageSnapshots(scope) {
   const candidates = [];
-  for (const root of canvasRoots) {
+  for (const root of cursorContextUsageCanvasRoots(scope)) {
     if (!await pathExists(root)) continue;
     const files = await walkFiles(root, {
       maxDepth: 1,
@@ -137,12 +138,20 @@ export async function readCursorContextUsage(scope) {
     for (const filePath of files) {
       let metadata;
       try { metadata = await stat(filePath); } catch { continue; }
-      const capturedAt = new Date(metadata.mtimeMs).toISOString();
-      if (!withinTimeRange(capturedAt, scope)) continue;
-      candidates.push({ filePath, capturedAt, mtimeMs: metadata.mtimeMs });
+      candidates.push({
+        filePath,
+        capturedAt: new Date(metadata.mtimeMs).toISOString(),
+        mtimeMs: metadata.mtimeMs,
+      });
     }
   }
   candidates.sort((left, right) => right.mtimeMs - left.mtimeMs || left.filePath.localeCompare(right.filePath));
+  return candidates;
+}
+
+export async function readCursorContextUsage(scope) {
+  const snapshots = await findCursorContextUsageSnapshots(scope);
+  const candidates = snapshots.filter((candidate) => withinTimeRange(candidate.capturedAt, scope));
   for (const candidate of candidates) {
     let raw;
     try { raw = await readJson(candidate.filePath); } catch { continue; }
@@ -597,6 +606,8 @@ export class CursorSessionAnalyzer extends SessionAnalyzer {
   async discoverSourceRoots(scope) {
     const transcriptPaths = scope._workspaceSlugVariants
       .map((slug) => path.join(scope.home, "projects", slug, "agent-transcripts"));
+    const contextUsagePaths = cursorContextUsageCanvasRoots(scope);
+    const contextUsageSnapshots = await findCursorContextUsageSnapshots(scope);
     const roots = [
       {
         id: "cursor-agent-transcripts",
@@ -623,12 +634,15 @@ export class CursorSessionAnalyzer extends SessionAnalyzer {
         id: "cursor-context-usage",
         kind: "cursor-context-usage-canvas",
         role: "context-usage-snapshot",
-        path: path.join(scope.home, "projects", scope._workspaceSlugVariants[0], "canvases"),
-        paths: scope._workspaceSlugVariants.map((slug) => path.join(scope.home, "projects", slug, "canvases")),
+        path: contextUsageSnapshots[0]?.filePath ?? contextUsagePaths[0],
+        paths: contextUsagePaths,
         optional: true,
         enabled: true,
         workspaceScoped: true,
         coverage: "optional-context-usage",
+        // The parent `canvases` directory can exist without any snapshot, so
+        // presence tracks a materialized snapshot file instead of the directory.
+        exists: contextUsageSnapshots.length > 0,
       },
       {
         id: "cursor-audit",
@@ -653,9 +667,11 @@ export class CursorSessionAnalyzer extends SessionAnalyzer {
     ];
     return Promise.all(roots.map(async (root) => ({
       ...root,
-      exists: root.paths
-        ? (await Promise.all(root.paths.map(pathExists))).some(Boolean)
-        : await pathExists(root.path),
+      exists: Object.hasOwn(root, "exists")
+        ? root.exists
+        : root.paths
+          ? (await Promise.all(root.paths.map(pathExists))).some(Boolean)
+          : await pathExists(root.path),
     })));
   }
 

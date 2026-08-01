@@ -41,6 +41,13 @@ function filesystemPathIdentity(value) {
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
+// Each Canvas mode owns its own analyzer companion filename so the two routes
+// stay independent even though they currently agree on `canvas.json`.
+const ANALYZER_CANVAS_DATA_FILE_BY_MODE = Object.freeze({
+  "qoder-canvas": QODER_CANVAS_DATA_FILE,
+  "cursor-canvas": CURSOR_CANVAS_DATA_FILE,
+});
+
 const HELP = `Usage: better-harness harness render (--source <report.source.json> | --findings <findings.json>) --mode <qoder-canvas|cursor-canvas|markdown|html> --out <dir> --target <path> [options]
 
 Render reviewed findings data into deterministic report artifacts.
@@ -105,10 +112,11 @@ function artifact(name, runDir) {
 }
 
 function implicitAnalyzerCanvasPath(options, findingsPath) {
-  if (options.canvas || !new Set(["qoder-canvas", "cursor-canvas"]).has(options.mode)) {
+  const canvasDataFile = ANALYZER_CANVAS_DATA_FILE_BY_MODE[options.mode];
+  if (options.canvas || !canvasDataFile) {
     return null;
   }
-  const candidatePath = path.join(path.dirname(findingsPath), QODER_CANVAS_DATA_FILE);
+  const candidatePath = path.join(path.dirname(findingsPath), canvasDataFile);
   if (!existsSync(candidatePath)) return null;
   const candidate = readJsonFile(candidatePath);
   return Object.hasOwn(candidate ?? {}, "summaryFactsSchemaVersion") ? candidatePath : null;

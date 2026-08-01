@@ -3071,7 +3071,7 @@ function contextUsageErrors(usage) {
         errors.push(`${itemPrefix} must be an object`);
         continue;
       }
-      errors.push(...unsupportedFields(item, ["id", "parentId", "categoryId", "label", "estimatedTokens", "characterCount", "source"], itemPrefix));
+      errors.push(...unsupportedFields(item, ["id", "categoryId", "label", "estimatedTokens", "characterCount", "source"], itemPrefix));
       for (const field of ["id", "categoryId", "label"]) {
         if (typeof item[field] !== "string" || !item[field].trim()) errors.push(`${itemPrefix}.${field} must be non-empty text`);
       }

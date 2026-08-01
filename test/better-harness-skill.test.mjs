@@ -86,6 +86,10 @@ test("Qoder and Cursor default to Canvas while portable providers retain durable
   assert.match(skill, /explicit inline or no-files request writes nothing/);
   assert.match(skill, /Other providers: <mode>=html; <host-root>=<target>\/\.<provider>\/better-harness/);
   assert.doesNotMatch(skill, /(?:Claude Code|Codex): <mode>=html/);
+  // The per-route artifact inventory is owned by routing.md, not duplicated in the
+  // byte-budgeted root Skill.
+  assert.match(routing, /renderer-owned `findings\.json`, `canvas\.json`, `report\.canvas\.tsx` \| `cursor-canvas\.md`/);
+  assert.match(routing, /renderer-owned `findings\.json`, `report\.md`, `report\.html` \| `html-visual\.md`/);
   assert.match(skill, /Succeed only on\s+`status: pass`/);
   assert.match(skill, /Never hand-write\s+Canvas, Markdown, or HTML/);
   assert.match(

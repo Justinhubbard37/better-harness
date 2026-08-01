@@ -41,9 +41,9 @@ for their explicit boundaries.
 Better Harness scopes behavior claims to relevant Task Episodes and the
 surrounding project mechanisms. Qoder and Cursor produce host-native Canvas
 reports; Claude Code, Codex, Qwen Code, and GitHub Copilot produce
-self-contained HTML with paired Markdown. Missing or partial evidence remains explicit. See the
-[Host Adapter Matrix](docs/adapters/README.md) for current coverage and output
-differences.
+self-contained HTML with paired Markdown. Missing or partial evidence remains
+explicit. See the [Host Adapter Matrix](docs/adapters/README.md) for current
+coverage and output differences.
 
 ## See it in action
 
