@@ -12,9 +12,10 @@ observable behavior and compatibility, not every internal refactor.
   `report.md`, and `report.html` to the same repair revision. Qoder split reports
   retain their Canvas-sidecar validation boundary.
 
-- Root CLI delegation failures now keep machine mode parseable: spawn errors and
-  signal termination emit one stable JSON error document, while normal child
-  stdout, stderr, and numeric exit status remain capability-owned.
+- Root CLI delegation failures now keep machine mode parseable: spawn errors,
+  signal termination, and output-buffer exhaustion each emit one stable JSON
+  error document, while normal child stdout, stderr, and numeric exit status
+  remain capability-owned.
 
 - Checkup plan/apply is provider-aware: only `provider=qoder` can emit or execute
   `qodercli` disable mutations. Other hosts keep candidates as `manual-review`

@@ -523,6 +523,17 @@ function normalizeDispatchResult(result, {
   stdout = process.stdout,
   stderr = process.stderr,
 } = {}) {
+  if (result.error?.code === "ENOBUFS") {
+    return emitRootResult(rootError({
+      code: "DELEGATED_COMMAND_OUTPUT_OVERFLOW",
+      message: "The delegated command produced more output than machine mode can buffer.",
+      hint: machine
+        ? "Narrow the command scope, or rerun without `--json` to stream the full output."
+        : undefined,
+      machine,
+    }), { stdout, stderr });
+  }
+
   if (result.error) {
     return emitRootResult(rootError({
       code: "DELEGATED_COMMAND_SPAWN_FAILED",

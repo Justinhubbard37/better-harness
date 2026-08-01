@@ -786,6 +786,28 @@ test("better-harness CLI preserves normal machine child output and status byte-f
   assert.equal(result.stderr, childStderr.toString("utf8"));
 });
 
+test("better-harness CLI separates machine output overflow from spawn failure", () => {
+  const overflow = spawnSync(process.execPath, [
+    "-e",
+    "process.stdout.write('x'.repeat(1024 * 1024)); process.exit(0);",
+  ], { stdio: ["inherit", "pipe", "pipe"], maxBuffer: 1024 });
+  assert.equal(overflow.error?.code, "ENOBUFS");
+
+  const machine = runMainWithResult(["cloc", "--json"], overflow);
+  assert.equal(machine.exitCode, 1);
+  assert.equal(machine.stderr, "");
+  const payload = JSON.parse(machine.stdout);
+  assert.equal(payload.ok, false);
+  assert.equal(payload.format_version, "1.0");
+  assert.equal(payload.error.code, "DELEGATED_COMMAND_OUTPUT_OVERFLOW");
+  assert.match(payload.error.hint, /rerun without `--json`/u);
+  assert.doesNotMatch(machine.stdout, /ENOBUFS|xxxx/u);
+
+  const human = runMainWithResult(["cloc"], overflow);
+  assert.equal(human.stdout, "");
+  assert.equal(human.stderr, "The delegated command produced more output than machine mode can buffer.\n");
+});
+
 test("better-harness CLI runs through a package-bin symlink", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-cli-bin-"));
   const linkPath = path.join(root, "better-harness");

@@ -33,6 +33,12 @@ to own their normal output bytes and exit status.
 - **RCM-AC-4 (normal child ownership):** delegated commands that return a
   numeric status keep that status, stdout, and stderr byte-for-byte. The root
   CLI adds no success or child-business-failure envelope.
+- **RCM-AC-5 (output overflow):** when a delegated process starts, runs, and
+  exceeds the machine-mode output buffer, stdout contains exactly one parseable
+  `format_version: "1.0"` error document with code
+  `DELEGATED_COMMAND_OUTPUT_OVERFLOW` and a hint that narrows scope or drops
+  `--json`. Truncated child bytes and the raw `ENOBUFS` diagnostic are not
+  relayed, and the envelope is never confused with a start failure.
 
 ## Non-goals
 
@@ -71,6 +77,10 @@ to own their normal output bytes and exit status.
   human mode for spawn and signal failures.
 - **RCM-AC-4:** compare delegated root CLI output with direct capability output
   and assert identical stdout, stderr, and numeric exit status.
+- **RCM-AC-5:** drive a real `spawnSync` overflow with a small `maxBuffer`, then
+  assert the resulting `ENOBUFS` shape produces the overflow envelope instead of
+  the spawn-failure envelope in machine mode and a bounded stderr diagnostic in
+  human mode.
 - **Documentation integrity:** run
   `node scripts/doc-link-graph/cli.mjs skills/better-harness` and
   `node --test test/doc-link-graph.test.mjs` after adding this Markdown file.
@@ -78,9 +88,9 @@ to own their normal output bytes and exit status.
   changes separately.
 - **Risk:** machine-mode buffering delays delegated output until the child
   exits and is bounded by Node's synchronous child-process buffer. Keep the
-  buffer explicit and large enough for current machine documents; treat buffer
-  exhaustion as the same stable spawn-boundary operational failure rather than
-  leaking a raw diagnostic into machine stdout.
+  buffer explicit and large enough for current machine documents; buffer
+  exhaustion stays a stable machine envelope with its own overflow code rather
+  than leaking a raw diagnostic or truncated child bytes into machine stdout.
 
 ## Observed Validation Evidence
 
