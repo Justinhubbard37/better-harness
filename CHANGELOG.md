@@ -5,6 +5,14 @@ observable behavior and compatibility, not every internal refactor.
 
 ## Unreleased
 
+### Added
+
+- A read-only native Learning Capture review contract can now screen ordinary
+  Task Episodes for repeated exact repair routes, emit a bounded privacy-safe
+  packet, validate evidence-bound `match` or `abstain` decisions, and project
+  accepted `recurring-correction` opportunities through the existing Learning
+  Loop candidate model without requiring adapter-supplied pattern labels.
+
 ### Fixed
 
 - Checkup plan/apply is provider-aware: only `provider=qoder` can emit or execute
