@@ -613,9 +613,16 @@ function nativeSignalSignature(group) {
   return String(group?.patternSignature ?? "");
 }
 
+function orderedByGroupRef(decisions) {
+  return [...rows(decisions)]
+    .sort((left, right) => String(left?.groupRef ?? "").localeCompare(String(right?.groupRef ?? "")));
+}
+
 function commonProviderSignature(episodes, patternId) {
   const signatureSets = episodes.map((episode) => new Set(rows(episode?.learningSignals)
-    .filter((signal) => signal?.patternId === patternId && text(signal?.normalizedSignature))
+    .filter((signal) => signal?.patternId === patternId
+      && !signal?.nativeReview
+      && text(signal?.normalizedSignature))
     .map((signal) => text(signal.normalizedSignature))));
   if (signatureSets.length === 0) return "";
   return [...signatureSets[0]]
@@ -705,16 +712,25 @@ export function applyNativeLearningCandidateReview({
   const episodesById = new Map(rows(reviewedEpisodes).map((episode) => [String(episode?.id ?? ""), episode]));
   const episodeFactsById = new Map(rows(packet?.episodeFacts).map((episode) => [episode.episodeRef, episode]));
   const groupsById = new Map(rows(packet?.groups).map((group) => [group.groupRef, group]));
+  const matchDecisions = rows(review?.decisions).filter((decision) => decision.decision === "match");
+  const signatureByGroupRef = new Map(matchDecisions.map((decision) => {
+    const group = groupsById.get(decision.groupRef);
+    const sourceEpisodes = group.episodeRefs.map((episodeRef) => episodesById.get(episodeRef));
+    return [
+      decision.groupRef,
+      commonProviderSignature(sourceEpisodes, decision.patternId) || nativeSignalSignature(group),
+    ];
+  }));
   const matches = [];
   const abstentions = [];
-  for (const decision of rows(review?.decisions)) {
+  for (const decision of orderedByGroupRef(review?.decisions)) {
     const group = groupsById.get(decision.groupRef);
     if (decision.decision === "abstain") {
       abstentions.push({ groupRef: decision.groupRef, reasonCodes: [...decision.reasonCodes] });
       continue;
     }
     const sourceEpisodes = group.episodeRefs.map((episodeRef) => episodesById.get(episodeRef));
-    const signature = commonProviderSignature(sourceEpisodes, decision.patternId) || nativeSignalSignature(group);
+    const signature = signatureByGroupRef.get(decision.groupRef);
     for (const episode of sourceEpisodes) {
       episode.learningSignals = dedupeLearningSignals(episode.learningSignals);
       const exists = episode.learningSignals.some((signal) => signal?.patternId === decision.patternId
@@ -741,7 +757,6 @@ export function applyNativeLearningCandidateReview({
   }
 
   const learningLoop = buildLearningLoopReview({ episodes: reviewedEpisodes, signals, interventions, assetCoverage });
-  learningLoop.status = "reviewed";
   return {
     result: {
       schemaVersion: NATIVE_LEARNING_APPLIED_REVIEW_SCHEMA_VERSION,

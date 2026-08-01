@@ -526,3 +526,181 @@ test("historical flat learningPatternId events still build provider-supplied rep
     true,
   );
 });
+
+function repairEventsForCheck(sessionId, minute, suffix, slug) {
+  const base = "2026-08-01T10:" + String(minute).padStart(2, "0");
+  const commandText = "node --test test/" + slug + ".test.mjs";
+  return [
+    event({
+      sessionId,
+      timestamp: base + ":00.000Z",
+      toolName: "Bash",
+      commandText,
+      targetPaths: ["src/" + slug + ".mjs"],
+      success: false,
+      evidenceId: suffix + "-" + slug + "-failure",
+    }),
+    event({
+      sessionId,
+      timestamp: base + ":01.000Z",
+      toolName: "Edit",
+      filePath: "src/" + slug + ".mjs",
+      evidenceId: suffix + "-" + slug + "-edit",
+    }),
+    event({
+      sessionId,
+      timestamp: base + ":02.000Z",
+      toolName: "Bash",
+      commandText,
+      targetPaths: ["src/" + slug + ".mjs"],
+      success: true,
+      evidenceId: suffix + "-" + slug + "-rerun",
+    }),
+  ];
+}
+
+function correctionEpisode(id, { taskRoute, targetKeys, signature }) {
+  return {
+    id,
+    taskRoute,
+    targetKeys,
+    evidenceRefs: [{ kind: "fixture", id: id.replace("episode:", "evidence-") }],
+    changeSets: [],
+    validationSets: [],
+    learningSignals: [{
+      normalizedSignature: signature,
+      userCorrection: true,
+      fieldProvenance: { userCorrection: "host-observed" },
+      evidenceRefs: [{ kind: "fixture", id: id.replace("episode:", "correction-") }],
+    }],
+  };
+}
+
+test("applying a native review leaves unreviewed provider candidates at candidate status", () => {
+  const episodes = buildTaskEpisodes([
+    ...repairEventsForCheck("session-a", 0, "a", "shared"),
+    ...repairEventsForCheck("session-b", 5, "b", "shared"),
+    ...repairEventsForCheck("session-c", 20, "c", "other"),
+  ]).episodes;
+  episodes.at(-1).learningSignals = [{
+    patternId: "present-but-not-routed",
+    normalizedSignature: "provider-routing-gap",
+    taskFamily: "docs",
+    repoArea: "docs",
+    frictionType: "rediscovery",
+    assetLoaded: false,
+    assetRelevant: true,
+  }];
+  const packet = buildNativeLearningReviewPacket({ episodes });
+  const applied = applyNativeLearningCandidateReview({ episodes, packet, review: matchingReview(packet) });
+  assert.deepEqual(applied.errors, []);
+  assert.equal(applied.result.status, "reviewed");
+  assert.equal(applied.result.learningLoop.status, "candidate");
+  assert.ok(applied.result.learningLoop.candidates.some((candidate) => candidate.patternId === "present-but-not-routed"));
+  assert.deepEqual(
+    validateLearningLoopReview(applied.result.learningLoop, { episodeIds: episodes.map((episode) => episode.id) }),
+    [],
+  );
+});
+
+test("reordered review decisions produce an identical applied result", () => {
+  const episodes = buildTaskEpisodes([
+    ...repairEventsForCheck("session-a", 0, "a", "shared"),
+    ...repairEventsForCheck("session-b", 5, "b", "shared"),
+    ...repairEventsForCheck("session-c", 20, "c", "other"),
+    ...repairEventsForCheck("session-d", 30, "d", "other"),
+  ]).episodes;
+  const packet = buildNativeLearningReviewPacket({ episodes });
+  assert.equal(packet.groups.length, 2);
+  const review = matchingReview(packet);
+  const applied = applyNativeLearningCandidateReview({ episodes, packet, review });
+  const reordered = applyNativeLearningCandidateReview({
+    episodes,
+    packet,
+    review: { ...review, decisions: [...review.decisions].reverse() },
+  });
+  assert.deepEqual(applied.errors, []);
+  assert.deepEqual(reordered.errors, []);
+  assert.deepEqual(reordered.result, applied.result);
+  assert.deepEqual(
+    applied.result.matches.map((match) => match.normalizedSignature).sort(),
+    packet.groups.map((group) => group.patternSignature).sort(),
+  );
+});
+
+test("a group whose Episodes are contained by a larger group is collapsed before review", () => {
+  const episodes = buildTaskEpisodes([
+    ...repairEventsForCheck("session-a", 0, "a", "shared"),
+    ...repairEventsForCheck("session-a", 1, "a", "other"),
+    ...repairEventsForCheck("session-b", 20, "b", "shared"),
+    ...repairEventsForCheck("session-c", 40, "c", "shared"),
+    ...repairEventsForCheck("session-c", 41, "c", "other"),
+  ]).episodes;
+  assert.equal(episodes.length, 3);
+  const packet = buildNativeLearningReviewPacket({ episodes });
+  assert.equal(packet.groups.length, 1);
+  assert.equal(packet.groups[0].episodeRefs.length, 3);
+  assert.equal(packet.coverage.subsumedGroupCount, 1);
+  assert.equal(packet.coverage.truncated, false);
+  assert.equal(packet.coverage.status, "candidate-groups-present");
+  assert.ok(packet.coverage.reasonCodes.includes("subsumed-group-collapsed"));
+  assert.equal(packet.coverage.reasonCodes.includes("group-limit-reached"), false);
+
+  const applied = applyNativeLearningCandidateReview({ episodes, packet, review: matchingReview(packet) });
+  assert.deepEqual(applied.errors, []);
+  assert.equal(applied.result.learningLoop.candidates.length, 1);
+  assert.equal(applied.result.learningLoop.candidates[0].sourceEpisodes.length, 3);
+});
+
+test("a blocked Hook observed on an ordinary Episode excludes it through canonical fields", () => {
+  const blockedEvents = repairEventsForCheck("session-b", 5, "b", "shared");
+  blockedEvents[0] = { ...blockedEvents[0], hookDecision: "blocked" };
+  const episodes = buildTaskEpisodes([
+    ...repairEventsForCheck("session-a", 0, "a", "shared"),
+    ...blockedEvents,
+  ]).episodes;
+  const blocked = episodes.find((episode) => episode.protectiveInterventionObserved === true);
+  assert.ok(blocked);
+  const packet = buildNativeLearningReviewPacket({ episodes });
+  assert.equal(packet.groups.length, 0);
+  assert.equal(packet.coverage.protectiveEpisodeCount, 1);
+  assert.ok(packet.coverage.reasonCodes.includes("protective-intervention-excluded"));
+  assert.equal(
+    packet.episodeFacts.find((fact) => fact.episodeRef === blocked.id).facts.protectiveIntervention,
+    "true",
+  );
+});
+
+test("a denied permission action recorded by the Episode contract excludes an Episode", () => {
+  const episodes = ordinaryRepairEpisodes();
+  episodes[0].permissionSummary = { prompted: 1, denied: 1, escalated: 0, protectedActions: 0, evidenceRefs: [] };
+  const packet = buildNativeLearningReviewPacket({ episodes });
+  assert.equal(packet.groups.length, 0);
+  assert.equal(packet.coverage.protectiveEpisodeCount, 1);
+});
+
+test("report-source Episodes group on shared route and target identity", () => {
+  const episodes = [
+    correctionEpisode("episode:aaaaaaaaaaaa1111", {
+      taskRoute: "lifecycle:fix-defect",
+      targetKeys: ["a1b2c3d4e5f6a7b8"],
+      signature: "provider-correction-route",
+    }),
+    correctionEpisode("episode:bbbbbbbbbbbb2222", {
+      taskRoute: "lifecycle:fix-defect",
+      targetKeys: ["a1b2c3d4e5f6a7b8"],
+      signature: "provider-correction-route",
+    }),
+  ];
+  const packet = buildNativeLearningReviewPacket({ episodes });
+  assert.equal(packet.groups.length, 1);
+  assert.ok(packet.groups[0].reasonCodes.includes("same-task-route"));
+  assert.ok(packet.groups[0].reasonCodes.includes("same-target"));
+  assert.ok(packet.groups[0].reasonCodes.includes("explicit-user-correction"));
+  assert.equal(packet.episodeFacts.every((fact) => fact.facts.userCorrection === "true"), true);
+
+  const applied = applyNativeLearningCandidateReview({ episodes, packet, review: matchingReview(packet) });
+  assert.deepEqual(applied.errors, []);
+  assert.equal(applied.result.learningLoop.candidates.length, 1);
+  assert.equal(applied.result.learningLoop.candidates[0].taskFingerprint.family, "lifecycle-fix-defect");
+});

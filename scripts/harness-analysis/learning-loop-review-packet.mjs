@@ -161,12 +161,9 @@ function sameCheckRepairObserved(episode) {
 function protectiveState(episode) {
   const signals = rows(episode?.learningSignals);
   return observationState([
-    episode?.protectiveIntervention,
     episode?.protectiveInterventionObserved,
-    episode?.hookDenialProtective,
-    episode?.permissionSummary?.protectiveIntervention,
     Number(episode?.permissionSummary?.protectedActions ?? 0) > 0 ? true : undefined,
-    Number(episode?.permissionSummary?.deniedActions ?? 0) > 0 ? true : undefined,
+    Number(episode?.permissionSummary?.denied ?? 0) > 0 ? true : undefined,
     ...signals.map((signal) => signal?.frictionType === PROTECTIVE_FRICTION ? true : undefined),
   ]);
 }
@@ -333,17 +330,31 @@ function screeningGroups(episodeFacts) {
     }
     byKey.set(pair.groupKey, merged);
   }
-  return [...byKey.values()].map(({ groupKey, ...group }) => ({
+  return collapseSubsumedGroups([...byKey.values()].map(({ groupKey, ...group }) => ({
     groupRef: `learning-group:${digest({ groupKey, episodeRefs: group.episodeRefs }, 20)}`,
     patternSignature: `native-${groupKey}`,
     ...group,
     evidenceOwnership: Object.fromEntries(
       Object.entries(group.evidenceOwnership).sort(([left], [right]) => left.localeCompare(right)),
     ),
-  })).sort((left, right) => left.groupRef.localeCompare(right.groupRef));
+  })).sort((left, right) => left.groupRef.localeCompare(right.groupRef)));
 }
 
-function coverageFor(allEpisodeCount, episodeFacts, allGroups, selectedGroups) {
+function subsumes(outer, inner) {
+  if (outer.groupRef === inner.groupRef) return false;
+  if (outer.episodeRefs.length <= inner.episodeRefs.length) return false;
+  const outerEpisodes = new Set(outer.episodeRefs);
+  if (!inner.episodeRefs.every((episodeRef) => outerEpisodes.has(episodeRef))) return false;
+  const outerPatternIds = new Set(outer.allowedPatternIds);
+  return inner.allowedPatternIds.every((patternId) => outerPatternIds.has(patternId));
+}
+
+function collapseSubsumedGroups(groups) {
+  const kept = groups.filter((group) => !groups.some((other) => subsumes(other, group)));
+  return { groups: kept, subsumedCount: groups.length - kept.length };
+}
+
+function coverageFor(allEpisodeCount, episodeFacts, allGroups, selectedGroups, subsumedGroupCount = 0) {
   const episodeTruncated = allEpisodeCount > episodeFacts.length;
   const groupTruncated = allGroups.length > selectedGroups.length;
   const evidenceTruncated = episodeFacts.some((episode) => episode.evidenceCoverage.status === "truncated");
@@ -364,6 +375,7 @@ function coverageFor(allEpisodeCount, episodeFacts, allGroups, selectedGroups) {
     includedEpisodeCount: episodeFacts.length,
     candidateGroupCount: selectedGroups.length,
     totalCandidateGroupCount: allGroups.length,
+    subsumedGroupCount,
     protectiveEpisodeCount,
     missingEvidenceEpisodeCount,
     truncated: episodeTruncated || groupTruncated || evidenceTruncated,
@@ -373,6 +385,7 @@ function coverageFor(allEpisodeCount, episodeFacts, allGroups, selectedGroups) {
       evidenceTruncated ? "evidence-limit-reached" : "",
       missingEvidenceEpisodeCount > 0 ? "missing-evidence" : "",
       protectiveEpisodeCount > 0 ? "protective-intervention-excluded" : "",
+      subsumedGroupCount > 0 ? "subsumed-group-collapsed" : "",
       selectedGroups.length === 0 && episodeFacts.length >= 2 ? "no-comparable-group" : "",
     ]),
   };
@@ -409,7 +422,7 @@ export function buildNativeLearningReviewPacket({ episodes = [], limits: supplie
       return distinct.values().next().value;
     })
     .sort((left, right) => left.episodeRef.localeCompare(right.episodeRef));
-  const allGroups = screeningGroups(episodeFacts);
+  const { groups: allGroups, subsumedCount } = screeningGroups(episodeFacts);
   const groups = allGroups.slice(0, limits.maxGroups);
   const safeSourceProjection = { episodeFacts, groups, limits };
   const packet = {
@@ -425,7 +438,7 @@ export function buildNativeLearningReviewPacket({ episodes = [], limits: supplie
     },
     episodeFacts,
     groups,
-    coverage: coverageFor(allEpisodeCount, episodeFacts, allGroups, groups),
+    coverage: coverageFor(allEpisodeCount, episodeFacts, allGroups, groups, subsumedCount),
   };
   packet.packetDigest = nativeLearningReviewPacketDigest(packet);
   return packet;

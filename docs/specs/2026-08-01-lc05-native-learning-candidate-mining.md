@@ -23,8 +23,8 @@ claim that an intervention is effective.
 
 - **AC-1: Bounded ordinary-Episode packet:** Given normalized Task Episodes
   with no adapter-supplied `learningPatternId`, deterministic screening emits a
-  versioned review packet containing only bounded structural facts, opaque
-  Episode and evidence aliases, allowed review enums, a source binding over
+  versioned review packet containing only bounded structural facts, Task Episode
+  ids plus opaque evidence aliases, allowed review enums, a source binding over
   only those projected privacy-safe facts, and a packet digest. Raw Episode,
   prompt, path, or transcript content is never directly hashed. Input Episode
   order does not change the packet or digest.
@@ -38,13 +38,16 @@ claim that an intervention is effective.
   effectiveness claim is produced.
 - **AC-3: Match and abstain:** Every deterministically screened group receives
   exactly one `match` or `abstain` decision. A match requires at least two
-  distinct Episode aliases and evidence from every referenced Episode. Missing,
+  distinct Episode refs and evidence from every referenced Episode. Missing,
   incomplete, or insufficiently comparable evidence must remain an abstention
   or an explicit non-clean coverage reason.
 - **AC-4: Hard-negative identity boundary:** Episodes are not grouped merely
   because both failed. They need a shared privacy-safe request/task route,
   target, or check identity plus structural friction. Different task, target,
-  and check identities therefore abstain before AI review.
+  and check identities therefore abstain before AI review. Route and target
+  identity are only available on the report-source Episode projection that
+  carries `taskRoute` and `targetKeys`; the `buildTaskEpisodes()` contract shape
+  supplies check identity only, so screening it groups on `same-check` alone.
 - **AC-5: Protective behavior exclusion:** Permission, Hook, or Guardrail
   denials identified as protective interventions are retained as a minimal
   ordinary Task Episode fact, excluded from native friction groups, and cannot
@@ -65,13 +68,16 @@ claim that an intervention is effective.
   evidence in packet facts and validation.
 - **AC-9: Privacy boundary:** Packet and apply output contain no raw prompt,
   command, transcript, session identifier, credential, email address, or
-  Windows, POSIX, or UNC home path. Opaque aliases bind privacy-safe source
+  Windows, POSIX, or UNC home path. `episodeRef` is the Task Episode id, which
+  the Episode contract already emits as `episode:<fingerprint>`, so it is
+  privacy-safe without further aliasing and stays resolvable for an authorized
+  caller. Evidence refs are opaque aliases that bind privacy-safe source
   evidence IDs or public fingerprints, and each bounded Episode fact carries an
   aggregate digest over the complete accepted identity set. A change outside
   the displayed evidence limit therefore still invalidates an old review.
-  Apply output keeps aliases and the aggregate binding opaque; an authorized
-  caller can deterministically re-derive the association from the source, but
-  the public artifact never resolves or exposes raw IDs.
+  Apply output keeps evidence aliases and the aggregate binding opaque; an
+  authorized caller can deterministically re-derive the association from the
+  source, but the public artifact never resolves or exposes raw evidence IDs.
 - **AC-10: Evaluation fixtures:** Positive and hard-negative fixtures report
   expected match, abstain, and coverage counts for native
   `recurring-correction` plus legacy-signal compatibility,
@@ -99,8 +105,9 @@ claim that an intervention is effective.
 
 1. Add a capability-owned Learning Loop review-packet module under
    `scripts/harness-analysis/`. It normalizes only privacy-safe structural
-   Episode facts, screens bounded comparable pairs, builds opaque alias maps by
-   deterministic recomputation, and publishes the allowed decision contract.
+   Episode facts, screens bounded comparable pairs, builds opaque evidence alias
+   maps by deterministic recomputation, and publishes the allowed decision
+   contract.
 2. Extend the existing capability owner in `learning-loop-candidates.mjs` with a
    deterministic apply API that validates source and packet digests, exact
    decision coverage, enum domains, distinct Episode membership, evidence
@@ -127,9 +134,10 @@ claim that an intervention is effective.
   were never observed. Mitigation: opaque allowlists, per-Episode evidence
   ownership, exact group membership, and digest binding.
 - **Private content leakage:** Episode IDs, source refs, paths, credentials, or
-  text could escape through packets or signatures. Mitigation: opaque aliases,
-  enum-only reviewer prose, no raw text fields, privacy sentinel validation,
-  deterministic signatures, and source binding over projected safe facts only.
+  text could escape through packets or signatures. Mitigation: fingerprint-only
+  Episode ids, opaque evidence aliases, enum-only reviewer prose, no raw text
+  fields, privacy sentinel validation, deterministic signatures, and source
+  binding over projected safe facts only.
 - **Overstated coverage:** Truncation or absent observations could look clean.
   Mitigation: explicit `unavailable`, `insufficient-*`, and `truncated` coverage
   codes; the method never emits `checked-clean` for missing or truncated facts.
