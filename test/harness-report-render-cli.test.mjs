@@ -337,6 +337,26 @@ function taskLoopFindingsAtVersion(version) {
   return findings;
 }
 
+function htmlReportDataWithActivity(dates, { language = "en", activeMinutes } = {}) {
+  const source = reviewedTaskLoopSource();
+  source.sessionEvents.usageActivity.dates = dates;
+  source.sessionEvents.usageActivity.sessions.starts = dates.map((_, index) => index + 1);
+  source.sessionEvents.usageActivity.sessions.activeMinutes = activeMinutes ?? dates.map((_, index) => (index + 1) * 5);
+  const data = projectTaskLoopFindings(source, {
+    projectName: "render-source-project",
+    direct: true,
+  });
+  return {
+    ...data,
+    language,
+    target: { name: "render-source-project", path: "/tmp/render-source-project" },
+  };
+}
+
+function attribute(tag, name) {
+  return tag.match(new RegExp(`\\b${name}="([^"]*)"`, "u"))?.[1] ?? null;
+}
+
 function parseRun(stdout) {
   const payload = JSON.parse(stdout);
   assert.equal(payload.kind, "harness-report-render");
@@ -936,6 +956,73 @@ test("HTML mode mirrors the reviewed Agent Work Loop reader sections without Can
     assert.equal(existsSync(path.join(runDir, "canvas.json")), false);
     assert.equal(existsSync(path.join(runDir, "report.canvas.tsx")), false);
   });
+});
+
+test("HTML activity chart binds every short-range UTC date to its horizontal grid column", () => {
+  const dates = ["2026-07-11", "2026-07-12", "2026-07-13", "2026-07-14"];
+  const reportData = htmlReportDataWithActivity(dates);
+
+  const html = renderHtml(reportData);
+  const cells = html.match(/<span class="heat-cell [^"]+"[^>]*>/gu) ?? [];
+  const ticks = html.match(/<span class="heat-tick[^"]*"[^>]*>/gu) ?? [];
+
+  assert.equal(cells.length, 4);
+  assert.deepEqual(cells.map((tag) => attribute(tag, "data-date")), dates);
+  assert.deepEqual(cells.map((tag) => attribute(tag, "style")), [
+    "grid-column:1",
+    "grid-column:2",
+    "grid-column:3",
+    "grid-column:4",
+  ]);
+  assert.deepEqual(ticks.map((tag) => attribute(tag, "data-date")), dates);
+  assert.deepEqual(ticks.map((tag) => attribute(tag, "style")), cells.map((tag) => attribute(tag, "style")));
+  assert.ok(ticks.every((tag) => attribute(tag, "class") === "heat-tick"));
+  assert.match(html, /class="heat-scroll" style="--heat-days:4;--heat-min-width:64px"/u);
+  assert.doesNotMatch(html, /grid-template-rows:repeat\(7,13px\)|heat-legend/u);
+  for (const [index, cell] of cells.entries()) {
+    assert.equal(attribute(cell, "title"), `${dates[index]}: ${(index + 1) * 5} active minutes`);
+    assert.equal(attribute(cell, "aria-label"), attribute(cell, "title"));
+  }
+  assert.equal(evaluateHtmlReport(html, reportData).status, "pass");
+});
+
+test("HTML activity chart keeps sparse long-range ticks bound to their source columns", () => {
+  const dates = Array.from({ length: 30 }, (_, index) => `2026-07-${String(index + 1).padStart(2, "0")}`);
+  const reportData = htmlReportDataWithActivity(dates);
+
+  const html = renderHtml(reportData);
+  const cells = html.match(/<span class="heat-cell [^"]+"[^>]*>/gu) ?? [];
+  const ticks = html.match(/<span class="heat-tick[^"]*"[^>]*>/gu) ?? [];
+
+  assert.equal(cells.length, 30);
+  assert.deepEqual(ticks.map((tag) => [attribute(tag, "data-date"), attribute(tag, "style")]), [
+    [dates[0], "grid-column:1"],
+    [dates[7], "grid-column:8"],
+    [dates[14], "grid-column:15"],
+    [dates[21], "grid-column:22"],
+    [dates[29], "grid-column:30"],
+  ]);
+  assert.match(html, /class="heat-scroll" style="--heat-days:30;--heat-min-width:506px"/u);
+  assert.match(html, /\.heat-scroll \{[^}]*overflow-x:auto/u);
+  assert.equal(evaluateHtmlReport(html, reportData).status, "pass");
+});
+
+test("HTML activity chart preserves empty, localized, accessible, and self-contained output", () => {
+  const emptyData = htmlReportDataWithActivity([], { activeMinutes: [] });
+  const emptyHtml = renderHtml(emptyData);
+  assert.match(emptyHtml, /class="heatmap-empty" role="img"/u);
+  assert.doesNotMatch(emptyHtml, /class="heat-cell|class="heat-axis/u);
+  assert.equal(evaluateHtmlReport(emptyHtml, emptyData).status, "pass");
+
+  const chineseData = htmlReportDataWithActivity(["2026-07-11"], { language: "zh", activeMinutes: [15] });
+  const chineseHtml = renderHtml(chineseData);
+  const chineseCell = chineseHtml.match(/<span class="heat-cell [^"]+"[^>]*>/u)?.[0] ?? "";
+  assert.equal(attribute(chineseCell, "data-date"), "2026-07-11");
+  assert.match(attribute(chineseCell, "title") ?? "", /^2026-07-11:/u);
+  assert.match(attribute(chineseCell, "title") ?? "", /15/u);
+  assert.equal(attribute(chineseCell, "aria-label"), attribute(chineseCell, "title"));
+  assert.doesNotMatch(chineseHtml, /<link\b|<script[^>]+\bsrc=|fetch\s*\(/iu);
+  assert.equal(evaluateHtmlReport(chineseHtml, chineseData).status, "pass");
 });
 
 test("HTML dimension progressbar semantics stay complete and score-bound", () => {
