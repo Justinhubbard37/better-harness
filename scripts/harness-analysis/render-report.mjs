@@ -10,6 +10,7 @@ import { canvasArtifactsFromReportData, readJsonFile, findingsJsonFromReportData
 import { repairFindingsJsonData } from "./repair-findings-json.mjs";
 import { allocateRunDir } from "./run-dir.mjs";
 import { evaluateFindingsJson, validateHarnessCanvasArtifacts } from "./validate-canvas.mjs";
+import { validateCursorCanvasArtifacts } from "./validate-cursor-canvas.mjs";
 import { resolveWorkspaceTopology } from "../workspace-topology/index.mjs";
 import { evaluateHtmlReport, renderHtml } from "./renderers/html.mjs";
 import { renderMarkdown } from "./renderers/markdown.mjs";
@@ -28,13 +29,19 @@ import {
   QODER_CANVAS_FILE,
   renderQoderCanvas,
 } from "./renderers/qoder-canvas.mjs";
+import {
+  CURSOR_CANVAS_FINDINGS_FILE,
+  CURSOR_CANVAS_DATA_FILE,
+  CURSOR_CANVAS_FILE,
+  renderCursorCanvas,
+} from "./renderers/cursor-canvas.mjs";
 
 function filesystemPathIdentity(value) {
   const normalized = path.normalize(value);
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
-const HELP = `Usage: better-harness harness render (--source <report.source.json> | --findings <findings.json>) --mode <qoder-canvas|markdown|html> --out <dir> --target <path> [options]
+const HELP = `Usage: better-harness harness render (--source <report.source.json> | --findings <findings.json>) --mode <qoder-canvas|cursor-canvas|markdown|html> --out <dir> --target <path> [options]
 
 Render reviewed findings data into deterministic report artifacts.
 
@@ -42,8 +49,8 @@ Options:
   --findings <file>    Reviewed findings JSON with top-level summary and findings
   --canvas <file>      Explicit legacy canvas.json companion for a split Agent Work Loop bundle
   --source <file>      Reviewed Agent Work Loop report source; projection is performed in memory
-  --mode <mode>        qoder-canvas, markdown, or html (default: qoder-canvas)
-  --out <dir>          Output root (default: .qoder/better-harness)
+  --mode <mode>        qoder-canvas, cursor-canvas, markdown, or html (default: qoder-canvas)
+  --out <dir>          Output root (default: .qoder/better-harness, or .cursor/better-harness for cursor-canvas)
   --run-dir <dir>      Run directory: relative values resolve below --out; absolute values remain exact
   --target <path>      Target project path used for run-directory slug
   --language <lang>    en or zh-CN (default: input summary.locale, then en)
@@ -55,7 +62,7 @@ Options:
 `;
 
 function parseArgs(argv) {
-  const options = { mode: "qoder-canvas", out: ".qoder/better-harness", validate: false, json: false };
+  const options = { mode: "qoder-canvas", validate: false, json: false };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "-h" || arg === "--help") {
@@ -73,6 +80,7 @@ function parseArgs(argv) {
       throw Object.assign(new Error(`Unknown argument: ${arg}`), { code: "UNKNOWN_ARGUMENT" });
     }
   }
+  options.out ??= options.mode === "cursor-canvas" ? ".cursor/better-harness" : ".qoder/better-harness";
   return options;
 }
 
@@ -97,7 +105,7 @@ function artifact(name, runDir) {
 }
 
 function implicitAnalyzerCanvasPath(options, findingsPath) {
-  if (options.canvas || options.mode !== "qoder-canvas") {
+  if (options.canvas || !new Set(["qoder-canvas", "cursor-canvas"]).has(options.mode)) {
     return null;
   }
   const candidatePath = path.join(path.dirname(findingsPath), QODER_CANVAS_DATA_FILE);
@@ -167,6 +175,17 @@ async function writeArtifacts({ reportData, artifactDir, runDir }) {
       await writeFile(path.join(artifactDir, name), content);
       artifacts.push(artifact(name, runDir));
     }
+  } else if (reportData.mode === "cursor-canvas") {
+    const output = canvasArtifactsFromReportData(reportData);
+    await writeJson(path.join(artifactDir, CURSOR_CANVAS_FINDINGS_FILE), output.findings);
+    artifacts.push(artifact(CURSOR_CANVAS_FINDINGS_FILE, runDir));
+    await writeJson(path.join(artifactDir, CURSOR_CANVAS_DATA_FILE), output.canvas);
+    artifacts.push(artifact(CURSOR_CANVAS_DATA_FILE, runDir));
+    const rendered = renderCursorCanvas(reportData);
+    for (const [name, content] of Object.entries(rendered)) {
+      await writeFile(path.join(artifactDir, name), content);
+      artifacts.push(artifact(name, runDir));
+    }
   } else if (reportData.mode === "markdown") {
     const findingsJson = findingsJsonFromReportData(reportData);
     await writeJson(path.join(artifactDir, "findings.json"), findingsJson);
@@ -230,6 +249,13 @@ async function validateArtifacts({ reportData, artifactDir, runDir, artifacts, o
       preview: false,
     });
     checks.push(...result.checks);
+  } else if (reportData.mode === "cursor-canvas") {
+    const result = await validateCursorCanvasArtifacts({
+      canvasPath: path.join(artifactDir, CURSOR_CANVAS_FILE),
+      findingsPath: path.join(artifactDir, CURSOR_CANVAS_FINDINGS_FILE),
+      canvasDataPath: path.join(artifactDir, CURSOR_CANVAS_DATA_FILE),
+    });
+    checks.push(...result.checks);
   } else {
     const findingsPath = path.join(artifactDir, "findings.json");
     const findingsText = readFileSync(findingsPath, "utf8");
@@ -264,6 +290,9 @@ async function validateArtifacts({ reportData, artifactDir, runDir, artifacts, o
 function artifactNamesForMode(mode) {
   if (mode === "qoder-canvas") {
     return [QODER_CANVAS_FINDINGS_FILE, QODER_CANVAS_DATA_FILE, QODER_CANVAS_FILE];
+  }
+  if (mode === "cursor-canvas") {
+    return [CURSOR_CANVAS_FINDINGS_FILE, CURSOR_CANVAS_DATA_FILE, CURSOR_CANVAS_FILE];
   }
   if (mode === "markdown") return ["findings.json", "report.md"];
   if (mode === "html") return ["findings.json", "report.md", "report.html"];
