@@ -14,7 +14,7 @@ export const ASSET_BASELINE_SCHEMA_VERSION = 1;
 export const MAX_BASELINE_FINDINGS = 16;
 export const MAX_BASELINE_OWNER_ROUTES = 16;
 
-const PROVIDERS = new Set(["qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "workbuddy"]);
+const PROVIDERS = new Set(["qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "workbuddy", "grok"]);
 const SEVERITY_RANK = Object.freeze({ error: 0, warning: 1, advisory: 2 });
 const OWNER_KIND_RANK = Object.freeze({
   rules: 0,
@@ -278,7 +278,7 @@ function mergeInheritedInventories(projectInventory, inheritedInventories, topol
 export async function collectAssetBaseline(options = {}, dependencies = {}) {
   const provider = options.provider ?? options.platform ?? "qoder";
   if (!PROVIDERS.has(provider)) {
-    throw new Error(`Unsupported provider: ${provider}. Supported providers: qoder, codex, claude, cursor, qwen, copilot, pi, workbuddy.`);
+    throw new Error(`Unsupported provider: ${provider}. Supported providers: qoder, codex, claude, cursor, qwen, copilot, pi, workbuddy, grok.`);
   }
   const workspace = normalizeWorkspace(options.workspace ?? ".");
   const includeUserHome = parseBooleanFlag(options.includeUserHome ?? options["include-user-home"] ?? false);
@@ -403,7 +403,7 @@ export function formatAssetBaselineMarkdown(result) {
   return `${lines.join("\n")}\n`;
 }
 
-const USAGE = `Usage: better-harness coding-agent-practices asset-baseline [qoder|codex|claude|cursor|qwen|copilot|pi|workbuddy] [options]
+const USAGE = `Usage: better-harness coding-agent-practices asset-baseline [qoder|codex|claude|cursor|qwen|copilot|pi|workbuddy|grok] [options]
 
 Collect one compact, read-only AI evidence envelope from a shared asset snapshot.
 

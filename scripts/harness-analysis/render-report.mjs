@@ -87,7 +87,11 @@ function parseArgs(argv) {
       throw Object.assign(new Error(`Unknown argument: ${arg}`), { code: "UNKNOWN_ARGUMENT" });
     }
   }
-  options.out ??= options.mode === "cursor-canvas" ? ".cursor/better-harness" : ".qoder/better-harness";
+  options.out ??= options.mode === "cursor-canvas"
+    ? ".cursor/better-harness"
+    : options.mode === "html" && String(options.platform ?? options.provider ?? "").toLowerCase() === "grok"
+      ? ".grok/better-harness"
+      : ".qoder/better-harness";
   return options;
 }
 

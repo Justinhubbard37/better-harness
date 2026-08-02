@@ -116,8 +116,9 @@ function leadEvidence(overrides = {}) {
 }
 
 test("evidence-bundle help advertises WorkBuddy and its isolated home override", () => {
-  assert.match(EVIDENCE_BUNDLE_HELP, /pi, or workbuddy/u);
+  assert.match(EVIDENCE_BUNDLE_HELP, /pi, workbuddy, or grok/u);
   assert.match(EVIDENCE_BUNDLE_HELP, /--workbuddy-home <dir>/u);
+  assert.match(EVIDENCE_BUNDLE_HELP, /--grok-home <dir>/u);
 });
 
 function topologyResolution(workspace = ".", status = "complete") {

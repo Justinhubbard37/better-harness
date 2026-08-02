@@ -79,10 +79,18 @@ export async function walkFiles(root, options = {}) {
         return;
       }
       const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
+      // Dirent isDirectory/isFile are false for symlinks; follow them so hosts
+      // that install skills via ln -s (e.g. Grok ~/.grok/skills) are inventoried.
+      const linkedDirectory = entry.isSymbolicLink() ? await isDirectory(fullPath) : false;
+      if (entry.isDirectory() || linkedDirectory) {
         await visit(fullPath, depth + 1);
-      } else if (entry.isFile() && (!options.match || options.match(fullPath))) {
-        files.push(fullPath);
+      } else if (
+        (entry.isFile() || entry.isSymbolicLink())
+        && (!options.match || options.match(fullPath))
+      ) {
+        if (entry.isFile() || (await pathStat(fullPath))?.isFile()) {
+          files.push(fullPath);
+        }
       }
     }
   }

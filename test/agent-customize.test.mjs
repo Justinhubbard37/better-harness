@@ -2356,3 +2356,138 @@ test("WorkBuddy provider collects user and project skills, MCP servers, and cont
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
+
+async function makeGrokFixture() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-agent-customize-grok-"));
+  const grokHome = path.join(root, ".grok");
+  const workspace = path.join(root, "workspace");
+
+  await writeText(
+    path.join(grokHome, "config.toml"),
+    [
+      '[mcp_servers.docs]',
+      'command = "npx"',
+      'args = ["-y", "docs-mcp"]',
+      "",
+      '[mcp_servers.disabled_search]',
+      "enabled = false",
+      'url = "https://example.invalid/mcp"',
+      "",
+    ].join("\n"),
+  );
+  await writeText(
+    path.join(grokHome, "skills", "frontend-slides", "SKILL.md"),
+    "---\nname: frontend-slides\ndescription: Build HTML slide decks.\n---\n",
+  );
+  await writeText(
+    path.join(grokHome, "bundled", "skills", "help", "SKILL.md"),
+    "---\nname: help\ndescription: Grok help skill.\n---\n",
+  );
+  await writeJson(path.join(grokHome, "hooks", "git-gh-only.json"), {
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: "Bash",
+          hooks: [
+            { type: "command", command: "echo start" },
+          ],
+        },
+      ],
+    },
+  });
+
+  const pluginRoot = path.join(grokHome, "installed-plugins", "sample-plugin");
+  await writeJson(path.join(pluginRoot, "plugin.json"), {
+    name: "sample-plugin",
+    displayName: "Sample Plugin",
+    description: "A sample Grok plugin.",
+  });
+  await writeText(
+    path.join(pluginRoot, "skills", "sample-skill", "SKILL.md"),
+    "---\nname: sample-skill\ndescription: Sample plugin skill.\n---\n",
+  );
+
+  await writeText(
+    path.join(workspace, ".grok", "skills", "project-flow", "SKILL.md"),
+    "---\nname: project-flow\ndescription: Project Grok workflow.\n---\n",
+  );
+  await writeText(
+    path.join(workspace, ".agents", "skills", "shared-standard", "SKILL.md"),
+    "---\nname: shared-standard\ndescription: Shared Agent Skills standard workflow.\n---\n",
+  );
+  await writeText(path.join(workspace, "AGENTS.md"), "# Grok Project Instructions\n");
+
+  return { root, grokHome, workspace };
+}
+
+test("collectAgentCustomizeInventory returns Grok skills, MCP, hooks, and installed plugins", async () => {
+  const fixture = await makeGrokFixture();
+  try {
+    const inventory = await collectAgentCustomizeInventory({
+      provider: "grok",
+      grokHome: fixture.grokHome,
+      workspace: fixture.workspace,
+    });
+
+    assert.equal(inventory.provider, "grok");
+    assert.equal(inventory.grokHome, fixture.grokHome);
+    assert.equal(inventory.plugins.length, 1);
+    assert.equal(inventory.plugins[0].name, "sample-plugin");
+    assert.equal(inventory.plugins[0].installMatch, "grok-installed-plugins-dir");
+    assert.deepEqual(inventory.plugins[0].skills.map((skill) => skill.name), ["sample-skill"]);
+
+    assert.ok(
+      filterManageItems(inventory, { tab: "skills", scopeKind: "user" })
+        .some((item) => item.name === "frontend-slides"),
+    );
+    assert.ok(
+      filterManageItems(inventory, { tab: "skills", scopeKind: "user" })
+        .some((item) => item.name === "help"),
+    );
+    assert.deepEqual(
+      filterManageItems(inventory, { tab: "skills", scopeKind: "project" }).map((item) => item.name).sort(),
+      ["project-flow", "shared-standard"],
+    );
+    assert.ok(
+      filterManageItems(inventory, { tab: "mcps", scopeKind: "user" })
+        .some((item) => item.name === "docs" && item.enabled !== false),
+    );
+    const disabled = filterManageItems(inventory, { tab: "mcps", scopeKind: "user" })
+      .find((item) => item.name === "disabled_search");
+    assert.ok(disabled);
+    assert.equal(disabled.enabled, false);
+    assert.ok(
+      filterManageItems(inventory, { tab: "hooks", scopeKind: "user" })
+        .some((item) => (item.label ?? item.name ?? "").includes("PreToolUse")
+          || item.evidence?.path?.includes("git-gh-only")),
+    );
+    assert.equal(inventory.diagnostics.configPath, path.join(fixture.grokHome, "config.toml"));
+    // Inventory may mention secret *policy* labels; values themselves must stay absent.
+    assert.doesNotMatch(JSON.stringify(inventory), /sk-[A-Za-z0-9]{10,}|Bearer\s+[A-Za-z0-9._-]+/u);
+    assert.ok(inventory.unsupported.some((item) => /auth\.json/u.test(item)));
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("agent-customize CLI honours --grok-home instead of the real user home", async () => {
+  const fixture = await makeGrokFixture();
+  try {
+    const result = runAgentCustomizeCli([
+      "inventory",
+      "--provider",
+      "grok",
+      "--workspace",
+      fixture.workspace,
+      "--grok-home",
+      fixture.grokHome,
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+    const inventory = JSON.parse(result.stdout);
+    assert.equal(inventory.grokHome, fixture.grokHome);
+    assert.notEqual(inventory.grokHome, path.join(os.homedir(), ".grok"));
+    assert.ok(inventory.manage.mcps.some((item) => item.name === "docs"));
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
