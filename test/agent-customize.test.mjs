@@ -2491,3 +2491,42 @@ test("agent-customize CLI honours --grok-home instead of the real user home", as
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
+
+test("Grok project skills dedupe when .grok/skills symlinks to .agents/skills", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-grok-skill-symlink-"));
+  const grokHome = path.join(root, "home", ".grok");
+  const workspace = path.join(root, "workspace");
+  try {
+    await mkdir(path.join(grokHome), { recursive: true });
+    await writeText(
+      path.join(workspace, ".agents", "skills", "shared-flow", "SKILL.md"),
+      "---\nname: shared-flow\ndescription: Shared SoT skill.\n---\n",
+    );
+    await mkdir(path.join(workspace, ".grok"), { recursive: true });
+    await symlink(
+      path.join(workspace, ".agents", "skills"),
+      path.join(workspace, ".grok", "skills"),
+      "dir",
+    );
+
+    const inventory = await collectAgentCustomizeInventory({
+      provider: "grok",
+      grokHome,
+      workspace,
+      includeUserHome: false,
+    });
+    const projectSkills = filterManageItems(inventory, {
+      tab: "skills",
+      scopeKind: "project",
+    });
+    assert.deepEqual(
+      projectSkills.map((item) => item.name).sort(),
+      ["shared-flow"],
+    );
+    assert.equal(projectSkills.length, 1);
+    const evidencePath = projectSkills[0]?.evidence?.path ?? projectSkills[0]?.filePath ?? "";
+    assert.match(evidencePath.replace(/\\/gu, "/"), /\.agents\/skills\/shared-flow\/SKILL\.md$/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

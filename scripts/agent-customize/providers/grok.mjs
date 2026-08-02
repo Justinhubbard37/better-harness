@@ -4,7 +4,7 @@
  */
 import os from "node:os";
 import path from "node:path";
-import { readdir } from "node:fs/promises";
+import { readdir, realpath } from "node:fs/promises";
 
 import { expandHome, normalizeWorkspace, pathExists } from "../../session-analysis/index.mjs";
 import { MANAGE_TABS } from "../constants.mjs";
@@ -180,6 +180,40 @@ async function collectGrokUserPrimitives(grokHome) {
   };
 }
 
+async function resolveRealPath(filePath) {
+  try {
+    return await realpath(filePath);
+  } catch {
+    return path.resolve(filePath);
+  }
+}
+
+/**
+ * Merge project skills from `.grok/skills` and `.agents/skills`.
+ * When `.grok/skills` is a symlink to `.agents/skills` (OnMyAgent layout), keep
+ * a single entry and prefer the `.agents` SoT path for evidence/owner routes.
+ */
+export async function mergeGrokProjectSkills(skills, workspace) {
+  const agentsRoot = path.resolve(workspace, ".agents", "skills");
+  const byReal = new Map();
+  for (const skill of skills) {
+    const filePath = skill?.filePath ?? skill?.path;
+    if (!filePath) continue;
+    const key = await resolveRealPath(filePath);
+    const existing = byReal.get(key);
+    if (!existing) {
+      byReal.set(key, skill);
+      continue;
+    }
+    const existingPath = existing.filePath ?? existing.path ?? "";
+    const preferAgents =
+      String(filePath).startsWith(agentsRoot)
+      && !String(existingPath).startsWith(agentsRoot);
+    if (preferAgents) byReal.set(key, skill);
+  }
+  return [...byReal.values()].sort(sortByName);
+}
+
 async function collectGrokWorkspacePrimitives(workspace) {
   const sourceLabel = await workspaceSourceLabel(workspace);
   const projectRoot = path.join(workspace, ".grok");
@@ -193,7 +227,7 @@ async function collectGrokWorkspacePrimitives(workspace) {
   const projectMcps = await collectMcpItems(workspace, "project", sourceLabel, workspace);
   return {
     ...project,
-    skills: [...project.skills, ...agentsSkills].sort(sortByName),
+    skills: await mergeGrokProjectSkills([...project.skills, ...agentsSkills], workspace),
     mcps: [...project.mcps, ...projectMcps].sort(sortByName),
     rules: [
       ...project.rules,
