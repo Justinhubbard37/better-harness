@@ -94,12 +94,20 @@ test("Claude, Cursor, and Qwen workspace slugs cover Unix and Windows layouts", 
   assert.ok(workspaceToQwenSlugVariants("/workspace/project").includes("-workspace-project"));
   assert.equal(workspaceToPiSessionDirVariants("/workspace/project").exact, "--workspace-project--");
   assert.equal(workspaceToWorkbuddySlugVariants("/workspace/project").exact, "workspace-project");
-  assert.equal(workspaceToGrokSessionDirName("/workspace/project"), encodeURIComponent("/workspace/project"));
+  // Grok encodes path.resolve()'d absolute paths; keep the assertion host-portable.
+  assert.equal(
+    workspaceToGrokSessionDirName("/workspace/project"),
+    encodeURIComponent(path.resolve("/workspace/project")),
+  );
   assert.ok(workspaceToClaudeSlugVariants("C:\\workspace\\project").some((value) => value.includes("C--workspace-project")));
   assert.ok(workspaceToCursorSlugVariants("C:\\workspace\\project").some((value) => value.includes("C--workspace-project")));
   assert.ok(workspaceToQwenSlugVariants("C:\\workspace\\project").some((value) => value.includes("C--workspace-project")));
   assert.ok(workspaceToPiSessionDirVariants("C:\\workspace\\project").exact.includes("C--workspace-project"));
   assert.ok(workspaceToWorkbuddySlugVariants("C:\\workspace\\project").exact.includes("C--workspace-project"));
+  assert.equal(
+    workspaceToGrokSessionDirName("C:\\workspace\\project"),
+    encodeURIComponent(path.resolve("C:\\workspace\\project")),
+  );
 });
 
 test("Claude workspace slug folds dots the way Claude Code names project directories", () => {
