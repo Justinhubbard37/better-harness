@@ -190,3 +190,6 @@ failing contract rather than silent misrouting.
 - [NEEDS CLARIFICATION: whether Kimi Code will expose custom-agent inventory
   natively, at which point the Agents collection could move off the
   not-yet-inventoried boundary.]
+- [NEEDS CLARIFICATION: Kimi Code does not document a session-id environment
+  variable; `currentSessionId()` follows the `<HOST>_SESSION_ID` convention and
+  reads `KIMI_SESSION_ID`, returning null when it is unset.]

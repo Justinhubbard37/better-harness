@@ -195,7 +195,13 @@ export async function collectSkillFiles(root, scope, sourceLabel, rootForEvidenc
       evidence: evidence(filePath, rootForEvidence),
     });
   }
-  return items.sort(sortByName);
+  // Plugin bundles are third-party content and collection follows symlinks,
+  // so a symlink inside a plugin component root could otherwise pull files
+  // from outside it into the inventory; contain plugin collections to the
+  // component root. User and project scopes intentionally keep
+  // symlink-installed skills (see the README skill-install recommendation).
+  const contained = scope === "plugin" ? await filterItemsInsideRoot(items, root) : items;
+  return contained.sort(sortByName);
 }
 
 export async function collectMarkdownItems(root, kind, scope, sourceLabel, rootForEvidence = root) {

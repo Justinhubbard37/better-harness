@@ -239,6 +239,7 @@ function wireEvents(raw, sourceRef, options) {
     timestamp: inferTimestamp(raw),
     sourceKind: sourceRef.kind,
     planningScope: "workspace",
+    agentId: sourceRef.agentId ?? null,
     isSubagent: sourceRef.agentId ? sourceRef.agentId !== "main" : null,
   };
 
@@ -350,8 +351,11 @@ function finalizeSession(session) {
 function dedupeEvents(events) {
   const seen = new Set();
   return events.filter((event) => {
+    // Tool call ids are only unique per agent: the main wire and a subagent
+    // wire of the same session may reuse the same id, so the dedupe key must
+    // include the agent identity to avoid dropping distinct events.
     const key = event.toolInvocationId && event.lifecyclePhase
-      ? `${event.sessionId}:${event.lifecyclePhase}:${event.toolInvocationId}`
+      ? `${event.sessionId}:${event.agentId ?? "main"}:${event.lifecyclePhase}:${event.toolInvocationId}`
       : null;
     if (!key) return true;
     if (seen.has(key)) return false;
@@ -361,6 +365,12 @@ function dedupeEvents(events) {
 }
 
 export class KimiSessionAnalyzer extends SessionAnalyzer {
+  // Kimi Code does not document a session-id environment variable; follow the
+  // <HOST>_SESSION_ID convention and return null when it is unset.
+  currentSessionId() {
+    return process.env.KIMI_SESSION_ID ?? null;
+  }
+
   async resolveScope(options = {}) {
     const since = normalizeCliDate(options.since, false);
     const until = normalizeCliDate(options.until, true);
