@@ -81,6 +81,15 @@ function normalizeUsageFromSignals(signals) {
   return Object.keys(observed).length > 0 ? observed : null;
 }
 
+function addUsageField(observed, key, value) {
+  if (value === undefined) return;
+  observed[key] = (observed[key] ?? 0) + value;
+}
+
+/**
+ * Accept flat turn usage and/or nested usage.modelUsage.<modelId> objects.
+ * Nested modelUsage values are summed across models for the turn total.
+ */
 function normalizeUsageFromTurn(usage) {
   if (!usage || typeof usage !== "object") return null;
   const observed = {};
@@ -92,7 +101,42 @@ function normalizeUsageFromTurn(usage) {
   ]) {
     if (value !== undefined) observed[key] = value;
   }
+
+  const modelUsage = usage.modelUsage && typeof usage.modelUsage === "object" ? usage.modelUsage : null;
+  if (modelUsage && Object.keys(observed).length === 0) {
+    for (const perModel of Object.values(modelUsage)) {
+      if (!perModel || typeof perModel !== "object") continue;
+      addUsageField(observed, "inputTokens", finiteNumber(perModel.inputTokens, perModel.input_tokens));
+      addUsageField(observed, "outputTokens", finiteNumber(perModel.outputTokens, perModel.output_tokens));
+      addUsageField(observed, "totalTokens", finiteNumber(perModel.totalTokens, perModel.total_tokens));
+      addUsageField(
+        observed,
+        "cacheReadInputTokens",
+        finiteNumber(perModel.cachedReadTokens, perModel.cacheReadInputTokens, perModel.cache_read_input_tokens),
+      );
+    }
+  } else if (modelUsage && observed.totalTokens === undefined) {
+    // Flat partials present but total missing: fill from nested when available.
+    let nestedTotal = 0;
+    let saw = false;
+    for (const perModel of Object.values(modelUsage)) {
+      const value = finiteNumber(perModel?.totalTokens, perModel?.total_tokens);
+      if (value !== undefined) {
+        nestedTotal += value;
+        saw = true;
+      }
+    }
+    if (saw) observed.totalTokens = nestedTotal;
+  }
+
   return Object.keys(observed).length > 0 ? observed : null;
+}
+
+function primaryModelFromUsage(usage) {
+  const modelUsage = usage?.modelUsage;
+  if (!modelUsage || typeof modelUsage !== "object") return null;
+  const names = Object.keys(modelUsage);
+  return names.length > 0 ? names[0] : null;
 }
 
 function toolStatusOf(raw, update) {
@@ -242,9 +286,7 @@ function updatesRecordToEvents(raw, sourceRef, options = {}) {
           usageFieldsObserved: true,
           evidenceRef: evidenceRef(sourceRef, "model.response.completed"),
           summary: "Grok turn_completed usage",
-          model: update?.usage?.modelUsage
-            ? Object.keys(update.usage.modelUsage)[0] ?? null
-            : null,
+          model: primaryModelFromUsage(update?.usage),
         });
       } else {
         events.push({

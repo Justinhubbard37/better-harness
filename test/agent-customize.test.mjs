@@ -2506,6 +2506,47 @@ test("agent-customize CLI honours --grok-home instead of the real user home", as
   }
 });
 
+test("Grok plugin inventory dedupes one physical plugin reached through multiple roots", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-grok-plugin-dedupe-"));
+  const grokHome = path.join(root, ".grok");
+  const workspace = path.join(root, "workspace");
+  const pluginDir = path.join(grokHome, "plugins", "sample-plugin");
+  await writeJson(path.join(pluginDir, "plugin.json"), {
+    name: "sample-plugin",
+    displayName: "Sample Plugin",
+  });
+  // Alias the same physical plugin directory via config paths and project tree.
+  const pluginsRoot = path.join(grokHome, "plugins");
+  await writeText(
+    path.join(grokHome, "config.toml"),
+    [
+      "[plugins]",
+      `paths = ["${pluginsRoot.replaceAll("\\", "/")}"]`,
+      "",
+    ].join("\n"),
+  );
+  await mkdir(path.join(workspace, ".grok"), { recursive: true });
+  try {
+    await symlink(path.join(grokHome, "plugins"), path.join(workspace, ".grok", "plugins"));
+  } catch {
+    // Windows without symlink privilege: copy path alias only via config.
+  }
+
+  try {
+    const inventory = await collectAgentCustomizeInventory({
+      provider: "grok",
+      grokHome,
+      workspace,
+    });
+    assert.equal(inventory.plugins.length, 1);
+    assert.equal(inventory.plugins[0].name, "sample-plugin");
+    assert.ok(inventory.plugins[0].installSources.includes("grok-plugins-dir"));
+    assert.ok(inventory.plugins[0].installSources.includes("grok-plugins-path-config"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Grok project skills dedupe when .grok/skills symlinks to .agents/skills", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-grok-skill-symlink-"));
   const grokHome = path.join(root, "home", ".grok");

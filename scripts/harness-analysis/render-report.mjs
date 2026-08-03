@@ -89,6 +89,15 @@ function parseArgs(argv) {
     }
   }
   const hostId = String(options.platform ?? options.provider ?? "").toLowerCase();
+  const supportedHtmlHosts = new Set([
+    "qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "workbuddy", "grok",
+  ]);
+  if (hostId && !supportedHtmlHosts.has(hostId)) {
+    throw Object.assign(
+      new Error(`unsupported render platform: ${hostId}. Supported platforms: ${[...supportedHtmlHosts].join(", ")}.`),
+      { code: "UNSUPPORTED_RENDER_PLATFORM" },
+    );
+  }
   options.out ??= options.mode === "cursor-canvas"
     ? ".cursor/better-harness"
     : options.mode === "html" && hostId && hostId !== "qoder"

@@ -1407,6 +1407,26 @@ test("Grok provider expands user/assistant/tool events and turn_completed usage"
         },
       },
     },
+    {
+      method: "_x.ai/session/update",
+      params: {
+        update: {
+          sessionUpdate: "turn_completed",
+          stop_reason: "end_turn",
+          // Nested-only shape must still produce model usage (Grok 0.2.x).
+          usage: {
+            modelUsage: {
+              "grok-4": {
+                inputTokens: 1000,
+                outputTokens: 200,
+                totalTokens: 1200,
+                cachedReadTokens: 50,
+              },
+            },
+          },
+        },
+      },
+    },
   ]);
   // contextTokensUsed must not be treated as total token spend
   await writeFile(path.join(sessionDir, "signals.json"), JSON.stringify({
@@ -1436,10 +1456,15 @@ test("Grok provider expands user/assistant/tool events and turn_completed usage"
   assert.equal(events.filter((event) => event.type === "metadata.tool_call_update").length, 2);
   assert.equal(events.filter((event) => event.type === "assistant").length, 1);
   assert.ok(events.some((event) => event.type === "metadata.thought_chunk"));
-  const usage = events.find((event) => event.type === "model.response.completed");
-  assert.equal(usage?.modelUsage?.inputTokens, 120);
-  assert.equal(usage?.modelUsage?.outputTokens, 40);
-  assert.equal(usage?.modelUsage?.totalTokens, 160);
+  const usageEvents = events.filter((event) => event.type === "model.response.completed");
+  assert.equal(usageEvents.length, 2);
+  assert.equal(usageEvents[0]?.modelUsage?.inputTokens, 120);
+  assert.equal(usageEvents[0]?.modelUsage?.outputTokens, 40);
+  assert.equal(usageEvents[0]?.modelUsage?.totalTokens, 160);
+  assert.equal(usageEvents[1]?.modelUsage?.inputTokens, 1000);
+  assert.equal(usageEvents[1]?.modelUsage?.outputTokens, 200);
+  assert.equal(usageEvents[1]?.modelUsage?.totalTokens, 1200);
+  assert.equal(usageEvents[1]?.model, "grok-4");
   assert.ok(!events.some((event) => event.modelUsage?.totalTokens === 44532));
   assert.ok(events.some((event) => event.type === "metadata.context_window"));
   const facts = await analyzer.analyze({ command: "facts", workspace, home, limit: 1 });

@@ -22,39 +22,39 @@
 | Item | Value |
 | --- | --- |
 | Home | `GROK_HOME` env, else `~/.grok` |
-| Config | `$GROK_HOME/config.toml` |
-| Skills | `$GROK_HOME/skills/`, `$GROK_HOME/bundled/skills/`, `<ws>/.grok/skills/`, `<ws>/.agents/skills/` |
+| Config | `$GROK_HOME/config.toml`; project may also use `<ws>/.grok/config.toml` |
+| Skills | `$GROK_HOME/skills/`, `$GROK_HOME/bundled/skills/`, `~/.agents/skills/`, `<ws>/.grok/skills/`, `<ws>/.agents/skills/` |
 | Hooks | `$GROK_HOME/hooks/*.json`, project `.grok/hooks` when present |
-| MCP | `[mcp_servers.<name>]` tables in `config.toml` (enabled flag) |
-| Plugins | `$GROK_HOME/installed-plugins/`, `marketplace-cache/` (inventory only) |
-| Sessions | `$GROK_HOME/sessions/<url-encoded-cwd>/<session-id>/` with `summary.json`, `updates.jsonl`, `chat_history.jsonl`, `signals.json` |
+| MCP | `[mcp_servers.<name>]` tables in user and project `config.toml` (enabled flag) |
+| Plugins | Trusted user `$GROK_HOME/plugins/`, legacy `$GROK_HOME/installed-plugins/`, project `<ws>/.grok/plugins/`, plus `[plugins].paths` from config; physical roots are deduped by realpath |
+| Sessions | `$GROK_HOME/sessions/<url-encoded-cwd>/<session-id>/` with `summary.json`, `updates.jsonl`, optional `chat_history.jsonl`, `signals.json` |
+| Long cwd groups | When `encodeURIComponent(cwd)` exceeds 255 bytes, Grok uses a slug+hash group directory and stores the original path in `.cwd` |
 | Report root | `<workspace>/.grok/better-harness/` |
 | Output mode | `html` |
 
 ### Workspace qualification
 
-'
-    )
-# add notes section if missing
-if 'updates.jsonl is authoritative' not in t:
-    t = t.replace(
-        '### Privacy
-',
-        - `updates.jsonl` is the authoritative conversation log; `chat_history.jsonl` is only used when updates are missing (never both).
-- Terminal tool results require an explicit terminal status (`completed`/`failed`/…); progress and status-less `tool_call_update` stay metadata.
-- Model usage comes from `turn_completed.usage` on `_x.ai/session/update` records. `signals.contextTokensUsed` is context occupancy, not total spend.
-- When `encodeURIComponent(cwd)` exceeds 255 bytes, Grok uses a slug+hash group directory and stores the original path in `.cwd`; discovery matches both forms.
-
-### Privacy
-
 - Prefer `summary.json` → `info.cwd` (or equivalent) matched via existing workspace-match helpers.
-- Session group directory name is `encodeURIComponent(absoluteCwd)` (e.g. `/Users/work` → `%2FUsers%2Fwork`).
+- Session group directory name is normally `encodeURIComponent(absoluteCwd)` (e.g. `/Users/work` → `%2FUsers%2Fwork`).
+- Long-path groups are also matched when `.cwd` records a workspace-qualified path.
 - Foreign-workspace sessions never enter facts for a report.
+
+### Conversation evidence
+
+- `updates.jsonl` is the authoritative conversation log; `chat_history.jsonl` is only used when updates are missing (never both).
+- Terminal tool results require an explicit terminal status (`completed` / `failed` / `error` / `cancelled` / `canceled`); progress and status-less `tool_call_update` stay metadata.
+- Model usage comes from `turn_completed.usage` on `_x.ai/session/update` records, including nested `usage.modelUsage.<modelId>` when flat totals are absent.
+- `signals.contextTokensUsed` is context-window occupancy, not total spend; it is never mapped to `totalTokens`.
 
 ### Privacy
 
 - Never serialize `auth.json`, API keys, or MCP `env` secret values.
 - Inventory may record server names, enabled flags, and path existence only.
+
+### Stated approximations
+
+- Plugin `enabled` follows `[plugins].enabled` / `[plugins].disabled` when present. When neither list is declared, discovered plugin directories are treated as enabled for inventory (filesystem presence), which is a documented approximation of Grok's runtime enablement/trust model rather than a full parity claim.
+- Marketplace catalog entries under `marketplace-cache/` are not treated as installed plugins without an install root.
 
 ## Acceptance ids
 
@@ -62,12 +62,14 @@ if 'updates.jsonl is authoritative' not in t:
 | --- | --- |
 | Grok-A1 | Provider inventory returns skills/hooks/mcp/plugins scopes for synthetic home + workspace |
 | Grok-A2 | `GROK_HOME` / `--grok-home` overrides default without foreign home fallback |
+| Grok-A3 | One physical plugin root discovered via multiple path aliases counts once (realpath dedupe) |
 | Grok-S1 | Session sources list only cwd-matching sessions under encoded group dir |
 | Grok-S2 | Foreign session group excluded from sources |
-| Grok-S3 | Missing `signals.json` usage stays unobserved (not zero-filled) |
+| Grok-S3 | Missing `signals.json` usage stays unobserved (not zero-filled); `contextTokensUsed` alone does not invent totals |
 | Grok-S4 | Unknown `updates.jsonl` events preserved as metadata |
+| Grok-S5 | Nested `turn_completed.usage.modelUsage` contributes observed model usage |
 | Grok-R1 | `platform=grok` accepted by evidence-bundle and session-analysis CLI help |
-| Grok-R2 | HTML render default out root documents `.grok/better-harness` |
+| Grok-R2 | HTML render default out root documents `.grok/better-harness`; unsupported `--platform` values fail closed |
 
 ## Smoke (local)
 

@@ -226,29 +226,61 @@ async function collectPluginsFromRoot(pluginsRoot, installMatch, enabledSet, dis
   return plugins;
 }
 
-async function collectGrokPlugins(grokHome, workspace, configText) {
+async function collectGrokPlugins(grokHome, workspace, configText, { includeUserHome = true } = {}) {
   const section = parseGrokPluginsSectionFromToml(configText ?? "");
   const enabledSet = new Set(section.enabled);
   const disabledSet = new Set(section.disabled);
-  const roots = [
-    { root: path.join(grokHome, "plugins"), match: "grok-plugins-dir" },
-    { root: path.join(grokHome, "installed-plugins"), match: "grok-installed-plugins-dir" },
-    { root: path.join(workspace, ".grok", "plugins"), match: "grok-project-plugins-dir" },
-  ];
-  for (const extra of section.paths) {
-    const expanded = path.resolve(expandHome(extra));
-    roots.push({ root: expanded, match: "grok-plugins-path-config" });
+  const grokHomeReal = await resolveRealPath(grokHome);
+  const projectPluginsRoot = path.join(workspace, ".grok", "plugins");
+  const projectIsUserHome = (await resolveRealPath(path.join(workspace, ".grok"))) === grokHomeReal;
+
+  const roots = [];
+  if (includeUserHome) {
+    roots.push(
+      { root: path.join(grokHome, "plugins"), match: "grok-plugins-dir" },
+      { root: path.join(grokHome, "installed-plugins"), match: "grok-installed-plugins-dir" },
+    );
+    for (const extra of section.paths) {
+      roots.push({ root: path.resolve(expandHome(extra)), match: "grok-plugins-path-config" });
+    }
   }
-  const byId = new Map();
+  // Project plugins only when they are not the same physical tree as the user home.
+  if (!projectIsUserHome) {
+    roots.push({ root: projectPluginsRoot, match: "grok-project-plugins-dir" });
+  }
+
+  // Dedupe physical plugin directories; merge discovery roots into installSources.
+  const byRealRoot = new Map();
   const recordFiles = [];
+  const seenRecordRoots = new Set();
   for (const { root, match } of roots) {
-    if (await pathExists(root)) recordFiles.push(root);
+    if (!(await pathExists(root))) continue;
+    const realScanRoot = await resolveRealPath(root);
+    if (!seenRecordRoots.has(realScanRoot)) {
+      seenRecordRoots.add(realScanRoot);
+      recordFiles.push(root);
+    }
     for (const plugin of await collectPluginsFromRoot(root, match, enabledSet, disabledSet)) {
-      if (!byId.has(plugin.id)) byId.set(plugin.id, plugin);
+      const realPluginRoot = await resolveRealPath(plugin.rootPath);
+      const existing = byRealRoot.get(realPluginRoot);
+      if (!existing) {
+        byRealRoot.set(realPluginRoot, {
+          ...plugin,
+          id: `grok/plugin/${path.basename(realPluginRoot)}`,
+          installSources: [match],
+          installSource: match,
+          installMatch: match,
+        });
+        continue;
+      }
+      const sources = new Set([...(existing.installSources ?? [existing.installMatch]), match]);
+      existing.installSources = [...sources].sort();
+      // Prefer the first discovered match as primary installMatch; require enabled in all sightings.
+      existing.enabled = existing.enabled && plugin.enabled;
     }
   }
   return {
-    plugins: [...byId.values()].sort(sortByName),
+    plugins: [...byRealRoot.values()].sort(sortByName),
     recordFiles: [...new Set(recordFiles)],
   };
 }
@@ -364,15 +396,17 @@ export async function collectGrokCustomizeInventory(options = {}) {
   const workspace = normalizeWorkspace(options.workspace ?? process.cwd());
   const includeUserHome = options.includeUserHome !== false;
   const configPath = path.join(grokHome, "config.toml");
-  const configText = includeUserHome ? await readTomlText(configPath) : null;
+  // Project config may declare plugins/MCP independently of the user home.
+  const userConfigText = includeUserHome ? await readTomlText(configPath) : null;
+  const projectConfigText = await readTomlText(path.join(workspace, ".grok", "config.toml"));
+  // Prefer user-home [plugins] tables for enable lists; fall back to project config.
+  const pluginConfigText = userConfigText ?? projectConfigText;
   const [pluginPack, user, project] = await Promise.all([
-    collectGrokPlugins(grokHome, workspace, configText),
+    collectGrokPlugins(grokHome, workspace, pluginConfigText, { includeUserHome }),
     includeUserHome ? collectGrokUserPrimitives(grokHome) : emptyPrimitives(),
     collectGrokWorkspacePrimitives(workspace, grokHome),
   ]);
-  const plugins = includeUserHome
-    ? pluginPack.plugins
-    : pluginPack.plugins.filter((plugin) => plugin.installMatch === "grok-project-plugins-dir");
+  const plugins = pluginPack.plugins;
   return {
     generatedAt: new Date().toISOString(),
     provider: "grok",
@@ -384,9 +418,10 @@ export async function collectGrokCustomizeInventory(options = {}) {
     diagnostics: {
       installedPluginState: plugins.length > 0 ? "grok-plugins-dirs" : "missing",
       installedPluginRecordCount: plugins.length,
+      // recordFiles already scoped by includeUserHome inside collectGrokPlugins.
       installedPluginRecordFiles: pluginPack.recordFiles,
       remotePluginInstallMarkersRequired: false,
-      configPath,
+      configPath: includeUserHome ? configPath : path.join(workspace, ".grok", "config.toml"),
       projectConfigPath: path.join(workspace, ".grok", "config.toml"),
     },
     unsupported: [
@@ -394,6 +429,7 @@ export async function collectGrokCustomizeInventory(options = {}) {
       "MCP env secret values from config.toml",
       "marketplace-cache catalog entries without install",
       "runtime plugin trust state beyond enabled inventory",
+      "plugin enablement/trust precedence is filesystem-presence approximation when no enabled/disabled lists are declared",
     ],
   };
 }
