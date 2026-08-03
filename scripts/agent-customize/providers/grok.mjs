@@ -226,8 +226,25 @@ async function collectPluginsFromRoot(pluginsRoot, installMatch, enabledSet, dis
   return plugins;
 }
 
-async function collectGrokPlugins(grokHome, workspace, configText, { includeUserHome = true } = {}) {
-  const section = parseGrokPluginsSectionFromToml(configText ?? "");
+/**
+ * Union the [plugins] tables of several config files. Repeated keys across
+ * files add entries instead of replacing them, so a project config cannot
+ * silently drop user-declared plugin paths.
+ */
+export function mergeGrokPluginsSections(sections) {
+  const merged = { paths: [], enabled: [], disabled: [] };
+  for (const section of sections) {
+    if (!section) continue;
+    for (const key of ["paths", "enabled", "disabled"]) {
+      for (const value of section[key] ?? []) {
+        if (!merged[key].includes(value)) merged[key].push(value);
+      }
+    }
+  }
+  return merged;
+}
+
+async function collectGrokPlugins(grokHome, workspace, section, { includeUserHome = true } = {}) {
   const enabledSet = new Set(section.enabled);
   const disabledSet = new Set(section.disabled);
   const grokHomeReal = await resolveRealPath(grokHome);
@@ -264,9 +281,10 @@ async function collectGrokPlugins(grokHome, workspace, configText, { includeUser
       const realPluginRoot = await resolveRealPath(plugin.rootPath);
       const existing = byRealRoot.get(realPluginRoot);
       if (!existing) {
+        // Keep the discovery-root qualified id so two different plugin roots
+        // that share a directory name stay distinguishable downstream.
         byRealRoot.set(realPluginRoot, {
           ...plugin,
-          id: `grok/plugin/${path.basename(realPluginRoot)}`,
           installSources: [match],
           installSource: match,
           installMatch: match,
@@ -396,13 +414,18 @@ export async function collectGrokCustomizeInventory(options = {}) {
   const workspace = normalizeWorkspace(options.workspace ?? process.cwd());
   const includeUserHome = options.includeUserHome !== false;
   const configPath = path.join(grokHome, "config.toml");
+  const projectConfigPath = path.join(workspace, ".grok", "config.toml");
   // Project config may declare plugins/MCP independently of the user home.
   const userConfigText = includeUserHome ? await readTomlText(configPath) : null;
-  const projectConfigText = await readTomlText(path.join(workspace, ".grok", "config.toml"));
-  // Merge user then project [plugins] tables so project enabled/disabled lists still apply.
-  const pluginConfigText = [userConfigText, projectConfigText].filter(Boolean).join("\n");
+  const projectConfigText = await readTomlText(projectConfigPath);
+  // Union the user and project [plugins] tables so project enabled/disabled
+  // lists apply without discarding user-declared paths.
+  const pluginSection = mergeGrokPluginsSections([
+    parseGrokPluginsSectionFromToml(userConfigText ?? ""),
+    parseGrokPluginsSectionFromToml(projectConfigText ?? ""),
+  ]);
   const [pluginPack, user, project] = await Promise.all([
-    collectGrokPlugins(grokHome, workspace, pluginConfigText, { includeUserHome }),
+    collectGrokPlugins(grokHome, workspace, pluginSection, { includeUserHome }),
     includeUserHome ? collectGrokUserPrimitives(grokHome) : emptyPrimitives(),
     collectGrokWorkspacePrimitives(workspace, grokHome),
   ]);
@@ -421,8 +444,9 @@ export async function collectGrokCustomizeInventory(options = {}) {
       // recordFiles already scoped by includeUserHome inside collectGrokPlugins.
       installedPluginRecordFiles: pluginPack.recordFiles,
       remotePluginInstallMarkersRequired: false,
-      configPath: includeUserHome ? configPath : path.join(workspace, ".grok", "config.toml"),
-      projectConfigPath: path.join(workspace, ".grok", "config.toml"),
+      // configPath always names the user config; null when the user home is out of scope.
+      configPath: includeUserHome ? configPath : null,
+      projectConfigPath,
     },
     unsupported: [
       "auth.json credentials (never inventoried as values)",
