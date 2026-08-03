@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { evaluateHtmlReport, renderHtml } from "../scripts/harness-analysis/renderers/html.mjs";
+import { RENDER_REPORT_PLATFORMS, renderReport } from "../scripts/harness-analysis/render-report.mjs";
+import { SUPPORTED_SESSION_PLATFORMS } from "../scripts/session-analysis/analyzer.mjs";
 import { renderCanvasTsx } from "../scripts/harness-analysis/renderers/qoder-canvas.mjs";
 import { buildTaskLoopSourceCandidate } from "../scripts/harness-analysis/task-loop-source.mjs";
 import { applyEpisodeReviews } from "../scripts/harness-analysis/episode-evidence-review.mjs";
+import { projectTaskLoopFindings } from "../scripts/harness-analysis/task-loop-report.mjs";
 
 const cliPath = path.join(process.cwd(), "scripts", "better-harness.mjs");
 const renderPath = path.join(process.cwd(), "scripts", "harness-analysis", "render-report.mjs");
@@ -113,6 +116,15 @@ function sampleFindings() {
       dimensionRefs: ["environment-readiness", "safe-change"],
     }],
   };
+}
+
+function embeddedJson(html, id) {
+  const payload = html.match(new RegExp(
+    `<script id="${id}" type="application/json">([\\s\\S]*?)<\\/script>`,
+    "u",
+  ))?.[1];
+  assert.ok(payload, `missing embedded JSON payload: ${id}`);
+  return JSON.parse(payload);
 }
 
 function reviewedTaskLoopSource() {
@@ -279,6 +291,73 @@ function runNode(args, options = {}) {
   });
 }
 
+function git(cwd, args) {
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.equal(result.status, 0, result.stderr);
+}
+
+async function createRenderMonorepo(root, { partial = false } = {}) {
+  git(root, ["init", "-q"]);
+  git(root, ["config", "user.email", "test@example.com"]);
+  git(root, ["config", "user.name", "Test User"]);
+  await writeJson(path.join(root, "package.json"), {
+    private: true,
+    workspaces: partial ? ["packages/*", "../outside/*"] : ["packages/*"],
+  });
+  for (const name of ["a", "b"]) {
+    await writeJson(path.join(root, "packages", name, "package.json"), { name });
+  }
+  git(root, ["add", "."]);
+  git(root, ["commit", "-q", "-m", "fixture"]);
+}
+
+function targetFindingData({ packageRoute = "packages/a" } = {}) {
+  const data = sampleFindings();
+  data.findings = data.findings.map((finding) => ({
+    ...finding,
+    target: {
+      kind: "workspace-member",
+      packageRoute,
+      ownerRoute: packageRoute,
+    },
+  }));
+  return data;
+}
+
+function taskLoopFindingsAtVersion(version) {
+  const findings = projectTaskLoopFindings(reviewedTaskLoopSource(), {
+    projectName: "render-source-project",
+    direct: true,
+  });
+  findings.summary.reportContractVersion = version;
+  for (const finding of findings.findings) delete finding.target;
+  return findings;
+}
+
+function htmlReportDataWithActivity(dates, { language = "en", activeMinutes } = {}) {
+  const source = reviewedTaskLoopSource();
+  source.sessionEvents.usageActivity.dates = dates;
+  source.sessionEvents.usageActivity.sessions.starts = dates.map((_, index) => index + 1);
+  source.sessionEvents.usageActivity.sessions.activeMinutes = activeMinutes ?? dates.map((_, index) => (index + 1) * 5);
+  const data = projectTaskLoopFindings(source, {
+    projectName: "render-source-project",
+    direct: true,
+  });
+  return {
+    ...data,
+    language,
+    target: { name: "render-source-project", path: "/tmp/render-source-project" },
+  };
+}
+
+function attribute(tag, name) {
+  return tag.match(new RegExp(`\\b${name}="([^"]*)"`, "u"))?.[1] ?? null;
+}
+
 function parseRun(stdout) {
   const payload = JSON.parse(stdout);
   assert.equal(payload.kind, "harness-report-render");
@@ -347,6 +426,164 @@ test("render command defaults new writes to Better Harness Qoder Canvas output",
     assert.equal(payload.outputLocation.requestedOut, ".qoder/better-harness");
     assert.equal(payload.outputLocation.resolvedOutDir.endsWith(path.join(".qoder", "better-harness")), true);
     assert.equal(payload.runDir.startsWith(payload.outputLocation.resolvedOutDir), true);
+  });
+});
+
+test("render keeps legacy v1 package findings readable without target metadata", async () => {
+  await withTempDir("better-harness-render-legacy-package-", async (root) => {
+    await createRenderMonorepo(root);
+    const packageRoot = path.join(root, "packages", "a");
+    const findingsPath = path.join(root, "legacy.findings.json");
+    await writeJson(findingsPath, taskLoopFindingsAtVersion(1));
+
+    const result = runNode([
+      renderPath,
+      "--findings", findingsPath,
+      "--mode", "markdown",
+      "--out", path.join(root, "runs"),
+      "--target", packageRoot,
+      "--json",
+    ]);
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const payload = parseRun(result.stdout);
+    assert.equal(payload.status, "pass");
+  });
+});
+
+test("render requires target metadata for the new contract in a package workspace", async () => {
+  await withTempDir("better-harness-render-new-package-", async (root) => {
+    await createRenderMonorepo(root);
+    const findingsPath = path.join(root, "current.findings.json");
+    await writeJson(findingsPath, taskLoopFindingsAtVersion(26));
+
+    const result = runNode([
+      renderPath,
+      "--findings", findingsPath,
+      "--mode", "markdown",
+      "--out", path.join(root, "runs"),
+      "--target", path.join(root, "packages", "a"),
+      "--json",
+    ]);
+
+    assert.equal(result.status, 1);
+    const payload = parseRun(result.stdout);
+    assert.equal(payload.error.code, "INVALID_FINDINGS");
+    assert.ok(payload.error.details.some((error) =>
+      /findings\[0\]\.target is required for this workspace target/u.test(error)));
+  });
+});
+
+test("render rejects structured target metadata without an explicit target workspace", async () => {
+  await withTempDir("better-harness-render-target-required-", async (root) => {
+    const findingsPath = path.join(root, "target.findings.json");
+    await writeJson(findingsPath, targetFindingData());
+
+    const result = runNode([
+      renderPath,
+      "--findings", findingsPath,
+      "--mode", "markdown",
+      "--out", path.join(root, "runs"),
+      "--json",
+    ]);
+
+    assert.equal(result.status, 1);
+    assert.equal(parseRun(result.stdout).error.code, "MISSING_RENDER_TARGET");
+  });
+});
+
+test("render rejects structured target metadata when topology discovery is partial", async () => {
+  await withTempDir("better-harness-render-target-partial-", async (root) => {
+    await createRenderMonorepo(root, { partial: true });
+    const findingsPath = path.join(root, "target.findings.json");
+    await writeJson(findingsPath, targetFindingData());
+
+    const result = runNode([
+      renderPath,
+      "--findings", findingsPath,
+      "--mode", "markdown",
+      "--out", path.join(root, "runs"),
+      "--target", path.join(root, "packages", "a"),
+      "--json",
+    ]);
+
+    assert.equal(result.status, 1);
+    assert.equal(parseRun(result.stdout).error.code, "RENDER_WORKSPACE_TOPOLOGY_INCOMPLETE");
+  });
+});
+
+test("render canonicalizes both target and frozen topology workspace identities", async () => {
+  await withTempDir("better-harness-render-target-alias-", async (root) => {
+    await createRenderMonorepo(root);
+    const packageRoot = path.join(root, "packages", "a");
+    const packageLink = path.join(root, "package-a-link");
+    const findingsPath = path.join(root, "target.findings.json");
+    await symlink(packageRoot, packageLink, "dir");
+    await writeJson(findingsPath, targetFindingData());
+
+    await assert.rejects(
+      () => renderReport({
+        findings: findingsPath,
+        mode: "markdown",
+        out: path.join(root, "runs"),
+        target: packageRoot,
+        topology: {
+          status: "partial",
+          requestedWorkspace: packageLink,
+          target: { kind: "workspace-member" },
+        },
+      }),
+      (error) => error.code === "RENDER_WORKSPACE_TOPOLOGY_INCOMPLETE",
+    );
+  });
+});
+
+test("render rejects structured target metadata for a different package", async () => {
+  await withTempDir("better-harness-render-target-mismatch-", async (root) => {
+    await createRenderMonorepo(root);
+    const findingsPath = path.join(root, "target.findings.json");
+    await writeJson(findingsPath, targetFindingData({ packageRoute: "packages/a" }));
+
+    const result = runNode([
+      renderPath,
+      "--findings", findingsPath,
+      "--mode", "markdown",
+      "--out", path.join(root, "runs"),
+      "--target", path.join(root, "packages", "b"),
+      "--json",
+    ]);
+
+    assert.equal(result.status, 1);
+    const payload = parseRun(result.stdout);
+    assert.equal(payload.error.code, "INVALID_FINDINGS");
+    assert.ok(payload.error.details.some((error) => /packageRoute does not match/u.test(error)));
+  });
+});
+
+test("render accepts and preserves structured target metadata for the selected package", async () => {
+  await withTempDir("better-harness-render-target-match-", async (root) => {
+    await createRenderMonorepo(root);
+    const findingsPath = path.join(root, "target.findings.json");
+    const outDir = path.join(root, "runs");
+    await writeJson(findingsPath, targetFindingData({ packageRoute: "packages/a" }));
+
+    const result = runNode([
+      renderPath,
+      "--findings", findingsPath,
+      "--mode", "markdown",
+      "--out", outDir,
+      "--target", path.join(root, "packages", "a"),
+      "--json",
+    ]);
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const payload = parseRun(result.stdout);
+    const rendered = JSON.parse(readFileSync(path.join(payload.runDir, "findings.json"), "utf8"));
+    assert.deepEqual(rendered.findings[0].target, {
+      kind: "workspace-member",
+      packageRoute: "packages/a",
+      ownerRoute: "packages/a",
+    });
   });
 });
 
@@ -548,6 +785,7 @@ test("render command writes disk-openable HTML artifacts", async () => {
     const html = readFileSync(path.join(payload.runDir, "report.html"), "utf8");
     assert.match(html, /<main id="harness-report" data-report-mode="codex-html">/u);
     assert.match(html, /<script id="harness-report-data" type="application\/json">/u);
+    assert.match(html, /<script id="harness-report-actions" type="application\/json">/u);
     assert.match(html, /data-section="fluency"/u);
     assert.match(html, /data-section="findings"/u);
     assert.match(html, /data-section="customize"/u);
@@ -566,7 +804,137 @@ test("render command writes disk-openable HTML artifacts", async () => {
     assert.match(html, /View details/u);
     assert.doesNotMatch(html, /<details class="finding"/u);
     assert.doesNotMatch(html, /<details class="finding" open/u);
+
+    const reviewed = JSON.parse(readFileSync(path.join(payload.runDir, "findings.json"), "utf8"));
+    assert.doesNotMatch(
+      readFileSync(path.join(payload.runDir, "findings.json"), "utf8"),
+      /better-harness-fix-output/u,
+    );
+    assert.doesNotMatch(
+      readFileSync(path.join(payload.runDir, "report.md"), "utf8"),
+      /better-harness-fix-output/u,
+    );
+    const actions = embeddedJson(html, "harness-report-actions");
+    const interactionData = embeddedJson(html, "harness-report-data");
+    assert.deepEqual(actions.findings.map((row) => row.id), reviewed.findings.map((row) => row.id));
+    assert.deepEqual(interactionData.findings, reviewed.findings.map((finding) => ({
+      id: finding.id,
+      aiFixPrompt: finding.aiFixPrompt,
+    })));
+    assert.deepEqual(actions.findings, reviewed.findings.map((finding) => ({
+      id: finding.id,
+      expectedRevision: 0,
+    })));
+    assert.deepEqual(Object.keys(actions).sort(), ["findings", "reportRoute"]);
+    assert.deepEqual(Object.keys(interactionData), ["findings"]);
+    for (const finding of interactionData.findings) {
+      assert.deepEqual(Object.keys(finding).sort(), ["aiFixPrompt", "id"]);
+    }
+    assert.equal(
+      actions.reportRoute,
+      path.relative(root, path.join(payload.runDir, "report.html")).replace(/\\/gu, "/"),
+    );
+    assert.equal(path.isAbsolute(actions.reportRoute), false);
+    assert.doesNotMatch(actions.reportRoute, /\.staging-/u);
+    assert.equal(Object.hasOwn(interactionData, "target"), false);
+    assert.equal(Object.hasOwn(interactionData, "dataPath"), false);
   });
+});
+
+test("render routes html output by host id and fails closed on unknown platforms", async () => {
+  await withTempDir("better-harness-render-platform-", async (root) => {
+    const findingsPath = path.join(root, "input.findings.json");
+    await writeJson(findingsPath, sampleFindings());
+
+    const routed = runNode(
+      [renderPath, "--findings", findingsPath, "--mode", "html", "--platform", "grok", "--target", root, "--json"],
+      { cwd: root },
+    );
+    assert.equal(routed.status, 0, routed.stderr || routed.stdout);
+    const payload = parseRun(routed.stdout);
+    assert.equal(payload.outputLocation.requestedOut, ".grok/better-harness");
+    assert.equal(payload.runDir.includes(path.join(".grok", "better-harness")), true);
+
+    const rejected = runNode(
+      [renderPath, "--findings", findingsPath, "--mode", "html", "--platform", "grock", "--target", root, "--json"],
+      { cwd: root },
+    );
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stderr, /unsupported render platform: grock/u);
+
+    // Help must stay usable even with an invalid platform so agents can self-correct.
+    const help = runNode([renderPath, "--help", "--platform", "grock"], { cwd: root });
+    assert.equal(help.status, 0, help.stderr);
+    assert.match(help.stdout, /Usage: better-harness harness render/u);
+  });
+});
+
+test("render platform allowlist matches the session platform registry", () => {
+  assert.deepEqual([...RENDER_REPORT_PLATFORMS].sort(), [...SUPPORTED_SESSION_PLATFORMS].sort());
+});
+
+test("HTML relative action metadata carries the finding's current repair revision", () => {
+  const reportData = {
+    ...sampleFindings(),
+    language: "en",
+    target: { name: "render-fixture", path: "/tmp/render-fixture" },
+  };
+  reportData.findings = reportData.findings.map((finding, index) => ({
+    ...finding,
+    ...(index === 0 ? { actualOutputRevision: 3 } : {}),
+  }));
+  const html = renderHtml(reportData, {
+    findingsPath: "/tmp/render-fixture/run/findings.json",
+  });
+  const action = embeddedJson(html, "harness-report-actions").findings[0];
+
+  assert.deepEqual(action, {
+    id: reportData.findings[0].id,
+    expectedRevision: 3,
+  });
+});
+
+test("HTML context-free rendering keeps raw prompt compatibility without local paths", () => {
+  const reportData = {
+    ...sampleFindings(),
+    language: "en",
+    target: { name: "render-fixture", path: "/tmp/render-fixture" },
+  };
+
+  const html = renderHtml(reportData);
+
+  assert.deepEqual(embeddedJson(html, "harness-report-actions"), {
+    reportRoute: null,
+    findings: [],
+  });
+  assert.deepEqual(
+    embeddedJson(html, "harness-report-data").findings.map((finding) => finding.id),
+    reportData.findings.map((finding) => finding.id),
+  );
+  assert.equal(evaluateHtmlReport(html, reportData).status, "pass");
+});
+
+test("HTML omits Copy controls and action metadata for empty AI fix prompts", () => {
+  const fixture = sampleFindings();
+  const reportData = {
+    ...fixture,
+    language: "en",
+    target: { name: "render-fixture", path: "/tmp/render-fixture" },
+    findings: fixture.findings.map((finding, index) => (
+      index === 0 ? { ...finding, aiFixPrompt: "  \n" } : finding
+    )),
+  };
+  const actionContext = { findingsPath: "/tmp/render-fixture/run/findings.json" };
+
+  const html = renderHtml(reportData, actionContext);
+  const actions = embeddedJson(html, "harness-report-actions");
+  const interactionData = embeddedJson(html, "harness-report-data");
+
+  assert.equal((html.match(/data-copy-finding=/gu) ?? []).length, 2);
+  assert.equal((html.match(/data-view-finding-dialog=/gu) ?? []).length, 2);
+  assert.deepEqual(actions.findings.map((finding) => finding.id), [reportData.findings[1].id]);
+  assert.deepEqual(interactionData.findings.map((finding) => finding.id), [reportData.findings[1].id]);
+  assert.equal(evaluateHtmlReport(html, reportData, actionContext).status, "pass");
 });
 
 test("HTML mode validates canonical compact Agent Work Loop findings without a Canvas sidecar", async () => {
@@ -623,17 +991,284 @@ test("HTML mode mirrors the reviewed Agent Work Loop reader sections without Can
   });
 });
 
+test("HTML activity chart binds every short-range UTC date to its horizontal grid column", () => {
+  const dates = ["2026-07-11", "2026-07-12", "2026-07-13", "2026-07-14"];
+  const reportData = htmlReportDataWithActivity(dates);
+
+  const html = renderHtml(reportData);
+  const cells = html.match(/<span class="heat-cell [^"]+"[^>]*>/gu) ?? [];
+  const ticks = html.match(/<span class="heat-tick[^"]*"[^>]*>/gu) ?? [];
+
+  assert.equal(cells.length, 4);
+  assert.deepEqual(cells.map((tag) => attribute(tag, "data-date")), dates);
+  assert.deepEqual(cells.map((tag) => attribute(tag, "style")), [
+    "grid-column:1",
+    "grid-column:2",
+    "grid-column:3",
+    "grid-column:4",
+  ]);
+  assert.deepEqual(ticks.map((tag) => attribute(tag, "data-date")), dates);
+  assert.deepEqual(ticks.map((tag) => attribute(tag, "style")), cells.map((tag) => attribute(tag, "style")));
+  assert.ok(ticks.every((tag) => attribute(tag, "class") === "heat-tick"));
+  assert.match(html, /class="heat-scroll" style="--heat-days:4;--heat-min-width:64px"/u);
+  assert.doesNotMatch(html, /grid-template-rows:repeat\(7,13px\)|heat-legend/u);
+  for (const [index, cell] of cells.entries()) {
+    assert.equal(attribute(cell, "title"), `${dates[index]}: ${(index + 1) * 5} active minutes`);
+    assert.equal(attribute(cell, "aria-label"), attribute(cell, "title"));
+  }
+  assert.equal(evaluateHtmlReport(html, reportData).status, "pass");
+});
+
+test("HTML activity chart keeps sparse long-range ticks bound to their source columns", () => {
+  const dates = Array.from({ length: 30 }, (_, index) => `2026-07-${String(index + 1).padStart(2, "0")}`);
+  const reportData = htmlReportDataWithActivity(dates);
+
+  const html = renderHtml(reportData);
+  const cells = html.match(/<span class="heat-cell [^"]+"[^>]*>/gu) ?? [];
+  const ticks = html.match(/<span class="heat-tick[^"]*"[^>]*>/gu) ?? [];
+
+  assert.equal(cells.length, 30);
+  assert.deepEqual(ticks.map((tag) => [attribute(tag, "data-date"), attribute(tag, "style")]), [
+    [dates[0], "grid-column:1"],
+    [dates[7], "grid-column:8"],
+    [dates[14], "grid-column:15"],
+    [dates[21], "grid-column:22"],
+    [dates[29], "grid-column:30"],
+  ]);
+  assert.match(html, /class="heat-scroll" style="--heat-days:30;--heat-min-width:506px"/u);
+  assert.match(html, /\.heat-scroll \{[^}]*overflow-x:auto/u);
+  assert.equal(evaluateHtmlReport(html, reportData).status, "pass");
+});
+
+test("HTML activity chart preserves empty, localized, accessible, and self-contained output", () => {
+  const emptyData = htmlReportDataWithActivity([], { activeMinutes: [] });
+  const emptyHtml = renderHtml(emptyData);
+  assert.match(emptyHtml, /class="heatmap-empty" role="img"/u);
+  assert.doesNotMatch(emptyHtml, /class="heat-cell|class="heat-axis/u);
+  assert.equal(evaluateHtmlReport(emptyHtml, emptyData).status, "pass");
+
+  const chineseData = htmlReportDataWithActivity(["2026-07-11"], { language: "zh", activeMinutes: [15] });
+  const chineseHtml = renderHtml(chineseData);
+  const chineseCell = chineseHtml.match(/<span class="heat-cell [^"]+"[^>]*>/u)?.[0] ?? "";
+  assert.equal(attribute(chineseCell, "data-date"), "2026-07-11");
+  assert.match(attribute(chineseCell, "title") ?? "", /^2026-07-11:/u);
+  assert.match(attribute(chineseCell, "title") ?? "", /15/u);
+  assert.equal(attribute(chineseCell, "aria-label"), attribute(chineseCell, "title"));
+  assert.doesNotMatch(chineseHtml, /<link\b|<script[^>]+\bsrc=|fetch\s*\(/iu);
+  assert.equal(evaluateHtmlReport(chineseHtml, chineseData).status, "pass");
+});
+
+test("HTML dimension progressbar semantics stay complete and score-bound", () => {
+  // Given: a canonical reviewed report with five fluency dimensions.
+  const reportData = {
+    ...sampleFindings(),
+    language: "en",
+    target: { name: "render-fixture", path: "/tmp/render-fixture" },
+  };
+
+  // When: the report is rendered and its dimension progressbars are inspected.
+  const html = renderHtml(reportData);
+  const progressbars = html.match(/<div class="track" role="progressbar"[^>]*>/gu) ?? [];
+
+  // Then: every displayed rounded score has one complete semantic contract.
+  assert.equal(progressbars.length, reportData.summary.dimensions.length);
+  for (const dimension of reportData.summary.dimensions) {
+    const score = Math.round(dimension.score);
+    assert.ok(progressbars.includes(
+      `<div class="track" role="progressbar" aria-label="${dimension.label} ${score} of 100" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${score}">`,
+    ));
+  }
+  assert.equal(evaluateHtmlReport(html, reportData).status, "pass");
+
+  const firstProgressbar = progressbars[0] ?? "";
+  const firstProgressbarMarkup = html.match(/<div class="track" role="progressbar"[^>]*><i[^>]*><\/i><\/div>/u)?.[0] ?? "";
+  assert.notEqual(firstProgressbarMarkup, "");
+  const mutateFirstProgressbar = (pattern, replacement) => html.replace(
+    firstProgressbar,
+    firstProgressbar.replace(pattern, replacement),
+  );
+  const mutations = [
+    ["missing progressbar", html.replace(firstProgressbarMarkup, "")],
+    ["extra progressbar", html.replace(firstProgressbarMarkup, `${firstProgressbarMarkup}${firstProgressbarMarkup}`)],
+    ["missing role", mutateFirstProgressbar(' role="progressbar"', "")],
+    ["invalid role", mutateFirstProgressbar('role="progressbar"', 'role="meter"')],
+    ["missing label", mutateFirstProgressbar(/ aria-label="[^"]+"/u, "")],
+    ["invalid label", mutateFirstProgressbar(/aria-label="[^"]+"/u, 'aria-label=""')],
+    ["invalid minimum", mutateFirstProgressbar('aria-valuemin="0"', 'aria-valuemin="1"')],
+    ["invalid maximum", mutateFirstProgressbar('aria-valuemax="100"', 'aria-valuemax="99"')],
+    ["invalid current value", mutateFirstProgressbar(/aria-valuenow="[^"]+"/u, 'aria-valuenow="invalid"')],
+    ["score mismatch", mutateFirstProgressbar('aria-valuenow="62"', 'aria-valuenow="61"')],
+  ];
+
+  for (const [label, mutatedHtml] of mutations) {
+    assert.equal(
+      evaluateHtmlReport(mutatedHtml, reportData).status,
+      "fail",
+      `${label} mutation must fail validation`,
+    );
+  }
+});
+
+test("HTML evidence episode coverage preserves canonical summary facts and legacy fallback", () => {
+  // Given: machine-owned summary facts and a conflicting legacy projection.
+  const fixture = sampleFindings();
+  const reportData = {
+    ...fixture,
+    language: "en",
+    target: { name: "render-fixture", path: "/tmp/render-fixture" },
+    summary: {
+      ...fixture.summary,
+      evidenceBoundary: {
+        episodeCoverage: {
+          episodeCount: 14,
+          editedEpisodeCount: 12,
+        },
+      },
+      atAGlance: {
+        coverage: {
+          episodeCount: 1,
+          editedEpisodeCount: 1,
+        },
+      },
+    },
+  };
+
+  // When: canonical and legacy reports are rendered.
+  const canonicalHtml = renderHtml(reportData);
+  const legacyHtml = renderHtml({
+    ...reportData,
+    summary: {
+      ...reportData.summary,
+      evidenceBoundary: undefined,
+      atAGlance: {
+        coverage: {
+          episodeCount: 7,
+          editedEpisodeCount: 5,
+        },
+      },
+    },
+  });
+
+  // Then: machine facts win, while legacy-only input remains readable.
+  assert.match(canonicalHtml, /<span>Task episodes<\/span><strong>14<\/strong>/u);
+  assert.match(canonicalHtml, /<span>Edited episodes<\/span><strong>12<\/strong>/u);
+  assert.match(legacyHtml, /<span>Task episodes<\/span><strong>7<\/strong>/u);
+  assert.match(legacyHtml, /<span>Edited episodes<\/span><strong>5<\/strong>/u);
+});
+
+test("HTML CJK phrase breaking emits bounded deterministic markup without changing report data", () => {
+  // Given: reviewed phrases plus escaping, long-token, path, URL, and mixed-Latin boundaries.
+  const fixture = sampleFindings();
+  const reportData = {
+    ...fixture,
+    language: "zh-CN",
+    target: { name: "render-fixture", path: "/tmp/render-fixture" },
+    summary: {
+      ...fixture.summary,
+      overview: "同一证据包给出两套互相冲突的口径，并保留 recommendedReads 与 app/api/example.py。",
+      dimensions: fixture.summary.dimensions.map((dimension, index) => ({
+        ...dimension,
+        label: ["任务理解", "可控执行", "改动验证", "可靠交付", "经验沉淀"][index],
+        summary: index === 1
+          ? "项目具有工作入口，但画像没有投影这些命令，代理仍需猜测验证路线。"
+          : dimension.summary,
+      })),
+    },
+    findings: fixture.findings.map((finding, index) => ({
+      ...finding,
+      title: index === 0 ? "同一证据包给出相反结论" : "项目画像漏掉工作入口",
+      reason: index === 0
+        ? "安全<script>与命令：https://example.com/复核/very-long-token"
+        : `${finding.reason} 超长连续汉字测试文本边界仍可读取`,
+    })),
+  };
+
+  // When: the Chinese and English documents are rendered through the same HTML renderer.
+  const chineseHtml = renderHtml(reportData);
+  const englishHtml = renderHtml({ ...reportData, language: "en" });
+
+  // Then: ordinary Chinese word segments receive bounded keep-together markup.
+  assert.match(chineseHtml, /<html lang="zh-CN" class="no-js">/u);
+  for (const phrase of ["口径", "入口", "结论", "命令"]) {
+    assert.match(chineseHtml, new RegExp(`<span class="cjk-phrase">${phrase}</span>`, "u"));
+  }
+  const markedPhrases = [...chineseHtml.matchAll(/<span class="cjk-phrase">([^<]+)<\/span>/gu)];
+  assert.ok(markedPhrases.length > 4);
+  for (const [, phrase] of markedPhrases) {
+    assert.match(phrase, /^\p{Script=Han}{2,8}$/u);
+    assert.ok([...phrase].length <= 8);
+  }
+  const metricMarkup = chineseHtml.match(/<div class="metric">([\s\S]*?)<\/div>/u)?.[1] ?? "";
+  const scoreOrbitMarkup = chineseHtml.match(/<div class="score-orbit">([\s\S]*?)<\/div>/u)?.[1] ?? "";
+  const evidenceMarkup = chineseHtml.match(/<div class="evidence-grid">([\s\S]*?)<\/div>/u)?.[1] ?? "";
+  for (const surfaceMarkup of [metricMarkup, scoreOrbitMarkup, evidenceMarkup]) {
+    assert.match(surfaceMarkup, /<span>[\s\S]*?<span class="cjk-phrase">/u);
+  }
+  assert.match(chineseHtml, /\.score-orbit > span\s*\{[^}]*width:110px/u);
+  assert.match(chineseHtml, /\.metric > span,\.metric > small\s*\{[^}]*display:block/u);
+  assert.match(chineseHtml, /\.metric > strong\s*\{[^}]*display:block/u);
+  assert.match(chineseHtml, /\.evidence-grid > div > span,\.evidence-grid > div > strong\s*\{[^}]*display:block/u);
+  assert.match(chineseHtml, /\.evidence-grid > div > span\s*\{[^}]*font-size:12px/u);
+  assert.match(chineseHtml, /\.evidence-grid > div > strong\s*\{[^}]*margin-top:4px/u);
+  assert.match(chineseHtml, /<span class="cjk-phrase">安全<\/span>&lt;script&gt;/u);
+  assert.doesNotMatch(chineseHtml, /安全<script>/u);
+  assert.match(chineseHtml, /recommendedReads/u);
+  assert.match(chineseHtml, /app\/api\/example\.py/u);
+  assert.match(chineseHtml, /https:\/\/example\.com\//u);
+
+  // And: English output and nonvisual report surfaces do not gain phrase markup.
+  assert.match(englishHtml, /<html lang="en" class="no-js">/u);
+  assert.doesNotMatch(englishHtml, /<span class="cjk-phrase">/u);
+  assert.doesNotMatch(chineseHtml, /aria-label="[^"]*<span class="cjk-phrase">/u);
+  assert.doesNotMatch(chineseHtml, /<script id="harness-report-data" type="application\/json">[\s\S]*?<span class="cjk-phrase">/u);
+
+  // And: unsupported runtimes fall back to escaped readable text.
+  const segmenter = Intl.Segmenter;
+  let fallbackHtml;
+  try {
+    Intl.Segmenter = undefined;
+    fallbackHtml = renderHtml(reportData);
+  } finally {
+    Intl.Segmenter = segmenter;
+  }
+  assert.doesNotMatch(fallbackHtml, /<span class="cjk-phrase">/u);
+  assert.match(fallbackHtml, /安全&lt;script&gt;与命令/u);
+});
+
 test("HTML validator rejects incomplete finding action contracts", () => {
   const reportData = {
     ...sampleFindings(),
     language: "en",
     target: { name: "render-fixture", path: "/tmp/render-fixture" },
   };
-  const html = renderHtml(reportData);
-  assert.equal(evaluateHtmlReport(html, reportData).status, "pass");
+  const actionContext = { findingsPath: "/tmp/render-fixture/run/findings.json" };
+  const html = renderHtml(reportData, actionContext);
+  assert.equal(evaluateHtmlReport(html, reportData, actionContext).status, "pass");
 
   const mutations = [
     ["interaction controller", html.replace(/<script id="harness-report-interactions">[\s\S]*?<\/script>/u, "")],
+    ["finding action payload", html.replace(/<script id="harness-report-actions"[\s\S]*?<\/script>/u, "")],
+    ["interaction data payload", html.replace(/<script id="harness-report-data"[\s\S]*?<\/script>/u, "")],
+    ["cross-bound finding action payload", html.replace(
+      '"id":"ff-runtime-validation","expectedRevision"',
+      '"id":"aia-workflow-evidence","expectedRevision"',
+    )],
+    ["stale finding action revision", html.replace(
+      '"expectedRevision":0',
+      '"expectedRevision":7',
+    )],
+    ["absolute report route", html.replace(
+      /"reportRoute":"[^"]+"/u,
+      '"reportRoute":"C:/private/report.html"',
+    )],
+    ["escaping report route", html.replace(
+      /"reportRoute":"[^"]+"/u,
+      '"reportRoute":"../report.html"',
+    )],
+    ["cross-bound interaction data", html.replace(
+      '"id":"ff-runtime-validation","aiFixPrompt"',
+      '"id":"aia-workflow-evidence","aiFixPrompt"',
+    )],
     ["copy status", html.replace(/<div id="copy-status"[\s\S]*?<\/div>/u, "")],
     ["manual copy fallback", html.replace(/<dialog id="manual-copy-dialog"[\s\S]*?<\/dialog>/u, "")],
     ["finding copy action", html.replace(/<button[^>]+data-copy-finding=[\s\S]*?<\/button>/u, "")],
@@ -661,7 +1296,7 @@ test("HTML validator rejects incomplete finding action contracts", () => {
   ];
 
   for (const [label, mutatedHtml] of mutations) {
-    const result = evaluateHtmlReport(mutatedHtml, reportData);
+    const result = evaluateHtmlReport(mutatedHtml, reportData, actionContext);
     assert.equal(result.status, "fail", `${label} mutation must fail validation`);
   }
 });

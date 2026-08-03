@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
@@ -36,9 +36,46 @@ function assertSuccessfulOutput(result, expected, label) {
   assert.equal(result.stdout, expected);
 }
 
+function moduleFiles(root) {
+  const files = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...moduleFiles(entryPath));
+    } else if (entry.isFile() && entry.name.endsWith(".mjs")) {
+      files.push(entryPath);
+    }
+  }
+  return files;
+}
+
 test("scripts refactor contract keeps one canonical doc-link graph CLI", () => {
   assert.equal(existsSync(path.join(ROOT, "scripts", "doc-link-graph.mjs")), false);
   assert.equal(existsSync(path.join(ROOT, "scripts", "doc-link-graph", "cli.mjs")), true);
+});
+
+test("scripts compose with session-analysis through its public surface", () => {
+  const scriptsRoot = path.join(ROOT, "scripts");
+  const capabilityRoot = path.join(scriptsRoot, "session-analysis");
+  const publicSurface = path.join(capabilityRoot, "index.mjs");
+  const rootShim = path.join(scriptsRoot, "session-analysis.mjs");
+  const importSpecifier = /(?:\bfrom\s*|\bimport\s*(?:\(\s*)?)["']([^"']+)["']/gu;
+  const violations = [];
+
+  for (const filePath of moduleFiles(scriptsRoot)) {
+    if (filePath === rootShim || filePath.startsWith(`${capabilityRoot}${path.sep}`)) continue;
+    const source = readFileSync(filePath, "utf8");
+    for (const match of source.matchAll(importSpecifier)) {
+      const specifier = match[1];
+      if (!specifier.startsWith(".")) continue;
+      const resolved = path.resolve(path.dirname(filePath), specifier);
+      if (resolved.startsWith(`${capabilityRoot}${path.sep}`) && resolved !== publicSurface) {
+        violations.push(`${path.relative(ROOT, filePath)} -> ${specifier}`);
+      }
+    }
+  }
+
+  assert.deepEqual(violations, []);
 });
 
 test("scripts refactor contract freezes human-readable CLI help", () => {
@@ -70,17 +107,17 @@ test("scripts refactor contract freezes machine-readable CLI output", () => {
     {
       label: "command inventory",
       args: ["commands", "--json"],
-      sha256: "240ff52fece335db98aaf90011808255c0aeed190db6688c7fee3a0c0e1f2b03",
+      sha256: "f7da6a2d87a1746fbe85de6573091e92dd988002a82920145bd00ebf6d930faa",
     },
     {
       label: "OpenCLI schema",
       args: ["schema"],
-      sha256: "8b01673def1d3f7c085bbb3830019142e4b98b28ae5a46add0f89cbcdc813bb9",
+      sha256: "6b6a55573a338cf942ed3856d31c26dffdf295d9e3bf5a9966d499608d5ce431",
     },
     {
       label: "Harness command description",
       args: ["command", "describe", "harness", "--json"],
-      sha256: "1efeceb766dbdfd97750a1e402f3892d0a08a374659945741084b75783bbd6a4",
+      sha256: "a2562f1719b53a24c9e1a39d9fe32924ad5a1c38253177a2dc6f5970461b9303",
     },
   ];
 

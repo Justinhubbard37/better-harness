@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseArgs } from "../session-analysis/cli.mjs";
+import { parseArgs } from "../session-analysis/index.mjs";
 import { HOOK_RECOMMENDED_LIMIT, hookOverLimitSummary } from "./asset-eval/index.mjs";
 import { collectProviderInventory, collectQoderInventory } from "./inventory.mjs";
 
@@ -340,7 +340,7 @@ export function formatAssetIntegrityMarkdown(result) {
   return `${lines.join("\n")}\n`;
 }
 
-const USAGE = `Usage: better-harness coding-agent-practices asset-integrity [qoder|codex|claude|cursor|qwen|copilot|pi|kimi] [options]
+const USAGE = `Usage: better-harness coding-agent-practices asset-integrity [qoder|codex|claude|cursor|qwen|copilot|pi|kimi|workbuddy|grok] [options]
 
 Run a read-only metadata integrity review for Memory titles, enabled Plugins,
 and Hooks. Memory bodies are never read.
@@ -369,8 +369,8 @@ async function runCli(argv) {
   }
   const { command, options } = parseArgs(argv);
   const provider = options.provider ?? options.platform ?? command ?? "qoder";
-  if (!["qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "kimi"].includes(provider)) {
-    throw new Error(`Unsupported provider: ${provider}. Supported providers: qoder, codex, claude, cursor, qwen, copilot, pi, kimi.`);
+  if (!["qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "workbuddy", "grok"].includes(provider)) {
+    throw new Error(`Unsupported provider: ${provider}. Supported providers: qoder, codex, claude, cursor, qwen, copilot, pi, kimi, workbuddy, grok.`);
   }
   const includeUserHome = options.includeUserHome ?? options["include-user-home"] ?? false;
   const includeMemories = options.includeMemories ?? options["include-memories"] ?? false;

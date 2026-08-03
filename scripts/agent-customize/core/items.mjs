@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
-import { pathExists, walkFiles } from "../../session-analysis/fs.mjs";
+import { pathExists, walkFiles } from "../../session-analysis/index.mjs";
 import { SCOPE_TITLES, TAB_TO_COLLECTION } from "../constants.mjs";
 
 const TEXT_FILE_EXTENSIONS = new Set([".md", ".mdc"]);
@@ -795,6 +795,7 @@ export function flattenPlugins(plugins, key) {
       pluginId: plugin.id,
       pluginName: plugin.name,
       pluginEnabled: plugin.enabled,
+      workspaceScoped: item.workspaceScoped ?? plugin.workspaceScoped,
       sourceLabel: plugin.displayName,
     })),
   );
@@ -827,7 +828,7 @@ function allowedSourceScopes(scopeKind = "user", tab = "plugins") {
     return tab === "mcps" ? new Set(["team", "dashboard"]) : new Set(["team"]);
   }
   if (scopeKind === "workspace" || scopeKind === "project") {
-    return new Set(["project"]);
+    return new Set(["project", "inherited"]);
   }
   return new Set(["user", "plugin"]);
 }

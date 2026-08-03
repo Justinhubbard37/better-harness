@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { realpath, readdir, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 
@@ -9,6 +9,10 @@ export async function pathStat(filePath) {
   } catch {
     return null;
   }
+}
+
+export async function readJson(filePath) {
+  return JSON.parse(await readFile(filePath, "utf8"));
 }
 
 export async function pathExists(filePath) {
@@ -56,14 +60,25 @@ export async function forEachJsonLine(filePath, onRecord, options = {}) {
 export async function walkFiles(root, options = {}) {
   const maxDepth = options.maxDepth ?? Infinity;
   const limit = options.limit ?? Infinity;
-  const followSymlinks = Boolean(options.followSymlinks);
   const files = [];
   const visitedDirs = new Set();
+
+  async function resolveDirIdentity(dir) {
+    try {
+      return await realpath(dir);
+    } catch {
+      return path.resolve(dir);
+    }
+  }
 
   async function visit(dir, depth) {
     if (files.length >= limit || depth > maxDepth) {
       return;
     }
+    const realDir = await resolveDirIdentity(dir);
+    if (visitedDirs.has(realDir)) return;
+    visitedDirs.add(realDir);
+
     let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
@@ -77,37 +92,17 @@ export async function walkFiles(root, options = {}) {
         return;
       }
       const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
+      // Dirent isDirectory/isFile are false for symlinks; follow them so hosts
+      // that install skills via ln -s (e.g. Grok ~/.grok/skills) are inventoried.
+      // Track realpath identities so symlink cycles cannot re-enter a directory.
+      const linkedDirectory = entry.isSymbolicLink() ? await isDirectory(fullPath) : false;
+      if (entry.isDirectory() || linkedDirectory) {
         await visit(fullPath, depth + 1);
-      } else if (entry.isFile()) {
-        if (!options.match || options.match(fullPath)) {
-          files.push(fullPath);
-        }
-      } else if (followSymlinks && entry.isSymbolicLink()) {
-        // A symlink (including a Windows junction) Dirent is neither file nor
-        // directory, so stat the target to resolve its type. Stat failures
-        // (broken links, etc.) are silently skipped.
-        let targetStat;
-        try {
-          targetStat = await stat(fullPath);
-        } catch {
-          continue;
-        }
-        if (targetStat.isDirectory()) {
-          // Track visited directories by realpath so symlink loops cannot
-          // recurse forever.
-          let real;
-          try {
-            real = await realpath(fullPath);
-          } catch {
-            continue;
-          }
-          if (visitedDirs.has(real)) {
-            continue;
-          }
-          visitedDirs.add(real);
-          await visit(fullPath, depth + 1);
-        } else if (targetStat.isFile() && (!options.match || options.match(fullPath))) {
+      } else if (
+        (entry.isFile() || entry.isSymbolicLink())
+        && (!options.match || options.match(fullPath))
+      ) {
+        if (entry.isFile() || (await pathStat(fullPath))?.isFile()) {
           files.push(fullPath);
         }
       }
@@ -115,13 +110,6 @@ export async function walkFiles(root, options = {}) {
   }
 
   if (await isDirectory(root)) {
-    if (followSymlinks) {
-      try {
-        visitedDirs.add(await realpath(root));
-      } catch {
-        // A realpath failure does not affect the traversal itself.
-      }
-    }
     await visit(root, 0);
   }
   return files;

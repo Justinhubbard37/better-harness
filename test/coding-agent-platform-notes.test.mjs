@@ -45,7 +45,9 @@ test("session diagnostics keeps the shared workflow before platform source roots
   assertAfter(content, "~/.qwen/projects", "## Platform Notes", "Sessions Diagnostics");
   assertAfter(content, "~/.copilot/session-state", "## Platform Notes", "Sessions Diagnostics");
   assertAfter(content, "~/.pi/agent/sessions", "## Platform Notes", "Sessions Diagnostics");
-  assert.match(content, /Supported platforms: `qoder`, `codex`, `claude`, `cursor`, `qwen`, `copilot`, `pi`, and `kimi`/);
+  assertAfter(content, "~/.workbuddy/projects", "## Platform Notes", "Sessions Diagnostics");
+  assertAfter(content, "~/.grok/sessions", "## Platform Notes", "Sessions Diagnostics");
+  assert.match(content, /Supported platforms: `qoder`, `codex`, `claude`, `cursor`, `qwen`, `copilot`, `pi`, `kimi`, `workbuddy`, and `grok`/);
   assert.match(content, /Never decode Cursor `store\.db`/);
   assert.ok(content.indexOf("session-analysis.mjs sources") < content.indexOf("## Platform Notes"));
 });

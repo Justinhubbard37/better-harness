@@ -1,8 +1,13 @@
 import os from "node:os";
 import path from "node:path";
 
-import { pathExists, pathStat, walkFiles } from "../../session-analysis/fs.mjs";
-import { expandHome, normalizeWorkspace } from "../../session-analysis/paths.mjs";
+import {
+  expandHome,
+  normalizeWorkspace,
+  pathExists,
+  pathStat,
+  walkFiles,
+} from "../../session-analysis/index.mjs";
 import { MANAGE_TABS } from "../constants.mjs";
 import {
   agentsMarkdownRuleSource,

@@ -7,6 +7,7 @@ import {
   SCHEMA_VERSION,
   addCount,
   analysisDirectoryFor,
+  analysisDirectoryForScope,
   applyIgnorePatterns,
   compactReasonList,
   fileRoleFor,
@@ -19,12 +20,16 @@ import {
   normalizeLanguages,
   option,
   parseArgs,
+  publicAnalysisScope,
   readJsonFile,
-  resolveRepoRoot,
+  resolveAnalysisScopeForOptions,
   sortedCounts,
+  fromAnalysisRelativePath,
+  toAnalysisRelativePath,
   toPosix,
   writeJsonResult,
 } from "./common.mjs";
+import { printCoreChangeWatchHelp } from "./help.mjs";
 
 const MANIFESTS = new Set([
   "package.json",
@@ -53,6 +58,8 @@ const SOURCE_FILES_PER_AGENT_INSTRUCTION = 250;
 const SIGNIFICANT_SOURCE_ROOT_FILES = 100;
 const SOURCE_LINE_METHOD = "tracked readable primary source files only; excludes tests, non-source assets, generated/dependency paths, and untracked files";
 const SOURCE_LINE_SKIPPED_METHOD = "not measured by default; use --measure-source-lines to count tracked readable primary source files only";
+const ROOT_JUSTFILES = new Set(["justfile", "Justfile", ".justfile"]);
+const MAX_JUST_RECIPES = 100;
 
 function scriptNames(manifest, filePath) {
   if (!manifest?.scripts || typeof manifest.scripts !== "object") {
@@ -133,10 +140,45 @@ function entryScore(filePath) {
   return 0;
 }
 
-function corePathHint(filePath) {
-  const directory = analysisDirectoryFor(filePath);
-  if (/(^|\/)(core|auth|security|permission|permissions|crypto|session|payment|billing|domain|service|api)(\/|$)/i.test(directory)) {
-    return directory;
+function justRecipeScore(name) {
+  const conventional = new Map([
+    ["default", 100],
+    ["sync", 99],
+    ["api-dev", 98],
+    ["health", 97],
+    ["check", 96],
+  ]);
+  return conventional.get(name) ?? 70;
+}
+
+function justRecipeNames(text) {
+  const recipes = [];
+  let privateRecipe = false;
+  for (const line of String(text ?? "").split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    if (!/^\s/u.test(line) && /^\[[^\]]+\]$/u.test(trimmed)) {
+      privateRecipe = /(?:^|[\s,])private(?:[\s,]|$)/u.test(trimmed.slice(1, -1));
+      continue;
+    }
+    const match = !/^\s/u.test(line)
+      ? /^@?([A-Za-z_][A-Za-z0-9_-]*)\b(?!\s*:=)[^:\r\n]*:(?:\s|$)/u.exec(line)
+      : null;
+    if (match) {
+      if (!privateRecipe && !match[1].startsWith("_")) recipes.push(match[1]);
+      privateRecipe = false;
+      if (recipes.length >= MAX_JUST_RECIPES) break;
+      continue;
+    }
+    if (!/^\s/u.test(line)) privateRecipe = false;
+  }
+  return [...new Set(recipes)];
+}
+
+function corePathHint(filePath, analysisScope) {
+  const localDirectory = analysisDirectoryFor(toAnalysisRelativePath(filePath, analysisScope));
+  if (/(^|\/)(core|auth|security|permission|permissions|crypto|session|payment|billing|domain|service|api)(\/|$)/i.test(localDirectory)) {
+    return fromAnalysisRelativePath(localDirectory, analysisScope);
   }
   return "";
 }
@@ -206,11 +248,12 @@ function firstMarkdownHeading(text) {
   return "";
 }
 
-function rootPackageIdentity(repoRoot, fileSet) {
-  if (!fileSet.has("package.json")) {
+function rootPackageIdentity(repoRoot, fileSet, analysisScope) {
+  const manifestPath = fromAnalysisRelativePath("package.json", analysisScope);
+  if (!fileSet.has(manifestPath)) {
     return null;
   }
-  const manifest = readJsonFile(repoRoot, "package.json");
+  const manifest = readJsonFile(repoRoot, manifestPath);
   if (!manifest || typeof manifest !== "object") {
     return null;
   }
@@ -220,16 +263,19 @@ function rootPackageIdentity(repoRoot, fileSet) {
     evidence: [],
   };
   if (identity.name) {
-    identity.evidence.push("package.json:name");
+    identity.evidence.push(`${manifestPath}:name`);
   }
   if (identity.description) {
-    identity.evidence.push("package.json:description");
+    identity.evidence.push(`${manifestPath}:description`);
   }
   return identity.name || identity.description ? identity : null;
 }
 
-function rootReadmeTitle(repoRoot, trackedFiles) {
-  const readmePath = trackedFiles.find((filePath) => /^readme(?:\.[^.]+)?$/i.test(path.posix.basename(filePath)) && !filePath.includes("/"));
+function rootReadmeTitle(repoRoot, trackedFiles, analysisScope) {
+  const readmePath = trackedFiles.find((filePath) => {
+    const local = toAnalysisRelativePath(filePath, analysisScope);
+    return /^readme(?:\.[^.]+)?$/i.test(path.posix.basename(local)) && !local.includes("/");
+  });
   if (!readmePath) {
     return { title: "", path: "" };
   }
@@ -305,6 +351,7 @@ function detectFrameworks(repoRoot, trackedFiles) {
     || firstManifestWithDependency(composerManifests, "symfony/http-kernel");
   const codeIgniterManifest = firstManifestWithDependency(composerManifests, "codeigniter4/framework");
   const railsGemfile = firstTextMatch(repoRoot, fileSet, /(^|\/)Gemfile$/, /\bgem\s+["']rails["']/);
+  const railsRoutes = manifestFiles(fileSet, /(^|\/)config\/routes\.rb$/)[0] ?? "";
   const pythonManifestText = joinedManifestText(repoRoot, fileSet, /(^|\/)(requirements\.txt|pyproject\.toml|Pipfile)$/);
   const javaBuildText = joinedManifestText(repoRoot, fileSet, /(^|\/)(pom\.xml|build\.gradle|build\.gradle\.kts)$/);
 
@@ -323,8 +370,11 @@ function detectFrameworks(repoRoot, trackedFiles) {
   if (codeIgniterManifest || fileSet.has("app/Config/Routes.php")) {
     addFrameworkSignal(signals, "codeigniter", codeIgniterManifest ? 70 : 30, codeIgniterManifest ? `${codeIgniterManifest}:codeigniter4/framework` : "app/Config/Routes.php");
   }
-  if (railsGemfile || fileSet.has("config/routes.rb") || hasFileMatching(fileSet, /^app\/(models|controllers|services)\//)) {
-    addFrameworkSignal(signals, "rails", railsGemfile ? 75 : 35, railsGemfile ? `${railsGemfile}:rails` : "rails app paths");
+  if (railsGemfile || railsRoutes) {
+    addFrameworkSignal(signals, "rails", railsGemfile ? 75 : 45, railsGemfile ? `${railsGemfile}:rails` : railsRoutes);
+  }
+  if (/\bfastapi\b/iu.test(pythonManifestText)) {
+    addFrameworkSignal(signals, "fastapi", 75, "python manifest:fastapi");
   }
   if (/\bdjango\b/i.test(pythonManifestText) || fileSet.has("manage.py") || hasFileMatching(fileSet, /(^|\/)settings\.py$/)) {
     addFrameworkSignal(signals, "django", /\bdjango\b/i.test(pythonManifestText) ? 70 : 35, /\bdjango\b/i.test(pythonManifestText) ? "python manifest:django" : "manage.py/settings.py");
@@ -359,10 +409,10 @@ function sourceLineStatus(totals) {
   return "unavailable";
 }
 
-function projectIdentity(repoRoot, trackedFiles) {
+function projectIdentity(repoRoot, trackedFiles, analysisScope) {
   const fileSet = new Set(trackedFiles);
-  const packageIdentity = rootPackageIdentity(repoRoot, fileSet);
-  const readme = rootReadmeTitle(repoRoot, trackedFiles);
+  const packageIdentity = rootPackageIdentity(repoRoot, fileSet, analysisScope);
+  const readme = rootReadmeTitle(repoRoot, trackedFiles, analysisScope);
   const evidence = [];
 
   if (packageIdentity?.evidence?.length) {
@@ -373,7 +423,7 @@ function projectIdentity(repoRoot, trackedFiles) {
   }
 
   return {
-    name: packageIdentity?.name || readme.title || path.basename(repoRoot),
+    name: packageIdentity?.name || readme.title || path.basename(analysisScope.targetRoot),
     description: packageIdentity?.description || "",
     readmeTitle: readme.title,
     evidence: compactReasonList(evidence, 8),
@@ -391,13 +441,17 @@ function isPathUnderScope(filePath, scope) {
   return normalizedScope === "." || normalized === normalizedScope || normalized.startsWith(`${normalizedScope}/`);
 }
 
-function agentInstructionFiles(trackedFiles) {
+function agentInstructionFiles(trackedFiles, analysisScope) {
   return trackedFiles
     .filter((filePath) => path.posix.basename(toPosix(filePath)) === AGENT_INSTRUCTION_FILE)
     .filter((filePath) => !isDependencyOrGenerated(filePath))
     .map((filePath) => ({
       path: toPosix(filePath),
-      scope: instructionScope(filePath),
+      scope: fromAnalysisRelativePath(
+        instructionScope(toAnalysisRelativePath(filePath, analysisScope)),
+        analysisScope,
+      ),
+      targetRoot: instructionScope(toAnalysisRelativePath(filePath, analysisScope)) === ".",
     }))
     .sort((a, b) => a.path.localeCompare(b.path));
 }
@@ -424,9 +478,9 @@ function agentInstructionStatus(count, suggestedMinimum) {
   return "adequate";
 }
 
-function analyzeAgentInstructions({ trackedFiles, sourceRecords, sourceRoots, totals }) {
-  const files = agentInstructionFiles(trackedFiles);
-  const nestedScopes = files.filter((item) => item.scope !== ".").map((item) => item.scope);
+function analyzeAgentInstructions({ trackedFiles, sourceRecords, sourceRoots, totals, analysisScope }) {
+  const files = agentInstructionFiles(trackedFiles, analysisScope);
+  const nestedScopes = files.filter((item) => !item.targetRoot).map((item) => item.scope);
   let sourceFilesUnderNestedInstructions = 0;
   const uncoveredSourceDirs = new Map();
 
@@ -439,7 +493,7 @@ function analyzeAgentInstructions({ trackedFiles, sourceRecords, sourceRoots, to
     }
   }
 
-  const rootCount = files.filter((item) => item.scope === ".").length;
+  const rootCount = files.filter((item) => item.targetRoot).length;
   const nestedCount = files.length - rootCount;
   const suggestedMinimum = suggestedInstructionMinimum(totals, sourceRoots);
   const suggestedAdditional = Math.max(0, suggestedMinimum - files.length);
@@ -466,7 +520,7 @@ function analyzeAgentInstructions({ trackedFiles, sourceRecords, sourceRoots, to
     count: files.length,
     rootCount,
     nestedCount,
-    files,
+    files: files.map(({ targetRoot: _targetRoot, ...file }) => file),
     status,
     suggestedMinimum,
     suggestedAdditional,
@@ -489,8 +543,9 @@ function buildProjectInfo({
   sourceRoots,
   entryCandidates,
   totals,
+  analysisScope,
 }) {
-  const identity = projectIdentity(repoRoot, trackedFiles);
+  const identity = projectIdentity(repoRoot, trackedFiles, analysisScope);
   return {
     ...identity,
     primaryLanguages: languages.slice(0, 5).map((item) => ({
@@ -513,16 +568,21 @@ function buildProjectInfo({
       path: item.path,
       language: item.language,
       score: item.score,
+      ...(item.kind ? { kind: item.kind } : {}),
+      ...(item.command ? { command: item.command } : {}),
+      ...(item.sourcePath ? { sourcePath: item.sourcePath } : {}),
+      ...(item.executionStatus ? { executionStatus: item.executionStatus } : {}),
     })),
     manifests: manifests.slice(0, 8),
   };
 }
 
 export async function analyzeProjectProfile(options = {}) {
-  const repoRoot = resolveRepoRoot(options.cwd ?? process.env.QODER_CWD ?? process.cwd());
+  const analysisScope = resolveAnalysisScopeForOptions(options);
+  const repoRoot = analysisScope.repoRoot;
   const allowedLanguages = new Set(normalizeLanguages(options.languages));
   const measureSourceLines = shouldMeasureSourceLines(options);
-  const rawTrackedFiles = listTrackedFiles(repoRoot);
+  const rawTrackedFiles = listTrackedFiles(repoRoot, analysisScope);
   const filteredTrackedFiles = applyIgnorePatterns(rawTrackedFiles, options.ignore);
   const trackedFiles = filteredTrackedFiles.items;
   const analysisTrackedFiles = trackedFiles.filter((filePath) => !isDependencyOrGenerated(filePath));
@@ -551,6 +611,23 @@ export async function analyzeProjectProfile(options = {}) {
       continue;
     }
 
+    if (!normalized.includes("/") && ROOT_JUSTFILES.has(normalized)) {
+      const recipes = justRecipeNames(safeReadText(repoRoot, normalized));
+      manifests.push({ path: normalized, kind: "just", scripts: [...recipes].sort() });
+      for (const recipe of recipes) {
+        entryCandidates.push({
+          path: normalized,
+          language: "just",
+          score: justRecipeScore(recipe),
+          reasons: compactReasonList(["statically discovered root Just recipe"]),
+          kind: "just-recipe",
+          command: ["just", recipe],
+          sourcePath: normalized,
+          executionStatus: "unverified",
+        });
+      }
+    }
+
     if (isManifestFile(normalized)) {
       const manifest = readJsonFile(repoRoot, normalized);
       manifests.push({
@@ -561,7 +638,7 @@ export async function analyzeProjectProfile(options = {}) {
     }
 
     if (!isSourceFile(normalized)) {
-      const score = entryScore(normalized);
+      const score = entryScore(toAnalysisRelativePath(normalized, analysisScope));
       if (score > 0 && existsSync(path.join(repoRoot, normalized))) {
         entryCandidates.push({
           path: normalized,
@@ -578,7 +655,7 @@ export async function analyzeProjectProfile(options = {}) {
       continue;
     }
 
-    const score = entryScore(normalized);
+    const score = entryScore(toAnalysisRelativePath(normalized, analysisScope));
     if (score > 0 && existsSync(path.join(repoRoot, normalized))) {
       entryCandidates.push({
         path: normalized,
@@ -613,7 +690,7 @@ export async function analyzeProjectProfile(options = {}) {
         path: normalized,
         language,
         lines,
-        directory: analysisDirectoryFor(normalized),
+        directory: analysisDirectoryForScope(normalized, analysisScope),
       });
     }
 
@@ -627,12 +704,13 @@ export async function analyzeProjectProfile(options = {}) {
     stats.files += 1;
     stats.sourceFiles += isPrimarySource ? 1 : 0;
     stats.testFiles += isTest ? 1 : 0;
-    addCount(stats.roots, analysisDirectoryFor(normalized), 1);
+    addCount(stats.roots, analysisDirectoryForScope(normalized, analysisScope), 1);
     languageStats.set(language, stats);
 
     if (isPrimarySource) {
-      addCount(sourceRoots, normalized.split("/")[0] ?? ".", 1);
-      const hint = corePathHint(normalized);
+      const localRoot = toAnalysisRelativePath(normalized, analysisScope).split("/")[0] ?? ".";
+      addCount(sourceRoots, fromAnalysisRelativePath(localRoot, analysisScope), 1);
+      const hint = corePathHint(normalized, analysisScope);
       addCount(coreHints, hint, hint ? 1 : 0);
     }
 
@@ -657,6 +735,7 @@ export async function analyzeProjectProfile(options = {}) {
     kind: "project-profile",
     status: "ok",
     repoRoot,
+    analysisScope: publicAnalysisScope(analysisScope),
     filters: filteredTrackedFiles.filters,
     projectInfo: buildProjectInfo({
       repoRoot,
@@ -667,12 +746,14 @@ export async function analyzeProjectProfile(options = {}) {
       sourceRoots: sortedSourceRoots,
       entryCandidates: sortedEntryCandidates,
       totals,
+      analysisScope,
     }),
     agentInstructions: analyzeAgentInstructions({
       trackedFiles,
       sourceRecords,
       sourceRoots: sortedSourceRoots,
       totals,
+      analysisScope,
     }),
     languages,
     manifests: sortedManifests,
@@ -685,9 +766,11 @@ export async function analyzeProjectProfile(options = {}) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  if (printCoreChangeWatchHelp("project-profile", argv)) return;
   const args = parseArgs(argv);
   const result = await analyzeProjectProfile({
     cwd: option(args, "cwd"),
+    packageRelPath: option(args, "package-rel-path"),
     languages: option(args, "languages"),
     ignore: option(args, "ignore"),
     measureSourceLines: Boolean(args["measure-source-lines"]),

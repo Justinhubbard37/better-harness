@@ -4,7 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createAnalyzer } from "../session-analysis.mjs";
+import { createAnalyzer } from "./analyzer.mjs";
 import { parseArgs } from "./cli.mjs";
 import {
   buildSessionSelectionProfile,
@@ -19,7 +19,7 @@ a declarative session selection plan. Raw prompts, commands, paths, and session
 identifiers never enter the profile.
 
 Options:
-  --platform <qoder|codex|claude|cursor|qwen|copilot|pi|kimi>
+  --platform <qoder|codex|claude|cursor|qwen|copilot|pi|kimi|workbuddy|grok>
                             Session platform (default: qoder)
   --workspace <path>        Target workspace (required)
   --since <ISO timestamp>   Exclude earlier sessions

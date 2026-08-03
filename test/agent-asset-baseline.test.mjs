@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   ASSET_BASELINE_KIND,
   MAX_BASELINE_FINDINGS,
+  MAX_BASELINE_OWNER_ROUTES,
   collectAssetBaseline,
   formatAssetBaselineMarkdown,
 } from "../scripts/coding-agent-practices/asset-baseline.mjs";
@@ -102,11 +103,12 @@ test("asset baseline shares one inventory snapshot and emits compact AI envelope
   assert.equal(lintInventory, rawInventory);
   assert.equal(publicInventory, rawInventory);
   assert.equal(result.kind, ASSET_BASELINE_KIND);
-  assert.equal(result.status, "complete");
+  assert.equal(result.status, "partial");
   assert.equal(result.diagnostics.sharedInventorySnapshot, true);
   assert.equal(result.diagnostics.compact, true);
   assert.equal(result.envelopes.lint.data.findings.items.length, MAX_BASELINE_FINDINGS);
   assert.equal(result.envelopes.lint.data.findings.omitted, 4);
+  assert.equal(result.envelopes.lint.data.findings.truncated, true);
   assert.equal(result.envelopes.integrity.data.findings.omitted, 4);
   assert.deepEqual(result.envelopes.inventory.data.ownerRoutes.items[0], {
     kind: "skills",
@@ -119,6 +121,12 @@ test("asset baseline shares one inventory snapshot and emits compact AI envelope
   assert.equal(result.envelopes.inventory.data.ownerRoutes.items.some((item) => item.kind === "plugins"), true);
   assert.equal(result.envelopes.inventory.data.ownerRoutes.items.some((item) => item.kind === "agents"), true);
   assert.equal(result.envelopes.inventory.data.ownerRoutes.omitted, 16);
+  assert.equal(result.envelopes.inventory.data.ownerRoutes.truncated, true);
+  assert.deepEqual(result.diagnostics.truncatedStages, [
+    "lint-findings",
+    "integrity-findings",
+  ]);
+  assert.deepEqual(result.diagnostics.sampledStages, ["inventory-owner-routes"]);
   assert.equal(Object.hasOwn(result.envelopes.inventory.data.summary, "practiceCoverageRows"), false);
   const serialized = JSON.stringify(result);
   assert.ok(Buffer.byteLength(serialized) < 12_000, "fixture baseline must stay compact for AI reading");
@@ -143,6 +151,66 @@ test("asset baseline preserves partial stage failures without hiding healthy env
   const markdown = formatAssetBaselineMarkdown(result);
   assert.match(markdown, /lint: available/);
   assert.match(markdown, /inventory: unavailable/);
+});
+
+test("asset baseline samples the latest 16 owner routes with explicit freshness coverage", async () => {
+  const workspace = path.resolve("/tmp/better-harness-latest-owner-routes");
+  const observedAt = new Date("2026-08-03T08:00:00.000Z");
+  const modifiedBase = Date.parse("2026-08-01T00:00:00.000Z");
+  let activeStats = 0;
+  let maxActiveStats = 0;
+  const items = Array.from({ length: 40 }, (_, index) => ({
+    name: `skill-${String(index).padStart(2, "0")}`,
+    scope: "workspace",
+    path: path.join(workspace, `skill-${String(index).padStart(2, "0")}.md`),
+  }));
+  const result = await collectAssetBaseline({ provider: "codex", workspace }, {
+    now: () => observedAt,
+    stat: async (filePath) => {
+      activeStats += 1;
+      maxActiveStats = Math.max(maxActiveStats, activeStats);
+      await new Promise((resolve) => setImmediate(resolve));
+      activeStats -= 1;
+      return { mtime: new Date(modifiedBase + Number(path.basename(filePath).match(/\d+/u)?.[0]) * 1_000) };
+    },
+    collectRawInventory: async () => ({}),
+    runLint: async () => ({ kind: "agent-lint", profile: "agent-assets-review", summary: {}, findings: [] }),
+    collectPublicInventory: async () => ({
+      scope: { platform: "codex", includeUserHome: false },
+      summary: {},
+      surfaces: [{ type: "skills", scope: "workspace", items }],
+      memories: { included: false, categories: [] },
+      warnings: [],
+    }),
+    reviewIntegrity: () => ({
+      kind: "asset-integrity-review",
+      profile: "asset-integrity-review",
+      status: "reviewed",
+      summary: { findingCount: 0 },
+      findings: [],
+    }),
+  });
+
+  const routes = result.envelopes.inventory.data.ownerRoutes;
+  assert.equal(result.status, "complete");
+  assert.equal(routes.items.length, MAX_BASELINE_OWNER_ROUTES);
+  assert.deepEqual(routes.items.map((item) => item.name),
+    Array.from({ length: 16 }, (_, index) => `skill-${String(39 - index).padStart(2, "0")}`));
+  assert.equal(routes.items[0].modifiedAt, new Date(modifiedBase + 39_000).toISOString());
+  assert.equal(routes.total, 40);
+  assert.equal(routes.omitted, 24);
+  assert.equal(routes.truncated, true);
+  assert.deepEqual(routes.selection, {
+    strategy: "latest-modified",
+    limit: 16,
+    observedAt: observedAt.toISOString(),
+    timestampSource: "filesystem-mtime",
+    timestamped: 40,
+    untimestamped: 0,
+  });
+  assert.ok(maxActiveStats > 1 && maxActiveStats <= 32);
+  assert.deepEqual(result.diagnostics.truncatedStages, []);
+  assert.deepEqual(result.diagnostics.sampledStages, ["inventory-owner-routes"]);
 });
 
 test("Qoder asset baseline includes selected-project Memory titles by default", async () => {
@@ -258,6 +326,87 @@ test("Claude asset baseline completes from a native project fixture", async () =
   }
 });
 
+test("Claude asset baseline treats its designated config root as bounded project scope", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-asset-baseline-claude-home-"));
+  const workspace = path.join(root, ".claude");
+  const claudeStatePath = path.join(root, ".claude.json");
+  const containedPluginId = "contained@fixture-marketplace";
+  const escapingPluginId = "escaping@fixture-marketplace";
+  const containedPluginRoot = path.join(workspace, "plugins", "cache", "fixture-marketplace", "contained", "1.0.0");
+  const escapingPluginRoot = path.join(root, "outside-plugin");
+  try {
+    await mkdir(path.join(workspace, "skills", "review"), { recursive: true });
+    await mkdir(path.join(workspace, "commands"), { recursive: true });
+    await mkdir(path.join(containedPluginRoot, ".claude-plugin"), { recursive: true });
+    await mkdir(path.join(escapingPluginRoot, ".claude-plugin"), { recursive: true });
+    await writeFile(
+      path.join(workspace, "skills", "review", "SKILL.md"),
+      "---\nname: review\ndescription: Review the designated Claude config workspace.\n---\n",
+    );
+    await writeFile(path.join(workspace, "commands", "project-check.md"), "# Project Check\n");
+    await writeFile(path.join(workspace, "CLAUDE.md"), "# Claude config project\n\nRun the focused tests.\n");
+    await writeFile(path.join(workspace, "settings.json"), `${JSON.stringify({
+      enabledPlugins: {
+        [containedPluginId]: true,
+        [escapingPluginId]: true,
+      },
+      hooks: {
+        SessionStart: [{ hooks: [{ type: "command", command: "node hooks/check.mjs" }] }],
+      },
+    }, null, 2)}\n`);
+    await writeFile(path.join(containedPluginRoot, ".claude-plugin", "plugin.json"), `${JSON.stringify({
+      name: "contained",
+      version: "1.0.0",
+    }, null, 2)}\n`);
+    await writeFile(path.join(escapingPluginRoot, ".claude-plugin", "plugin.json"), `${JSON.stringify({
+      name: "escaping",
+      version: "1.0.0",
+    }, null, 2)}\n`);
+    await mkdir(path.join(workspace, "plugins"), { recursive: true });
+    await writeFile(path.join(workspace, "plugins", "installed_plugins.json"), `${JSON.stringify({
+      version: 2,
+      plugins: {
+        [containedPluginId]: [{ scope: "user", installPath: containedPluginRoot, version: "1.0.0" }],
+        [escapingPluginId]: [{ scope: "user", installPath: escapingPluginRoot, version: "1.0.0" }],
+      },
+    }, null, 2)}\n`);
+    await writeFile(claudeStatePath, `${JSON.stringify({
+      mcpServers: {
+        outsideState: { command: "node", args: ["outside-state-server.mjs"] },
+      },
+    }, null, 2)}\n`);
+
+    const result = await collectAssetBaseline({
+      provider: "claude",
+      workspace,
+      claudeHome: workspace,
+      claudeStatePath,
+      includeUserHome: false,
+    });
+
+    assert.equal(result.status, "complete");
+    assert.equal(result.scope.includeUserHome, false);
+    assert.deepEqual(result.envelopes.lint.data.assetInventory.summary, {
+      skills: 1,
+      mcps: 0,
+      commands: 1,
+      hooks: 1,
+      rules: 1,
+      agents: 0,
+      plugins: 1,
+    });
+    const ownerRoutes = result.envelopes.inventory.data.ownerRoutes.items;
+    assert.equal(ownerRoutes.some((item) => item.kind === "skills" && item.name === "review"), true);
+    assert.equal(ownerRoutes.some((item) => item.kind === "commands" && item.name === "project-check"), true);
+    assert.equal(ownerRoutes.some((item) => item.kind === "hooks"), true);
+    assert.equal(ownerRoutes.some((item) => item.kind === "plugins" && item.name === "Contained"), true);
+    assert.equal(JSON.stringify(result).includes("escaping"), false);
+    assert.equal(JSON.stringify(result).includes("outsideState"), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Qwen asset baseline completes from a native project fixture", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-asset-baseline-qwen-"));
   const workspace = path.join(root, "project");
@@ -284,6 +433,102 @@ test("Qwen asset baseline completes from a native project fixture", async () => 
     assert.equal(result.envelopes.lint.data.assetInventory.summary.skills, 1);
     assert.equal(result.envelopes.inventory.data.ownerRoutes.items.some((item) =>
       item.kind === "skills" && item.name === "review"), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("package asset baseline preserves root and intermediate assets as inherited owners", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-asset-monorepo-"));
+  const workspace = path.join(root, "packages", "app");
+  const qoderHome = path.join(root, "qoder-home");
+  try {
+    await mkdir(qoderHome, { recursive: true });
+    await mkdir(path.join(root, ".agents", "skills", "root-review"), { recursive: true });
+    await mkdir(path.join(workspace, ".qoder", "skills", "local-review"), { recursive: true });
+    await writeFile(path.join(root, "AGENTS.md"), "# Root instructions\n");
+    await writeFile(path.join(root, "packages", "AGENTS.md"), "# Packages instructions\n");
+    await writeFile(path.join(workspace, "AGENTS.md"), "# App instructions\n");
+    await writeFile(
+      path.join(root, ".agents", "skills", "root-review", "SKILL.md"),
+      "---\nname: root-review\ndescription: Review the repository contract.\n---\n",
+    );
+    await writeFile(
+      path.join(workspace, ".qoder", "skills", "local-review", "SKILL.md"),
+      "---\nname: local-review\ndescription: Review the package contract.\n---\n",
+    );
+    const topology = {
+      kind: "better-harness.workspace-topology",
+      schemaVersion: 1,
+      status: "complete",
+      requestedWorkspace: workspace,
+      gitRoot: root,
+      target: {
+        kind: "workspace-member",
+        route: "packages/app",
+        memberRoute: "packages/app",
+        memberMatch: "exact",
+      },
+      members: {
+        items: [{
+          route: "packages/app",
+          kind: "manifest",
+          discoveredBy: ["package.json#workspaces"],
+          manifestRoute: "package.json",
+        }],
+        total: 1,
+        omitted: 0,
+        truncated: false,
+      },
+      instructionScopes: {
+        items: [
+          { route: "AGENTS.md", provider: "qoder", activation: "effective" },
+          { route: "packages/AGENTS.md", provider: "qoder", activation: "candidate" },
+          { route: "packages/app/AGENTS.md", provider: "qoder", activation: "candidate" },
+        ],
+        total: 3,
+        omitted: 0,
+        truncated: false,
+      },
+      discovery: {
+        inventoryMode: "git",
+        ignoreMode: "git-index",
+        tracked: 5,
+        untracked: 0,
+        scanned: 5,
+        omitted: 0,
+        truncated: false,
+        warnings: [],
+      },
+    };
+
+    const result = await collectAssetBaseline({
+      provider: "qoder",
+      workspace,
+      qoderHome,
+      topology,
+      includeUserHome: false,
+    });
+
+    assert.equal(result.status, "complete");
+    assert.equal(result.diagnostics.inheritedWorkspaceCount, 2);
+    const owners = result.envelopes.inventory.data.ownerRoutes.items;
+    assert.ok(owners.some((item) =>
+      item.kind === "skills"
+      && item.scope === "project"
+      && item.name === "local-review"
+      && item.route === ".qoder/skills/local-review/SKILL.md"));
+    assert.ok(owners.some((item) =>
+      item.kind === "skills"
+      && item.scope === "inherited"
+      && item.name === "root-review"
+      && item.route === ".agents/skills/root-review/SKILL.md"
+      && item.effectiveTarget === "packages/app"));
+    const lintEntrypoints = result.envelopes.lint.data.assetInventory;
+    assert.ok(lintEntrypoints);
+    assert.ok(result.envelopes.lint.data.summary.entrypoints >= 3);
+    assert.ok(result.envelopes.inventory.data.coverageRows.some((row) =>
+      row.surface === "Skills" && row.scopes.includes("Inherited")));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -342,6 +587,37 @@ test("Kimi asset baseline completes from a native project fixture", async () => 
 
     assert.equal(result.status, "complete");
     assert.equal(result.scope.provider, "kimi");
+    assert.equal(result.envelopes.inventory.status, "available");
+    assert.equal(result.envelopes.lint.data.assetInventory.summary.skills, 1);
+    assert.equal(result.envelopes.inventory.data.ownerRoutes.items.some((item) =>
+      item.kind === "skills" && item.name === "review"), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("WorkBuddy asset baseline completes from a native project fixture", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-asset-baseline-workbuddy-"));
+  const workspace = path.join(root, "project");
+  const workbuddyHome = path.join(root, ".workbuddy");
+  try {
+    await mkdir(workbuddyHome, { recursive: true });
+    await mkdir(path.join(workspace, ".workbuddy", "skills", "review"), { recursive: true });
+    await writeFile(path.join(workspace, "AGENTS.md"), "# WorkBuddy project\n\nRun npm test.\n");
+    await writeFile(
+      path.join(workspace, ".workbuddy", "skills", "review", "SKILL.md"),
+      "---\nname: review\ndescription: Review a bounded WorkBuddy project change.\n---\n",
+    );
+
+    const result = await collectAssetBaseline({
+      provider: "workbuddy",
+      workspace,
+      workbuddyHome,
+      includeUserHome: false,
+    });
+
+    assert.equal(result.status, "complete");
+    assert.equal(result.scope.provider, "workbuddy");
     assert.equal(result.envelopes.inventory.status, "available");
     assert.equal(result.envelopes.lint.data.assetInventory.summary.skills, 1);
     assert.equal(result.envelopes.inventory.data.ownerRoutes.items.some((item) =>

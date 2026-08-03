@@ -74,8 +74,12 @@ test("harness report routing owns output-mode selection and exclusions", () => {
   assert.match(projectTraits, /## Output Shape/);
   assert.match(reportRouting, /Choose exactly one output route/);
   assert.match(reportRouting, /Qoder Canvas report/);
+  assert.match(reportRouting, /Cursor Canvas report/);
   assert.match(reportRouting, /Portable HTML report/);
-  assert.match(reportRouting, /Active host is Claude Code, Codex, Cursor, Qwen Code, GitHub Copilot, Pi, or Kimi Code/);
+  assert.match(
+    reportRouting,
+    /Active host is Claude Code, Codex, Qwen Code, GitHub Copilot, Pi, Kimi Code, WorkBuddy, or Grok, or a portable visual is explicitly requested \|/,
+  );
   assert.match(reportRouting, /Markdown only/);
   assert.match(reportRouting, /Inline only/);
   assert.match(reportRouting, /inline analysis writes nothing/);

@@ -12,7 +12,7 @@ const GITHUB_URL = "https://github.com/QoderAI/better-harness";
 const config = {
   title: "Better Harness",
   tagline:
-    "See how your AI coding workflow works—and make it better, one step at a time.",
+    "Open-source insights for the Agent Work Loop.",
   favicon: "img/favicon.svg",
 
   url: "https://qoderai.github.io",
@@ -41,11 +41,55 @@ const config = {
           sidebarPath: "./sidebars.js",
           editUrl: `${GITHUB_URL}/edit/main/docs/`,
         },
-        blog: false,
+        blog: {
+          path: "blog",
+          routeBasePath: "blog",
+          blogTitle: "Better Harness Blog",
+          blogDescription:
+            "Engineering practices for reliable coding-agent workflows.",
+          showReadingTime: true,
+          editUrl: `${GITHUB_URL}/edit/main/docs/`,
+        },
         theme: {
           customCss: "./src/css/custom.css",
         },
+        sitemap: {
+          // Keep low-value routes out of the sitemap: on-site search, thin
+          // blog taxonomy pages, and the zh-Hans blog until it carries real
+          // Chinese articles. src/theme/Root.js marks the same routes
+          // noindex,follow so the sitemap and robots signals stay aligned.
+          ignorePatterns: [
+            "/better-harness/search",
+            "/better-harness/blog/tags",
+            "/better-harness/blog/tags/**",
+            "/better-harness/blog/authors",
+            "/better-harness/blog/authors/**",
+            "/better-harness/blog/archive",
+            "/better-harness/zh-Hans/search",
+            "/better-harness/zh-Hans/blog",
+            "/better-harness/zh-Hans/blog/**",
+          ],
+        },
       }),
+    ],
+  ],
+
+  themes: [
+    [
+      "@easyops-cn/docusaurus-search-local",
+      {
+        indexDocs: true,
+        indexBlog: true,
+        indexPages: false,
+        language: ["en", "zh"],
+        hashed: "filename",
+        docsDir: [
+          "docs",
+          "i18n/zh-Hans/docusaurus-plugin-content-docs/current",
+        ],
+        searchBarPosition: "right",
+        searchBarShortcutKeymap: "mod+k",
+      },
     ],
   ],
 
@@ -66,9 +110,19 @@ const config = {
             label: "Docs",
           },
           {
+            to: "/blog",
+            label: "Blog",
+            position: "left",
+          },
+          {
             href: "pathname:///demo/better-harness-report/",
             label: "Demo Report",
             position: "left",
+          },
+          {
+            href: `${GITHUB_URL}/issues/new/choose`,
+            label: "Report Issue",
+            position: "right",
           },
           {
             type: "localeDropdown",
@@ -94,6 +148,7 @@ const config = {
             items: [
               { label: "Introduction", to: "/docs/introduction" },
               { label: "Installation", to: "/docs/installation" },
+              { label: "Blog", to: "/blog" },
               { label: "Agent Work Loop", to: "/docs/concepts/agent-work-loop" },
             ],
           },

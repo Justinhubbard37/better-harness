@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 import path from "node:path";
+import { stat as statPath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { collectAgentCustomizeInventory } from "../agent-customize/index.mjs";
 import { runAgentLint } from "../agent-lint/index.mjs";
-import { parseArgs, parseBooleanFlag } from "../session-analysis/cli.mjs";
-import { normalizeWorkspace } from "../session-analysis/paths.mjs";
+import { normalizeWorkspace, parseArgs, parseBooleanFlag } from "../session-analysis/index.mjs";
 import { reviewAssetIntegrity } from "./asset-integrity.mjs";
 import { collectProviderInventory, collectQoderInventory } from "./inventory.mjs";
 
@@ -14,8 +14,9 @@ export const ASSET_BASELINE_KIND = "agent-asset-baseline";
 export const ASSET_BASELINE_SCHEMA_VERSION = 1;
 export const MAX_BASELINE_FINDINGS = 16;
 export const MAX_BASELINE_OWNER_ROUTES = 16;
+const MAX_OWNER_ROUTE_STAT_CONCURRENCY = 32;
 
-const PROVIDERS = new Set(["qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "kimi"]);
+const PROVIDERS = new Set(["qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "kimi", "workbuddy", "grok"]);
 const SEVERITY_RANK = Object.freeze({ error: 0, warning: 1, advisory: 2 });
 const OWNER_KIND_RANK = Object.freeze({
   rules: 0,
@@ -28,7 +29,7 @@ const OWNER_KIND_RANK = Object.freeze({
   agents: 7,
   workflows: 8,
 });
-const OWNER_SCOPE_RANK = Object.freeze({ workspace: 0, project: 0, user: 1, plugin: 2 });
+const OWNER_SCOPE_RANK = Object.freeze({ workspace: 0, project: 0, inherited: 1, user: 2, plugin: 3 });
 
 function text(value, limit = 320) {
   return String(value ?? "").replace(/[\u0000-\u001f\u007f]/gu, " ").replace(/\s+/gu, " ").trim().slice(0, limit);
@@ -67,6 +68,7 @@ function compactFindings(findings = []) {
     items: ordered.slice(0, MAX_BASELINE_FINDINGS).map(compactFinding),
     total: ordered.length,
     omitted: Math.max(0, ordered.length - MAX_BASELINE_FINDINGS),
+    truncated: ordered.length > MAX_BASELINE_FINDINGS,
   };
 }
 
@@ -78,57 +80,81 @@ function workspaceRoute(filePath, workspace) {
   return relative.split(path.sep).join("/");
 }
 
-function ownerRoutes(inventory, workspace) {
+function ownerRouteFallbackOrder(left, right) {
+  return (OWNER_KIND_RANK[left.kind] ?? 99) - (OWNER_KIND_RANK[right.kind] ?? 99)
+    || (OWNER_SCOPE_RANK[left.scope] ?? 9) - (OWNER_SCOPE_RANK[right.scope] ?? 9)
+    || String(left.name).localeCompare(String(right.name));
+}
+
+async function ownerRoutes(inventory, workspace, options = {}) {
   const routes = new Map();
   for (const surface of inventory?.surfaces ?? []) {
     if (!new Set(["rules", "skills", "mcps", "memories", "agents", "hooks", "commands", "workflows", "plugins"]).has(surface?.type)) continue;
     for (const item of surface.items ?? []) {
       const name = text(item?.displayName ?? item?.name ?? item?.label, 96);
       if (!name) continue;
+      const sourcePath = item?.path ?? item?.filePath ?? item?.rootPath;
       const route = Object.fromEntries(Object.entries({
         kind: text(surface.type, 32),
         scope: text(item?.scope ?? surface.scope, 24),
         name,
         version: text(item?.version, 32),
         owner: text(item?.pluginName ?? item?.ownerName ?? item?.sourceLabel, 96),
-        route: workspaceRoute(item?.path ?? item?.filePath, workspace),
+        route: text(item?.originRoute, 180)
+          || workspaceRoute(item?.path ?? item?.filePath, workspace),
+        effectiveTarget: text(item?.effectiveTarget, 180),
       }).filter(([, value]) => value !== undefined && value !== ""));
       const key = [route.kind, route.scope, route.name, route.version, route.owner, route.route].join(":");
-      if (!routes.has(key)) routes.set(key, route);
+      if (!routes.has(key)) routes.set(key, { route, sourcePath });
     }
   }
-  const ordered = [...routes.values()].sort((left, right) =>
-    (OWNER_KIND_RANK[left.kind] ?? 99) - (OWNER_KIND_RANK[right.kind] ?? 99)
-      || (OWNER_SCOPE_RANK[left.scope] ?? 9) - (OWNER_SCOPE_RANK[right.scope] ?? 9)
-      || String(left.name).localeCompare(String(right.name)),
-  );
-  const byKind = new Map();
-  for (const route of ordered) {
-    const group = byKind.get(route.kind) ?? [];
-    group.push(route);
-    byKind.set(route.kind, group);
-  }
-  const selected = [];
-  const groups = [...byKind.values()];
-  for (let depth = 0; selected.length < MAX_BASELINE_OWNER_ROUTES; depth += 1) {
-    let found = false;
-    for (const group of groups) {
-      if (group[depth]) {
-        selected.push(group[depth]);
-        found = true;
-        if (selected.length === MAX_BASELINE_OWNER_ROUTES) break;
+  const stat = options.stat ?? statPath;
+  const candidates = [...routes.values()];
+  const timestamped = new Array(candidates.length);
+  let nextCandidate = 0;
+  await Promise.all(Array.from({ length: Math.min(MAX_OWNER_ROUTE_STAT_CONCURRENCY, candidates.length) }, async () => {
+    while (nextCandidate < candidates.length) {
+      const index = nextCandidate;
+      nextCandidate += 1;
+      const { route, sourcePath } = candidates[index];
+      if (!sourcePath) {
+        timestamped[index] = route;
+        continue;
+      }
+      try {
+        const info = await stat(sourcePath);
+        const modifiedAt = info?.mtime instanceof Date ? info.mtime.toISOString() : undefined;
+        timestamped[index] = modifiedAt ? { ...route, modifiedAt } : route;
+      } catch {
+        timestamped[index] = route;
       }
     }
-    if (!found) break;
-  }
+  }));
+  const ordered = timestamped.sort((left, right) => {
+    const leftTime = left.modifiedAt ? Date.parse(left.modifiedAt) : Number.NEGATIVE_INFINITY;
+    const rightTime = right.modifiedAt ? Date.parse(right.modifiedAt) : Number.NEGATIVE_INFINITY;
+    return rightTime - leftTime || ownerRouteFallbackOrder(left, right);
+  });
+  const selected = ordered.slice(0, MAX_BASELINE_OWNER_ROUTES);
+  const observedAt = (options.now?.() ?? new Date()).toISOString();
+  const timestampedCount = ordered.filter((route) => route.modifiedAt).length;
   return {
     items: selected,
     total: ordered.length,
     omitted: Math.max(0, ordered.length - MAX_BASELINE_OWNER_ROUTES),
+    truncated: ordered.length > MAX_BASELINE_OWNER_ROUTES,
+    selection: {
+      strategy: "latest-modified",
+      limit: MAX_BASELINE_OWNER_ROUTES,
+      observedAt,
+      timestampSource: "filesystem-mtime",
+      timestamped: timestampedCount,
+      untimestamped: ordered.length - timestampedCount,
+    },
   };
 }
 
-function compactInventory(inventory, workspace) {
+async function compactInventory(inventory, workspace, options = {}) {
   const memoryCategories = (inventory?.memories?.categories ?? [])
     .map((category) => ({
       category: text(category?.category ?? category?.name, 72),
@@ -157,7 +183,7 @@ function compactInventory(inventory, workspace) {
     },
     summary: inventorySummary,
     coverageRows,
-    ownerRoutes: ownerRoutes(inventory, workspace),
+    ownerRoutes: await ownerRoutes(inventory, workspace, options),
     memories: {
       included: Boolean(inventory?.memories?.included),
       contentPolicy: inventory?.memories?.contentPolicy ?? "raw-memory-content-not-read",
@@ -197,10 +223,85 @@ function available(data) {
   return { status: "available", data };
 }
 
+function inheritedWorkspaceRoots(topology, workspace) {
+  if (!topology?.gitRoot
+    || !new Set(["workspace-member", "repo-subtree"]).has(topology.target?.kind)) {
+    return [];
+  }
+  const relative = path.relative(topology.gitRoot, workspace);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return [];
+  const parts = relative.split(path.sep).filter(Boolean);
+  const roots = [topology.gitRoot];
+  for (let index = 1; index < parts.length; index += 1) {
+    roots.push(path.join(topology.gitRoot, ...parts.slice(0, index)));
+  }
+  return roots;
+}
+
+function rawItemPath(item) {
+  return item?.evidence?.path ?? item?.filePath ?? item?.rootPath;
+}
+
+function inheritedItem(item, topology) {
+  const filePath = rawItemPath(item);
+  const relative = filePath ? path.relative(topology.gitRoot, path.resolve(filePath)) : "";
+  const originRoute = relative
+    && !relative.startsWith("..")
+    && !path.isAbsolute(relative)
+    ? relative.split(path.sep).join("/")
+    : undefined;
+  return {
+    ...item,
+    scope: "inherited",
+    originScope: "inherited",
+    originRoute,
+    effectiveTarget: topology.target.route,
+  };
+}
+
+function mergeInheritedInventories(projectInventory, inheritedInventories, topology) {
+  const manage = Object.fromEntries(
+    Object.entries(projectInventory.manage ?? {}).map(([collection, items]) => [collection, [...items]]),
+  );
+  for (const inventory of inheritedInventories) {
+    for (const [collection, items] of Object.entries(inventory.manage ?? {})) {
+      const target = manage[collection] ?? [];
+      for (const item of items) {
+        if (item?.scope !== "project") continue;
+        const inherited = inheritedItem(item, topology);
+        const key = [
+          inherited.id,
+          inherited.kind,
+          inherited.name ?? inherited.displayName ?? inherited.label,
+          rawItemPath(inherited),
+        ].join(":");
+        if (!target.some((candidate) => [
+          candidate.id,
+          candidate.kind,
+          candidate.name ?? candidate.displayName ?? candidate.label,
+          rawItemPath(candidate),
+        ].join(":") === key)) {
+          target.push(inherited);
+        }
+      }
+      manage[collection] = target;
+    }
+  }
+  return {
+    ...projectInventory,
+    manage,
+    diagnostics: {
+      ...(projectInventory.diagnostics ?? {}),
+      inheritedWorkspaceCount: inheritedInventories.length,
+      inheritedTargetRoute: topology.target.route,
+    },
+  };
+}
+
 export async function collectAssetBaseline(options = {}, dependencies = {}) {
   const provider = options.provider ?? options.platform ?? "qoder";
   if (!PROVIDERS.has(provider)) {
-    throw new Error(`Unsupported provider: ${provider}. Supported providers: qoder, codex, claude, cursor, qwen, copilot, pi, kimi.`);
+    throw new Error(`Unsupported provider: ${provider}. Supported providers: qoder, codex, claude, cursor, qwen, copilot, pi, kimi, workbuddy, grok.`);
   }
   const workspace = normalizeWorkspace(options.workspace ?? ".");
   const includeUserHome = parseBooleanFlag(options.includeUserHome ?? options["include-user-home"] ?? false);
@@ -224,6 +325,20 @@ export async function collectAssetBaseline(options = {}, dependencies = {}) {
   let rawInventory;
   try {
     rawInventory = await collectRawInventory(common);
+    const inheritedRoots = inheritedWorkspaceRoots(options.topology, workspace);
+    if (inheritedRoots.length > 0) {
+      const inheritedInventories = [];
+      for (const inheritedWorkspace of inheritedRoots) {
+        inheritedInventories.push(await collectRawInventory({
+          ...common,
+          workspace: inheritedWorkspace,
+          includeUserHome: false,
+          includeGlobalHooks: false,
+          includeMemories: false,
+        }));
+      }
+      rawInventory = mergeInheritedInventories(rawInventory, inheritedInventories, options.topology);
+    }
   } catch (error) {
     const failed = unavailable(error, "inventory");
     return {
@@ -247,7 +362,10 @@ export async function collectAssetBaseline(options = {}, dependencies = {}) {
     ? available(compactLint(lintResult.value))
     : unavailable(lintResult.reason, "lint");
   const inventoryEnvelope = inventoryResult.status === "fulfilled"
-    ? available(compactInventory(inventoryResult.value, workspace))
+    ? available(await compactInventory(inventoryResult.value, workspace, {
+      stat: dependencies.stat,
+      now: dependencies.now,
+    }))
     : unavailable(inventoryResult.reason, "inventory");
   let integrityEnvelope;
   if (inventoryResult.status === "fulfilled") {
@@ -262,10 +380,21 @@ export async function collectAssetBaseline(options = {}, dependencies = {}) {
   }
   const envelopes = { lint: lintEnvelope, inventory: inventoryEnvelope, integrity: integrityEnvelope };
   const availableCount = Object.values(envelopes).filter((envelope) => envelope.status === "available").length;
+  const truncatedStages = [
+    lintEnvelope.data?.findings?.truncated ? "lint-findings" : null,
+    integrityEnvelope.data?.findings?.truncated ? "integrity-findings" : null,
+  ].filter(Boolean);
+  const sampledStages = [
+    inventoryEnvelope.data?.ownerRoutes?.truncated ? "inventory-owner-routes" : null,
+  ].filter(Boolean);
   return {
     kind: ASSET_BASELINE_KIND,
     schemaVersion: ASSET_BASELINE_SCHEMA_VERSION,
-    status: availableCount === 3 ? "complete" : availableCount === 0 ? "failed" : "partial",
+    status: availableCount === 3 && truncatedStages.length === 0
+      ? "complete"
+      : availableCount === 0
+        ? "failed"
+        : "partial",
     scope: { provider, workspace, includeUserHome, includeMemories },
     envelopes,
     diagnostics: {
@@ -273,6 +402,9 @@ export async function collectAssetBaseline(options = {}, dependencies = {}) {
       compact: true,
       findingLimitPerEnvelope: MAX_BASELINE_FINDINGS,
       ownerRouteLimit: MAX_BASELINE_OWNER_ROUTES,
+      inheritedWorkspaceCount: rawInventory?.diagnostics?.inheritedWorkspaceCount ?? 0,
+      truncatedStages,
+      sampledStages,
     },
   };
 }
@@ -300,7 +432,7 @@ export function formatAssetBaselineMarkdown(result) {
   return `${lines.join("\n")}\n`;
 }
 
-const USAGE = `Usage: better-harness coding-agent-practices asset-baseline [qoder|codex|claude|cursor|qwen|copilot|pi|kimi] [options]
+const USAGE = `Usage: better-harness coding-agent-practices asset-baseline [qoder|codex|claude|cursor|qwen|copilot|pi|kimi|workbuddy|grok] [options]
 
 Collect one compact, read-only AI evidence envelope from a shared asset snapshot.
 

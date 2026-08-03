@@ -3,7 +3,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createAnalyzer } from "../session-analysis.mjs";
+import { createAnalyzer } from "./analyzer.mjs";
 import { parseArgs } from "./cli.mjs";
 
 const HELP = `Usage: better-harness session-analysis usage-summary [options]
@@ -12,7 +12,7 @@ Emit a bounded, read-only usage boundary as JSON. This command never accepts
 --output and never writes report or scratch files.
 
 Options:
-  --platform <qoder|codex|claude|cursor|qwen|copilot|pi|kimi>
+  --platform <qoder|codex|claude|cursor|qwen|copilot|pi|kimi|workbuddy|grok>
                             Session provider (default: qoder)
   --workspace <path>        Target workspace (default: current directory)
   --selection <strategy>    Selection strategy (default: all-eligible)

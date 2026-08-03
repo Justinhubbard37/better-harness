@@ -54,7 +54,9 @@ test("walkFiles with followSymlinks: true collects files inside linked directori
       followSymlinks: true,
     });
     const names = files.map((file) => path.basename(path.dirname(file))).sort();
-    assert.deepEqual(names, ["linked-skill", "linked-skill", "real-skill"]);
+    // walkFiles dedupes directories by realpath, so the linked directory is
+    // collected once even though it is reachable through two paths.
+    assert.deepEqual(names, ["linked-skill", "real-skill"]);
   });
 });
 

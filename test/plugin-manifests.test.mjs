@@ -160,7 +160,7 @@ test("host plugin manifests expose canonical Better Harness resources", () => {
   assert.equal(qwen.version, qoder.version);
   assert.equal(qwen.description, qoder.description);
   assert.equal(qwen.displayName, qoder.displayName);
-  assert.equal(qwen.contextFileName, "QWEN.md");
+  assert.equal(qwen.contextFileName, undefined);
   assert.equal(qwen.skills, "./skills/");
 
   assert.equal(copilot.name, qoder.name);
@@ -291,6 +291,8 @@ test("npm packaging includes every host manifest while the runtime bundle stays 
   assert.match(verifyScript, /package\/CONTRIBUTING\.md/u);
   assert.match(verifyScript, /package\/case-studies\/factory\/model\/factory-readiness\.md/u);
   assert.match(verifyScript, /package\/docs\/glossary\.md/u);
+  assert.match(verifyScript, /package\/scripts\/workspace-topology\/cli\.mjs/u);
+  assert.match(verifyScript, /package\/scripts\/workspace-topology\/finding-target\.mjs/u);
   assert.match(verifyScript, /^\s*"LICENSE",$/mu);
   assert.match(verifyScript, /vendor\/tree-sitter-wasm\/LICENSE/u);
   assert.match(verifyScript, /vendor\/esbuild-wasm\/LICENSE\.md/u);

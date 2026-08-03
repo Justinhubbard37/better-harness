@@ -6,9 +6,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseArgs, parseBooleanFlag } from "../session-analysis/cli.mjs";
-import { pathExists, walkFiles } from "../session-analysis/fs.mjs";
-import { expandHome, normalizeWorkspace } from "../session-analysis/paths.mjs";
+import {
+  expandHome,
+  normalizeWorkspace,
+  parseArgs,
+  parseBooleanFlag,
+  pathExists,
+  walkFiles,
+} from "../session-analysis/index.mjs";
 import { collectAgentCustomizeInventory } from "../agent-customize/index.mjs";
 
 const MEMORY_CONFIG_KEYS = new Set([
@@ -379,7 +384,7 @@ async function collectCodexMemories(scope) {
 }
 
 function makeSessionSourceHints(scope) {
-  if (!["qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "kimi"].includes(scope.platform)) {
+  if (!["qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "kimi", "workbuddy", "grok"].includes(scope.platform)) {
     return [];
   }
   return [
@@ -451,6 +456,8 @@ function providerScope(options = {}, platform = options.platform ?? "qoder") {
     copilotHome: options.copilotHome ?? options["copilot-home"],
     piHome: options.piHome ?? options["pi-home"],
     kimiHome: options.kimiHome ?? options["kimi-home"],
+    workbuddyHome: options.workbuddyHome ?? options["workbuddy-home"],
+    grokHome: options.grokHome ?? options["grok-home"],
   };
 }
 
@@ -488,6 +495,10 @@ function customizeItem(item) {
     sourceKind: item.sourceKind,
     precedence: item.precedence,
     scope: item.scope,
+    originScope: item.originScope,
+    originRoute: item.originRoute,
+    effectiveTarget: item.effectiveTarget,
+    workspaceScoped: item.workspaceScoped,
     pluginId: item.pluginId,
     pluginName: item.pluginName,
     pluginEnabled: item.pluginEnabled,
@@ -517,9 +528,11 @@ function scopeItems(inventory, collection, scope) {
     .map(customizeItem);
 }
 
-function pluginScopedItems(inventory, collection) {
+function pluginScopedItems(inventory, collection, includeUserHome) {
   return (inventory.manage?.[collection] ?? [])
-    .filter((item) => item.scope === "plugin" && item.pluginEnabled !== false)
+    .filter((item) => item.scope === "plugin"
+      && item.pluginEnabled !== false
+      && (includeUserHome || item.workspaceScoped === true))
     .map(customizeItem);
 }
 
@@ -539,7 +552,7 @@ function customizeSurface({ provider, group, scope, type, label, basePath, items
 async function buildConfiguredAssetSurfaces(inventory, scope) {
   const provider = scope.platform;
   const projectBase = scope.workspace;
-  const userBase = inventory.cursorHome ?? inventory.qoderHome ?? inventory.codexHome ?? inventory.claudeHome ?? inventory.qwenHome ?? inventory.copilotHome ?? inventory.piHome ?? inventory.kimiHome;
+  const userBase = inventory.cursorHome ?? inventory.qoderHome ?? inventory.codexHome ?? inventory.claudeHome ?? inventory.qwenHome ?? inventory.copilotHome ?? inventory.piHome ?? inventory.kimiHome ?? inventory.workbuddyHome ?? inventory.grokHome;
   const surfaceTypes = [
     ["skills", "skills", "Skills"],
     ["subagents", "agents", "Agents"],
@@ -559,6 +572,21 @@ async function buildConfiguredAssetSurfaces(inventory, scope) {
         scope: "project",
         type,
         label: `Project ${provider} ${label}`,
+        basePath: projectBase,
+        items,
+      }));
+    }
+  }
+
+  for (const [collection, type, label] of surfaceTypes) {
+    const items = scopeItems(inventory, collection, "inherited");
+    if (items.length > 0) {
+      surfaces.push(customizeSurface({
+        provider,
+        group: "Inherited project assets",
+        scope: "inherited",
+        type,
+        label: `Inherited ${provider} ${label}`,
         basePath: projectBase,
         items,
       }));
@@ -596,8 +624,10 @@ async function buildConfiguredAssetSurfaces(inventory, scope) {
     }
   }
 
-  if (scope.includeUserHome) {
-    const effectivePlugins = inventory.plugins.filter((plugin) => plugin.enabled !== false);
+  const workspaceScopedPlugins = inventory.plugins.filter((plugin) => plugin.workspaceScoped === true);
+  if (scope.includeUserHome || workspaceScopedPlugins.length > 0) {
+    const effectivePlugins = inventory.plugins.filter((plugin) =>
+      plugin.enabled !== false && (scope.includeUserHome || plugin.workspaceScoped === true));
     if (effectivePlugins.length > 0) {
       surfaces.push(customizeSurface({
         provider,
@@ -610,7 +640,7 @@ async function buildConfiguredAssetSurfaces(inventory, scope) {
       }));
     }
     for (const [collection, type, label] of surfaceTypes) {
-      const items = pluginScopedItems(inventory, collection);
+      const items = pluginScopedItems(inventory, collection, scope.includeUserHome);
       if (items.length > 0) {
         surfaces.push(customizeSurface({
           provider,
@@ -645,6 +675,8 @@ export async function collectProviderInventory(options = {}) {
     copilotHome: scope.copilotHome,
     piHome: scope.piHome,
     kimiHome: scope.kimiHome,
+    workbuddyHome: scope.workbuddyHome,
+    grokHome: scope.grokHome,
     includeUserHome: scope.includeUserHome,
     includeGlobalHooks: scope.includeGlobalHooks,
   });
@@ -752,10 +784,12 @@ function practiceCoverageRows(surfaces, scope) {
     const scopes = [...new Set(matchedSurfaces.map((surface) => {
       if (surface.group === "Plugin/marketplace assets" || surface.scope === "plugin") return "Plugin";
       if (surface.scope === "user") return "Global";
+      if (surface.scope === "inherited") return "Inherited";
       return "Project";
     }))];
     const paths = [...new Set([...uniqueItems.values()]
-      .map((item) => boundedReportPath(item.path ?? item.filePath ?? item.rootPath, scope.workspace))
+      .map((item) => item.originRoute
+        ?? boundedReportPath(item.path ?? item.filePath ?? item.rootPath, scope.workspace))
       .filter(Boolean))].slice(0, 12);
     rows.push({ surface: surfaceName, scopes, count: uniqueItems.size, paths });
   }
@@ -896,12 +930,12 @@ export function formatInventoryMarkdown(result) {
   return `${lines.join("\n")}\n`;
 }
 
-const USAGE = `Usage: better-harness coding-agent-practices inventory [qoder|codex|claude|cursor|qwen|copilot|pi|kimi] [options]
+const USAGE = `Usage: better-harness coding-agent-practices inventory [qoder|codex|claude|cursor|qwen|copilot|pi|kimi|workbuddy|grok] [options]
 
 Inspect configured coding-agent assets and practice evidence for one platform.
 
 Options:
-  --platform <qoder|codex|claude|cursor|qwen|copilot|pi|kimi>  Select the platform (default: qoder; may also be the first positional)
+  --platform <qoder|codex|claude|cursor|qwen|copilot|pi|kimi|workbuddy|grok>  Select the platform (default: qoder; may also be the first positional)
   --workspace <dir>                Workspace root to inspect (default: current directory)
   --json                           Emit JSON (default)
   --format <json|markdown>         Output format
@@ -924,9 +958,9 @@ async function runCli(argv) {
   }
   const { command, options } = parseArgs(argv);
   const platform = options.platform ?? command ?? "qoder";
-  if (!["cursor", "qoder", "codex", "claude", "qwen", "copilot", "pi", "kimi"].includes(platform)) {
+  if (!["cursor", "qoder", "codex", "claude", "qwen", "copilot", "pi", "kimi", "workbuddy", "grok"].includes(platform)) {
     throw new Error(
-      `Unsupported platform: ${platform}. Supported platforms: cursor, qoder, codex, claude, qwen, copilot, pi, kimi.\n\n${USAGE}`,
+      `Unsupported platform: ${platform}. Supported platforms: cursor, qoder, codex, claude, qwen, copilot, pi, kimi, workbuddy, grok.\n\n${USAGE}`,
     );
   }
   const result = platform === "qoder"

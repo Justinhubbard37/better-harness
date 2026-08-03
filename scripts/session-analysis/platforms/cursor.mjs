@@ -1,21 +1,186 @@
 #!/usr/bin/env node
 
 import path from "node:path";
-import { readFile } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import { SessionAnalyzer } from "../../session-analysis.mjs";
+import { SessionAnalyzer } from "../analyzer.mjs";
 import { parseArgs, parseBooleanFlag } from "../cli.mjs";
-import { forEachJsonLine, pathExists, walkFiles } from "../fs.mjs";
+import { forEachJsonLine, pathExists, readJson, walkFiles } from "../fs.mjs";
 import { expandHome, normalizeWorkspace } from "../paths.mjs";
-import { emitProviderResult, runProviderAnalysis, runProviderCommand } from "../provider-runner.mjs";
+import {
+  bindSessionWorkspaceCwds,
+  emitProviderResult,
+  markSessionReadCoverage,
+  runProviderAnalysis,
+  runProviderCommand,
+  sessionWorkspaceCwd,
+  workspaceMatchScopeFromOptions,
+} from "../provider-runner.mjs";
 import { parseResultFacts } from "../result-facts.mjs";
 import { mergeTimeRange, normalizeCliDate, normalizeTimestamp, timestampMillis, withinTimeRange } from "../time.mjs";
+
+export const CURSOR_CONTEXT_USAGE_SCHEMA_VERSION = 1;
+const CURSOR_CONTEXT_USAGE_ITEM_LIMIT = 200;
 
 function isWorkspaceMatch(candidate, workspace) {
   if (!candidate) return false;
   const resolved = normalizeWorkspace(candidate);
   return resolved === workspace || resolved.startsWith(`${workspace}${path.sep}`);
+}
+
+function boundedText(value, limit = 160) {
+  return String(value ?? "").trim().slice(0, limit);
+}
+
+function nonNegativeInteger(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.round(number) : 0;
+}
+
+function pathIsWithin(root, candidate) {
+  if (!root || !candidate || !path.isAbsolute(candidate)) return false;
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
+}
+
+function safeContextSource(source, scope) {
+  if (source?.kind !== "file" || !path.isAbsolute(String(source.path ?? ""))) return null;
+  const roots = [
+    scope.workspace,
+    scope._workspaceMatchScope?.requestedWorkspace,
+    scope._workspaceMatchScope?.gitRoot,
+  ].filter(Boolean);
+  if (!roots.some((root) => pathIsWithin(root, source.path))) return null;
+  return {
+    kind: "file",
+    path: path.resolve(source.path),
+    label: boundedText(source.label || path.basename(source.path), 120),
+  };
+}
+
+function contextItemLabel(item, index, admittedSource) {
+  // Only an admitted source may name the item; a rejected source's label would
+  // re-expose a file the workspace boundary just excluded.
+  const sourceLabel = boundedText(admittedSource?.label, 160);
+  if (sourceLabel && !path.isAbsolute(sourceLabel)) return sourceLabel;
+  const candidate = boundedText(item?.label, 240);
+  if (!candidate) return `Context item ${index + 1}`;
+  if (!path.isAbsolute(candidate)) return candidate.slice(0, 160);
+  const parent = path.basename(path.dirname(candidate));
+  const base = path.basename(candidate);
+  return boundedText(parent && parent !== "." ? `${parent}/${base}` : base, 160);
+}
+
+function projectContextUsageSnapshot(raw, { capturedAt, scope } = {}) {
+  const usage = raw?.contextUsage;
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null;
+  const contextWindowSize = nonNegativeInteger(usage.contextWindowSize);
+  const totalTokensUsed = nonNegativeInteger(usage.totalTokensUsed);
+  if (contextWindowSize <= 0 || totalTokensUsed <= 0) return null;
+
+  const rawItems = Array.isArray(usage.items) ? usage.items.slice(0, CURSOR_CONTEXT_USAGE_ITEM_LIMIT) : [];
+  const items = rawItems.map((item, index) => {
+    const source = safeContextSource(item?.source, scope);
+    return {
+      id: `item-${index + 1}`,
+      categoryId: boundedText(item?.categoryId, 80) || "other",
+      label: contextItemLabel(item, index, source),
+      estimatedTokens: nonNegativeInteger(item?.estimatedTokens),
+      characterCount: nonNegativeInteger(item?.characterCount),
+      ...(source ? { source } : {}),
+    };
+  });
+
+  return {
+    schemaVersion: CURSOR_CONTEXT_USAGE_SCHEMA_VERSION,
+    status: "observed",
+    evidence: "cursor-native-context-usage-canvas",
+    capturedAt,
+    totalTokensUsed,
+    contextWindowSize,
+    percentFull: Math.min(100, Math.round((totalTokensUsed / contextWindowSize) * 100)),
+    categories: (Array.isArray(usage.categories) ? usage.categories : [])
+      .map((category) => ({
+        id: boundedText(category?.id, 80) || "other",
+        label: boundedText(category?.label, 120) || "Other",
+        estimatedTokens: nonNegativeInteger(category?.tokens),
+      }))
+      .filter((category) => category.estimatedTokens > 0),
+    items,
+    coverage: {
+      itemCount: items.length,
+      sourceItemCount: Array.isArray(usage.items) ? usage.items.length : 0,
+      truncated: Array.isArray(usage.items) && usage.items.length > items.length,
+      rawTextOmitted: true,
+    },
+    actions: {
+      openAgentId: boundedText(usage.composerId, 120) || null,
+    },
+  };
+}
+
+export function cursorContextUsageCanvasRoots(scope) {
+  return scope._workspaceSlugVariants.map((slug) => path.join(scope.home, "projects", slug, "canvases"));
+}
+
+// A `canvases` directory is not itself Context Usage evidence; only a materialized
+// snapshot file is, so presence is reported from the files rather than the parent.
+export async function findCursorContextUsageSnapshots(scope) {
+  const candidates = [];
+  for (const root of cursorContextUsageCanvasRoots(scope)) {
+    if (!await pathExists(root)) continue;
+    const files = await walkFiles(root, {
+      maxDepth: 1,
+      limit: 2_000,
+      match: (file) => /^context-usage-.+\.canvas\.data\.json$/u.test(path.basename(file)),
+    });
+    for (const filePath of files) {
+      let metadata;
+      try { metadata = await stat(filePath); } catch { continue; }
+      candidates.push({
+        filePath,
+        capturedAt: new Date(metadata.mtimeMs).toISOString(),
+        mtimeMs: metadata.mtimeMs,
+      });
+    }
+  }
+  candidates.sort((left, right) => right.mtimeMs - left.mtimeMs || left.filePath.localeCompare(right.filePath));
+  return candidates;
+}
+
+export async function readCursorContextUsage(scope) {
+  const snapshots = await findCursorContextUsageSnapshots(scope);
+  const candidates = snapshots.filter((candidate) => withinTimeRange(candidate.capturedAt, scope));
+  for (const candidate of candidates) {
+    let raw;
+    try { raw = await readJson(candidate.filePath); } catch { continue; }
+    const projected = projectContextUsageSnapshot(raw, { capturedAt: candidate.capturedAt, scope });
+    if (projected) {
+      return {
+        ...projected,
+        coverage: {
+          ...projected.coverage,
+          snapshotCount: candidates.length,
+        },
+      };
+    }
+  }
+  return {
+    schemaVersion: CURSOR_CONTEXT_USAGE_SCHEMA_VERSION,
+    status: "unobserved",
+    evidence: "cursor-native-context-usage-canvas",
+    categories: [],
+    items: [],
+    coverage: {
+      snapshotCount: candidates.length,
+      itemCount: 0,
+      sourceItemCount: 0,
+      truncated: false,
+      rawTextOmitted: true,
+    },
+    actions: { openAgentId: null },
+  };
 }
 
 export function workspaceToCursorSlugVariants(workspace) {
@@ -258,7 +423,15 @@ function addRef(sessions, sessionId, workspace, ref) {
     sourceKinds: new Set(),
     sourceRefs: [],
     eventTimestampCoverage: "unobserved",
+    workspaceCwdCandidates: new Map(),
   };
+  if (typeof ref.cwd === "string" && ref.cwd.length > 0) {
+    const priority = Number(ref.cwdPriority ?? 0);
+    session.workspaceCwdCandidates.set(
+      ref.cwd,
+      Math.max(priority, session.workspaceCwdCandidates.get(ref.cwd) ?? Number.NEGATIVE_INFINITY),
+    );
+  }
   if (!session.sourceRefs.some((existing) => existing.kind === ref.kind && existing.path === ref.path)) {
     session.sourceRefs.push(ref);
   }
@@ -270,11 +443,18 @@ function addRef(sessions, sessionId, workspace, ref) {
 }
 
 function finalizeSession(session) {
-  return { ...session, sourceKinds: [...session.sourceKinds].sort() };
-}
-
-async function readJson(filePath) {
-  return JSON.parse(await readFile(filePath, "utf8"));
+  const { workspaceCwdCandidates, ...publicSession } = session;
+  const finalized = { ...publicSession, sourceKinds: [...session.sourceKinds].sort() };
+  const priorities = [...workspaceCwdCandidates.values()];
+  const strongest = priorities.length > 0 ? Math.max(...priorities) : null;
+  return bindSessionWorkspaceCwds(
+    finalized,
+    strongest === null
+      ? []
+      : [...workspaceCwdCandidates]
+        .filter(([_cwd, priority]) => priority === strongest)
+        .map(([cwd]) => cwd),
+  );
 }
 
 async function inspectTranscriptCoverage(filePath) {
@@ -399,11 +579,19 @@ export class CursorSessionAnalyzer extends SessionAnalyzer {
     const since = normalizeCliDate(options.since, false);
     const until = normalizeCliDate(options.until, true);
     const workspace = normalizeWorkspace(options.workspace);
+    const workspaceMatchScope = workspaceMatchScopeFromOptions(options);
+    const transcriptWorkspaces = [...new Set([
+      workspace,
+      workspaceMatchScope?.requestedWorkspace,
+      workspaceMatchScope?.target.kind === "workspace-member" ? workspaceMatchScope.gitRoot : null,
+    ].filter(Boolean))];
     return {
       platform: "cursor",
       workspace,
       home: path.resolve(expandHome(options.home ?? options.cursorHome ?? options["cursor-home"] ?? "~/.cursor")),
-      _workspaceSlugVariants: workspaceToCursorSlugVariants(workspace),
+      _workspaceSlugVariants: [...new Set(
+        transcriptWorkspaces.flatMap((candidate) => workspaceToCursorSlugVariants(candidate)),
+      )],
       since: since.label,
       sinceTime: since.time,
       until: until.label,
@@ -411,12 +599,15 @@ export class CursorSessionAnalyzer extends SessionAnalyzer {
       sessionId: options["session-id"] ?? options.sessionId ?? options._?.[0] ?? null,
       includeGlobalCapabilities: parseBooleanFlag(options["include-global-capabilities"] ?? false),
       _command: options.command ?? null,
+      _workspaceMatchScope: workspaceMatchScope,
     };
   }
 
   async discoverSourceRoots(scope) {
     const transcriptPaths = scope._workspaceSlugVariants
       .map((slug) => path.join(scope.home, "projects", slug, "agent-transcripts"));
+    const contextUsagePaths = cursorContextUsageCanvasRoots(scope);
+    const contextUsageSnapshots = await findCursorContextUsageSnapshots(scope);
     const roots = [
       {
         id: "cursor-agent-transcripts",
@@ -438,6 +629,20 @@ export class CursorSessionAnalyzer extends SessionAnalyzer {
         enabled: true,
         workspaceScoped: false,
         coverage: "session-time",
+      },
+      {
+        id: "cursor-context-usage",
+        kind: "cursor-context-usage-canvas",
+        role: "context-usage-snapshot",
+        path: contextUsageSnapshots[0]?.filePath ?? contextUsagePaths[0],
+        paths: contextUsagePaths,
+        optional: true,
+        enabled: true,
+        workspaceScoped: true,
+        coverage: "optional-context-usage",
+        // The parent `canvases` directory can exist without any snapshot, so
+        // presence tracks a materialized snapshot file instead of the directory.
+        exists: contextUsageSnapshots.length > 0,
       },
       {
         id: "cursor-audit",
@@ -462,9 +667,11 @@ export class CursorSessionAnalyzer extends SessionAnalyzer {
     ];
     return Promise.all(roots.map(async (root) => ({
       ...root,
-      exists: root.paths
-        ? (await Promise.all(root.paths.map(pathExists))).some(Boolean)
-        : await pathExists(root.path),
+      exists: Object.hasOwn(root, "exists")
+        ? root.exists
+        : root.paths
+          ? (await Promise.all(root.paths.map(pathExists))).some(Boolean)
+          : await pathExists(root.path),
     })));
   }
 
@@ -500,7 +707,7 @@ export class CursorSessionAnalyzer extends SessionAnalyzer {
         if (!knownIds.has(sessionId)) continue;
         let meta;
         try { meta = await readJson(filePath); } catch { continue; }
-        if (meta.cwd && !isWorkspaceMatch(meta.cwd, scope.workspace)) continue;
+        if (meta.cwd && !scope._workspaceMatchScope && !isWorkspaceMatch(meta.cwd, scope.workspace)) continue;
         const firstSeen = normalizeTimestamp(meta.createdAtMs);
         const lastSeen = normalizeTimestamp(meta.updatedAtMs);
         addRef(sessions, sessionId, scope.workspace, {
@@ -509,6 +716,7 @@ export class CursorSessionAnalyzer extends SessionAnalyzer {
           path: filePath,
           firstSeen,
           lastSeen,
+          ...(meta.cwd ? { cwd: meta.cwd, cwdPriority: 4 } : {}),
         });
       }
     }
@@ -566,15 +774,32 @@ export class CursorSessionAnalyzer extends SessionAnalyzer {
 
   async readSession(session, scope, options = {}) {
     const events = [];
-    for (const ref of session.sourceRefs ?? []) {
+    const requestedMaxLines = Number(options.workspacePreflightMaxLines);
+    const preflight = Number.isFinite(requestedMaxLines) && requestedMaxLines > 0;
+    let remainingLines = preflight ? Math.trunc(requestedMaxLines) : null;
+    let truncated = false;
+    const refs = preflight
+      ? (session.sourceRefs ?? []).filter((ref) => ref.kind === "cursor-agent-transcript")
+      : session.sourceRefs ?? [];
+    const identityCwd = scope._workspaceMatchScope
+      ? sessionWorkspaceCwd(session, scope._workspaceMatchScope)
+      : null;
+    for (const ref of refs) {
+      if (remainingLines !== null && remainingLines <= 0) {
+        truncated = true;
+        break;
+      }
       if (ref.kind === "cursor-chat-meta") {
         let raw;
-        try { raw = await readJson(ref.path); } catch { continue; }
+        try { raw = await readJson(ref.path); } catch {
+          truncated = true;
+          continue;
+        }
         events.push(...this.normalizeEvents(raw, { ...ref, sessionId: session.sessionId }, options)
           .filter((event) => withinTimeRange(event.timestamp, scope)));
         continue;
       }
-      await forEachJsonLine(ref.path, (raw, line) => {
+      const readCoverage = await forEachJsonLine(ref.path, (raw, line) => {
         if (ref.kind.includes("audit")) {
           const identities = [raw?.session_id, raw?.conversation_id,
             raw?.transcript_path ? path.basename(String(raw.transcript_path), ".jsonl") : null].filter(Boolean);
@@ -583,12 +808,20 @@ export class CursorSessionAnalyzer extends SessionAnalyzer {
         for (const event of this.normalizeEvents(raw, { ...ref, sessionId: session.sessionId, line }, options)) {
           if (event.sessionId === session.sessionId && withinTimeRange(event.timestamp, scope)) events.push(event);
         }
-      });
+      }, remainingLines === null ? {} : { maxLines: remainingLines });
+      if (readCoverage.invalidLines > 0) truncated = true;
+      if (remainingLines !== null) {
+        if (readCoverage.lineCount > remainingLines) truncated = true;
+        remainingLines -= Math.min(readCoverage.lineCount, remainingLines);
+      }
     }
-    return events.sort((left, right) =>
+    const sorted = events
+      .map((event) => event.cwd || !identityCwd ? event : { ...event, cwd: identityCwd })
+      .sort((left, right) =>
       (timestampMillis(left.timestamp) ?? 0) - (timestampMillis(right.timestamp) ?? 0)
       || Number(left.evidenceRef?.line ?? 0) - Number(right.evidenceRef?.line ?? 0)
       || Number(left.evidenceRef?.seq ?? 0) - Number(right.evidenceRef?.seq ?? 0));
+    return markSessionReadCoverage(sorted, { truncated });
   }
 
   async analysisWarnings(scope, roots, sessions) {
@@ -643,7 +876,13 @@ export class CursorSessionAnalyzer extends SessionAnalyzer {
   }
 
   async analyze(options = {}) {
-    return runProviderAnalysis(this, options, { platform: "cursor", adapterVersion: "cursor-v1" });
+    const result = await runProviderAnalysis(this, options, { platform: "cursor", adapterVersion: "cursor-v1" });
+    if (!["insights", "facts"].includes(options.command)) return result;
+    const scope = await this.resolveScope(options);
+    return {
+      ...result,
+      contextUsage: await readCursorContextUsage(scope),
+    };
   }
 }
 

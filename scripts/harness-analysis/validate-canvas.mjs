@@ -27,9 +27,24 @@ import {
   validateTaskLoopUsagePair,
 } from "./task-loop-report.mjs";
 import { hasSyntheticEvidenceAlias } from "./ai-fix-prompt.mjs";
+import { findingTargetErrors } from "../workspace-topology/index.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const defaultRepoRoot = path.resolve(__dirname, "../..");
+const VALIDATE_CANVAS_HELP = `Usage: better-harness harness validate-canvas --canvas <path> [options]
+
+Validate Qoder Canvas artifacts and their linked report inputs.
+
+Options:
+  --canvas <path>             Canvas artifact to validate
+  --report <path>             Linked Markdown report
+  --findings <path>           Linked findings JSON
+  --repo-root <path>          Repository root for path validation
+  --preview                   Start a local preview during validation
+  --browser                   Open the preview in a browser
+  --json                      Emit JSON output
+  -h, --help                  Print help
+`;
 
 const SECTION_LABELS = {
   riskFindings: ["Risk Findings", "风险发现"],
@@ -861,7 +876,7 @@ const FINDING_REQUIRED_FIELDS = [
   "aiFixPrompt",
   "dimensionRefs",
 ];
-const FINDING_FIELD_SET = new Set(FINDING_REQUIRED_FIELDS);
+const FINDING_FIELD_SET = new Set([...FINDING_REQUIRED_FIELDS, "target"]);
 
 const FINDINGS_JSON_RISK_LABELS = new Set(["High", "Medium", "Low"]);
 const AI_AGENT_PRACTICE_SURFACES = new Set([
@@ -876,7 +891,7 @@ const AI_AGENT_PRACTICE_SURFACES = new Set([
   "Session Insights",
   "Memories",
 ]);
-const AI_AGENT_PRACTICE_SCOPES = new Set(["Project", "Global", "Plugin"]);
+const AI_AGENT_PRACTICE_SCOPES = new Set(["Project", "Inherited", "Global", "Plugin"]);
 const AI_FIX_REPAIR_COMMAND_RE = /^\/better-harness\s+(?:fix\s+this\s+issue|修复这个问题)\b/i;
 const AI_FIX_SCHEDULE_PROMPT_REQUIREMENTS = [
   ["/schedule", /\/schedule\b/i],
@@ -1301,6 +1316,13 @@ export function evaluateFindingsJson(findingsText, reportText, canvasDataText = 
     if (finding?.severity && !FINDINGS_JSON_RISK_LABELS.has(finding.severity)) {
       errors.push(`findings[${index}] has invalid severity: ${finding.severity}; use High, Medium, or Low`);
     }
+    errors.push(...findingTargetErrors(finding.target, {
+      topology: options.topology,
+      required: options.requireFindingTarget === true
+        || options.topology?.target?.kind === "workspace-member",
+      requireOwnerRoute: finding?.target?.kind === "workspace-member",
+      prefix: `findings[${index}].target`,
+    }));
     errors.push(...aiFixPromptQualityErrors(finding, index));
     const normalized = normalizeFindingTitle(title);
     if (normalized) {
@@ -1993,6 +2015,10 @@ function parseArgs(argv) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
+  if (argv.some((arg) => arg === "--help" || arg === "-h")) {
+    process.stdout.write(VALIDATE_CANVAS_HELP);
+    return;
+  }
   const args = parseArgs(argv);
   const result = await validateHarnessCanvasArtifacts(args);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
