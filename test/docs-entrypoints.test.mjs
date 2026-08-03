@@ -34,7 +34,6 @@ const README_PRODUCT_ENTRIES = [
   { label: "Codex CLI", anchor: "codex-cli" },
   { label: "Qoder Desktop/CLI", anchor: "qoder" },
   { label: "Cursor", anchor: "cursor" },
-  { label: "Qwen Code", anchor: "qwen-code" },
   { label: "GitHub Copilot CLI", anchor: "github-copilot" },
 ];
 
@@ -122,7 +121,7 @@ function checkReadmeQuickstart(filePath, introPattern, fileLabel) {
   return content;
 }
 
-test("README.md Quickstart lists all seven product entries with valid installation anchors", () => {
+test("README.md Quickstart lists all six product entries with valid installation anchors", () => {
   const content = checkReadmeQuickstart(
     ["README.md"],
     /Analyze and improve your coding workflow with:[^\n]*/u,
@@ -140,11 +139,11 @@ test("README.md Quickstart lists all seven product entries with valid installati
     content,
     /qoderai\.github\.io\/better-harness\/\?utm_source=github&utm_medium=referral&utm_campaign=repository_landing&utm_content=readme_hero/u,
   );
-  assert.match(content, /canonical registry covers nine host adapters/u);
-  assert.match(content, /Pi, WorkBuddy, and Grok currently\nremain adapter-support entries/u);
+  assert.match(content, /This README shows inline setup for the most common hosts/u);
+  assert.match(content, /\(Qwen Code, Pi, Kimi Code, WorkBuddy, and Grok\)/u);
 });
 
-test("README.zh-CN.md Quickstart lists all seven product entries with valid installation anchors", () => {
+test("README.zh-CN.md Quickstart lists all six product entries with valid installation anchors", () => {
   const content = checkReadmeQuickstart(
     ["README.zh-CN.md"],
     /使用以下 Coding Agent 分析并改进你的工作流：[^\n]*/u,
@@ -166,8 +165,8 @@ test("README.zh-CN.md Quickstart lists all seven product entries with valid inst
     content,
     /https:\/\/qoderai\.github\.io\/better-harness\/demo\/better-harness-report\//u,
   );
-  assert.match(content, /规范注册表当前包含九个宿主适配器/u);
-  assert.match(content, /Pi、WorkBuddy 与 Grok 仍属于适配器支持入口/u);
+  assert.match(content, /本 README 仅内联展示最常用宿主的安装步骤/u);
+  assert.match(content, /Kimi Code、WorkBuddy 与 Grok/u);
 });
 
 test("Docusaurus home page cards expose nine adapters without flattening support levels", () => {

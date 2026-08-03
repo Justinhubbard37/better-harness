@@ -27,16 +27,18 @@
 
 ## Quick start
 
-Analyze and improve your coding workflow with: [Claude Code](#claude-code), [Codex Desktop](#codex-desktop), [Codex CLI](#codex-cli), [Qoder Desktop/CLI](#qoder), [Cursor](#cursor), [Qwen Code](#qwen-code), or [GitHub Copilot CLI](#github-copilot).
+Analyze and improve your coding workflow with: [Claude Code](#claude-code), [Codex Desktop](#codex-desktop), [Codex CLI](#codex-cli), [Qoder Desktop/CLI](#qoder), [Cursor](#cursor), or [GitHub Copilot CLI](#github-copilot).
 
 Choose the host you already use to get its exact installation, verification,
 invocation, and report-output steps. Better Harness does not use one universal
 entrypoint across every host.
 
-The canonical registry covers nine host adapters. Pi, WorkBuddy, and Grok currently
-remain adapter-support entries rather than part of the six-host verified
-Quickstart; see the [public Host Adapter Matrix](docs/docs/hosts/adapter-matrix.md)
-for their explicit boundaries.
+This README shows inline setup for the most common hosts. Additional supported
+hosts (Qwen Code, Pi, Kimi Code, WorkBuddy, and Grok) keep their steps and
+boundaries in the [installation guide](docs/docs/installation.mdx) and the
+[public Host Adapter Matrix](docs/docs/hosts/adapter-matrix.md); see
+[More adapters](#more-adapters). README placement is a display choice, not a
+support-level claim.
 
 Better Harness scopes behavior claims to relevant Task Episodes and the
 surrounding project mechanisms. Qoder and Cursor produce host-native Canvas
@@ -322,80 +324,23 @@ transcripts under `~/.copilot/session-state/`. Copilot records no per-response
 token usage, and VS Code Copilot Chat has no supported durable transcript; both
 remain explicit evidence boundaries.
 
-### Qwen Code
+### More adapters
 
-Install Better Harness as a Qwen Code extension:
+Beyond the hosts above, Better Harness also supports Qwen Code, Pi, Kimi Code,
+WorkBuddy, and Grok. Their exact install, invocation, and evidence boundaries
+live in the docs so this README stays focused:
 
-```bash
-qwen extensions install QoderAI/better-harness
-```
+- **Qwen Code** — [installation guide](docs/docs/installation.mdx#qwen-code)
+  (`qwen extensions install QoderAI/better-harness`).
+- **Pi** — [Host Adapter Matrix](docs/docs/hosts/adapter-matrix.md#pi)
+  (`pi install <source>` or `pi -e <source>`).
+- **Kimi Code** — [Host Adapter Matrix](docs/adapters/README.md)
+  (`.kimi-plugin/plugin.json` plugin install).
+- **WorkBuddy** — [Host Adapter Matrix](docs/docs/hosts/adapter-matrix.md#workbuddy).
+- **Grok** — [Host Adapter Matrix](docs/docs/hosts/adapter-matrix.md#grok).
 
-Start a new Qwen Code session in the repository you want to analyze and run the
-report prompt:
-
-```text
-/better-harness analyze this project's AI coding workflow and generate an evidence-backed report
-```
-
-Qwen Code produces a self-contained `report.html` with paired `report.md` and
-`findings.json`. Session evidence coverage depends on Qwen Code's available
-transcript paths; missing or partial evidence remains explicit.
-
-### Pi
-
-Install the repository as a [pi package](https://pi.dev/docs/latest/packages):
-
-```bash
-pi install https://github.com/QoderAI/better-harness
-```
-
-Or try it for a single run without changing settings:
-
-```bash
-pi -e git:github.com/QoderAI/better-harness
-```
-
-Pi discovers the `better-harness` Skill and the `/better-harness` prompt
-template through the `pi` manifest in `package.json`. Start a new Pi session
-in the repository you want to analyze and run the report prompt:
-
-```text
-/better-harness analyze this project's AI coding workflow and generate an evidence-backed report
-```
-
-Pi defaults to a self-contained `report.html` with paired `report.md` and
-`findings.json` under the repository's `.pi/better-harness` report root. Pi
-session evidence is read from workspace-matching JSONL transcripts under
-`~/.pi/agent/sessions/`; missing evidence stays explicit rather than being
-inferred.
-
-### Kimi Code
-
-Install the repository as a Kimi Code plugin:
-
-```text
-/plugins install https://github.com/QoderAI/better-harness
-```
-
-Or install from a local checkout with `/plugins install <path-to-repository>`.
-Plugins install per user and apply to every project; run `/reload` or start a
-new session after installing.
-
-Kimi Code discovers the `better-harness` skill through the
-`.kimi-plugin/plugin.json` manifest. A manual install without the plugin
-manager also works: copy or symlink this repository's `skills/better-harness`
-directory into `~/.kimi-code/skills/` (all projects) or
-`<repository>/.kimi-code/skills/` (one repository). Start a new Kimi Code
-session in the repository you want to review and run the report prompt:
-
-```text
-/skill:better-harness review this project's AI coding workflow and generate a report
-```
-
-Kimi Code produces a self-contained `report.html` with paired `report.md` and
-`findings.json`. Session evidence is read from workspace-matching wire
-transcripts under `~/.kimi-code/sessions/`; missing evidence stays explicit
-rather than being inferred.
+Each produces a self-contained `report.html` with paired `report.md` and
+`findings.json`; missing or partial session evidence stays explicit.
 
 ## Develop and package from source
 

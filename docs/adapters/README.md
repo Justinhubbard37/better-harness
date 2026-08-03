@@ -27,7 +27,9 @@ The generated Qoder runtime bundle includes only the Qoder shell,
 Claude Code installs its shell through the repository's native marketplace
 manifest. Pi installs the repository as a pi package through the `pi` manifest
 in `package.json`. Kimi Code installs the repository as a plugin through the
-`.kimi-plugin/plugin.json` manifest.
+`.kimi-plugin/plugin.json` manifest with `/plugins install <source>` (or a
+manual `skills/better-harness` copy/symlink into `~/.kimi-code/skills/` or a
+project `.kimi-code/skills/`), then runs `/skill:better-harness`.
 
 | Host | Positioning | Shell | Configured Assets | Session Evidence | Default Output | Rules / Prompts | Smoke |
 | --- | --- | --- | --- | --- | --- | --- | --- |
