@@ -19,6 +19,7 @@ const PUBLIC_QUICKSTART_HOSTS = [
 
 const ADAPTER_SUPPORT_HOSTS = [
   { name: "Pi", anchor: "pi", id: "pi" },
+  { name: "Kimi Code", anchor: "kimi-code", id: "kimiCode" },
   { name: "WorkBuddy", anchor: "workbuddy", id: "workBuddy" },
   { name: "Grok", anchor: "grok", id: "grok" },
 ];
@@ -169,7 +170,7 @@ test("README.zh-CN.md Quickstart lists all six product entries with valid instal
   assert.match(content, /Kimi Code、WorkBuddy 与 Grok/u);
 });
 
-test("Docusaurus home page cards expose nine adapters without flattening support levels", () => {
+test("Docusaurus home page cards expose ten adapters without flattening support levels", () => {
   const source = readUtf8("docs", "src", "pages", "index.js");
 
   const anchors = [];
@@ -266,7 +267,7 @@ test("zh-Hans installation.mdx tabs match public Quickstart host anchors", () =>
   }
 });
 
-test("zh-Hans code.json has translations for all nine homepage host cards", () => {
+test("zh-Hans code.json has translations for all ten homepage host cards", () => {
   const codeJson = JSON.parse(readUtf8("docs", "i18n", "zh-Hans", "code.json"));
   for (const host of SUPPORTED_CARD_HOSTS) {
     for (const field of ["method", "setup"]) {
@@ -283,7 +284,7 @@ test("zh-Hans code.json has translations for all nine homepage host cards", () =
   assert.ok(codeJson["homepage.hosts.status.adapter"]?.message);
 });
 
-test("public adapter matrix documents all nine adapters and their support boundaries", () => {
+test("public adapter matrix documents all ten adapters and their support boundaries", () => {
   const matrix = readUtf8("docs", "docs", "hosts", "adapter-matrix.md");
   const tableRows = matrix
     .split("\n")
@@ -294,22 +295,23 @@ test("public adapter matrix documents all nine adapters and their support bounda
 
   assert.match(
     matrix,
-    /all six plugin metadata\nroots/u,
-    "docs/docs/hosts/adapter-matrix.md does not declare six plugin metadata roots",
+    /all seven plugin metadata\nroots/u,
+    "docs/docs/hosts/adapter-matrix.md does not declare seven plugin metadata roots",
   );
 
   assert.match(
     matrix,
-    /Claude Code\/Codex\/Qwen\/Copilot\/Pi\/WorkBuddy\/Grok/u,
+    /Claude Code\/Codex\/Qwen\/Copilot\/Pi\/Kimi Code\/WorkBuddy\/Grok/u,
     "docs/docs/hosts/adapter-matrix.md HTML visual contract omits supported HTML hosts",
   );
   assert.match(matrix, /\*\*Cursor Canvas\*\*[^]*`cursor\/canvas`/u);
   assert.match(matrix, /### Pi \{#pi\}/u);
+  assert.match(matrix, /### Kimi Code \{#kimi-code\}/u);
   assert.match(matrix, /### WorkBuddy \{#workbuddy\}/u);
   assert.match(matrix, /### Grok \{#grok\}/u);
 });
 
-test("zh-Hans public adapter matrix documents all nine adapters and their support boundaries", () => {
+test("zh-Hans public adapter matrix documents all ten adapters and their support boundaries", () => {
   const matrix = readUtf8("docs", "i18n", "zh-Hans", "docusaurus-plugin-content-docs", "current", "hosts", "adapter-matrix.md");
   const tableRows = matrix
     .split("\n")
@@ -320,17 +322,18 @@ test("zh-Hans public adapter matrix documents all nine adapters and their suppor
 
   assert.match(
     matrix,
-    /全部六个插件元数据根目录/u,
-    "zh-Hans adapter-matrix.md does not declare six plugin metadata roots",
+    /全部七个插件元数据根目录/u,
+    "zh-Hans adapter-matrix.md does not declare seven plugin metadata roots",
   );
 
   assert.match(
     matrix,
-    /Claude Code\/Codex\/Qwen\/Copilot\/Pi\/WorkBuddy\/Grok/u,
+    /Claude Code\/Codex\/Qwen\/Copilot\/Pi\/Kimi Code\/WorkBuddy\/Grok/u,
     "zh-Hans adapter-matrix.md HTML visual contract omits supported HTML hosts",
   );
   assert.match(matrix, /\*\*Cursor Canvas\*\*[^]*`cursor\/canvas`/u);
   assert.match(matrix, /### Pi \{#pi\}/u);
+  assert.match(matrix, /### Kimi Code \{#kimi-code\}/u);
   assert.match(matrix, /### WorkBuddy \{#workbuddy\}/u);
   assert.match(matrix, /### Grok \{#grok\}/u);
 });
