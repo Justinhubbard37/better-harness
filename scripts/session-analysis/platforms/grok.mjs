@@ -88,7 +88,8 @@ function addUsageField(observed, key, value) {
 
 /**
  * Accept flat turn usage and/or nested usage.modelUsage.<modelId> objects.
- * Nested modelUsage values are summed across models for the turn total.
+ * Nested modelUsage values are summed across models and fill only the fields
+ * flat usage did not report, so partial flat records stay complete.
  */
 function normalizeUsageFromTurn(usage) {
   if (!usage || typeof usage !== "object") return null;
@@ -103,30 +104,22 @@ function normalizeUsageFromTurn(usage) {
   }
 
   const modelUsage = usage.modelUsage && typeof usage.modelUsage === "object" ? usage.modelUsage : null;
-  if (modelUsage && Object.keys(observed).length === 0) {
+  if (modelUsage) {
+    const nested = {};
     for (const perModel of Object.values(modelUsage)) {
       if (!perModel || typeof perModel !== "object") continue;
-      addUsageField(observed, "inputTokens", finiteNumber(perModel.inputTokens, perModel.input_tokens));
-      addUsageField(observed, "outputTokens", finiteNumber(perModel.outputTokens, perModel.output_tokens));
-      addUsageField(observed, "totalTokens", finiteNumber(perModel.totalTokens, perModel.total_tokens));
+      addUsageField(nested, "inputTokens", finiteNumber(perModel.inputTokens, perModel.input_tokens));
+      addUsageField(nested, "outputTokens", finiteNumber(perModel.outputTokens, perModel.output_tokens));
+      addUsageField(nested, "totalTokens", finiteNumber(perModel.totalTokens, perModel.total_tokens));
       addUsageField(
-        observed,
+        nested,
         "cacheReadInputTokens",
         finiteNumber(perModel.cachedReadTokens, perModel.cacheReadInputTokens, perModel.cache_read_input_tokens),
       );
     }
-  } else if (modelUsage && observed.totalTokens === undefined) {
-    // Flat partials present but total missing: fill from nested when available.
-    let nestedTotal = 0;
-    let saw = false;
-    for (const perModel of Object.values(modelUsage)) {
-      const value = finiteNumber(perModel?.totalTokens, perModel?.total_tokens);
-      if (value !== undefined) {
-        nestedTotal += value;
-        saw = true;
-      }
+    for (const [key, value] of Object.entries(nested)) {
+      if (observed[key] === undefined) observed[key] = value;
     }
-    if (saw) observed.totalTokens = nestedTotal;
   }
 
   return Object.keys(observed).length > 0 ? observed : null;

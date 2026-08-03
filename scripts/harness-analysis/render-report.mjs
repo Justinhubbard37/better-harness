@@ -41,6 +41,13 @@ function filesystemPathIdentity(value) {
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
+// Host ids accepted for report routing. Kept local so `--help` stays cheap;
+// test/harness-report-render-cli.test.mjs guards it against the session
+// platform registry in scripts/session-analysis/analyzer.mjs.
+export const RENDER_REPORT_PLATFORMS = Object.freeze([
+  "qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "workbuddy", "grok",
+]);
+
 // Each Canvas mode owns its own analyzer companion filename so the two routes
 // stay independent even though they currently agree on `canvas.json`.
 const ANALYZER_CANVAS_DATA_FILE_BY_MODE = Object.freeze({
@@ -89,9 +96,7 @@ function parseArgs(argv) {
     }
   }
   const hostId = String(options.platform ?? options.provider ?? "").toLowerCase();
-  const supportedHtmlHosts = new Set([
-    "qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "workbuddy", "grok",
-  ]);
+  const supportedHtmlHosts = new Set(RENDER_REPORT_PLATFORMS);
   // Allow --help even when a bad platform is present; validate only for real runs.
   if (!options.help && hostId && !supportedHtmlHosts.has(hostId)) {
     throw Object.assign(

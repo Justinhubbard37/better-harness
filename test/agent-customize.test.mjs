@@ -2547,6 +2547,87 @@ test("Grok plugin inventory dedupes one physical plugin reached through multiple
   }
 });
 
+test("Grok plugin inventory keeps distinct roots that share a plugin directory name", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-grok-plugin-name-clash-"));
+  const grokHome = path.join(root, "home", ".grok");
+  const workspace = path.join(root, "workspace");
+  await writeJson(path.join(grokHome, "plugins", "flow", "plugin.json"), { name: "flow" });
+  await writeJson(path.join(workspace, ".grok", "plugins", "flow", "plugin.json"), { name: "flow" });
+
+  try {
+    const inventory = await collectAgentCustomizeInventory({
+      provider: "grok",
+      grokHome,
+      workspace,
+    });
+    assert.equal(inventory.plugins.length, 2);
+    // Same directory name, different physical roots: ids must stay distinguishable
+    // so downstream collision diagnostics are not silently collapsed.
+    assert.equal(new Set(inventory.plugins.map((plugin) => plugin.id)).size, 2);
+    assert.deepEqual(
+      inventory.plugins.map((plugin) => plugin.installMatch).sort(),
+      ["grok-plugins-dir", "grok-project-plugins-dir"],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Grok plugin paths from the user and project config are unioned, not replaced", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-grok-plugin-paths-"));
+  const grokHome = path.join(root, "home", ".grok");
+  const workspace = path.join(root, "workspace");
+  const userExtraRoot = path.join(root, "user-extra-plugins");
+  const projectExtraRoot = path.join(root, "project-extra-plugins");
+  await writeJson(path.join(userExtraRoot, "alpha", "plugin.json"), { name: "alpha" });
+  await writeJson(path.join(projectExtraRoot, "beta", "plugin.json"), { name: "beta" });
+  await writeText(
+    path.join(grokHome, "config.toml"),
+    ["[plugins]", `paths = ["${userExtraRoot.replaceAll("\\", "/")}"]`, ""].join("\n"),
+  );
+  await writeText(
+    path.join(workspace, ".grok", "config.toml"),
+    ["[plugins]", `paths = ["${projectExtraRoot.replaceAll("\\", "/")}"]`, ""].join("\n"),
+  );
+
+  try {
+    const inventory = await collectAgentCustomizeInventory({
+      provider: "grok",
+      grokHome,
+      workspace,
+    });
+    assert.deepEqual(inventory.plugins.map((plugin) => plugin.name).sort(), ["alpha", "beta"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Grok inventory reports no user config path when the user home is out of scope", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-grok-project-scope-"));
+  const grokHome = path.join(root, "home", ".grok");
+  const workspace = path.join(root, "workspace");
+  await writeJson(path.join(grokHome, "plugins", "user-only", "plugin.json"), { name: "user-only" });
+  await writeText(path.join(workspace, ".grok", "config.toml"), "[plugins]\n");
+
+  try {
+    const inventory = await collectAgentCustomizeInventory({
+      provider: "grok",
+      grokHome,
+      workspace,
+      includeUserHome: false,
+    });
+    assert.equal(inventory.plugins.length, 0);
+    assert.deepEqual(inventory.diagnostics.installedPluginRecordFiles, []);
+    assert.equal(inventory.diagnostics.configPath, null);
+    assert.equal(
+      inventory.diagnostics.projectConfigPath,
+      path.join(workspace, ".grok", "config.toml"),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Grok project skills dedupe when .grok/skills symlinks to .agents/skills", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-grok-skill-symlink-"));
   const grokHome = path.join(root, "home", ".grok");

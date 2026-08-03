@@ -1507,6 +1507,48 @@ test("Grok provider discovers long-path session groups via .cwd marker", async (
   assert.equal(result.sources[0].exists, true);
 });
 
+test("Grok turn usage completes partial flat records from nested modelUsage", async () => {
+  const root = await fixtureRoot("session-grok-partial-usage-");
+  const home = path.join(root, ".grok");
+  const workspace = path.join(root, "workspace", "project");
+  const sessionId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  const sessionDir = path.join(home, "sessions", encodeURIComponent(workspace), sessionId);
+  await mkdir(sessionDir, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  await writeFile(path.join(sessionDir, "summary.json"), JSON.stringify({
+    info: { id: sessionId, cwd: workspace },
+    created_at: "2026-08-01T10:00:00.000Z",
+    updated_at: "2026-08-01T10:05:00.000Z",
+  }, null, 2));
+  await writeJsonl(path.join(sessionDir, "updates.jsonl"), [
+    {
+      method: "_x.ai/session/update",
+      params: {
+        update: {
+          sessionUpdate: "turn_completed",
+          // Flat record reports input only; output/total live in nested modelUsage.
+          usage: {
+            inputTokens: 300,
+            modelUsage: {
+              "grok-4": { outputTokens: 80, totalTokens: 380 },
+            },
+          },
+        },
+      },
+    },
+  ]);
+
+  const analyzer = new GrokSessionAnalyzer();
+  const discovery = await analyzer.analyze({ command: "sources", workspace, home });
+  assert.equal(discovery.sessions.length, 1);
+  const scope = await analyzer.resolveScope({ workspace, home });
+  const events = await analyzer.readSession(discovery.sessions[0], scope, {});
+  const usage = events.find((event) => event.type === "model.response.completed")?.modelUsage;
+  assert.equal(usage?.inputTokens, 300);
+  assert.equal(usage?.outputTokens, 80);
+  assert.equal(usage?.totalTokens, 380);
+});
+
 test("Grok provider excludes foreign workspace session groups", async () => {
   const root = await fixtureRoot("session-grok-isolation-");
   const home = path.join(root, ".grok");
