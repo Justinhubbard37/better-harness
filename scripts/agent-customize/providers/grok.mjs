@@ -399,8 +399,8 @@ export async function collectGrokCustomizeInventory(options = {}) {
   // Project config may declare plugins/MCP independently of the user home.
   const userConfigText = includeUserHome ? await readTomlText(configPath) : null;
   const projectConfigText = await readTomlText(path.join(workspace, ".grok", "config.toml"));
-  // Prefer user-home [plugins] tables for enable lists; fall back to project config.
-  const pluginConfigText = userConfigText ?? projectConfigText;
+  // Merge user then project [plugins] tables so project enabled/disabled lists still apply.
+  const pluginConfigText = [userConfigText, projectConfigText].filter(Boolean).join("\n");
   const [pluginPack, user, project] = await Promise.all([
     collectGrokPlugins(grokHome, workspace, pluginConfigText, { includeUserHome }),
     includeUserHome ? collectGrokUserPrimitives(grokHome) : emptyPrimitives(),

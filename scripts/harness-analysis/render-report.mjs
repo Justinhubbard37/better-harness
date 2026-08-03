@@ -92,7 +92,8 @@ function parseArgs(argv) {
   const supportedHtmlHosts = new Set([
     "qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "workbuddy", "grok",
   ]);
-  if (hostId && !supportedHtmlHosts.has(hostId)) {
+  // Allow --help even when a bad platform is present; validate only for real runs.
+  if (!options.help && hostId && !supportedHtmlHosts.has(hostId)) {
     throw Object.assign(
       new Error(`unsupported render platform: ${hostId}. Supported platforms: ${[...supportedHtmlHosts].join(", ")}.`),
       { code: "UNSUPPORTED_RENDER_PLATFORM" },
@@ -100,7 +101,7 @@ function parseArgs(argv) {
   }
   options.out ??= options.mode === "cursor-canvas"
     ? ".cursor/better-harness"
-    : options.mode === "html" && hostId && hostId !== "qoder"
+    : options.mode === "html" && hostId && supportedHtmlHosts.has(hostId) && hostId !== "qoder"
       ? `.${hostId}/better-harness`
       : ".qoder/better-harness";
   return options;
