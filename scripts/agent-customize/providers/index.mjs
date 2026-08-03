@@ -8,6 +8,7 @@ import { collectKimiCustomizeInventory } from "./kimi.mjs";
 import { collectQoderCustomizeInventory } from "./qoder.mjs";
 import { collectQwenCustomizeInventory } from "./qwen.mjs";
 import { collectWorkbuddyCustomizeInventory } from "./workbuddy.mjs";
+import { HOST_CAPABILITIES, hostIdsFor } from "../../host-support/index.mjs";
 
 export const PROVIDER_COLLECTORS = new Map([
   ["cursor", collectCursorCustomizeInventory],
@@ -21,6 +22,8 @@ export const PROVIDER_COLLECTORS = new Map([
   ["workbuddy", collectWorkbuddyCustomizeInventory],
   ["grok", collectGrokCustomizeInventory],
 ]);
+
+export const SUPPORTED_CUSTOMIZE_PROVIDERS = hostIdsFor(HOST_CAPABILITIES.AGENT_CUSTOMIZE);
 
 export async function collectProviderInventory(provider, options = {}) {
   const collectProvider = PROVIDER_COLLECTORS.get(provider);

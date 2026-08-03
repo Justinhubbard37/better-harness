@@ -1,6 +1,14 @@
 import { analyzeClaudeStyleSessions } from "./claude-facets.mjs";
 import { parseArgs } from "./cli.mjs";
 import { createCodexCliJsonModelClient } from "./codex-json-model.mjs";
+import {
+  formatHostList,
+  HOST_CAPABILITIES,
+  hostIdsFor,
+  hostPipeList,
+} from "../host-support/index.mjs";
+
+const DECLARED_SESSION_HOSTS = hostIdsFor(HOST_CAPABILITIES.SESSION_ANALYSIS);
 
 // Minimal AI-facing usage:
 //   const analyzer = await createAnalyzer("qoder");
@@ -19,7 +27,7 @@ import { createCodexCliJsonModelClient } from "./codex-json-model.mjs";
 
 export const SESSION_ANALYSIS_HELP = `Usage: better-harness session-analysis [command] [options]
 
-Inspect local Qoder, Codex, Claude, Cursor, Qwen, Copilot, Pi, Kimi, WorkBuddy, or Grok session evidence. The
+Inspect local ${formatHostList(DECLARED_SESSION_HOSTS, { displayNames: true })} session evidence. The
 default command is sessions and the default platform is qoder. Help exits before
 reading HOME or workspace.
 
@@ -35,7 +43,7 @@ Commands:
   events        Show normalized events selected with --session-id
 
 Options:
-  --platform <qoder|codex|claude|cursor|qwen|copilot|pi|kimi|workbuddy|grok>
+  --platform <${hostPipeList(DECLARED_SESSION_HOSTS)}>
                             Session host (default: qoder)
   --workspace <dir>         Workspace scope (default: current directory)
   --qoder-home <dir>        Qoder data root (default: ~/.qoder)
@@ -311,7 +319,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
         ]
       : [];
     stdout.write([
-      `Usage: session-analysis${command ? ` ${command}` : " <command>"} --platform <qoder|codex|claude|cursor|qwen|copilot|pi|kimi|workbuddy|grok> --workspace <path> [options]`,
+      `Usage: session-analysis${command ? ` ${command}` : " <command>"} --platform <${hostPipeList(SUPPORTED_SESSION_PLATFORMS)}> --workspace <path> [options]`,
       "",
       "Commands: sources, sessions, facets, insights, facts, file-reads, show, events, claude-facets",
       ...factsOptions,

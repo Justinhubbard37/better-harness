@@ -77,7 +77,7 @@ SUPPORT.md                             # [target] supported versions and support
 scripts/
   dx-contracts/                       # [target] judgment-free declaration catalog,
                                       # activation ledger, validation, and projection diff
-  host-support/                       # [target] host identities, support slices,
+  host-support/                       # [active] host identities, support slices,
                                       # profile predicates, and freshness policies
   evidence-contract/                  # [target] shared receipt envelope, evidence
                                       # taxonomy, compatibility, and redaction invariants

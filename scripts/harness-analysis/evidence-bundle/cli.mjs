@@ -3,8 +3,16 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  formatHostList,
+  HOST_CAPABILITIES,
+  hostHomeOptionKeys,
+  hostIdsFor,
+} from "../../host-support/index.mjs";
 import { parseArgs } from "../../session-analysis/index.mjs";
 import { collectEvidenceBundle } from "./index.mjs";
+
+const EVIDENCE_HOSTS = hostIdsFor(HOST_CAPABILITIES.EVIDENCE_BUNDLE);
 
 export const EVIDENCE_BUNDLE_HELP = `Usage: better-harness harness evidence-bundle --workspace <target> [options]
 
@@ -13,7 +21,7 @@ Harness, and Agent Customize specialists plus the lead analyzer.
 
 Options:
   --workspace <path>       Target workspace (required)
-  --platform <name>        qoder, codex, claude, cursor, qwen, copilot, pi, kimi, workbuddy, or grok (default: qoder)
+  --platform <name>        ${formatHostList(EVIDENCE_HOSTS)} (default: qoder)
   --language <locale>      Evidence language (default: en)
   --depth <quick|normal>   7-day/3-item or 30-day/5-item review (default: normal)
   --since <ISO timestamp>  Override the frozen window start
@@ -35,8 +43,8 @@ Options:
 const ALLOWED = new Set([
   "workspace", "platform", "provider", "language", "depth", "since", "until",
   "evidence-limit", "include-user-home", "include-memories", "canvas-out",
-  "replace-canvas", "format", "json", "qoder-home", "codex-home", "claude-home",
-  "cursor-home", "qwen-home", "copilot-home", "pi-home", "kimi-home", "workbuddy-home", "grok-home", "claude-state", "help", "h",
+  "replace-canvas", "format", "json", ...hostHomeOptionKeys(EVIDENCE_HOSTS),
+  "claude-state", "help", "h",
 ]);
 
 function assertOptions(command, options) {

@@ -1116,6 +1116,7 @@ Current state is L3 candidate because Codex assets appear configured.
   assert.equal(quality.status, "fail");
   assert.ok(quality.errors.some((error) => /session-analysis\.mjs sources/i.test(error)));
   assert.ok(quality.errors.some((error) => /session-analysis\.mjs facets/i.test(error)));
+
 });
 
 test("harness report quality flags kimi-only session scope without session-analysis evidence", () => {
@@ -1166,6 +1167,16 @@ Current state is L3 candidate because Kimi assets appear configured.
   assert.equal(quality.status, "fail");
   assert.ok(quality.errors.some((error) => /session-analysis\.mjs sources/i.test(error)));
   assert.ok(quality.errors.some((error) => /session-analysis\.mjs facets/i.test(error)));
+
+  const grokQuality = evaluateHarnessReportQuality(
+    report
+      .replaceAll("Kimi", "Grok")
+      .replaceAll("kimi", "grok")
+      .replaceAll(".grok-code", ".grok"),
+  );
+  assert.equal(grokQuality.status, "fail");
+  assert.ok(grokQuality.errors.some((error) => /session-analysis\.mjs sources/i.test(error)));
+  assert.ok(grokQuality.errors.some((error) => /session-analysis\.mjs facets/i.test(error)));
 });
 
 test("harness report quality requires practice surfaces inside the practice diagnosis", () => {
