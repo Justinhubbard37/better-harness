@@ -116,7 +116,7 @@ test("Step 1 establishes one provider-labelled evidence bundle", () => {
   assert.match(skill, /`memberRoute` or `null`/);
   assert.match(skill, /Providers must agree/);
   assert.match(skill, /bounded `lint`, `inventory`, and `integrity` envelopes/);
-  assert.match(skill, /individual [\s\S]+command only to diagnose a named unavailable or truncated owner/);
+  assert.match(skill, /individual [\s\S]+command only to diagnose a named unavailable or evidence-loss stage/);
   assert.doesNotMatch(skill, /<cli> agent-lint --workspace <target>/);
   assert.match(skill, /Rules,\s+Skills, MCP, Memory, Agents, Hooks, Commands, Workflows, and Plugins/);
   assert.match(skill, /Zero or high counts never create findings or scores/);
