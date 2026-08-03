@@ -106,7 +106,62 @@ async function collectGrokMcpFromConfig(configPath, scope, sourceLabel, rootForE
   })).sort(sortByName);
 }
 
-async function collectInstalledPlugins(pluginsRoot) {
+/**
+ * Parse [plugins] paths/enabled/disabled from config.toml (minimal TOML).
+ */
+export function parseGrokPluginsSectionFromToml(text) {
+  if (typeof text !== "string" || text.trim() === "") {
+    return { paths: [], enabled: [], disabled: [] };
+  }
+  const lines = text.split(/\r?\n/u);
+  let inPlugins = false;
+  const result = { paths: [], enabled: [], disabled: [] };
+  let multiKey = null;
+  let multiBuf = "";
+  const flushMulti = () => {
+    if (!multiKey) return;
+    const raw = multiBuf.replace(/\s+/gu, " ").trim();
+    const items = [...raw.matchAll(/"([^"]+)"|'([^']+)'/gu)].map((m) => m[1] ?? m[2]);
+    result[multiKey] = items;
+    multiKey = null;
+    multiBuf = "";
+  };
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/#.*$/u, "").trim();
+    if (!line) continue;
+    if (/^\[plugins\]$/u.test(line)) {
+      flushMulti();
+      inPlugins = true;
+      continue;
+    }
+    if (/^\[/u.test(line)) {
+      flushMulti();
+      inPlugins = false;
+      continue;
+    }
+    if (!inPlugins) continue;
+    if (multiKey) {
+      multiBuf += ` ${line}`;
+      if (line.includes("]")) flushMulti();
+      continue;
+    }
+    const kv = line.match(/^(paths|enabled|disabled)\s*=\s*(.+)$/u);
+    if (!kv) continue;
+    const key = kv[1];
+    const value = kv[2].trim();
+    if (value.startsWith("[") && !value.includes("]")) {
+      multiKey = key;
+      multiBuf = value;
+      continue;
+    }
+    const items = [...value.matchAll(/"([^"]+)"|'([^']+)'/gu)].map((m) => m[1] ?? m[2]);
+    result[key] = items;
+  }
+  flushMulti();
+  return result;
+}
+
+async function collectPluginsFromRoot(pluginsRoot, installMatch, enabledSet, disabledSet) {
   if (!(await pathExists(pluginsRoot))) return [];
   const plugins = [];
   for (const pluginRoot of await listDirectories(pluginsRoot)) {
@@ -125,23 +180,33 @@ async function collectInstalledPlugins(pluginsRoot) {
         break;
       }
     }
+    const pluginName = manifest?.name || name;
     const displayName = normalizePluginDisplayName(
-      manifest?.displayName || manifest?.name || titleCase(name),
+      manifest?.displayName || pluginName || titleCase(name),
       name,
     );
+    // Grok: plugins are off by default unless listed in enabled (or no lists at all → discover as enabled for trusted user roots).
+    let enabled = true;
+    if (enabledSet.size > 0 || disabledSet.size > 0) {
+      enabled = enabledSet.has(pluginName) || enabledSet.has(name);
+      if (disabledSet.has(pluginName) || disabledSet.has(name)) enabled = false;
+      if (enabledSet.size === 0 && disabledSet.size > 0) {
+        enabled = !(disabledSet.has(pluginName) || disabledSet.has(name));
+      }
+    }
     const plugin = {
-      id: `grok/installed/${name}`,
+      id: `grok/${installMatch}/${name}`,
       rootPath: pluginRoot,
       scope: "plugin",
       sourceLabel: displayName,
-      name: manifest?.name || name,
+      name: pluginName,
       displayName,
       description: manifest?.description || "",
-      installSources: ["installed-plugins"],
-      installSource: "installed-plugins",
-      installMatch: "grok-installed-plugins-dir",
+      installSources: [installMatch],
+      installSource: installMatch,
+      installMatch,
       installType: "local",
-      enabled: true,
+      enabled,
       evidence: evidence(manifestPath ?? pluginRoot, path.dirname(pluginRoot)),
     };
     plugin.skills = (await collectSkillFiles(pluginRoot, "plugin", displayName, pluginRoot)).sort(sortByName);
@@ -158,20 +223,58 @@ async function collectInstalledPlugins(pluginsRoot) {
     plugin.mcpServers = await collectMcpItems(pluginRoot, "plugin", displayName, pluginRoot);
     plugins.push(plugin);
   }
-  return plugins.sort(sortByName);
+  return plugins;
+}
+
+async function collectGrokPlugins(grokHome, workspace, configText) {
+  const section = parseGrokPluginsSectionFromToml(configText ?? "");
+  const enabledSet = new Set(section.enabled);
+  const disabledSet = new Set(section.disabled);
+  const roots = [
+    { root: path.join(grokHome, "plugins"), match: "grok-plugins-dir" },
+    { root: path.join(grokHome, "installed-plugins"), match: "grok-installed-plugins-dir" },
+    { root: path.join(workspace, ".grok", "plugins"), match: "grok-project-plugins-dir" },
+  ];
+  for (const extra of section.paths) {
+    const expanded = path.resolve(expandHome(extra));
+    roots.push({ root: expanded, match: "grok-plugins-path-config" });
+  }
+  const byId = new Map();
+  const recordFiles = [];
+  for (const { root, match } of roots) {
+    if (await pathExists(root)) recordFiles.push(root);
+    for (const plugin of await collectPluginsFromRoot(root, match, enabledSet, disabledSet)) {
+      if (!byId.has(plugin.id)) byId.set(plugin.id, plugin);
+    }
+  }
+  return {
+    plugins: [...byId.values()].sort(sortByName),
+    recordFiles: [...new Set(recordFiles)],
+  };
 }
 
 async function collectGrokUserPrimitives(grokHome) {
   const configPath = path.join(grokHome, "config.toml");
-  const [skills, bundledSkills, commands, hooks, mcps] = await Promise.all([
+  const agentsSkillsHome = path.join(os.homedir(), ".agents", "skills");
+  const [skills, bundledSkills, agentsSkills, commands, hooks, mcps] = await Promise.all([
     collectSkillFiles(path.join(grokHome, "skills"), "user", "User", grokHome),
     collectSkillFiles(path.join(grokHome, "bundled", "skills"), "user", "User bundled", grokHome),
+    // Grok also loads ~/.agents/skills (often linked under ~/.grok/skills).
+    collectSkillFiles(agentsSkillsHome, "user", "User agents", agentsSkillsHome),
     collectMarkdownItems(path.join(grokHome, "commands"), "command", "user", "User", grokHome),
     collectHookItems(grokHome, "user", "User", grokHome),
     collectGrokMcpFromConfig(configPath, "user", "User", grokHome),
   ]);
+  // Dedupe skills that appear both under ~/.grok/skills and ~/.agents/skills via symlink.
+  const byReal = new Map();
+  for (const skill of [...skills, ...bundledSkills, ...agentsSkills]) {
+    const filePath = skill?.filePath ?? skill?.path;
+    if (!filePath) continue;
+    const key = await resolveRealPath(filePath);
+    if (!byReal.has(key)) byReal.set(key, skill);
+  }
   return {
-    skills: [...skills, ...bundledSkills].sort(sortByName),
+    skills: [...byReal.values()].sort(sortByName),
     subagents: [],
     rules: [],
     commands,
@@ -214,21 +317,36 @@ export async function mergeGrokProjectSkills(skills, workspace) {
   return [...byReal.values()].sort(sortByName);
 }
 
-async function collectGrokWorkspacePrimitives(workspace) {
+async function collectGrokWorkspacePrimitives(workspace, grokHome) {
   const sourceLabel = await workspaceSourceLabel(workspace);
   const projectRoot = path.join(workspace, ".grok");
-  const project = await collectWorkspaceRootPrimitives(projectRoot, sourceLabel, workspace);
-  const agentsSkills = await collectSkillFiles(
-    path.join(workspace, ".agents", "skills"),
-    "project",
-    sourceLabel,
-    workspace,
-  );
+  // When workspace is the user home, workspace/.grok === ~/.grok — do not
+  // double-count the same tree as both user and project scope.
+  const projectIsUserHome = (await resolveRealPath(projectRoot)) === (await resolveRealPath(grokHome));
+  const project = projectIsUserHome
+    ? emptyPrimitives()
+    : await collectWorkspaceRootPrimitives(projectRoot, sourceLabel, workspace);
+  const agentsProjectRoot = path.join(workspace, ".agents", "skills");
+  const agentsUserRoot = path.join(os.homedir(), ".agents", "skills");
+  const agentsIsUserHome = (await resolveRealPath(agentsProjectRoot))
+    === (await resolveRealPath(agentsUserRoot));
+  const agentsSkills = agentsIsUserHome
+    ? []
+    : await collectSkillFiles(agentsProjectRoot, "project", sourceLabel, workspace);
+  const projectConfigMcps = projectIsUserHome
+    ? []
+    : await collectGrokMcpFromConfig(
+      path.join(projectRoot, "config.toml"),
+      "project",
+      sourceLabel,
+      workspace,
+    );
   const projectMcps = await collectMcpItems(workspace, "project", sourceLabel, workspace);
+  // Project hooks under .grok/hooks (collectWorkspaceRootPrimitives may already cover hooks).
   return {
     ...project,
     skills: await mergeGrokProjectSkills([...project.skills, ...agentsSkills], workspace),
-    mcps: [...project.mcps, ...projectMcps].sort(sortByName),
+    mcps: [...project.mcps, ...projectConfigMcps, ...projectMcps].sort(sortByName),
     rules: [
       ...project.rules,
       ...(await collectRuleSources([
@@ -245,11 +363,16 @@ export async function collectGrokCustomizeInventory(options = {}) {
   ));
   const workspace = normalizeWorkspace(options.workspace ?? process.cwd());
   const includeUserHome = options.includeUserHome !== false;
-  const [plugins, user, project] = await Promise.all([
-    includeUserHome ? collectInstalledPlugins(path.join(grokHome, "installed-plugins")) : [],
+  const configPath = path.join(grokHome, "config.toml");
+  const configText = includeUserHome ? await readTomlText(configPath) : null;
+  const [pluginPack, user, project] = await Promise.all([
+    collectGrokPlugins(grokHome, workspace, configText),
     includeUserHome ? collectGrokUserPrimitives(grokHome) : emptyPrimitives(),
-    collectGrokWorkspacePrimitives(workspace),
+    collectGrokWorkspacePrimitives(workspace, grokHome),
   ]);
+  const plugins = includeUserHome
+    ? pluginPack.plugins
+    : pluginPack.plugins.filter((plugin) => plugin.installMatch === "grok-project-plugins-dir");
   return {
     generatedAt: new Date().toISOString(),
     provider: "grok",
@@ -259,13 +382,12 @@ export async function collectGrokCustomizeInventory(options = {}) {
     plugins,
     manage: buildManageCollections(plugins, user, project),
     diagnostics: {
-      installedPluginState: plugins.length > 0 ? "grok-installed-plugins-dir" : "missing",
+      installedPluginState: plugins.length > 0 ? "grok-plugins-dirs" : "missing",
       installedPluginRecordCount: plugins.length,
-      installedPluginRecordFiles: includeUserHome && (await pathExists(path.join(grokHome, "installed-plugins")))
-        ? [path.join(grokHome, "installed-plugins")]
-        : [],
+      installedPluginRecordFiles: pluginPack.recordFiles,
       remotePluginInstallMarkersRequired: false,
-      configPath: path.join(grokHome, "config.toml"),
+      configPath,
+      projectConfigPath: path.join(workspace, ".grok", "config.toml"),
     },
     unsupported: [
       "auth.json credentials (never inventoried as values)",

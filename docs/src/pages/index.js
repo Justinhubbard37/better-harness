@@ -509,7 +509,7 @@ function HowItWorks() {
         </p>
         <p className={styles.demoCaption}>
           <Translate id="homepage.how.architectureCaption">
-            Eight capability-level host adapters feed the same evidence
+            Nine capability-level host adapters feed the same evidence
             pipeline. Six have verified Quickstart paths; Pi, WorkBuddy, and Grok keep
             their current adapter-support boundaries explicit.
           </Translate>
@@ -533,7 +533,7 @@ function QuickStart() {
         </h2>
         <p>
           <Translate id="homepage.quickstart.intro">
-            Eight host adapters are supported. Six have verified setup paths;
+            Nine host adapters are supported. Six have verified setup paths;
             Pi, WorkBuddy, and Grok link to their current support boundaries.
           </Translate>
         </p>

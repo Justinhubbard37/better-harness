@@ -57,7 +57,8 @@ Options:
   --canvas <file>      Explicit legacy canvas.json companion for a split Agent Work Loop bundle
   --source <file>      Reviewed Agent Work Loop report source; projection is performed in memory
   --mode <mode>        qoder-canvas, cursor-canvas, markdown, or html (default: qoder-canvas)
-  --out <dir>          Output root (default: .qoder/better-harness, or .cursor/better-harness for cursor-canvas)
+  --out <dir>          Output root (default: .qoder/better-harness, .cursor/better-harness for cursor-canvas, or .<platform>/better-harness for html)
+  --platform <name>    Host id used for default html out root (alias: --provider)
   --run-dir <dir>      Run directory: relative values resolve below --out; absolute values remain exact
   --target <path>      Target project path used for run-directory slug
   --language <lang>    en or zh-CN (default: input summary.locale, then en)
@@ -78,19 +79,20 @@ function parseArgs(argv) {
       options.validate = true;
     } else if (arg === "--json") {
       options.json = true;
-    } else if (["--findings", "--canvas", "--source", "--mode", "--out", "--run-dir", "--target", "--language", "--sdk-root", "--sdk-declarations"].includes(arg)) {
+    } else if (["--findings", "--canvas", "--source", "--mode", "--out", "--run-dir", "--target", "--language", "--sdk-root", "--sdk-declarations", "--platform", "--provider"].includes(arg)) {
       options[arg.slice(2)] = argv[++index];
-    } else if (arg.startsWith("--findings=") || arg.startsWith("--canvas=") || arg.startsWith("--source=") || arg.startsWith("--mode=") || arg.startsWith("--out=") || arg.startsWith("--run-dir=") || arg.startsWith("--target=") || arg.startsWith("--language=") || arg.startsWith("--sdk-root=") || arg.startsWith("--sdk-declarations=")) {
+    } else if (arg.startsWith("--findings=") || arg.startsWith("--canvas=") || arg.startsWith("--source=") || arg.startsWith("--mode=") || arg.startsWith("--out=") || arg.startsWith("--run-dir=") || arg.startsWith("--target=") || arg.startsWith("--language=") || arg.startsWith("--sdk-root=") || arg.startsWith("--sdk-declarations=") || arg.startsWith("--platform=") || arg.startsWith("--provider=")) {
       const [name, value] = arg.slice(2).split(/=(.*)/s);
       options[name] = value;
     } else {
       throw Object.assign(new Error(`Unknown argument: ${arg}`), { code: "UNKNOWN_ARGUMENT" });
     }
   }
+  const hostId = String(options.platform ?? options.provider ?? "").toLowerCase();
   options.out ??= options.mode === "cursor-canvas"
     ? ".cursor/better-harness"
-    : options.mode === "html" && String(options.platform ?? options.provider ?? "").toLowerCase() === "grok"
-      ? ".grok/better-harness"
+    : options.mode === "html" && hostId && hostId !== "qoder"
+      ? `.${hostId}/better-harness`
       : ".qoder/better-harness";
   return options;
 }

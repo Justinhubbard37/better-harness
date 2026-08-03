@@ -1298,7 +1298,7 @@ test("WorkBuddy source roots stay absent without workspace-matching project dire
   assert.equal(result.sessions.length, 0);
 });
 
-test("Grok provider expands user/assistant/tool events and optional signals usage", async () => {
+test("Grok provider expands user/assistant/tool events and turn_completed usage", async () => {
   const root = await fixtureRoot("session-grok-provider-");
   const home = path.join(root, ".grok");
   const workspace = path.join(root, "workspace", "project");
@@ -1342,6 +1342,30 @@ test("Grok provider expands user/assistant/tool events and optional signals usag
           sessionUpdate: "tool_call_update",
           toolName: "run_terminal_command",
           toolCallId: "call_1",
+          status: null,
+          _meta: { isoTimestamp: "2026-08-01T10:00:02.500Z" },
+        },
+      },
+    },
+    {
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolName: "run_terminal_command",
+          toolCallId: "call_1",
+          status: "in_progress",
+          _meta: { isoTimestamp: "2026-08-01T10:00:02.750Z" },
+        },
+      },
+    },
+    {
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolName: "run_terminal_command",
+          toolCallId: "call_1",
           status: "completed",
           content: "ok",
           _meta: { isoTimestamp: "2026-08-01T10:00:03.000Z" },
@@ -1368,12 +1392,32 @@ test("Grok provider expands user/assistant/tool events and optional signals usag
         },
       },
     },
+    {
+      method: "_x.ai/session/update",
+      params: {
+        update: {
+          sessionUpdate: "turn_completed",
+          stop_reason: "end_turn",
+          usage: {
+            inputTokens: 120,
+            outputTokens: 40,
+            totalTokens: 160,
+            cachedReadTokens: 10,
+          },
+        },
+      },
+    },
   ]);
+  // contextTokensUsed must not be treated as total token spend
   await writeFile(path.join(sessionDir, "signals.json"), JSON.stringify({
-    inputTokens: 120,
-    outputTokens: 40,
-    totalTokens: 160,
+    contextTokensUsed: 44532,
+    contextWindowTokens: 500000,
   }, null, 2));
+  // chat_history must not double-count when updates.jsonl exists
+  await writeJsonl(path.join(sessionDir, "chat_history.jsonl"), [
+    { role: "user", content: "duplicate user", timestamp: "2026-08-01T10:00:01.000Z" },
+    { role: "assistant", content: "duplicate assistant", timestamp: "2026-08-01T10:00:04.000Z" },
+  ]);
 
   const analyzer = new GrokSessionAnalyzer();
   const discovery = await analyzer.analyze({ command: "sources", workspace, home });
@@ -1389,15 +1433,53 @@ test("Grok provider expands user/assistant/tool events and optional signals usag
   assert.equal(events.find((event) => event.type === "user")?.userText, "Implement the Grok provider");
   assert.equal(events.filter((event) => event.type === "tool.call").length, 1);
   assert.equal(events.filter((event) => event.type === "tool.result").length, 1);
+  assert.equal(events.filter((event) => event.type === "metadata.tool_call_update").length, 2);
   assert.equal(events.filter((event) => event.type === "assistant").length, 1);
   assert.ok(events.some((event) => event.type === "metadata.thought_chunk"));
   const usage = events.find((event) => event.type === "model.response.completed");
   assert.equal(usage?.modelUsage?.inputTokens, 120);
   assert.equal(usage?.modelUsage?.outputTokens, 40);
+  assert.equal(usage?.modelUsage?.totalTokens, 160);
+  assert.ok(!events.some((event) => event.modelUsage?.totalTokens === 44532));
+  assert.ok(events.some((event) => event.type === "metadata.context_window"));
   const facts = await analyzer.analyze({ command: "facts", workspace, home, limit: 1 });
   assert.equal(facts.kind, "session-core-facts");
   assert.equal(facts.scope.platform, "grok");
   assert.doesNotMatch(JSON.stringify(facts), new RegExp(sessionId, "u"));
+});
+
+test("Grok provider discovers long-path session groups via .cwd marker", async () => {
+  const root = await fixtureRoot("session-grok-long-path-");
+  const home = path.join(root, ".grok");
+  const workspace = path.join(root, "workspace", "deeply", "nested", "project");
+  const sessionId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  // Simulate Grok long-path form: slug+hash group with .cwd (not encodeURIComponent name).
+  const group = "workspace-deeply-nested-project-a1b2c3d4";
+  const groupPath = path.join(home, "sessions", group);
+  const sessionDir = path.join(groupPath, sessionId);
+  await mkdir(sessionDir, { recursive: true });
+  await writeFile(path.join(groupPath, ".cwd"), `${workspace}\n`);
+  await writeFile(path.join(sessionDir, "summary.json"), JSON.stringify({
+    info: { id: sessionId, cwd: workspace },
+    created_at: "2026-08-01T10:00:00.000Z",
+    updated_at: "2026-08-01T10:05:00.000Z",
+  }, null, 2));
+  await writeJsonl(path.join(sessionDir, "updates.jsonl"), [
+    {
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "user_message_chunk",
+          content: { text: "long path" },
+          _meta: { isoTimestamp: "2026-08-01T10:00:01.000Z" },
+        },
+      },
+    },
+  ]);
+  const result = await new GrokSessionAnalyzer().analyze({ command: "sources", workspace, home });
+  assert.equal(result.sessions.length, 1);
+  assert.equal(result.sessions[0].sessionId, sessionId);
+  assert.equal(result.sources[0].exists, true);
 });
 
 test("Grok provider excludes foreign workspace session groups", async () => {

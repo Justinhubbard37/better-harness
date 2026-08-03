@@ -1,9 +1,9 @@
 # Spec: Grok CLI host adapter
 
-**Date:** 2026-08-02  
-**Host id:** `grok`  
-**Host version (verified):** Grok CLI 0.2.x (user-guide + local `~/.grok`)  
-**Capability level (this PR):** Partial adapter → Verified assets + sessions + HTML render path  
+**Date:** 2026-08-02
+**Host id:** `grok`
+**Host version (verified):** Grok CLI 0.2.x (user-guide + local `~/.grok`)
+**Capability level (this PR):** Partial adapter → Verified assets + sessions + HTML render path
 **Non-goals:** Grok marketplace packaging into public npm shell; Canvas mode; reading `auth.json` secrets; claiming full Quickstart until native install smoke is recorded.
 
 ## Support slices
@@ -33,6 +33,20 @@
 
 ### Workspace qualification
 
+'
+    )
+# add notes section if missing
+if 'updates.jsonl is authoritative' not in t:
+    t = t.replace(
+        '### Privacy
+',
+        - `updates.jsonl` is the authoritative conversation log; `chat_history.jsonl` is only used when updates are missing (never both).
+- Terminal tool results require an explicit terminal status (`completed`/`failed`/…); progress and status-less `tool_call_update` stay metadata.
+- Model usage comes from `turn_completed.usage` on `_x.ai/session/update` records. `signals.contextTokensUsed` is context occupancy, not total spend.
+- When `encodeURIComponent(cwd)` exceeds 255 bytes, Grok uses a slug+hash group directory and stores the original path in `.cwd`; discovery matches both forms.
+
+### Privacy
+
 - Prefer `summary.json` → `info.cwd` (or equivalent) matched via existing workspace-match helpers.
 - Session group directory name is `encodeURIComponent(absoluteCwd)` (e.g. `/Users/work` → `%2FUsers%2Fwork`).
 - Foreign-workspace sessions never enter facts for a report.
@@ -58,8 +72,8 @@
 ## Smoke (local)
 
 ```bash
-node scripts/session-analysis/analyzer.mjs sources --platform grok --workspace <path>
-node scripts/agent-customize/cli.mjs inventory --provider grok --workspace <path>
+node scripts/session-analysis.mjs sources --platform grok --workspace <path>
+node scripts/better-harness.mjs agent-customize inventory --provider grok --workspace <path>
 node scripts/better-harness.mjs harness evidence-bundle --platform grok --workspace <path> --depth quick --format json
 ```
 

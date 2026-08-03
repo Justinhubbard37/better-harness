@@ -2396,7 +2396,8 @@ async function makeGrokFixture() {
     },
   });
 
-  const pluginRoot = path.join(grokHome, "installed-plugins", "sample-plugin");
+  // Prefer native ~/.grok/plugins discovery path (also still accept installed-plugins).
+  const pluginRoot = path.join(grokHome, "plugins", "sample-plugin");
   await writeJson(path.join(pluginRoot, "plugin.json"), {
     name: "sample-plugin",
     displayName: "Sample Plugin",
@@ -2410,6 +2411,14 @@ async function makeGrokFixture() {
   await writeText(
     path.join(workspace, ".grok", "skills", "project-flow", "SKILL.md"),
     "---\nname: project-flow\ndescription: Project Grok workflow.\n---\n",
+  );
+  await writeText(
+    path.join(workspace, ".grok", "config.toml"),
+    [
+      '[mcp_servers.project_docs]',
+      'command = "npx"',
+      "",
+    ].join("\n"),
   );
   await writeText(
     path.join(workspace, ".agents", "skills", "shared-standard", "SKILL.md"),
@@ -2433,8 +2442,9 @@ test("collectAgentCustomizeInventory returns Grok skills, MCP, hooks, and instal
     assert.equal(inventory.grokHome, fixture.grokHome);
     assert.equal(inventory.plugins.length, 1);
     assert.equal(inventory.plugins[0].name, "sample-plugin");
-    assert.equal(inventory.plugins[0].installMatch, "grok-installed-plugins-dir");
+    assert.equal(inventory.plugins[0].installMatch, "grok-plugins-dir");
     assert.deepEqual(inventory.plugins[0].skills.map((skill) => skill.name), ["sample-skill"]);
+    assert.equal(inventory.diagnostics.installedPluginState, "grok-plugins-dirs");
 
     assert.ok(
       filterManageItems(inventory, { tab: "skills", scopeKind: "user" })
@@ -2451,6 +2461,10 @@ test("collectAgentCustomizeInventory returns Grok skills, MCP, hooks, and instal
     assert.ok(
       filterManageItems(inventory, { tab: "mcps", scopeKind: "user" })
         .some((item) => item.name === "docs" && item.enabled !== false),
+    );
+    assert.ok(
+      filterManageItems(inventory, { tab: "mcps", scopeKind: "project" })
+        .some((item) => item.name === "project_docs"),
     );
     const disabled = filterManageItems(inventory, { tab: "mcps", scopeKind: "user" })
       .find((item) => item.name === "disabled_search");

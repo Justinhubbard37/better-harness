@@ -62,18 +62,54 @@ function finiteNumber(...values) {
   return values.find((value) => typeof value === "number" && Number.isFinite(value));
 }
 
+/**
+ * signals.json holds session counters and context-window occupancy, not
+ * per-turn accounting. Never treat contextTokensUsed as totalTokens.
+ * Prefer turn_completed.usage from updates.jsonl for model usage.
+ */
 function normalizeUsageFromSignals(signals) {
   if (!signals || typeof signals !== "object") return null;
   const observed = {};
   for (const [key, value] of [
     ["inputTokens", finiteNumber(signals.inputTokens, signals.input_tokens, signals.promptTokens)],
     ["outputTokens", finiteNumber(signals.outputTokens, signals.output_tokens, signals.completionTokens)],
-    ["totalTokens", finiteNumber(signals.totalTokens, signals.total_tokens, signals.contextTokensUsed)],
+    // Explicit totals only — contextTokensUsed is window occupancy, not spend.
+    ["totalTokens", finiteNumber(signals.totalTokens, signals.total_tokens)],
   ]) {
     if (value !== undefined) observed[key] = value;
   }
   return Object.keys(observed).length > 0 ? observed : null;
 }
+
+function normalizeUsageFromTurn(usage) {
+  if (!usage || typeof usage !== "object") return null;
+  const observed = {};
+  for (const [key, value] of [
+    ["inputTokens", finiteNumber(usage.inputTokens, usage.input_tokens, usage.promptTokens)],
+    ["outputTokens", finiteNumber(usage.outputTokens, usage.output_tokens, usage.completionTokens)],
+    ["totalTokens", finiteNumber(usage.totalTokens, usage.total_tokens)],
+    ["cacheReadInputTokens", finiteNumber(usage.cachedReadTokens, usage.cacheReadInputTokens, usage.cache_read_input_tokens)],
+  ]) {
+    if (value !== undefined) observed[key] = value;
+  }
+  return Object.keys(observed).length > 0 ? observed : null;
+}
+
+function toolStatusOf(raw, update) {
+  const candidates = [
+    update?.status,
+    update?.state,
+    raw?.params?._meta?.updateParams?.status,
+    update?._meta?.status,
+  ];
+  for (const value of candidates) {
+    if (value == null || value === "") continue;
+    return String(value).toLowerCase();
+  }
+  return "";
+}
+
+const TERMINAL_TOOL_STATUSES = new Set(["completed", "failed", "error", "cancelled", "canceled"]);
 
 function inferTimestamp(raw) {
   const ts = raw?.timestamp ?? raw?.params?.update?._meta?.agentTimestampMs ?? null;
@@ -101,8 +137,9 @@ function updatesRecordToEvents(raw, sourceRef, options = {}) {
   const update = raw?.params?.update ?? raw?.update ?? null;
   const sessionUpdate = update?.sessionUpdate ?? update?.type ?? null;
   const events = [];
+  const isSessionUpdate = method === "session/update" || method === "_x.ai/session/update";
 
-  if (method === "session/update" && sessionUpdate) {
+  if (isSessionUpdate && sessionUpdate) {
     if (sessionUpdate === "user_message_chunk" || sessionUpdate === "user_message") {
       const text = update?.content?.text ?? update?.text ?? "";
       const content = typeof text === "string" ? text : "";
@@ -135,41 +172,87 @@ function updatesRecordToEvents(raw, sourceRef, options = {}) {
       });
       return events;
     }
-    if (sessionUpdate === "tool_call" || sessionUpdate === "tool_call_update") {
-      const toolName = update?.toolName ?? update?.name ?? update?.title ?? "unknown-tool";
-      const status = String(update?.status ?? update?.state ?? "").toLowerCase();
-      const isResult = sessionUpdate === "tool_call_update"
-        || ["completed", "failed", "error", "cancelled", "canceled"].includes(status);
-      if (isResult) {
-        const success = !["failed", "error", "cancelled", "canceled"].includes(status);
-        const event = {
+    if (sessionUpdate === "tool_call") {
+      const toolName = update?.toolName
+        ?? update?.name
+        ?? update?._meta?.["x.ai/tool"]?.name
+        ?? update?.title
+        ?? "unknown-tool";
+      events.push({
+        ...base,
+        type: "tool.call",
+        category: "tool",
+        lifecyclePhase: "request",
+        toolName,
+        toolInvocationId: update?.toolCallId ?? update?.id ?? null,
+        evidenceRef: evidenceRef(sourceRef, "tool.call"),
+        summary: `${toolName} request`,
+      });
+      return events;
+    }
+    if (sessionUpdate === "tool_call_update") {
+      const toolName = update?.toolName
+        ?? update?.name
+        ?? update?._meta?.["x.ai/tool"]?.name
+        ?? update?.title
+        ?? "unknown-tool";
+      const status = toolStatusOf(raw, update);
+      // Progress / status-less updates are not terminal results (Grok 0.2.x).
+      if (!TERMINAL_TOOL_STATUSES.has(status)) {
+        events.push({
           ...base,
-          type: "tool.result",
-          category: "tool",
-          lifecyclePhase: "result",
+          type: "metadata.tool_call_update",
+          category: "metadata",
           toolName,
           toolInvocationId: update?.toolCallId ?? update?.id ?? null,
-          success,
-          hasError: !success,
-          evidenceRef: evidenceRef(sourceRef, "tool.result"),
-          summary: success ? "tool result" : `tool result ${status || "failed"}`,
-        };
-        const rawResult = update?.content ?? update?.result ?? update?.output ?? null;
-        if (rawResult != null) {
-          const facts = parseResultFacts(String(typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult)).slice(-8_192));
-          if (facts) event.resultFacts = facts;
-        }
-        events.push(event);
+          evidenceRef: evidenceRef(sourceRef, "metadata.tool_call_update"),
+          summary: status ? `tool update ${status}` : "tool update progress",
+        });
+        return events;
+      }
+      const success = !["failed", "error", "cancelled", "canceled"].includes(status);
+      const event = {
+        ...base,
+        type: "tool.result",
+        category: "tool",
+        lifecyclePhase: "result",
+        toolName,
+        toolInvocationId: update?.toolCallId ?? update?.id ?? null,
+        success,
+        hasError: !success,
+        evidenceRef: evidenceRef(sourceRef, "tool.result"),
+        summary: success ? "tool result" : `tool result ${status}`,
+      };
+      const rawResult = update?.content ?? update?.result ?? update?.output ?? null;
+      if (rawResult != null) {
+        const facts = parseResultFacts(String(typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult)).slice(-8_192));
+        if (facts) event.resultFacts = facts;
+      }
+      events.push(event);
+      return events;
+    }
+    if (sessionUpdate === "turn_completed") {
+      const usage = normalizeUsageFromTurn(update?.usage);
+      if (usage) {
+        events.push({
+          ...base,
+          type: "model.response.completed",
+          category: "model",
+          modelUsage: usage,
+          usageFieldsObserved: true,
+          evidenceRef: evidenceRef(sourceRef, "model.response.completed"),
+          summary: "Grok turn_completed usage",
+          model: update?.usage?.modelUsage
+            ? Object.keys(update.usage.modelUsage)[0] ?? null
+            : null,
+        });
       } else {
         events.push({
           ...base,
-          type: "tool.call",
-          category: "tool",
-          lifecyclePhase: "request",
-          toolName,
-          toolInvocationId: update?.toolCallId ?? update?.id ?? null,
-          evidenceRef: evidenceRef(sourceRef, "tool.call"),
-          summary: `${toolName} request`,
+          type: "metadata.turn_completed",
+          category: "metadata",
+          evidenceRef: evidenceRef(sourceRef, "metadata.turn_completed"),
+          summary: update?.stop_reason || "turn_completed",
         });
       }
       return events;
@@ -290,6 +373,41 @@ async function listEncodedSessionGroups(sessionsRoot, encodedNames) {
     .map((entry) => path.join(sessionsRoot, entry.name));
 }
 
+/**
+ * Match session groups by exact encodeURIComponent(cwd) name, or by the
+ * long-path form: slug+hash group with a `.cwd` file holding the original path
+ * when encodeURIComponent(cwd) exceeds 255 bytes (Grok 0.2.x docs).
+ */
+async function listMatchingSessionGroups(sessionsRoot, scope) {
+  const encodedWanted = new Set(scope._encodedGroupNames ?? []);
+  let entries;
+  try {
+    entries = await readdir(sessionsRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const groups = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const groupPath = path.join(sessionsRoot, entry.name);
+    if (encodedWanted.has(entry.name)) {
+      groups.push(groupPath);
+      continue;
+    }
+    const cwdMarker = path.join(groupPath, ".cwd");
+    if (!(await pathExists(cwdMarker))) continue;
+    try {
+      const recorded = (await readFile(cwdMarker, "utf8")).trim();
+      if (recorded && isScopedWorkspaceMatch(recorded, scope)) {
+        groups.push(groupPath);
+      }
+    } catch {
+      // ignore unreadable markers
+    }
+  }
+  return groups;
+}
+
 export class GrokSessionAnalyzer extends SessionAnalyzer {
   currentSessionId() {
     return process.env.GROK_SESSION_ID ?? null;
@@ -325,7 +443,7 @@ export class GrokSessionAnalyzer extends SessionAnalyzer {
   }
 
   async discoverSourceRoots(scope) {
-    const matching = await listEncodedSessionGroups(scope.sessionsDir, scope._encodedGroupNames);
+    const matching = await listMatchingSessionGroups(scope.sessionsDir, scope);
     return [{
       id: "grok-sessions",
       kind: "grok-session-dir",
@@ -344,13 +462,22 @@ export class GrokSessionAnalyzer extends SessionAnalyzer {
     const sessions = new Map();
     const root = roots.find((item) => item.kind === "grok-session-dir");
     if (!root) return [];
-    const groups = await listEncodedSessionGroups(scope.sessionsDir, scope._encodedGroupNames);
+    const groups = await listMatchingSessionGroups(scope.sessionsDir, scope);
     const seen = new Set();
     for (const groupPath of groups) {
       let realGroup;
       try { realGroup = realpathSync.native(groupPath); } catch { realGroup = path.resolve(groupPath); }
       if (seen.has(realGroup)) continue;
       seen.add(realGroup);
+      let groupCwdFromMarker = null;
+      try {
+        const marker = path.join(groupPath, ".cwd");
+        if (await pathExists(marker)) {
+          groupCwdFromMarker = (await readFile(marker, "utf8")).trim() || null;
+        }
+      } catch {
+        groupCwdFromMarker = null;
+      }
       let sessionDirs;
       try {
         sessionDirs = await readdir(groupPath, { withFileTypes: true });
@@ -367,8 +494,8 @@ export class GrokSessionAnalyzer extends SessionAnalyzer {
           ?? summary?.cwd
           ?? (typeof summary?.info === "object" ? summary.info.cwd : null)
           ?? null;
-        // Prefer summary cwd; fall back to decoding the group directory name.
-        let qualifiedCwd = cwd;
+        // Prefer summary cwd; then .cwd marker (long-path groups); then decode group name.
+        let qualifiedCwd = cwd ?? groupCwdFromMarker;
         if (!qualifiedCwd) {
           try {
             qualifiedCwd = decodeURIComponent(path.basename(groupPath));
@@ -384,7 +511,8 @@ export class GrokSessionAnalyzer extends SessionAnalyzer {
         const updatesPath = path.join(sessionPath, "updates.jsonl");
         const historyPath = path.join(sessionPath, "chat_history.jsonl");
         const signalsPath = path.join(sessionPath, "signals.json");
-        if (await pathExists(updatesPath)) {
+        const hasUpdates = await pathExists(updatesPath);
+        if (hasUpdates) {
           addRef(sessions, sessionId, scope.workspace, {
             kind: "grok-updates-jsonl",
             role: "session-transcript",
@@ -393,11 +521,11 @@ export class GrokSessionAnalyzer extends SessionAnalyzer {
             lastSeen,
             cwd: qualifiedCwd,
           });
-        }
-        if (await pathExists(historyPath)) {
+        } else if (await pathExists(historyPath)) {
+          // updates.jsonl is authoritative; only fall back to chat_history when missing.
           addRef(sessions, sessionId, scope.workspace, {
             kind: "grok-chat-history-jsonl",
-            role: "session-transcript-secondary",
+            role: "session-transcript",
             path: historyPath,
             firstSeen,
             lastSeen,
@@ -407,7 +535,7 @@ export class GrokSessionAnalyzer extends SessionAnalyzer {
         if (await pathExists(signalsPath)) {
           addRef(sessions, sessionId, scope.workspace, {
             kind: "grok-signals-json",
-            role: "session-usage",
+            role: "session-metadata",
             path: signalsPath,
             firstSeen,
             lastSeen,
@@ -462,6 +590,9 @@ export class GrokSessionAnalyzer extends SessionAnalyzer {
       }
       if (ref.kind === "grok-signals-json") {
         const signals = await readJsonSafe(ref.path);
+        // Prefer turn_completed usage from updates.jsonl. signals.json is
+        // counters/context occupancy; only emit usage when explicit token
+        // accounting fields exist (never contextTokensUsed as total).
         const usage = normalizeUsageFromSignals(signals);
         if (usage && !usageEmitted) {
           usageEmitted = true;
@@ -478,8 +609,19 @@ export class GrokSessionAnalyzer extends SessionAnalyzer {
             evidenceRef: evidenceRef({ ...ref, sessionId: session.sessionId }, "model.response.completed"),
             summary: "Grok session signals usage",
           });
+        } else if (signals && typeof signals.contextTokensUsed === "number") {
+          events.push({
+            sessionId: session.sessionId,
+            timestamp: normalizeTimestamp(session.lastSeen),
+            sourceKind: ref.kind,
+            planningScope: "workspace",
+            cwd: identityCwd ?? ref.cwd ?? null,
+            type: "metadata.context_window",
+            category: "metadata",
+            evidenceRef: evidenceRef({ ...ref, sessionId: session.sessionId }, "metadata.context_window"),
+            summary: `context tokens used ${signals.contextTokensUsed}`,
+          });
         }
-        // Missing or empty signals → leave usage unobserved (do not invent zeros).
         continue;
       }
       if (ref.kind === "grok-summary-json") {
