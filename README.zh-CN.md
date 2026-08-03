@@ -38,7 +38,7 @@
 [公开宿主适配矩阵](docs/docs/hosts/adapter-matrix.md)。
 
 Better Harness 会将行为断言限定在相关的任务过程片段（Task Episode）及其周边项目机制内。
-Qoder 与 Cursor 生成宿主原生 Canvas 报告；Claude Code、Codex、Qwen Code 和 GitHub Copilot 生成自包含的 HTML 报告及配套 Markdown。
+Qoder 与 Cursor 生成宿主原生 Canvas 报告；Claude Code、Codex、Qwen Code、GitHub Copilot 和 Kimi Code 生成自包含的 HTML 报告及配套 Markdown。
 缺失或不完整的证据会被明确标注。有关当前覆盖范围和输出差异，请参阅
 [宿主适配器矩阵](docs/adapters/README.md)。
 
@@ -346,6 +346,31 @@ Pi 通过 `package.json` 中的 `pi` manifest 发现 `better-harness` Skill 和
 Pi 默认在仓库的 `.pi/better-harness` 报告根目录下生成自包含的 `report.html`
 及配套的 `report.md` 和 `findings.json`。Pi 会话证据读自
 `~/.pi/agent/sessions/` 下与工作区匹配的 JSONL 会话记录；缺失的证据会被明确标注而不会被推断。
+
+### Kimi Code
+
+将本仓库作为 Kimi Code 插件安装：
+
+```text
+/plugins install https://github.com/QoderAI/better-harness
+```
+
+或在本地检出后使用 `/plugins install <仓库路径>`。插件按用户安装并对所有
+项目生效；安装后请运行 `/reload` 或启动新会话。
+
+Kimi Code 通过 `.kimi-plugin/plugin.json` manifest 发现 `better-harness`
+Skill。不使用插件管理器也可以手动安装：将本仓库的 `skills/better-harness`
+目录复制或软链到 `~/.kimi-code/skills/`（所有项目）或
+`<仓库>/.kimi-code/skills/`（仅当前仓库）。在需要审查的仓库中启动新的
+Kimi Code 会话，运行报告提示词：
+
+```text
+/skill:better-harness 审查此项目的 AI 编码工作流并生成报告
+```
+
+Kimi Code 生成自包含的 `report.html` 及配套的 `report.md` 和
+`findings.json`。Kimi Code 会话证据读自 `~/.kimi-code/sessions/` 下与
+工作区匹配的 wire 会话记录；缺失的证据会被明确标注而不会被推断。
 
 <a id="develop-and-package-from-source"></a>
 

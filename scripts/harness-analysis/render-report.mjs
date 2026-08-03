@@ -45,7 +45,7 @@ function filesystemPathIdentity(value) {
 // test/harness-report-render-cli.test.mjs guards it against the session
 // platform registry in scripts/session-analysis/analyzer.mjs.
 export const RENDER_REPORT_PLATFORMS = Object.freeze([
-  "qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "workbuddy", "grok",
+  "qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "kimi", "workbuddy", "grok",
 ]);
 
 // Each Canvas mode owns its own analyzer companion filename so the two routes

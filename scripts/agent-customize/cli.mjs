@@ -5,12 +5,12 @@ import { collectAgentCustomizeInventory, filterManageItems, groupManageItems } f
 
 function usage() {
   return [
-    "Usage: better-harness agent-customize [inventory|manage] --provider <cursor|qoder|codex|claude|qwen|copilot|pi|workbuddy|grok> [--workspace <path>]",
+    "Usage: better-harness agent-customize [inventory|manage] --provider <cursor|qoder|codex|claude|qwen|copilot|pi|kimi|workbuddy|grok> [--workspace <path>]",
     "       better-harness agent-customize manage --provider <provider> [--tab <tab>] [--query <text>] [--scope <scope>] [--group-by <key>]",
     "",
     "Collect configured agent-customize inventory for one provider as JSON.",
     "Provider home overrides: --cursor-home, --qoder-home, --codex-home, --claude-home,",
-    "--qwen-home, --copilot-home, --pi-home, --workbuddy-home, --grok-home, --claude-state, --codex-app-path, --qoder-shared-client-cache-root.",
+    "--qwen-home, --copilot-home, --pi-home, --kimi-home, --workbuddy-home, --grok-home, --claude-state, --codex-app-path, --qoder-shared-client-cache-root.",
     "",
   ].join("\n");
 }
@@ -35,6 +35,7 @@ function summarize(inventory, options) {
     workbuddyHome: inventory.workbuddyHome,
     grokHome: inventory.grokHome,
     claudeStatePath: inventory.claudeStatePath,
+    kimiHome: inventory.kimiHome,
     codexAppPath: inventory.codexAppPath,
     sharedClientCacheRoot: inventory.sharedClientCacheRoot,
     workspace: inventory.workspace,
@@ -81,6 +82,7 @@ async function main() {
     workbuddyHome: options["workbuddy-home"],
     grokHome: options["grok-home"],
     claudeStatePath: options["claude-state"] ?? options["claude-state-path"],
+    kimiHome: options["kimi-home"],
     codexAppPath: options["codex-app-path"],
     qoderSharedClientCacheRoot: options["qoder-shared-client-cache-root"] ?? options["shared-client-cache-root"],
     workspace: options.workspace,

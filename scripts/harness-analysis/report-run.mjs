@@ -19,7 +19,7 @@ an explicit Qoder Canvas output is requested.
 
 Options:
   --workspace <path>       Target workspace (required)
-  --platform <name>        qoder, codex, claude, cursor, qwen, copilot, pi, workbuddy, or grok (default: qoder)
+  --platform <name>        qoder, codex, claude, cursor, qwen, copilot, pi, kimi, workbuddy, or grok (default: qoder)
   --language <locale>      en or zh-CN (default: en)
   --since <ISO timestamp>  Include sessions at or after the frozen window start
   --until <ISO timestamp>  Include sessions at or before the frozen window end
@@ -34,7 +34,7 @@ function clone(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
 
-const REPORT_PLATFORMS = ["qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "workbuddy", "grok"];
+const REPORT_PLATFORMS = ["qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "kimi", "workbuddy", "grok"];
 
 function reportPlatform(value = "qoder") {
   const platform = String(value || "qoder").toLowerCase();
@@ -58,7 +58,7 @@ function flagEnabled(value) {
 function assertCliOptions(options) {
   const allowed = new Set([
     "workspace", "platform", "language", "since", "until", "format", "canvas-out", "replace-canvas", "include-global-capabilities",
-    "qoder-home", "codex-home", "claude-home", "cursor-home", "qwen-home", "copilot-home", "pi-home", "workbuddy-home", "grok-home",
+    "qoder-home", "codex-home", "claude-home", "cursor-home", "qwen-home", "copilot-home", "pi-home", "kimi-home", "workbuddy-home", "grok-home",
   ]);
   const positional = Array.isArray(options._) ? options._ : [];
   const unknown = Object.keys(options).filter((key) => key !== "_" && !allowed.has(key));
@@ -170,6 +170,7 @@ export async function analyzeHarnessEvidence(options = {}) {
         qwenHome: options["qwen-home"],
         copilotHome: options["copilot-home"],
         piHome: options["pi-home"],
+        kimiHome: options["kimi-home"],
         sessionPopulation: options.sessionPopulation,
         workbuddyHome: options["workbuddy-home"],
         grokHome: options["grok-home"],

@@ -384,7 +384,7 @@ async function collectCodexMemories(scope) {
 }
 
 function makeSessionSourceHints(scope) {
-  if (!["qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "workbuddy", "grok"].includes(scope.platform)) {
+  if (!["qoder", "codex", "claude", "cursor", "qwen", "copilot", "pi", "kimi", "workbuddy", "grok"].includes(scope.platform)) {
     return [];
   }
   return [
@@ -455,6 +455,7 @@ function providerScope(options = {}, platform = options.platform ?? "qoder") {
     qwenHome: options.qwenHome ?? options["qwen-home"],
     copilotHome: options.copilotHome ?? options["copilot-home"],
     piHome: options.piHome ?? options["pi-home"],
+    kimiHome: options.kimiHome ?? options["kimi-home"],
     workbuddyHome: options.workbuddyHome ?? options["workbuddy-home"],
     grokHome: options.grokHome ?? options["grok-home"],
   };
@@ -551,7 +552,7 @@ function customizeSurface({ provider, group, scope, type, label, basePath, items
 async function buildConfiguredAssetSurfaces(inventory, scope) {
   const provider = scope.platform;
   const projectBase = scope.workspace;
-  const userBase = inventory.cursorHome ?? inventory.qoderHome ?? inventory.codexHome ?? inventory.claudeHome ?? inventory.qwenHome ?? inventory.copilotHome ?? inventory.piHome ?? inventory.workbuddyHome ?? inventory.grokHome;
+  const userBase = inventory.cursorHome ?? inventory.qoderHome ?? inventory.codexHome ?? inventory.claudeHome ?? inventory.qwenHome ?? inventory.copilotHome ?? inventory.piHome ?? inventory.kimiHome ?? inventory.workbuddyHome ?? inventory.grokHome;
   const surfaceTypes = [
     ["skills", "skills", "Skills"],
     ["subagents", "agents", "Agents"],
@@ -673,6 +674,7 @@ export async function collectProviderInventory(options = {}) {
     qwenHome: scope.qwenHome,
     copilotHome: scope.copilotHome,
     piHome: scope.piHome,
+    kimiHome: scope.kimiHome,
     workbuddyHome: scope.workbuddyHome,
     grokHome: scope.grokHome,
     includeUserHome: scope.includeUserHome,
@@ -928,12 +930,12 @@ export function formatInventoryMarkdown(result) {
   return `${lines.join("\n")}\n`;
 }
 
-const USAGE = `Usage: better-harness coding-agent-practices inventory [qoder|codex|claude|cursor|qwen|copilot|pi|workbuddy|grok] [options]
+const USAGE = `Usage: better-harness coding-agent-practices inventory [qoder|codex|claude|cursor|qwen|copilot|pi|kimi|workbuddy|grok] [options]
 
 Inspect configured coding-agent assets and practice evidence for one platform.
 
 Options:
-  --platform <qoder|codex|claude|cursor|qwen|copilot|pi|workbuddy|grok>  Select the platform (default: qoder; may also be the first positional)
+  --platform <qoder|codex|claude|cursor|qwen|copilot|pi|kimi|workbuddy|grok>  Select the platform (default: qoder; may also be the first positional)
   --workspace <dir>                Workspace root to inspect (default: current directory)
   --json                           Emit JSON (default)
   --format <json|markdown>         Output format
@@ -941,6 +943,7 @@ Options:
   --include-memories               Include Qoder or Codex memory metadata
   --claude-home <dir>              Claude config root override
   --claude-state <file>            Claude state-file override
+  --kimi-home <dir>                Kimi Code data root override
   -h, --help                       Print this help
 `;
 
@@ -955,9 +958,9 @@ async function runCli(argv) {
   }
   const { command, options } = parseArgs(argv);
   const platform = options.platform ?? command ?? "qoder";
-  if (!["cursor", "qoder", "codex", "claude", "qwen", "copilot", "pi", "workbuddy", "grok"].includes(platform)) {
+  if (!["cursor", "qoder", "codex", "claude", "qwen", "copilot", "pi", "kimi", "workbuddy", "grok"].includes(platform)) {
     throw new Error(
-      `Unsupported platform: ${platform}. Supported platforms: cursor, qoder, codex, claude, qwen, copilot, pi, workbuddy, grok.\n\n${USAGE}`,
+      `Unsupported platform: ${platform}. Supported platforms: cursor, qoder, codex, claude, qwen, copilot, pi, kimi, workbuddy, grok.\n\n${USAGE}`,
     );
   }
   const result = platform === "qoder"

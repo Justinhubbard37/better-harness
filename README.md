@@ -40,7 +40,7 @@ for their explicit boundaries.
 
 Better Harness scopes behavior claims to relevant Task Episodes and the
 surrounding project mechanisms. Qoder and Cursor produce host-native Canvas
-reports; Claude Code, Codex, Qwen Code, and GitHub Copilot produce
+reports; Claude Code, Codex, Qwen Code, GitHub Copilot, and Kimi Code produce
 self-contained HTML with paired Markdown. Missing or partial evidence remains
 explicit. See the [Host Adapter Matrix](docs/adapters/README.md) for current
 coverage and output differences.
@@ -368,6 +368,34 @@ Pi defaults to a self-contained `report.html` with paired `report.md` and
 session evidence is read from workspace-matching JSONL transcripts under
 `~/.pi/agent/sessions/`; missing evidence stays explicit rather than being
 inferred.
+
+### Kimi Code
+
+Install the repository as a Kimi Code plugin:
+
+```text
+/plugins install https://github.com/QoderAI/better-harness
+```
+
+Or install from a local checkout with `/plugins install <path-to-repository>`.
+Plugins install per user and apply to every project; run `/reload` or start a
+new session after installing.
+
+Kimi Code discovers the `better-harness` skill through the
+`.kimi-plugin/plugin.json` manifest. A manual install without the plugin
+manager also works: copy or symlink this repository's `skills/better-harness`
+directory into `~/.kimi-code/skills/` (all projects) or
+`<repository>/.kimi-code/skills/` (one repository). Start a new Kimi Code
+session in the repository you want to review and run the report prompt:
+
+```text
+/skill:better-harness review this project's AI coding workflow and generate a report
+```
+
+Kimi Code produces a self-contained `report.html` with paired `report.md` and
+`findings.json`. Session evidence is read from workspace-matching wire
+transcripts under `~/.kimi-code/sessions/`; missing evidence stays explicit
+rather than being inferred.
 
 ## Develop and package from source
 

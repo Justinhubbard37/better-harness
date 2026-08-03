@@ -133,6 +133,15 @@ function parseArgs(argv) {
       options.cursorHome = arg.slice("--cursor-home=".length);
       continue;
     }
+    if (arg === "--kimi-home") {
+      options.kimiHome = argv[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--kimi-home=")) {
+      options.kimiHome = arg.slice("--kimi-home=".length);
+      continue;
+    }
     if (arg === "--max-reference-depth") {
       options.maxReferenceDepth = argv[index + 1];
       index += 1;
@@ -167,7 +176,7 @@ function usage() {
   return [
     "Usage: better-harness agent-lint [--workspace <path>] [--profile agents-md-review|agent-assets-review] [--json|--format markdown]",
     "       better-harness agent-lint --workspace-root <dir> --scan-children --profile agents-md-review",
-    "       better-harness agent-lint --profile agent-assets-review --provider <qoder|codex|claude|cursor|qwen|copilot|pi|workbuddy|grok> [--skill <path>]",
+    "       better-harness agent-lint --profile agent-assets-review --provider <qoder|codex|claude|cursor|qwen|copilot|pi|kimi|workbuddy|grok> [--skill <path>]",
     "",
     "Parse agent instruction entrypoints and bounded local Markdown references into review evidence.",
     "",
