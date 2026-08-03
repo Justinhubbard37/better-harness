@@ -1023,6 +1023,68 @@ test("Kimi keeps partial and malformed usage explicit instead of zero-filling", 
   assert.equal(Object.hasOwn(usageEvents[0].modelUsage, "cacheReadInputTokens"), false);
 });
 
+test("Kimi currentSessionId reads KIMI_SESSION_ID and falls back to null", () => {
+  const analyzer = new KimiSessionAnalyzer();
+  const previous = process.env.KIMI_SESSION_ID;
+  try {
+    delete process.env.KIMI_SESSION_ID;
+    assert.equal(analyzer.currentSessionId(), null);
+    process.env.KIMI_SESSION_ID = "session_fixture-current";
+    assert.equal(analyzer.currentSessionId(), "session_fixture-current");
+  } finally {
+    if (previous === undefined) {
+      delete process.env.KIMI_SESSION_ID;
+    } else {
+      process.env.KIMI_SESSION_ID = previous;
+    }
+  }
+});
+
+test("Kimi dedupe keeps a shared tool call id per agent but drops repeats within one agent", async () => {
+  const root = await fixtureRoot("session-kimi-dedupe-agents-");
+  const home = path.join(root, ".kimi-code");
+  const workspace = path.join(root, "workspace", "project");
+  const sessionId = "session_77777777-7777-4777-8777-777777777777";
+  const sessionDir = path.join(home, "sessions", "wd_project_ab12cd34ef56", sessionId);
+  await mkdir(workspace, { recursive: true });
+  await mkdir(home, { recursive: true });
+  await writeFile(path.join(home, "workspaces.json"), JSON.stringify({
+    version: 1,
+    workspaces: { wd_project_ab12cd34ef56: { root: workspace, name: "project" } },
+  }));
+  const toolCall = (uuid, time) => ({
+    type: "context.append_loop_event",
+    event: {
+      type: "tool.call",
+      uuid,
+      toolCallId: "tool-1",
+      name: "Bash",
+      args: { command: "npm test" },
+    },
+    time,
+  });
+  await writeJsonl(path.join(sessionDir, "agents", "main", "wire.jsonl"), [
+    { type: "metadata", protocol_version: "1.4", created_at: Date.parse("2026-07-20T01:00:00.000Z") },
+    toolCall("main-1", Date.parse("2026-07-20T01:01:00.000Z")),
+    // A repeated record of the same tool call within one agent wire is a
+    // duplicate and must still be deduped.
+    toolCall("main-2", Date.parse("2026-07-20T01:01:01.000Z")),
+  ]);
+  // A subagent wire reusing the same toolCallId is a distinct event.
+  await writeJsonl(path.join(sessionDir, "agents", "helper-1", "wire.jsonl"), [
+    { type: "metadata", protocol_version: "1.4", created_at: Date.parse("2026-07-20T01:00:00.000Z") },
+    toolCall("helper-1", Date.parse("2026-07-20T01:02:00.000Z")),
+  ]);
+
+  const analyzer = new KimiSessionAnalyzer();
+  const discovery = await analyzer.analyze({ command: "sources", workspace, home });
+  const scope = await analyzer.resolveScope({ workspace, home });
+  const events = await analyzer.readSession(discovery.sessions[0], scope, {});
+  const calls = events.filter((event) => event.type === "tool.call");
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls.map((event) => event.agentId).sort(), ["helper-1", "main"]);
+});
+
 test("Pi provider rejects a transcript whose header cwd belongs to another workspace", async () => {
   const root = await fixtureRoot("session-pi-isolation-");
   const home = path.join(root, ".pi", "agent");
@@ -1386,8 +1448,9 @@ test("Kimi provider merges main and subagent wire files and dedupes repeated too
   ]);
   await writeJsonl(path.join(sessionDir, "agents", "researcher", "wire.jsonl"), [
     { type: "metadata", protocol_version: "1.4", created_at: Date.parse("2026-07-20T01:00:00.000Z") },
-    // Same toolInvocationId + lifecyclePhase as the main wire record: dedupeEvents
-    // must drop this duplicate even though it comes from another agent's file.
+    // Same toolInvocationId + lifecyclePhase as the main wire record, but from
+    // another agent's file: tool call ids are only unique per agent, so
+    // dedupeEvents must keep this distinct subagent event.
     {
       type: "context.append_loop_event",
       event: { type: "tool.call", uuid: "tool-1", toolCallId: "tool-1", name: "Bash", args: { command: "npm test" } },
@@ -1417,10 +1480,12 @@ test("Kimi provider merges main and subagent wire files and dedupes repeated too
   const scope = await analyzer.resolveScope({ workspace, home });
   const events = await analyzer.readSession(discovery.sessions[0], scope, { includeCommandText: true });
   const toolCalls = events.filter((event) => event.type === "tool.call");
-  assert.deepEqual(toolCalls.map((event) => event.toolInvocationId), ["tool-1", "tool-2"]);
-  // The surviving tool-1 copy is the first occurrence, from the main agent wire file.
+  // The subagent copy of tool-1 survives: dedupe keys include the agent id.
+  assert.deepEqual(toolCalls.map((event) => event.toolInvocationId), ["tool-1", "tool-1", "tool-2"]);
+  assert.deepEqual(toolCalls.map((event) => event.agentId), ["main", "researcher", "researcher"]);
   assert.equal(toolCalls[0].isSubagent, false);
   assert.equal(toolCalls[1].isSubagent, true);
+  assert.equal(toolCalls[2].isSubagent, true);
   assert.equal(events.filter((event) => event.type === "tool.result").length, 1);
   assert.equal(events.filter((event) => event.type === "metadata.wire").length, 2);
 });

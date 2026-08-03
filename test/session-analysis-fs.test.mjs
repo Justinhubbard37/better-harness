@@ -98,3 +98,18 @@ test("collectSkillFiles discovers skills installed via symlinks", async () => {
     assert.equal(items[0].name, "linked-skill");
   });
 });
+
+test("collectSkillFiles drops plugin skills whose realpath escapes the component root", async () => {
+  await withTempDir(async (root) => {
+    const pluginRoot = path.join(root, "plugin");
+    const skillsRoot = path.join(pluginRoot, "skills");
+    await writeSkill(path.join(skillsRoot, "inside-skill"), "inside");
+    // A symlink inside the plugin component root points at a skill outside it.
+    const external = path.join(root, "outside-plugin-root", "external-skill");
+    await writeSkill(external, "external");
+    await symlink(external, path.join(skillsRoot, "linked-outside"), SYMLINK_TYPE);
+
+    const items = await collectSkillFiles(skillsRoot, "plugin", "Plugin", pluginRoot);
+    assert.deepEqual(items.map((item) => item.name), ["inside-skill"]);
+  });
+});
