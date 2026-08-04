@@ -119,7 +119,7 @@ the skill file as a thin track selector, and register the new domain in the
   touched or added files are verified Han-script-free.
 - Design fix applied during implementation: an earlier draft linked
   `references/bootstrap/README.md` from the `references/README.md` switchboard
-  and deep-linked `../project-harness/agent-verify-loop.md` from
+  and deep-linked `references/project-harness/agent-verify-loop.md` from
   `spec-structure.md`. Both pulled cross-domain subtrees into the English-first
   skill chain. The domain README now stays outside that chain, matching how
   `references/loop-engineering/README.md` behaves, and no switchboard entry names

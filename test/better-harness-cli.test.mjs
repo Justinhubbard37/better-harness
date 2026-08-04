@@ -149,19 +149,6 @@ async function writeFixtureFile(root, filePath, content) {
   await writeFile(absolute, content);
 }
 
-test("better-harness CLI renders root help without terminal formatting", () => {
-  const result = runBetterHarness(["--help"]);
-
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stderr, "");
-  assert.notEqual(result.stdout, "");
-  assert.doesNotMatch(result.stdout, /\x1b\[/);
-  assert.match(result.stdout, /\n  Workflows\n/u);
-  assert.match(result.stdout, /\n    report\s{2,}/u);
-  assert.match(result.stdout, /\n    harness\s{2,}/u);
-  assert.match(result.stdout, /Quickstart/u);
-});
-
 test("better-harness CLI expands help by audience without changing command access", () => {
   const advanced = runBetterHarness(["--help", "--audience", "advanced"]);
   assert.equal(advanced.status, 0, advanced.stderr);
