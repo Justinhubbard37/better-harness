@@ -28,6 +28,9 @@ acceptance, change safeguards, and recovery boundaries.
 - `observability.md`: diagnostic routes and correlated runtime evidence.
 - `project-overlays.md`: project-type additions to the common evidence model.
 - `design-md-contract.md`: design source-of-truth boundaries.
+- `ui-and-system-drivers.md`: choosing where the agent injects control into
+  the system under verification (D0..D4 drive planes), and the separate
+  selection of drive and observation adapters.
 - `friendly-cli.md`: agent-friendly command contracts.
 - `git-hooks.md`: Git hook lifecycle placement and evidence.
 - `recovery-evidence.md`: rollback and recovery presence, wiring, safe exercise,
@@ -52,6 +55,9 @@ acceptance, change safeguards, and recovery boundaries.
 
 - Use `agent-verify-loop.md` for designing a self-verifying regression harness
   around an agent loop.
+- Use `ui-and-system-drivers.md` when more than one driver class could
+  exercise a UI, desktop, mobile, or terminal case and the injection point
+  must be chosen by claim.
 - Use `review-trigger.md` for recommendation and review-trigger policy.
 - Use `core-change-watch.md` for static project evidence and changed-core
   routing.

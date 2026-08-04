@@ -116,6 +116,12 @@ Use [Verification Environment Design](verification-environment.md) to state the
 verification claim, discover repository-owned seams, keep claim-relevant
 semantics real, and record what the substitute leaves `unobserved`.
 
+When more than one driver class could exercise a UI, desktop, mobile, or
+terminal case — an automation-protocol driver, an attach-mode browser agent,
+an OS input or computer-use loop — use
+[UI and System Drivers](ui-and-system-drivers.md) to pick the injection point
+by claim and record what evidence that choice forfeits.
+
 ### Plane 3 — Judge: one correlation handle drives the whole check
 
 Replace per-target manual comparison with a **parameterized probe**: a single

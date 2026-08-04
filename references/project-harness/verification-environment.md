@@ -147,6 +147,14 @@ and transaction semantics, but not for a managed service's topology, extensions,
 latency, failover, or IAM. A real local browser is real for DOM and origin
 behavior, but not for a payment provider's iframe or device wallet.
 
+For browser and UI claims, how the browser is *driven* is a separate choice
+from how real it is: an attached real-profile browser or an OS-driven user
+session has higher session realism but **lower isolation** than the L3
+isolated real browser, and that inversion is recorded in the case
+`constraints`, not read as a higher rung. Use
+[UI and System Drivers](ui-and-system-drivers.md) to choose the injection
+point and its observation adapter.
+
 ## Fidelity Ladder
 
 Build a ladder rather than one oversized environment. A change climbs only as
