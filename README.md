@@ -159,32 +159,6 @@ each host, except that Qoder CLI can use the version bundled with Qoder Desktop.
 After installing or updating a plugin, start a new session or task so the host
 reloads its plugin inventory.
 
-### Inspect and plan plugin lifecycle changes
-
-The standalone CLI can inspect local Better Harness installation evidence for
-every host without contacting a registry or changing host configuration:
-
-```bash
-better-harness plugin status --host all
-better-harness doctor --platform all
-```
-
-Build a host-specific install, update, or removal plan before using that host's
-native UI or CLI. Plans preserve native steps as typed argv data for deliberate
-external execution; the human view does not turn them into shell command
-strings, and Better Harness does not execute them:
-
-```bash
-better-harness plugin plan install --host qwen --surface cli --scope user
-better-harness plugin verify --host qwen --surface cli
-```
-
-Host differences remain explicit. Qoder Desktop is bundled, Cursor is
-session-only while its native command contract is being reconciled, Pi
-lifecycle commands without current native evidence remain manual or
-unavailable, and WorkBuddy has no managed Better Harness plugin lifecycle
-surface.
-
 ### Claude Code
 
 Register this repository as a Claude Code marketplace:
@@ -355,6 +329,32 @@ Copilot session evidence is supported through workspace-matched Copilot CLI
 transcripts under `~/.copilot/session-state/`. Copilot records no per-response
 token usage, and VS Code Copilot Chat has no supported durable transcript; both
 remain explicit evidence boundaries.
+
+### Inspect and plan plugin lifecycle changes (Beta)
+
+The standalone CLI can inspect local Better Harness installation evidence for
+every host without contacting a registry or changing host configuration:
+
+```bash
+better-harness plugin status --host all
+better-harness doctor --platform all
+```
+
+Build a host-specific install, update, or removal plan before using that host's
+native UI or CLI. Plans preserve native steps as typed argv data for deliberate
+external execution; the human view does not turn them into shell command
+strings, and Better Harness does not execute them:
+
+```bash
+better-harness plugin plan install --host qwen --surface cli --scope user
+better-harness plugin verify --host qwen --surface cli
+```
+
+Host differences remain explicit. Qoder Desktop is bundled, Cursor is
+session-only while its native command contract is being reconciled, Pi
+lifecycle commands without current native evidence remain manual or
+unavailable, and WorkBuddy has no managed Better Harness plugin lifecycle
+surface.
 
 ### More adapters
 
