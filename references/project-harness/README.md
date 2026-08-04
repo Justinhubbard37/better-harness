@@ -20,6 +20,9 @@ acceptance, change safeguards, and recovery boundaries.
 
 ## Owns
 
+- `agent-verify-loop.md`: cross-stack verification-harness framework for
+  self-verifying agent loops (service chains, UI, mini-programs, pipelines,
+  model output).
 - `core-change-watch.md`: project profile, history, core-path, diff, and
   recommended-read evidence.
 - `observability.md`: diagnostic routes and correlated runtime evidence.
@@ -45,6 +48,8 @@ acceptance, change safeguards, and recovery boundaries.
 
 ## Read Next
 
+- Use `agent-verify-loop.md` for designing a self-verifying regression harness
+  around an agent loop.
 - Use `review-trigger.md` for recommendation and review-trigger policy.
 - Use `core-change-watch.md` for static project evidence and changed-core
   routing.
