@@ -67,10 +67,22 @@ test("installation prerequisites and verification paths stay aligned across loca
     assert.match(content, /claude plugin details better-harness@better-harness/u);
     assert.match(content, /codex plugin list --marketplace better-harness/u);
     assert.match(content, /qodercli plugin list/u);
+    assert.match(content, /qwen extensions list/u);
     assert.match(content, /copilot plugin list/u);
     assert.match(content, /copilot skill list/u);
-    assert.doesNotMatch(content, /qwen extensions list/u);
   }
+});
+
+test("Pi single-run guidance keeps temporary loading separate from a persisted install", () => {
+  const matrix = readUtf8("docs", "docs", "hosts", "adapter-matrix.md");
+  const matrixZh = readUtf8(...ZH_DOCS_ROOT, "hosts", "adapter-matrix.md");
+
+  for (const content of [matrix, matrixZh]) {
+    assert.match(content, /pi -e <source>/u);
+    assert.match(content, /cli-session/u);
+  }
+  assert.match(matrix, /one-run `pi -e` activation as the\n?separate `cli-session` session-only surface/u);
+  assert.match(matrixZh, /单次\n?`pi -e` 激活作为独立的 `cli-session` session-only surface/u);
 });
 
 test("troubleshooting is bilingual, safe, linked, and routed through Getting Started", () => {
@@ -91,8 +103,18 @@ test("troubleshooting is bilingual, safe, linked, and routed through Getting Sta
     assert.match(content, /INVALID_CWD/u);
     assert.match(content, /--qoder-home/u);
     assert.match(content, /\.copilot\/better-harness/u);
+    assert.match(content, /qwen extensions list/u);
+    assert.doesNotMatch(content, /--plugin-dir/u);
     assert.doesNotMatch(content, /rm\s+-rf|Remove-Item|del\s+\/s/iu);
   }
+});
+
+test("Cursor adapter guidance does not advertise an unavailable install flag", () => {
+  const adapters = readUtf8("docs", "adapters", "README.md");
+
+  assert.match(adapters, /native `cursor-agent --help` contract check/u);
+  assert.match(adapters, /unavailable install plan/u);
+  assert.doesNotMatch(adapters, /--plugin-dir/u);
 });
 
 test("first-report guidance no longer claims one invocation works for every host", () => {
