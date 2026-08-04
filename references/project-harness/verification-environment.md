@@ -125,6 +125,7 @@ rung that makes the test green.
 | Consumer/provider compatibility | Consumer contract test plus provider verification; provider state explicit | End-to-end workflow |
 | Database, broker, cache, filesystem semantics | Ephemeral real implementation or a compatibility-qualified emulator | Production scale/topology |
 | Browser rendering, storage, origin, accessibility | Isolated real browser with local fixtures; virtualize only external network edges | Third-party/device integration |
+| Core-path completion under degraded runtime capability | A pinned floor profile of the target runtime: constrained network, older engine version, missing platform API, failing native bridge | Behavior at full capability; pixel or layout fidelity |
 | Compiler, debugger, OS, driver, native runtime | Real toolchain and target backend for the affected platform; use synthetic inputs only below that boundary | Other platform variants |
 | Multi-service workflow | Real changed services plus contract-verified peers and real semantic state stores | Full production topology |
 | Performance, races, resilience, security, vendor acceptance | Authorized sandbox/staging or controlled real boundary | Production behavior unless explicitly sampled |
@@ -146,6 +147,15 @@ Use these decision rules:
 and transaction semantics, but not for a managed service's topology, extensions,
 latency, failover, or IAM. A real local browser is real for DOM and origin
 behavior, but not for a payment provider's iframe or device wallet.
+
+Capability degradation is a separate dimension from dependency fidelity: it asks
+how poor the *target runtime* may be, not how real the dependencies are. A floor
+profile is judged on whether the core path still completes — the flow reaches its
+terminal state and the persisted outcome is correct — and explicitly not on
+pixel or layout equality with the full-capability environment. Pin the floor
+(which engine version, which bandwidth and latency, which API absent, which
+bridge failing) in the environment contract, or the case silently re-tests the
+full-capability path.
 
 For browser and UI claims, how the browser is *driven* is a separate choice
 from how real it is: an attached real-profile browser or an OS-driven user

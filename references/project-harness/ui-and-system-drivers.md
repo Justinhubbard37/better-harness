@@ -24,6 +24,8 @@ This reference owns:
   control-plane location, session origin);
 - the D0..D4 drive plane ladder and its trade-off table;
 - the technology-class map behind each plane;
+- the within-plane filter on what failure evidence a driver emits for an agent;
+- the degradation path when a tool boundary makes the chosen plane unreachable;
 - the rule that drive adapters and observation adapters are selected and
   recorded separately; and
 - the shared six-step execution skeleton with per-plane deltas.
@@ -43,6 +45,8 @@ environment contract, oracle independence, or authorization boundaries
   the judging mode is chosen.
 - A review finds screenshot-judged acceptance where structural evidence (DOM,
   accessibility tree, state store) was available one plane lower.
+- A tool boundary blocks the driver the claim asked for, and the case needs a
+  degradation path instead of an unstable automation.
 - A case reuses a real logged-in profile or a running application window, and
   isolation, reset, or parallelism questions surface.
 
@@ -105,6 +109,54 @@ or a closed list.
 | Observation only | Network observation and virtualization | Recording/forwarding proxies, service virtualizers |
 | Observation only | Vision judge | Vision-model screenshot judging against a rubric |
 | Observation only | State oracle | Direct state, table, log, or trace queries |
+
+## Diagnostic Artifacts Are a Second Filter
+
+Drivers inside one plane are not interchangeable for an agent. The plane
+determines what evidence exists *while* the case runs; what the driver emits
+determines whether the agent can localize a break *after* it fails. Filter
+within the plane on that, because it sets the cost of the diagnose step in the
+[Agent Verify Loop](agent-verify-loop.md) post-verdict sequence.
+
+| Failure artifact the driver emits | What the agent can do after a `fail` |
+| --- | --- |
+| Structured step trace: each action with before/after snapshot, network, console | Localize offline from one run; no rerun needed |
+| Recorded replay or video | Useful to a human; an agent can use it only as far as it can address frames or steps programmatically |
+| Machine-readable result report (structured or JUnit-style) | Learn which assertion broke, not why; usually needs one more run |
+| Logs only | Rerun with added instrumentation, repeatedly, and hope the failure reproduces |
+
+Two consequences follow. First, a driver one plane lower that emits a
+structured trace can be the better choice over a higher-plane driver that emits
+only logs, when the claim allows either. Second, an agent should drive a
+task-oriented wrapper command rather than a raw driver API: the wrapper is where
+the trace, the result schema, and the cleanup guarantee live. See
+[Agent-Friendly CLI](friendly-cli.md) for that contract.
+
+## When the Chosen Plane Cannot Be Reached
+
+Tool boundaries are real: vendor devtools may not expose element-level
+automation, signing, account, or store review can gate a device plane, and
+custom-rendered UI may publish no accessibility tree at all. Forcing an unstable
+driver at such a boundary produces oscillating verdicts, which is worse than
+admitting the boundary — a flaky judge teaches the loop to ignore the judge.
+
+Degrade by **changing evidence type**, not by dropping to a lower drive plane
+that shares the same wall. The usual move is to replace element-level UI
+assertions with API and persisted-state assertions, and to hand the remaining
+visual or experiential detail to scheduled human sampling. Record four things
+with the case:
+
+- the evidence class forfeited (for example, element-level interaction proof);
+- the substitute evidence and what it does cover;
+- the owner and cadence of the human sampling that covers the rest; and
+- the decision itself, in whatever decision record the project uses, because a
+  successor will otherwise read the gap as an oversight.
+
+Such a case is **not** wholesale `unobserved`. The substitute evidence carries
+its own verdict for what it checks, and the forfeited part is a named residual
+gap in `constraints`. Recording the whole case as `unobserved` throws away
+evidence that was actually collected; recording it as `pass` without naming the
+gap is a false green.
 
 ## Drive and Observation Are Separate Choices
 
@@ -188,6 +240,10 @@ A drive adapter becomes something an agent runs without prompting when:
 - **Plane by availability:** choosing computer-use or an attach-mode agent
   because it is installed, when the claim needed only D0/D1 structural
   evidence.
+- **Forcing an unstable plane:** insisting on element-level automation at a
+  known tool boundary and living with oscillating verdicts, instead of
+  degrading to another evidence type and recording the forfeited class, the
+  substitute, the human-sampling owner, and the decision.
 - **Realism read as fidelity:** treating a real-profile session as a higher
   fidelity rung instead of recording the isolation loss in `constraints`.
 - **Same-model drive and judge:** the driving model visually approves its own

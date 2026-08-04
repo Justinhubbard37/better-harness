@@ -23,7 +23,9 @@ flowchart LR
   S --> E["Exercise<br/>trigger"]
   E --> J["Judge<br/>probe"]
   J --> V["pass | fail |<br/>unobserved | blocked"]
-  V -- "repaired failure<br/>(human gate)" --> K
+  V -- non-passing --> R["Diagnose + repair<br/>bounded rounds"]
+  R -- rerun same case --> E
+  R -- "repaired failure<br/>(human gate)" --> K
 ```
 
 ## Ownership Boundary
@@ -33,6 +35,8 @@ This reference owns:
 - the four planes of a verify loop and their bootstrap order;
 - the probe verdict domain, the judging modes, and the aggregate-verdict
   rules;
+- the post-verdict diagnose-repair-revalidate sequence, its round bound, and
+  flaky registration;
 - the scenario-family mapping that instantiates the planes per stack;
 - the regression-skeleton asset shape; and
 - the human value gate that keeps machine-collected cases and baselines
@@ -55,6 +59,9 @@ evidence (`recovery-evidence.md`), or review-trigger policy
   queries, generated text skimmed for plausibility.
 - A harness review finds Change Validation evidence that only covers unit
   tests while real acceptance happens by eye.
+- Verification only ever confirms what the system already does, so a promised
+  behavior that was never implemented, or a repair that quietly relaxed its own
+  assertion, passes unnoticed.
 - The trigger and probe are understood, but the real environment is
   unavailable, unsafe, expensive, or too slow; use
   [Verification Environment Design](verification-environment.md) to select and
@@ -79,24 +86,43 @@ the entrypoint, the trigger, the evidence, and the judging mode — see
 ### Plane 1 — Discover: coverage from data, not memory
 
 Humans cannot enumerate entrypoints they forgot exist, and they waste effort
-on dead paths. Cross three machine sources, then close with a human gate:
+on dead paths. Cross four machine-readable sources, then close with a human
+gate:
 
-1. **Runtime telemetry** (metrics, QPS/TPS per endpoint, page/screen
+1. **Intent sources** (specification and acceptance criteria, prototype or
+   design contract, interface contract such as an API schema or proto
+   definition, issue acceptance notes): state what the system was *promised
+   to do*. This is the only source available before a change ships, and the
+   only one that can name behavior nobody built yet.
+2. **Runtime telemetry** (metrics, QPS/TPS per endpoint, page/screen
    analytics, job schedules): lists every surface that real usage actually
    reaches, ranked by volume. High volume with no matching case is a
    coverage gap.
-2. **Code contracts** (interface definitions, consumers, enums, write paths;
+3. **Code contracts** (interface definitions, consumers, enums, write paths;
    route tables and page registries; component inventories; CLI command
    trees; pipeline DAG definitions): pins each entrypoint's input schema,
    outcome surfaces, and value domains. Record the lookup key or artifact
    location of every outcome surface — the probe cannot query what it cannot
    address.
-3. **Real usage samples** (logs, traces, session replays, real input
+4. **Real usage samples** (logs, traces, session replays, real input
    payloads): recover what genuine inputs look like, so constructed cases
    match reality instead of an imagined shape.
 
-Each source patches the previous one's blind spot: telemetry finds surfaces,
-contracts define expectations, samples keep inputs realistic.
+Each source patches the others' blind spots: intent states what should exist,
+telemetry finds the surfaces that do exist, contracts define expectations on
+them, samples keep inputs realistic.
+
+Sources 2 through 4 all read the system **as built**, so a loop that uses only
+them can never fail on behavior that was promised and never implemented: there
+is no traffic, no route, and no sample to discover. Treat the difference
+between the intent sources and the implemented contracts as coverage in its own
+right — admit the case and judge it. Missing the surface to observe makes the
+case `fail`, or `blocked` when the surface is externally gated; it is never a
+reason to leave the case out of the inventory.
+
+This also fixes the ceiling: verification coverage is bounded by the recorded
+intent. Behavior nobody wrote down is behavior the loop will not check, so a
+thin spec produces a thin verify loop no matter how good the probe is.
 
 ### Plane 2 — Exercise: every case must be machine-triggerable
 
@@ -174,7 +200,13 @@ Design constraints:
 
 - Input is one correlation handle; the probe resolves lookup keys and
   artifact locations per surface itself.
-- Output is machine-parseable verdict first, human-readable evidence second.
+- Output is layered for its three readers: a machine-parseable verdict first
+  for the loop, the localized diagnostic detail second for whoever repairs it,
+  and a short human-readable summary last for whoever accepts the result.
+  Collapsing the layers forces every reader to parse the other two.
+- Collected evidence is addressed per run and append-only within a run: a
+  later capture never overwrites an earlier one in the same run, or the
+  before/after chain the repair step depends on is destroyed.
 - The probe checks the environment outcome, never the system's or the agent's
   own success claim.
 - Failure output localizes the break: which stage, which surface, expected
@@ -225,8 +257,66 @@ never manufactures a green run:
 - lower-priority `blocked` or `unobserved` cases demote the run to `partial`
   with each gap named (case id, reason, missing evidence).
 
+Environment evidence caps each case verdict. A case exercised below the
+fidelity rung its claim requires, or on an environment whose own gates did not
+pass, is at best `unobserved` — a lower rung going green is not case
+acceptance. Report the highest completed rung alongside the result; see
+[Verification Environment Design](verification-environment.md) for the rung and
+gate definitions.
+
 A `partial` or `blocked` run can still inform delivery, but only a human can
 accept it — the loop itself must not treat it as `pass`.
+
+## After a Non-Passing Verdict
+
+A verdict is where the loop turns, not where it ends. Without a stated
+continuation an agent improvises, and the cheapest improvisation is to make the
+judge more permissive. Run this sequence instead:
+
+```text
+reproduce -> localize -> attribute to smallest owner -> repair
+  -> rerun the same case -> record the round
+```
+
+1. **Reproduce** on the same correlation handle before diagnosing anything. A
+   verdict that does not reproduce is a flakiness finding, not a defect
+   finding, and goes to the flaky path below.
+2. **Localize** with the cheapest sufficient diagnostics, escalating to
+   expensive collection only when the cheap layer does not localize the break.
+   What the trigger's driver emits bounds this step — see
+   [UI and System Drivers](ui-and-system-drivers.md) for choosing a driver by
+   the failure evidence it produces.
+3. **Attribute** to the smallest correct owner. A repair applied one layer
+   above the cause leaves the cause live under a passing verdict.
+4. **Repair**, then **rerun the same case**: same case id, same assertions,
+   same judging mode, same tolerance and masks. A rerun with a relaxed
+   assertion or a substituted case proves nothing about the original failure.
+5. **Record the round.**
+
+Each round records the round number, the root-cause hypothesis it tested, the
+change scope it applied, and the rerun verdict. Every round must advance a
+*different* hypothesis; re-testing the same hypothesis with a slightly
+different edit is not a round of progress and should not consume the budget as
+if it were.
+
+Agree the round bound before the loop runs. At the bound, the case becomes
+`blocked` and goes to a human with the round record attached — the bound exists
+precisely because an agent cannot tell "one more attempt" from "wrong model of
+the problem".
+
+**Sweep the same cause.** A repaired root cause is a pattern, not an incident.
+Search the other cases and surfaces that share it — the same unpinned clock,
+the same missing null branch, the same unhandled status — and route the matches
+into the skeleton through the human gate. This is where a repair pays for
+itself beyond the one case that failed.
+
+**Register flakiness rather than absorbing it.** When the same case on the same
+revision yields different verdicts across runs, mark it `flaky` in the skeleton
+and record the suspected nondeterminism source. A `flaky` case contributes to
+the aggregate verdict as `unobserved` until the source is pinned: it must not
+supply a `pass` by being run again, and it must not turn a run red at random.
+Flakiness is a pinning defect with an owner and a fix, not a property of the
+case.
 
 ## Scenario Families
 
@@ -252,6 +342,18 @@ store-review boundaries; model-output families need the evaluator itself
 version-pinned; UI families need their determinism pinning (Plane 2) before
 baseline judging is trustworthy.
 
+When one system spans several families — an admin web console, a mobile app, a
+mini-program, and a degraded web view of the same flow — each family arrives
+with its own per-platform tooling and its own native result format. The Plane 4
+aggregate rules cannot run across them until every case normalizes to the same
+four-valued verdict domain and the same result schema, whatever tool produced
+it. Normalize at the boundary: wrap each platform's driver behind a
+task-oriented command that emits the shared schema, so the agent works against
+verification evidence rather than against one tool's API. See
+[Agent-Friendly CLI](friendly-cli.md) for contract, surface, and projection
+design; per-platform result formats that never converge are why multi-platform
+verification stays unaggregatable.
+
 ## Where To Start
 
 Bootstrap in this order; each step yields a usable asset even if work stops
@@ -273,8 +375,9 @@ there:
    with [Verification Environment Design](verification-environment.md),
    including readiness, reset, cleanup, an independent oracle, and a known-bad
    control.
-3. **Backfill discovery.** Run the three-source discovery to inventory all
-   entrypoints; diff against the (currently one-case) skeleton to rank gaps.
+3. **Backfill discovery.** Run the four-source discovery to inventory all
+   entrypoints and promised behavior; diff against the (currently one-case)
+   skeleton to rank gaps.
 4. **Grow the skeleton by priority tier.** Add cases highest-volume-first,
    each passing the human gate below.
 5. **Wire the diff matcher last.** Incremental scoping only pays off once the
@@ -293,7 +396,7 @@ id: <stable case id>
 entrypoint: <surface + method/topic/path/route/page/command>
 scenario: <business meaning, one line>
 priority: <tier, e.g. P0 write-chain .. P3 read-only>
-status: live | low-traffic | stock-data-only | blocked | draft
+status: live | low-traffic | stock-data-only | flaky | blocked | draft
 trigger: <exact command or script + parameters, with pinned fixtures>
 expects:
   - target: <table/stream/state store/rendered artifact/output file>
@@ -344,16 +447,20 @@ matched-case results. Do not let the agent treat probe output as advisory
 once it gates anything — a verdict the loop can ignore trains the loop to
 ignore it.
 
-Close the loop on failures: every diagnosed-and-repaired failure becomes a
-candidate case — its trigger, correlation handle, and the assertion that
-caught it are already known — and enters the skeleton through the same human
-gate as discovered cases. Discovery grows coverage in breadth; repaired
+Close the loop on failures: run the
+[post-verdict sequence](#after-a-non-passing-verdict), then promote every
+diagnosed-and-repaired failure into a candidate case — its trigger, correlation
+handle, and the assertion that caught it are already known — through the same
+human gate as discovered cases. Discovery grows coverage in breadth; repaired
 failures grow it exactly where the system actually broke.
 
 ## Anti-Patterns
 
 - **Case list without a probe**: coverage that still requires human judging
   is documentation, not a verify loop.
+- **Coverage from the system only**: deriving cases from telemetry, code, and
+  samples alone, so behavior that was promised and never implemented has no
+  case and can never fail.
 - **Probe keyed on internal state**: if the input is not a handle the
   trigger already returns or fully determines, the agent cannot chain
   trigger → probe.
@@ -371,6 +478,15 @@ failures grow it exactly where the system actually broke.
   the new correct.
 - **Threshold creep**: widening visual or numeric tolerance to silence flaky
   comparisons instead of pinning the nondeterminism source.
+- **Repair until green**: each repair round relaxing an assertion, swapping in
+  an easier case, or widening a tolerance instead of testing a new root-cause
+  hypothesis against the original case.
+- **Unbounded repair rounds**: retrying diagnosis and repair with no agreed
+  round bound and no round record, so a wrong model of the problem burns the
+  budget instead of escalating to a human.
+- **Flakiness absorbed as a pass**: rerunning an oscillating case until it goes
+  green and reporting that run, instead of registering the case `flaky` and
+  fixing the pinning defect.
 - **Unbounded waiting on async chains**: a probe with no terminal condition,
   deadline, or backoff policy either hangs the loop or converts eventual
   consistency into flaky failures.
