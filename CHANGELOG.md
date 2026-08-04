@@ -3,9 +3,20 @@
 This file records notable public changes to Better Harness. Entries describe
 observable behavior and compatibility, not every internal refactor.
 
-## Unreleased
+## 0.5.0 - 2026-08-04
 
 ### Added
+
+- `better-harness plugin status`, `plugin plan`, `plugin verify`, and
+  `better-harness doctor` expose a read-only lifecycle control plane over eight
+  host profiles and eleven host surfaces. Status reports installation,
+  enablement, observed-version relation, and verification per surface from the
+  public configured-asset inventory; `plugin plan` emits typed native argv or
+  manual steps for install, update, and remove without executing them; `doctor`
+  reports bounded runtime and host diagnostics with redacted authorized roots.
+  Unknown, mixed, foreign, or unbound host state fails closed, `plugin apply`
+  stays unregistered, and Kimi Code and Grok are rejected with `UNKNOWN_HOST`
+  until their native lifecycle contracts are validated.
 
 - Kimi Code is now a supported analysis-capable source-local host. The
   repository installs as a Kimi Code plugin (`/plugins install <repo>`)
