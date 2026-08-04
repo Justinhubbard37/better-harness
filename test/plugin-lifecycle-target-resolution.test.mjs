@@ -39,6 +39,14 @@ test("status target resolution owns all-host, alias, surface, and home routing",
       "Use one of: claude, codex, qoder, cursor, qwen, copilot, pi, workbuddy, or all.",
     ),
   );
+  // Catalog hosts without a validated lifecycle contract stay unknown here
+  // instead of borrowing another host's install route.
+  for (const host of ["kimi", "grok"]) {
+    assert.throws(
+      () => resolveStatusTarget({ host }),
+      rejectsWith("UNKNOWN_HOST", `Unknown host: ${host}`),
+    );
+  }
 });
 
 test("plan target resolution owns explicit host and multi-surface requirements", () => {

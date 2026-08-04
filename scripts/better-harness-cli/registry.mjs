@@ -1,3 +1,4 @@
+import { formatHostList, HOST_CAPABILITIES, hostIdsFor } from "../host-support/index.mjs";
 import { PLUGIN_COMMAND_MANIFEST } from "../plugin-lifecycle/command-manifest.mjs";
 
 export const FORMAT_VERSION = "1.0";
@@ -74,7 +75,7 @@ const COMMANDS = [
     kind: "direct",
     audience: "advanced",
     script: "session-analysis.mjs",
-    summary: "Collect and normalize Qoder, Codex, Claude, Cursor, Qwen, Copilot, Pi, and WorkBuddy session evidence.",
+    summary: `Collect and normalize ${formatHostList(hostIdsFor(HOST_CAPABILITIES.SESSION_ANALYSIS), { displayNames: true, conjunction: "and" })} session evidence.`,
     subcommands: [
       {
         name: "sources",
@@ -203,7 +204,7 @@ const COMMANDS = [
         audience: "workflow",
         script: "harness-analysis/report-run.mjs",
         summary: "Return a neutral, budgeted Harness evidence brief.",
-        description: "Scan evidence read-only and return bounded natural text for AI interpretation, plus exact report summary facts in JSON mode; explicit Qoder canvas-out initializes them and replace-canvas refreshes only that authorized path.",
+        description: "Scan evidence read-only and return bounded natural text for AI interpretation, plus exact report summary facts in JSON mode; explicit Qoder or Cursor canvas-out initializes them and replace-canvas refreshes only that authorized path.",
       },
       {
         name: "checkup",
@@ -238,7 +239,7 @@ const COMMANDS = [
         audience: "advanced",
         script: "harness-analysis/render-report.mjs",
         summary: "Render reviewed findings data into report artifacts.",
-        description: "Render reviewed findings.json data into qoder-canvas, markdown, or html, and optionally run the selected validators.",
+        description: "Render reviewed findings.json data into qoder-canvas, cursor-canvas, markdown, or html, and optionally run the selected validators.",
       },
       {
         name: "preview-canvas",

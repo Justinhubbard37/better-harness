@@ -182,6 +182,10 @@ being converted into a generic install command.
   activation decision; new declarations remain a shadow parity surface.
 - Generalizing the shared lifecycle command runner into the repository-wide
   authoritative command-contract owner while ADR-0002 remains proposed.
+- Declaring lifecycle profiles for Kimi Code and Grok. Both host adapters landed
+  after this spec was written and have no validated native lifecycle contract
+  yet, so `plugin` and `doctor` targets reject them with `UNKNOWN_HOST` instead
+  of inheriting another host's install route.
 
 ## Plan and Tasks
 

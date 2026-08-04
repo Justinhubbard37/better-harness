@@ -76,26 +76,30 @@ test("Better Harness keeps one compact five-step owner", () => {
   assert.match(skill, /separate independent post-fix agent/);
 });
 
-test("non-Qoder providers default to validated durable HTML with an explicit inline opt-out", () => {
+test("Qoder and Cursor default to Canvas while portable providers retain durable HTML", () => {
   const skill = read("skills/better-harness/SKILL.md");
   const routing = read("templates/reporting/routing.md");
   const adapters = read("docs/adapters/README.md");
   const readme = read("README.md");
 
-  assert.match(skill, /Default Qoder to durable Canvas and other providers to durable HTML/);
+  assert.match(skill, /Default Qoder\/Cursor to durable Canvas; default others to durable HTML/);
   assert.match(skill, /explicit inline or no-files request writes nothing/);
   assert.match(skill, /Other providers: <mode>=html; <host-root>=<target>\/\.<provider>\/better-harness/);
   assert.doesNotMatch(skill, /(?:Claude Code|Codex): <mode>=html/);
-  assert.match(skill, /HTML artifacts: findings\.json, report\.md, report\.html/);
+  // The per-route artifact inventory is owned by routing.md, not duplicated in the
+  // byte-budgeted root Skill.
+  assert.match(routing, /renderer-owned `findings\.json`, `canvas\.json`, `report\.canvas\.tsx` \| `cursor-canvas\.md`/);
+  assert.match(routing, /renderer-owned `findings\.json`, `report\.md`, `report\.html` \| `html-visual\.md`/);
   assert.match(skill, /Succeed only on\s+`status: pass`/);
   assert.match(skill, /Never hand-write\s+Canvas, Markdown, or HTML/);
   assert.match(
     routing,
-    /Portable HTML report \| Active host is Claude Code, Codex, Cursor, Qwen Code, GitHub Copilot, Pi, or WorkBuddy, or a portable visual is explicitly requested \|/,
+    /Portable HTML report \| Active host is Claude Code, Codex, Qwen Code, GitHub Copilot, Pi, Kimi Code, WorkBuddy, or Grok, or a portable visual is explicitly requested \|/,
   );
+  assert.match(routing, /Cursor Canvas report \| Active host is Cursor \|/);
   assert.match(routing, /Inline only \| Inline or no-files output is explicitly requested \| none; inline analysis writes nothing/);
   assert.match(adapters, /Claude Code[^\n]+scripts\/session-analysis\/platforms\/claude\.mjs[^\n]+self-contained HTML \+ Markdown/);
-  assert.match(adapters, /Cursor[^\n]+scripts\/session-analysis\/platforms\/cursor\.mjs[^\n]+self-contained HTML \+ Markdown/);
+  assert.match(adapters, /Cursor[^\n]+scripts\/session-analysis\/platforms\/cursor\.mjs[^\n]+cursor-canvas/);
   assert.match(adapters, /Pi[^\n]+scripts\/session-analysis\/platforms\/pi\.mjs[^\n]+self-contained HTML \+ Markdown/);
   assert.doesNotMatch(adapters, /Inline repository review only|No Claude\s+session-evidence adapter/);
   assert.match(readme, /Claude Code defaults to a self-contained `report\.html`/);
@@ -131,7 +135,7 @@ test("Step 1 establishes one provider-labelled evidence bundle", () => {
   assert.match(skill, /`memberRoute` or `null`/);
   assert.match(skill, /Providers must agree/);
   assert.match(skill, /bounded `lint`, `inventory`, and `integrity` envelopes/);
-  assert.match(skill, /individual [\s\S]+command only to diagnose a named unavailable or truncated owner/);
+  assert.match(skill, /individual [\s\S]+command only to diagnose a named unavailable or evidence-loss stage/);
   assert.doesNotMatch(skill, /<cli> agent-lint --workspace <target>/);
   assert.match(skill, /Rules,\s+Skills, MCP, Memory, Agents, Hooks, Commands, Workflows, and Plugins/);
   assert.match(skill, /Zero or high counts never create findings or scores/);
@@ -229,6 +233,8 @@ test("Agent Customize consumes integrity evidence and investigates quality, not 
   const root = read("skills/better-harness/SKILL.md");
   const ownerPath = "skills/better-harness/references/agent-customize.md";
   const customize = read(ownerPath);
+  const skillEvalPath = "references/agent-customize/skill-eval.md";
+  const skillEval = read(skillEvalPath);
 
   assert.ok(customize.split("\n").length < 120);
   assert.ok(Buffer.byteLength(customize) < 7_000);
@@ -262,6 +268,7 @@ test("Agent Customize consumes integrity evidence and investigates quality, not 
   assert.match(customize, /Never return user-home Memory paths or\s+titles/);
   for (const reference of [
     "agents-md-review.md",
+    "skill-eval.md",
     "skill-review.md",
     "skill-discovery.md",
     "mcp-review.md",
@@ -274,6 +281,17 @@ test("Agent Customize consumes integrity evidence and investigates quality, not 
     assert.match(customize, new RegExp(`references/agent-customize/${reference.replace(".", "\\.")}`));
     assertReferencedPathExists(ownerPath, `../../../references/agent-customize/${reference}`);
   }
+  assert.match(skillEval, /JSON as the machine\s+source of truth/);
+  assert.match(skillEval, /Apply the E0 ceiling of 59/);
+  assert.match(skillEval, /has no simulated dry-run mode/);
+  assert.match(skillEval, /node scripts\/better-harness\.mjs agent-lint --profile agent-assets-review --skill/);
+  assert.match(skillEval, /plugin-eval> analyze <skill-path> --format json/);
+  assert.match(skillEval, /Plugin Eval's JSON intact as an input artifact/);
+  assert.match(skillEval, /Reconcile cross-tool disagreements/);
+  assert.match(skillEval, /never edit the canonical Plugin Eval result/);
+  assert.match(skillEval, /Do not report E1-E3, lift, stability, or outcome improvement/);
+  assertReferencedPathExists(skillEvalPath, "skill-review.md");
+  assertReferencedPathExists(skillEvalPath, "routing.md");
   assert.match(customize, /do not expand authority or asset limits/);
 });
 

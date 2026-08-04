@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import process from "node:process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 

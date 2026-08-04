@@ -73,17 +73,16 @@ test("installation prerequisites and verification paths stay aligned across loca
   }
 });
 
-test("Pi single-run README guidance keeps temporary loading in the same session", () => {
-  const readme = readUtf8("README.md");
-  const readmeZh = readUtf8("README.zh-CN.md");
+test("Pi single-run guidance keeps temporary loading separate from a persisted install", () => {
+  const matrix = readUtf8("docs", "docs", "hosts", "adapter-matrix.md");
+  const matrixZh = readUtf8(...ZH_DOCS_ROOT, "hosts", "adapter-matrix.md");
 
-  for (const content of [readme, readmeZh]) {
-    assert.match(content, /pi -e git:github\.com\/QoderAI\/better-harness/u);
+  for (const content of [matrix, matrixZh]) {
+    assert.match(content, /pi -e <source>/u);
+    assert.match(content, /cli-session/u);
   }
-  assert.match(readme, /run the report\n?prompt in that same Pi session/u);
-  assert.match(readme, /opening another session drops the temporary\npackage/u);
-  assert.match(readmeZh, /在同一 Pi 会话中运行报告\n提示词/u);
-  assert.match(readmeZh, /另开会话会丢失临时加载的包/u);
+  assert.match(matrix, /one-run `pi -e` activation as the\n?separate `cli-session` session-only surface/u);
+  assert.match(matrixZh, /单次\n?`pi -e` 激活作为独立的 `cli-session` session-only surface/u);
 });
 
 test("troubleshooting is bilingual, safe, linked, and routed through Getting Started", () => {
@@ -135,7 +134,7 @@ test("first-report guidance no longer claims one invocation works for every host
   assert.match(firstReportZh, /\[示例报告\]\(pathname:\/\/\/demo\/better-harness-report\/\)/u);
 });
 
-test("bug report intake does not hard-code a release and covers current host paths", () => {
+test("bug report intake stays lightweight and covers current host paths", () => {
   const issueForm = readUtf8(".github", "ISSUE_TEMPLATE", "bug_report.yml");
 
   assert.doesNotMatch(issueForm, /current repository baseline|placeholder:\s*0\.3\.0/u);
@@ -150,8 +149,21 @@ test("bug report intake does not hard-code a release and covers current host pat
   ]) {
     assert.match(issueForm, new RegExp(`- ${host.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}`));
   }
-  assert.match(issueForm, /Host marketplace or plugin manager/u);
-  assert.match(issueForm, /Cursor session evidence \(installation unavailable\)/u);
-  assert.doesNotMatch(issueForm, /--plugin-dir/u);
-  assert.match(issueForm, /npm package or standalone CLI/u);
+  assert.match(issueForm, /id: environment/u);
+  assert.doesNotMatch(issueForm, /id: operating-system|id: installation|id: command/u);
+  assert.doesNotMatch(issueForm, /Host marketplace or plugin manager|Cursor source-local --plugin-dir|npm package or standalone CLI/u);
+  assert.equal(countMatches(issueForm, /required: true/gu), 6);
+});
+
+test("feature request intake stays outcome-focused", () => {
+  const issueForm = readUtf8(".github", "ISSUE_TEMPLATE", "feature_request.yml");
+
+  assert.match(issueForm, /What problem are you trying to solve\?/u);
+  assert.match(issueForm, /What would success look like\?/u);
+  assert.match(issueForm, /id: scope/u);
+  assert.doesNotMatch(
+    issueForm,
+    /Likely extension surface|Proposed approach|Validation plan|Compatibility and delivery impact|canonical owner|activation path/u,
+  );
+  assert.equal(countMatches(issueForm, /required: true/gu), 4);
 });

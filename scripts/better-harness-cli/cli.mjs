@@ -19,6 +19,7 @@ import { createStyle, formatRows, shouldUseColor } from "./format.mjs";
 const scriptsRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(scriptsRoot, "..");
 const programName = "better-harness";
+const MACHINE_OUTPUT_MAX_BUFFER = 64 * 1024 * 1024;
 
 const HELP_GROUPS = [
   {
@@ -256,8 +257,16 @@ function isVersion(value) {
   return value === "--version" || value === "-V" || value === "version";
 }
 
+function hasHelpFlag(argv) {
+  return argv.some((value) => value === "--help" || value === "-h");
+}
+
 function hasJsonFlag(argv) {
-  return argv.includes("--json");
+  for (const value of argv) {
+    if (value === "--") return false;
+    if (value === "--json") return true;
+  }
+  return false;
 }
 
 function optionValue(argv, name) {
@@ -417,6 +426,31 @@ export function resolveDispatch(argv = []) {
     return commandSchema(argv.slice(1));
   }
 
+  if (hasHelpFlag(argv)) {
+    const direct = directDispatchFor(command, subcommand);
+    if (direct) {
+      const metadata = commandMetadata(command);
+      const registeredSubcommand = metadata?.subcommands?.some((entry) => entry.name === subcommand);
+      return {
+        kind: "dispatch",
+        script: scriptPath(direct.script),
+        args: !direct.consumesSubcommand && registeredSubcommand ? [subcommand, "--help"] : ["--help"],
+      };
+    }
+
+    const group = groupCommand(command);
+    if (group && !isHelp(subcommand)) {
+      const script = group.subcommands.find((entry) => entry.name === subcommand)?.script;
+      if (script) {
+        return { kind: "dispatch", script: scriptPath(script), args: ["--help"] };
+      }
+    }
+
+    if (!group) {
+      return { kind: "help", text: usage(), exitCode: 0 };
+    }
+  }
+
   const direct = directDispatchFor(command, subcommand);
   if (direct) {
     return {
@@ -469,26 +503,94 @@ export function resolveDispatch(argv = []) {
   };
 }
 
-export function main(argv = process.argv.slice(2)) {
-  const dispatch = resolveDispatch(argv);
-  if (dispatch.kind === "help" || dispatch.kind === "json") {
-    process.stdout.write(dispatch.text);
-    return dispatch.exitCode;
+function emitRootResult(result, { stdout, stderr }) {
+  if (result.kind === "help" || result.kind === "json") {
+    stdout.write(result.text);
+    return result.exitCode;
   }
-  if (dispatch.kind === "error") {
-    process.stderr.write(dispatch.message);
-    return dispatch.exitCode;
-  }
+  stderr.write(result.message);
+  return result.exitCode;
+}
 
-  const result = spawnSync(process.execPath, [dispatch.script, ...dispatch.args], {
-    cwd: process.cwd(),
-    stdio: "inherit",
-    windowsHide: true,
-  });
+function writeChildOutput(stream, value) {
+  if (value !== null && value !== undefined && value.length > 0) {
+    stream.write(value);
+  }
+}
+
+function signalName(value) {
+  return typeof value === "string" && /^[A-Z0-9]+$/u.test(value)
+    ? value
+    : "UNKNOWN";
+}
+
+function normalizeDispatchResult(result, {
+  machine,
+  stdout = process.stdout,
+  stderr = process.stderr,
+} = {}) {
+  if (result.error?.code === "ENOBUFS") {
+    return emitRootResult(rootError({
+      code: "DELEGATED_COMMAND_OUTPUT_OVERFLOW",
+      message: "The delegated command produced more output than machine mode can buffer.",
+      hint: machine
+        ? "Narrow the command scope, or rerun without `--json` to stream the full output."
+        : undefined,
+      machine,
+    }), { stdout, stderr });
+  }
 
   if (result.error) {
-    process.stderr.write(`${result.error.message}\n`);
-    return 1;
+    return emitRootResult(rootError({
+      code: "DELEGATED_COMMAND_SPAWN_FAILED",
+      message: machine
+        ? "Failed to start the delegated command."
+        : `Failed to start the delegated command: ${result.error.message}`,
+      hint: machine
+        ? "Verify the Better Harness installation, then retry the command."
+        : undefined,
+      machine,
+    }), { stdout, stderr });
+  }
+
+  if (result.signal) {
+    const signal = signalName(result.signal);
+    return emitRootResult(rootError({
+      code: "DELEGATED_COMMAND_SIGNAL_TERMINATED",
+      message: `The delegated command terminated with signal ${signal}.`,
+      hint: machine
+        ? "Retry the command; if it repeats, inspect the delegated capability diagnostics."
+        : undefined,
+      machine,
+    }), { stdout, stderr });
+  }
+
+  if (machine) {
+    writeChildOutput(stdout, result.stdout);
+    writeChildOutput(stderr, result.stderr);
   }
   return result.status ?? 1;
+}
+
+export function main(argv = process.argv.slice(2), runtime = {}) {
+  const {
+    spawn = spawnSync,
+    stdout = process.stdout,
+    stderr = process.stderr,
+    cwd = process.cwd(),
+  } = runtime;
+  const dispatch = resolveDispatch(argv);
+  if (dispatch.kind !== "dispatch") {
+    return emitRootResult(dispatch, { stdout, stderr });
+  }
+
+  const machine = hasJsonFlag(argv);
+  const result = spawn(process.execPath, [dispatch.script, ...dispatch.args], {
+    cwd,
+    stdio: machine ? ["inherit", "pipe", "pipe"] : "inherit",
+    windowsHide: true,
+    ...(machine ? { maxBuffer: MACHINE_OUTPUT_MAX_BUFFER } : {}),
+  });
+
+  return normalizeDispatchResult(result, { machine, stdout, stderr });
 }
