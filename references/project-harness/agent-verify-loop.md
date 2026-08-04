@@ -40,7 +40,8 @@ This reference owns:
 
 It does not own loop owner selection (`../loop-engineering/loop-discovery.md`),
 the full loop runtime contract (`../loop-engineering/loop-blueprint.md`),
-recovery evidence (`recovery-evidence.md`), or review-trigger policy
+verification-environment construction (`verification-environment.md`), recovery
+evidence (`recovery-evidence.md`), or review-trigger policy
 (`review-trigger.md`).
 
 ## Load When
@@ -54,6 +55,10 @@ recovery evidence (`recovery-evidence.md`), or review-trigger policy
   queries, generated text skimmed for plausibility.
 - A harness review finds Change Validation evidence that only covers unit
   tests while real acceptance happens by eye.
+- The trigger and probe are understood, but the real environment is
+  unavailable, unsafe, expensive, or too slow; use
+  [Verification Environment Design](verification-environment.md) to select and
+  calibrate the smallest credible substitute.
 
 ## The Four Planes
 
@@ -105,6 +110,11 @@ which staging cell, which device or simulator profile) inside the trigger so
 the agent never has to guess. Pin everything the outcome depends on —
 fixture data, viewport, locale, timezone, clock, random seed — as part of
 the trigger, not as ambient state.
+
+When the real target cannot be used, do not default to an all-mock environment.
+Use [Verification Environment Design](verification-environment.md) to state the
+verification claim, discover repository-owned seams, keep claim-relevant
+semantics real, and record what the substitute leaves `unobserved`.
 
 ### Plane 3 — Judge: one correlation handle drives the whole check
 
@@ -253,6 +263,10 @@ there:
    never a default input: reading it requires explicit authorization, a
    read-only scope, redaction of sensitive fields in probe output, and an
    agreed environment boundary — record all four in the case `constraints`.
+   If that environment does not yet exist, construct its minimum credible rung
+   with [Verification Environment Design](verification-environment.md),
+   including readiness, reset, cleanup, an independent oracle, and a known-bad
+   control.
 3. **Backfill discovery.** Run the three-source discovery to inventory all
    entrypoints; diff against the (currently one-case) skeleton to rank gaps.
 4. **Grow the skeleton by priority tier.** Add cases highest-volume-first,
@@ -354,3 +368,6 @@ failures grow it exactly where the system actually broke.
 - **Unbounded waiting on async chains**: a probe with no terminal condition,
   deadline, or backoff policy either hangs the loop or converts eventual
   consistency into flaky failures.
+- **Mock-selected-before-claim**: choosing a convenient double before naming
+  the behavior to prove hides whether the omitted dependency semantics are the
+  very subject of verification.

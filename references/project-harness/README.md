@@ -36,6 +36,8 @@ acceptance, change safeguards, and recovery boundaries.
 - `sensitive-code.md`: sensitive-code review and reporting boundaries.
 - `sensitive-write-boundary.md`: pre-write confirmation gate for
   project-control surfaces.
+- `verification-environment.md`: claim-driven construction and calibration of
+  mock, emulated, ephemeral, and sandbox verification environments.
 
 ## Does Not Own
 
@@ -61,4 +63,6 @@ acceptance, change safeguards, and recovery boundaries.
 - Use `sensitive-code.md` for sensitive-code review boundaries.
 - Use `sensitive-write-boundary.md` for pre-write confirmation on
   project-control surfaces.
+- Use `verification-environment.md` when the real verification environment is
+  unavailable or impractical and the agent must choose a credible substitute.
 - Use `git-hooks.md` for Git hook lifecycle placement and evidence.
