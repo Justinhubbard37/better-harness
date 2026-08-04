@@ -127,16 +127,17 @@ test("cross-capability lifecycle imports use the public index or pure root metad
   for (const filePath of moduleFiles(scriptsRoot)) {
     if (filePath.startsWith(`${lifecycleRoot}${path.sep}`)) continue;
     const source = readFileSync(filePath, "utf8");
+    const relativePath = path.relative(root, filePath).split(path.sep).join("/");
     for (const match of source.matchAll(importPattern)) {
       const specifier = match[1];
-      const metadataProjection = path.relative(root, filePath) === "scripts/better-harness-cli/registry.mjs"
+      const metadataProjection = relativePath === "scripts/better-harness-cli/registry.mjs"
         && specifier.endsWith("plugin-lifecycle/command-manifest.mjs");
       if (
         specifier.includes("plugin-lifecycle/")
         && !specifier.endsWith("plugin-lifecycle/index.mjs")
         && !metadataProjection
       ) {
-        violations.push(`${path.relative(root, filePath)} -> ${specifier}`);
+        violations.push(`${relativePath} -> ${specifier}`);
       }
     }
   }

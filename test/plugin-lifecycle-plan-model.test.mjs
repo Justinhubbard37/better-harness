@@ -106,24 +106,30 @@ test("mutation and verification steps carry distinct effect contracts", async ()
 });
 
 test("project and isolated-home plans bind target, digest, step cwd, and verification context", async () => {
+  // Plans resolve their inputs, so fixture paths are resolved here too and stay
+  // comparable on POSIX and Windows.
+  const workspaceOne = path.resolve("/fixture/workspace one");
+  const workspaceTwo = path.resolve("/fixture/workspace two");
+  const qwenHome = path.resolve("/fixture/qwen home");
+  const otherQwenHome = path.resolve("/fixture/other qwen home");
   const first = await planFor({
     scope: "project",
-    workspace: "/fixture/workspace one",
-    hostHome: "/fixture/qwen home",
+    workspace: workspaceOne,
+    hostHome: qwenHome,
   });
   const otherWorkspace = await planFor({
     scope: "project",
-    workspace: "/fixture/workspace two",
-    hostHome: "/fixture/qwen home",
+    workspace: workspaceTwo,
+    hostHome: qwenHome,
   });
   const otherHome = await planFor({
     scope: "project",
-    workspace: "/fixture/workspace one",
-    hostHome: "/fixture/other qwen home",
+    workspace: workspaceOne,
+    hostHome: otherQwenHome,
   });
 
-  assert.equal(first.target.workspace, "/fixture/workspace one");
-  assert.equal(first.target.hostHome, "/fixture/qwen home");
+  assert.equal(first.target.workspace, workspaceOne);
+  assert.equal(first.target.hostHome, qwenHome);
   assert.equal(first.steps.every((step) => step.cwd === first.target.workspace), true);
   assert.equal(first.verificationSteps.every((step) => step.cwd === first.target.workspace), true);
   assert.equal(first.steps.every((step) => (
@@ -139,7 +145,7 @@ test("project and isolated-home plans bind target, digest, step cwd, and verific
   assert.notEqual(first.preconditionDigest, otherHome.preconditionDigest);
   assert.notEqual(first.planId, otherHome.planId);
 
-  const user = await planFor({ hostHome: "/fixture/qwen home" });
+  const user = await planFor({ hostHome: qwenHome });
   assert.equal(Object.hasOwn(user.target, "workspace"), false);
   assert.equal(user.steps.every((step) => !Object.hasOwn(step, "cwd")), true);
   assert.equal(user.verificationSteps.every((step) => !Object.hasOwn(step, "cwd")), true);

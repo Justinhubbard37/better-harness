@@ -11,6 +11,12 @@ import { discoverHostExecutable } from "../scripts/plugin-lifecycle/index.mjs";
 
 const cliPath = path.join(process.cwd(), "scripts", "better-harness.mjs");
 
+// Windows paths carry backslashes, so leak assertions compare JSON-escaped text
+// instead of building a regular expression from a raw path.
+function encodedPath(value) {
+  return JSON.stringify(value).slice(1, -1);
+}
+
 function runCli(args) {
   return spawnSync(process.execPath, [cliPath, ...args], {
     cwd: process.cwd(),
@@ -213,7 +219,7 @@ test("doctor reports the effective redacted host-home override", async () => {
       "<workspace>/isolated claude home",
       "<workspace>/isolated claude home/.claude.json",
     ]);
-    assert.doesNotMatch(JSON.stringify(result.targets), new RegExp(workspace, "u"));
+    assert.equal(JSON.stringify(result.targets).includes(encodedPath(workspace)), false);
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
@@ -299,7 +305,7 @@ test("doctor captures and redacts the isolated Codex CLI and desktop roots", asy
       "<workspace>/isolated codex home",
       "<workspace>/isolated codex home/Applications/Codex.app",
     ]);
-    assert.doesNotMatch(JSON.stringify(result.targets), new RegExp(workspace, "u"));
+    assert.equal(JSON.stringify(result.targets).includes(encodedPath(workspace)), false);
     const desktop = result.targets[0].lifecycle.find((surface) => surface.surfaceId === "desktop");
     assert.equal(result.targets[0].hostDiscovery, "absent");
     assert.equal(desktop.installation, "unknown");
