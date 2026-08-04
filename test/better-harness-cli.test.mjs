@@ -495,23 +495,21 @@ test("better-harness CLI short-circuits help for every registered terminal path"
       assert.equal(canonical.stderr, "", canonicalArgs.join(" "));
       assert.notEqual(canonical.stdout, "", canonicalArgs.join(" "));
 
+      // The canonical `--help` run above already proved this dispatch executes
+      // to help with zero side effects under the guard. For the pre-help-flag
+      // variants we only need to prove resolveDispatch normalizes them to that
+      // same dispatch (identical script, `invalid-before-help` stripped, trailing
+      // `--help`); an identical dispatch yields byte-identical execution, so a
+      // per-variant guarded subprocess would only re-run canonical's own args.
       for (const helpFlag of ["--help", "-h"]) {
         const args = [...pathSegments, "invalid-before-help", helpFlag];
         const dispatch = resolveDispatch(args);
 
         assert.equal(dispatch.kind, "dispatch", args.join(" "));
         assert.equal(dispatch.script, canonicalDispatch.script, args.join(" "));
+        assert.deepEqual(dispatch.args, canonicalDispatch.args, args.join(" "));
         assert.equal(dispatch.args.includes("invalid-before-help"), false, args.join(" "));
         assert.equal(dispatch.args.at(-1), "--help", args.join(" "));
-
-        const result = await runGuardedBetterHarness(args, {
-          cwd: isolatedRoot,
-          expectedOwner: dispatch.script,
-          expectedOwnerArgs: dispatch.args,
-        });
-        assert.equal(result.status, 0, `${args.join(" ")}\n${result.stderr}`);
-        assert.equal(result.stderr, "", args.join(" "));
-        assert.equal(result.stdout, canonical.stdout, args.join(" "));
       }
     }
   } finally {
