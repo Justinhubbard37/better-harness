@@ -54,6 +54,19 @@ observable behavior and compatibility, not every internal refactor.
   support-declaration check now requires every adapter-matrix host claiming
   portable HTML output to appear in that routing row.
 
+## 0.4.1 - 2026-08-04
+
+### Fixed
+
+- The published npm package identity is `@qoder-ai/better-harness`. The
+  previously documented `@qoderai/better-harness` scope was never a valid
+  registry name, so package metadata, the lockfile, the adapter matrices, and
+  the documentation site now all reference the hyphenated scope.
+
+- The repository `test` script runs the automated suite again, so the release
+  workflow verifies tests before publishing instead of reporting success
+  without running them.
+
 ## 0.4.0 - 2026-07-30
 
 ### Added

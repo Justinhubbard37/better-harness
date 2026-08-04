@@ -34,7 +34,7 @@ remains the complete capability-level source of truth.
 | WorkBuddy | Adapter support | Analysis-capable source-local host | None; skills use WorkBuddy-owned paths | Workspace-matching WorkBuddy JSONL transcripts | Self-contained HTML + Markdown |
 | Grok | Adapter support | Analysis-capable source-local host | None; skills use Grok-owned paths | Workspace-matching Grok session dirs (`updates.jsonl`) | Self-contained HTML + Markdown |
 
-The `@qoderai/better-harness` npm package includes all seven plugin metadata
+The `@qoder-ai/better-harness` npm package includes all seven plugin metadata
 roots. Pi reuses install metadata in the existing `package.json`, so it does
 not add an eighth filesystem metadata root. The generated Qoder runtime bundle
 includes only the Qoder shell; non-Qoder generated host artifacts remain

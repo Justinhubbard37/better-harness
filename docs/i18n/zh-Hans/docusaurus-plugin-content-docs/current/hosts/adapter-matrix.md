@@ -32,7 +32,7 @@ Better Harness 当前声明了十个能力层宿主适配器，其中六个已�
 | WorkBuddy | 适配器支持 | 具备分析能力的源码本地宿主 | 无；Skill 使用 WorkBuddy 自有路径 | 匹配工作区的 WorkBuddy JSONL 转录 | 自包含 HTML + Markdown |
 | Grok | 适配器支持 | 具备分析能力的源码本地宿主 | 无；Skill 使用 Grok 自有路径 | 匹配工作区的 Grok 会话目录（`updates.jsonl`） | 自包含 HTML + Markdown |
 
-`@qoderai/better-harness` npm 包含全部七个插件元数据根目录。生成的 Qoder
+`@qoder-ai/better-harness` npm 包含全部七个插件元数据根目录。生成的 Qoder
 运行时 bundle 只包含 Qoder shell。Pi 复用现有 `package.json` 中的安装元数据，
 因此不会新增第八个文件系统元数据根目录；非 Qoder 的生成宿主产物保持源码本地。
 

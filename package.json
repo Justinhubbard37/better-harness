@@ -1,6 +1,6 @@
 {
   "name": "@qoder-ai/better-harness",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Build an AI-ready engineering system for safe coding-agent delivery and continuous software improvement.",
   "license": "MIT",
   "author": {
@@ -27,8 +27,12 @@
   ],
   "type": "module",
   "pi": {
-    "skills": ["./skills"],
-    "prompts": ["./prompts"]
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
+    ]
   },
   "files": [
     ".claude-plugin/",
@@ -76,7 +80,7 @@
     "prepublishOnly": "npm run check",
     "preview": "node scripts/harness-analysis/canvas-preview-server.mjs",
     "preview:canvas": "node scripts/harness-analysis/canvas-preview-server.mjs",
-    "test": "echo \"No tests specified\""
+    "test": "node --test"
   },
   "packageManager": "npm@10.9.3",
   "publishConfig": {

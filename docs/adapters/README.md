@@ -19,7 +19,7 @@ providers, real session-evidence adapters, and output modes. Canonical product
 judgment stays in `skills/`, `models/`, `references/`, `templates/`, and
 `scripts/<capability>/`.
 
-The `@qoderai/better-harness` npm package includes seven filesystem metadata
+The `@qoder-ai/better-harness` npm package includes seven filesystem metadata
 roots for Qoder, Claude Code, Codex, Cursor, Qwen, Copilot, and Kimi Code,
 plus Pi install metadata in the existing `package.json`.
 The generated Qoder runtime bundle includes only the Qoder shell,
