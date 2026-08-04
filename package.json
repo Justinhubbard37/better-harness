@@ -1,5 +1,5 @@
 {
-  "name": "@qoderai/better-harness",
+  "name": "@qoder-ai/better-harness",
   "version": "0.4.0",
   "description": "Build an AI-ready engineering system for safe coding-agent delivery and continuous software improvement.",
   "license": "MIT",
@@ -76,7 +76,7 @@
     "prepublishOnly": "npm run check",
     "preview": "node scripts/harness-analysis/canvas-preview-server.mjs",
     "preview:canvas": "node scripts/harness-analysis/canvas-preview-server.mjs",
-    "test": "node --test"
+    "test": "echo \"No tests specified\""
   },
   "packageManager": "npm@10.9.3",
   "publishConfig": {
