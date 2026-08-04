@@ -112,7 +112,7 @@ test("first-report guidance no longer claims one invocation works for every host
   assert.match(firstReportZh, /\[示例报告\]\(pathname:\/\/\/demo\/better-harness-report\/\)/u);
 });
 
-test("bug report intake does not hard-code a release and covers current host paths", () => {
+test("bug report intake stays lightweight and covers current host paths", () => {
   const issueForm = readUtf8(".github", "ISSUE_TEMPLATE", "bug_report.yml");
 
   assert.doesNotMatch(issueForm, /current repository baseline|placeholder:\s*0\.3\.0/u);
@@ -127,7 +127,21 @@ test("bug report intake does not hard-code a release and covers current host pat
   ]) {
     assert.match(issueForm, new RegExp(`- ${host.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}`));
   }
-  assert.match(issueForm, /Host marketplace or plugin manager/u);
-  assert.match(issueForm, /Cursor source-local --plugin-dir/u);
-  assert.match(issueForm, /npm package or standalone CLI/u);
+  assert.match(issueForm, /id: environment/u);
+  assert.doesNotMatch(issueForm, /id: operating-system|id: installation|id: command/u);
+  assert.doesNotMatch(issueForm, /Host marketplace or plugin manager|Cursor source-local --plugin-dir|npm package or standalone CLI/u);
+  assert.equal(countMatches(issueForm, /required: true/gu), 6);
+});
+
+test("feature request intake stays outcome-focused", () => {
+  const issueForm = readUtf8(".github", "ISSUE_TEMPLATE", "feature_request.yml");
+
+  assert.match(issueForm, /What problem are you trying to solve\?/u);
+  assert.match(issueForm, /What would success look like\?/u);
+  assert.match(issueForm, /id: scope/u);
+  assert.doesNotMatch(
+    issueForm,
+    /Likely extension surface|Proposed approach|Validation plan|Compatibility and delivery impact|canonical owner|activation path/u,
+  );
+  assert.equal(countMatches(issueForm, /required: true/gu), 4);
 });
