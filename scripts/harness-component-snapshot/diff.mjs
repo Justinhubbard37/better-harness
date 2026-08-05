@@ -10,6 +10,16 @@ import {
   validateHarnessComponentSnapshot,
 } from "./contract.mjs";
 
+// Significant statuses come first so a small limit truncates redundant
+// `unchanged` entries instead of hiding the actual differences. Ordering stays
+// deterministic because ties fall back to the canonical component ID order.
+const STATUS_ORDER = Object.freeze(["changed", "added", "removed", "unchanged"]);
+
+function compareEntries(left, right) {
+  const statusDelta = STATUS_ORDER.indexOf(left.status) - STATUS_ORDER.indexOf(right.status);
+  return statusDelta || compareCodeUnits(left.componentId, right.componentId);
+}
+
 function boundedLimit(value) {
   const limit = value === undefined ? 200 : Number(value);
   if (!Number.isInteger(limit) || limit < 0 || limit > MAX_DIFF_LIMIT) {
@@ -56,7 +66,7 @@ export function diffHarnessComponentSnapshots(before, after, options = {}) {
     componentId,
     beforeById.get(componentId),
     afterById.get(componentId),
-  ));
+  )).sort(compareEntries);
   const counts = Object.fromEntries(["added", "removed", "changed", "unchanged"]
     .map((status) => [status, allEntries.filter((entry) => entry.status === status).length]));
   const diff = {

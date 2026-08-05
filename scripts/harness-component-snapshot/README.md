@@ -20,6 +20,11 @@ node scripts/harness-component-snapshot/cli.mjs resolve --snapshot before.json -
 valid snapshot. Its result always sets `mutationAuthorized` to `false`; this
 capability neither stores source bodies nor restores files.
 
+`diff` counts always describe every component, while `entries` is bounded by
+`--limit`. Entries list `changed`, `added`, and `removed` before `unchanged`, so
+a small limit truncates redundant unchanged entries rather than the actual
+differences; `truncated` and `totalEntries` report what was dropped.
+
 Without `--population-key`, the population reference is a privacy-safe digest
 of the canonical workspace boundary, so two unrelated workspaces cannot be
 cross-diffed accidentally. Use the same opaque key only when two locations are

@@ -476,6 +476,14 @@ test("bounded diff reports added, removed, changed, and unchanged independently"
   assert.equal(bounded.entries.length, 2);
   assert.equal(bounded.totalEntries, full.totalEntries);
   assert.equal(bounded.truncated, true);
+  assert.deepEqual(bounded.counts, full.counts);
+  assert.equal(bounded.entries.some((entry) => entry.status === "unchanged"), false);
+
+  const significant = diffHarnessComponentSnapshots(before, after, { limit: 3 });
+  assert.deepEqual(
+    significant.entries.map((entry) => entry.status),
+    ["changed", "added", "removed"],
+  );
   assert.throws(() => diffHarnessComponentSnapshots(before, after, { limit: 1001 }), { code: "INVALID_DIFF_LIMIT" });
 });
 

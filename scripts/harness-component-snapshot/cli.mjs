@@ -26,11 +26,16 @@ Operational commands emit one JSON document on stdout; help emits this text.
 
 const COMMANDS = new Set(["create", "validate", "diff", "resolve"]);
 
+// Usage reasons stay explicit, but only allowlisted flag names may appear in
+// them. Unrecognized commands and options are caller-supplied argv that can
+// hold a private path, so they are reported without their value.
 class UsageError extends Error {
-  constructor(message) {
-    super(message);
+  constructor(reason, safeFlag) {
+    super(safeFlag ? `${reason}: ${safeFlag}` : reason);
     this.code = "INVALID_USAGE";
     this.exitCode = 64;
+    this.usageReason = reason;
+    this.usageFlag = safeFlag;
   }
 }
 
@@ -38,10 +43,10 @@ function parseOptions(argv, allowed) {
   const options = {};
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
-    if (!flag.startsWith("--") || !allowed.has(flag)) throw new UsageError(`unknown option: ${flag}`);
+    if (!flag.startsWith("--") || !allowed.has(flag)) throw new UsageError("unrecognized option");
     const value = argv[index + 1];
-    if (value === undefined || value.startsWith("--")) throw new UsageError(`missing value for ${flag}`);
-    if (Object.hasOwn(options, flag)) throw new UsageError(`duplicate option: ${flag}`);
+    if (value === undefined || value.startsWith("--")) throw new UsageError("missing option value", flag);
+    if (Object.hasOwn(options, flag)) throw new UsageError("duplicate option", flag);
     options[flag] = value;
     index += 1;
   }
@@ -49,7 +54,7 @@ function parseOptions(argv, allowed) {
 }
 
 function requireOption(options, flag) {
-  if (!options[flag]) throw new UsageError(`missing required option: ${flag}`);
+  if (!options[flag]) throw new UsageError("missing required option", flag);
   return options[flag];
 }
 
@@ -70,7 +75,7 @@ export async function runHarnessComponentSnapshotCli(argv) {
     return;
   }
   const [command, ...rest] = argv;
-  if (!COMMANDS.has(command)) throw new UsageError(`unknown command: ${command}`);
+  if (!COMMANDS.has(command)) throw new UsageError("unrecognized command");
   if (rest.length === 1 && (rest[0] === "--help" || rest[0] === "-h")) {
     process.stdout.write(HELP);
     return;
@@ -107,7 +112,7 @@ if (isMain) {
   runHarnessComponentSnapshotCli(process.argv.slice(2)).catch((error) => {
     const code = error.code ?? "SNAPSHOT_FAILED";
     const message = error instanceof UsageError
-      ? "invalid component snapshot arguments"
+      ? error.message
       : "component snapshot operation failed";
     process.stderr.write(`${code}: ${message}\n`);
     process.exitCode = error.exitCode ?? 1;

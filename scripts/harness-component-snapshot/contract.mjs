@@ -249,6 +249,10 @@ function validateCoverage(snapshot) {
   }
 }
 
+// In v1 every relationship is exactly one `declared-in` edge per component, so
+// the set is fully derivable from `components`. It stays a serialized, validated
+// field because the typed relationship shape is the stable extension point for
+// later relationship types; adding one must not be a breaking schema change.
 function validateRelationships(snapshot) {
   if (!Array.isArray(snapshot.relationships)) fail("INVALID_RELATIONSHIPS", "snapshot relationships must be an array");
   const byId = new Map(snapshot.components.map((component) => [component.id, component]));

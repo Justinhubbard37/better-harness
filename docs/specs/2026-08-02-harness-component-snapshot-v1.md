@@ -57,7 +57,10 @@ contract before generalizing across providers.
 - **HCS-AC-5 (minimal graph):** Each component has one typed `declared-in`
   relationship to its privacy-safe workspace artifact reference. Relationship
   validation rejects unknown component IDs, absolute targets, and mismatched
-  provenance instead of inferring semantic dependencies.
+  provenance instead of inferring semantic dependencies. In v1 this set is fully
+  derivable from `components`; it stays a serialized, validated field because the
+  typed relationship shape is the extension point for later relationship types,
+  so adding one must not be a breaking schema change.
 - **HCS-AC-6 (tamper-safe validation):** Validation recomputes component
   identity, relationship integrity, rollback references, ordering, and the
   snapshot digest. Stale or edited snapshots fail with stable diagnostic codes.
@@ -66,8 +69,11 @@ contract before generalizing across providers.
   counts. Revision changes are named `content`; route identity changes appear
   as one removal and one addition. Activation and provenance remain fixed,
   explicit evidence dimensions in this v1 producer and therefore cannot be
-  reported as changed without a future contract revision. Returned entries
-  obey an explicit bounded limit and report truncation. Different populations
+  reported as changed without a future contract revision. Counts always describe
+  every component, while returned entries obey an explicit bounded limit and
+  report truncation. Entries order `changed`, `added`, and `removed` before
+  `unchanged`, then by canonical component ID, so a small limit cannot hide the
+  actual differences behind redundant unchanged entries. Different populations
   fail closed.
 - **HCS-AC-8 (non-authorizing rollback reference):** Every component exposes a
   parseable reference binding provider, scope, population-qualified component
@@ -81,9 +87,12 @@ contract before generalizing across providers.
   `--population-key`, `validate`, `diff`, and `resolve` with parser-safe JSON
   stdout and usage/runtime failures on stderr. Runtime diagnostics expose a
   stable code without echoing caller-selected paths or untrusted snapshot
-  fields. Public API failures use stable sanitized messages without appending
-  filesystem or parser error details. Global and leaf help remain help-only
-  human text and do not inspect a workspace.
+  fields. Usage diagnostics name the specific failure reason and may name an
+  allowlisted flag, but never echo an unrecognized command, unrecognized option,
+  or any option value, because those are caller-supplied argv that can hold a
+  private path. Public API failures use stable sanitized messages without
+  appending filesystem or parser error details. Global and leaf help remain
+  help-only human text and do not inspect a workspace.
 - **HCS-AC-10 (portable evidence):** Fixtures cover Windows, macOS, and Linux
   route forms, stable input ordering, provider/scope isolation, secret and home
   sentinels, hook activation, tampering, bounded diff states, and rollback
@@ -148,7 +157,9 @@ from accepted host evidence to the component snapshot contract.
   rollback-reference mismatches.
 - **HCS-AC-9:** `node --test test/harness-component-snapshot-cli.test.mjs`
   verifies help, strict parsing, JSON stdout, path-safe stderr failures, and all
-  four direct CLI operations. Contract tests also verify that malformed Hook
+  four direct CLI operations. A dedicated case asserts that usage failures name
+  an allowlisted flag while never echoing an unrecognized command, unrecognized
+  option, or option value. Contract tests also verify that malformed Hook
   input cannot expose parser details, caller paths, or private sentinels through
   the public API error message.
 - **HCS-AC-10:** `node --test test/doc-link-graph.test.mjs`,
@@ -165,6 +176,25 @@ from accepted host evidence to the component snapshot contract.
   follow-up additionally replaced per-read workspace-root resolution with a
   snapshot-scoped boundary and removed parser/filesystem details from public
   Hook configuration errors.
+- **Post-merge review follow-up (2026-08-05):** A maintainer review after the
+  merge of pull request 69 corrected the observed repository-wide count above: on
+  the merged tree the run reports 1,289 passing with 0 failures and 0 skips on
+  macOS, not 1,288 passing with 1 skip. Four review findings were then applied on
+  `main`: bounded diff entries
+  now order significant statuses before `unchanged`; usage diagnostics name their
+  reason and any allowlisted flag; the v1 relationship redundancy and its
+  extension-point rationale are recorded in `contract.mjs` and HCS-AC-5; and
+  `.gitignore` re-includes `test/fixtures/**/.qoder/` so fixture assets are no
+  longer invisible to `git status`. Re-verification passed 1,290 tests with 0
+  failures and 0 skips, documentation links 6/6, and package verification at 458
+  npm and 480 runtime-zip entries.
+- **Deferred review findings (2026-08-05):** Two findings remain open rather than
+  fixed here, because each is a design decision beyond this slice. Symbolic-link
+  tolerance is inconsistent: probed collector roots and Skill trees reject any
+  symlink, while `workspaceFileEvidence` accepts one whose realpath stays inside
+  the workspace. `assertProjectReadBoundaries` also hard-codes the read surface of
+  `qoderWorkspaceRuleSources`, so a new rule source added in `agent-customize`
+  would silently narrow the fail-closed guarantee without failing a test.
 - **Risk — privacy:** A route or source field could expose an absolute home.
   Mitigation: accept only normalized workspace-relative routes and serialize
   no inventory path fields.
@@ -182,6 +212,16 @@ from accepted host evidence to the component snapshot contract.
   files cannot cross-diff or resolve rollback references. Repositories that
   relocate or compare across operating systems must provide the same opaque
   population key; only its domain-separated digest enters artifacts.
+- **Risk — line-ending normalization across operating systems:** A revision is a
+  digest of raw file bytes, so the same commit checked out with `core.autocrlf`
+  on Windows and with LF on Linux produces different revisions for every text
+  component. A cross-operating-system diff that shares one explicit
+  `--population-key` would then report each component as a `content` change.
+  Mitigation for this repository: `.gitattributes` pins `eol=lf` for `.md`,
+  `.json`, `.mjs`, `.js`, `.yaml`, and `.yml`. Snapshotted consumer projects
+  carry no such guarantee, so cross-operating-system comparison requires a
+  matching checkout normalization; byte-identical revisions are not claimed
+  across differing line-ending configurations.
 - **Risk — incomplete rollback:** A privacy-safe snapshot cannot itself restore
   omitted source bytes. The v1 reference is resolvable and non-authorizing;
   executable restore remains gated on a future content-store or Git provenance

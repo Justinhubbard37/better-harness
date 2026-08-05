@@ -33,7 +33,7 @@ test("direct CLI provides global and leaf help without performing work", () => {
     const result = run(args);
     assert.equal(result.status, 64, `${args.join(" ")} unexpectedly succeeded`);
     assert.equal(result.stdout, "");
-    assert.equal(result.stderr, "INVALID_USAGE: invalid component snapshot arguments\n");
+    assert.match(result.stderr, /^INVALID_USAGE: unrecognized (command|option)\n$/u);
   }
 
   const privatePath = path.join(os.tmpdir(), "PRIVATE-USAGE-PATH-SENTINEL", "snapshot.json");
@@ -41,9 +41,28 @@ test("direct CLI provides global and leaf help without performing work", () => {
     const result = run(args);
     assert.equal(result.status, 64);
     assert.equal(result.stdout, "");
-    assert.equal(result.stderr, "INVALID_USAGE: invalid component snapshot arguments\n");
+    assert.match(result.stderr, /^INVALID_USAGE: unrecognized (command|option)\n$/u);
     assert.equal(result.stderr.includes(privatePath), false);
+    assert.equal(result.stderr.includes("PRIVATE-USAGE-PATH-SENTINEL"), false);
   }
+});
+
+test("direct CLI names allowlisted flags in usage failures without echoing their values", async (t) => {
+  const { workspace } = await fixtureWorkspace(t);
+  const privateValue = path.join(os.tmpdir(), "PRIVATE-FLAG-VALUE-SENTINEL", "snapshot.json");
+
+  const missingValue = run(["create", "--workspace"]);
+  assert.equal(missingValue.status, 64);
+  assert.equal(missingValue.stderr, "INVALID_USAGE: missing option value: --workspace\n");
+
+  const duplicate = run(["create", "--workspace", workspace, "--workspace", privateValue]);
+  assert.equal(duplicate.status, 64);
+  assert.equal(duplicate.stderr, "INVALID_USAGE: duplicate option: --workspace\n");
+  assert.equal(duplicate.stderr.includes(privateValue), false);
+
+  const missingRequired = run(["validate"]);
+  assert.equal(missingRequired.status, 64);
+  assert.equal(missingRequired.stderr, "INVALID_USAGE: missing required option: --snapshot\n");
 });
 
 test("direct CLI creates parser-safe private JSON and rejects unknown options", async (t) => {
