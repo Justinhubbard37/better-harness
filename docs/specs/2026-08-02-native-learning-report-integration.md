@@ -114,11 +114,12 @@ matches into canonical Learning Capture diagnostics and reader evidence.
   Learning Loop/Episode run: 81/81.
 - CLI, Skill, frozen CLI, and doc-link contract run: 66 passed with one Windows
   package-bin symlink test skipped.
-- Final full regression: 1089 passed, 4 failed, and 6 skipped. All four failures
-  are Windows `EPERM` symlink-creation restrictions in analysis-scope, render,
-  and workspace-topology tests outside the changed modules.
-- Package verification passed with an isolated npm cache: 385 npm entries and
-  408 runtime ZIP entries.
+- Final full regression on the merged `main`: 1267 passed, 0 failed, 0 skipped
+  on macOS. The authoring environment had previously reported four Windows
+  `EPERM` symlink-creation failures in analysis-scope, render, and
+  workspace-topology tests outside the changed modules; those are environment
+  restrictions, and CI passed on ubuntu (Node 22 and 24), macOS, and Windows.
+- Package verification passed: 450 npm entries and 472 runtime ZIP entries.
 - `git diff --check` passed.
 
 ## Privacy and Risk
