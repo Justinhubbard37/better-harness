@@ -17,23 +17,23 @@ raw abilities. A verify loop turns them into a controlled cycle:
 5. if it fails, diagnose, repair, and rerun the **same** journey.
 
 This document explains that construction pattern for browser-based systems and
-embedded web runtimes such as mini-program containers. It uses the four-plane
+embedded web runtimes such as web application containers. It uses the four-plane
 model from
 [agent-verify-loop.md](../../references/project-harness/agent-verify-loop.md)
 and the D0–D4 drive-plane ladder from
 [ui-and-system-drivers.md](../../references/project-harness/ui-and-system-drivers.md),
 but keeps the explanation grounded in an everyday browser journey.
 
-## Mini-Program Harness Architecture in ASCII
+## Web Application Harness Architecture in ASCII
 
-The original mini-program Harness diagram can be read as this layered stack:
+The original Web Application Harness diagram can be read as this layered stack:
 
 ```text
 +----------------------------------------------------------------------------------------------+
-|                         Mini-Program Plugin: Harness Built In                                 |
+|                         Web Application Plugin: Harness Built In                              |
 +----------------------+------------------------+----------------------+------------------------+
 | Live Preview         | Verify & UI Harness    | Browser-Use & Test   | Debug & Diagnosis      |
-| - Taro/Uni/WeChat    | - UI: screenshot + DOM | - observe -> reason  | - L1 summary + L2 diag |
+| - Web App            | - UI: screenshot + DOM | - observe -> reason  | - L1 summary + L2 diag |
 | - Canvas             | - Logic: network/logs  |   -> act             | - errorType routing    |
 | - React              | - Data: RUM/perf       | - structured cases   | - locate -> fix -> run |
 | - page hot refresh   | - image load logs      | - DOM + visual back  | - raw evidence on pull |
@@ -41,7 +41,7 @@ The original mini-program Harness diagram can be read as this layered stack:
 
 +------------------------------------------------------+  +----------------------------------+
 | Runtime Layer                                        |  | GUI Agent                        |
-| Kotlin Runtime                  MiniProgram Runtime  |  | MCP Tool | Custom Agent | CLI     |
+| Browser Runtime                    Web App Runtime   |  | MCP Tool | Custom Agent | CLI     |
 +------------------------------------------------------+  | Figma MCP | Skill | Browser Use  |
 | time-travel debug | screenshot/ruler/timeline | net   |  +----------------------------------+
 | design diff       | XML/DOM/a11y tree         | trace |
@@ -80,13 +80,13 @@ same situation".
 
 ## The Practical Architecture
 
-| Everyday question | Verify-loop term | What it means in the checkout example |
-| --- | --- | --- |
-| What journey are we checking? | Discover | The story, design, or route says checkout must work. |
-| Which journeys matter now? | Scope | A checkout component changed, so checkout cases are selected. |
-| How do we run it repeatably? | Exercise | Start an isolated browser session, open `/checkout`, interact through element refs, and wait after each step. |
-| How do we know it worked? | Judge | Check UI evidence, network evidence, console state, and persisted order state. |
-| What happens if it fails? | Repair loop | Reproduce with the same handle, localize the failure, fix it, and rerun the same case. |
+| Everyday question             | Verify-loop term | What it means in the checkout example                                                                         |
+|-------------------------------|------------------|---------------------------------------------------------------------------------------------------------------|
+| What journey are we checking? | Discover         | The story, design, or route says checkout must work.                                                          |
+| Which journeys matter now?    | Scope            | A checkout component changed, so checkout cases are selected.                                                 |
+| How do we run it repeatably?  | Exercise         | Start an isolated browser session, open `/checkout`, interact through element refs, and wait after each step. |
+| How do we know it worked?     | Judge            | Check UI evidence, network evidence, console state, and persisted order state.                                |
+| What happens if it fails?     | Repair loop      | Reproduce with the same handle, localize the failure, fix it, and rerun the same case.                        |
 
 The architecture has four working parts:
 
@@ -104,10 +104,10 @@ The architecture has four working parts:
 
 A practical browser verify loop usually needs two browser modes:
 
-| Mode | Use it for | Why it matters |
-| --- | --- | --- |
-| Regression browser | Routine CI and repeatable local verification | The loop owns the browser, fixtures, network mocks, viewport, and session. This is where stable baselines belong. |
-| Real-state browser | Flows that require live login, real SSO, payment pages, or user-owned state | The loop attaches to a real browser but must isolate the agent from user-owned tabs and state. |
+| Mode               | Use it for                                                                  | Why it matters                                                                                                    |
+|--------------------|-----------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------|
+| Regression browser | Routine CI and repeatable local verification                                | The loop owns the browser, fixtures, network mocks, viewport, and session. This is where stable baselines belong. |
+| Real-state browser | Flows that require live login, real SSO, payment pages, or user-owned state | The loop attaches to a real browser but must isolate the agent from user-owned tabs and state.                    |
 
 Use the regression browser first. Escalate to the real-state browser only when
 the controlled environment cannot represent the case. If neither mode can
@@ -119,11 +119,11 @@ visual judgement.
 
 A browser journey should produce evidence in three layers:
 
-| Evidence layer | Examples | Typical judgement |
-| --- | --- | --- |
-| UI evidence | screenshot, region screenshot, accessibility tree, DOM snapshot | The confirmation page is visible; the expected button/text/role exists. |
-| Runtime evidence | console errors, network calls, request/response bodies, traces | No console error; payment mock was called once; the submit request returned 200. |
-| State evidence | order record, emitted event, analytics event, storage/cookie state | The order exists with the expected id and user; required event was emitted. |
+| Evidence layer   | Examples                                                           | Typical judgement                                                                |
+|------------------|--------------------------------------------------------------------|----------------------------------------------------------------------------------|
+| UI evidence      | screenshot, region screenshot, accessibility tree, DOM snapshot    | The confirmation page is visible; the expected button/text/role exists.          |
+| Runtime evidence | console errors, network calls, request/response bodies, traces     | No console error; payment mock was called once; the submit request returned 200. |
+| State evidence   | order record, emitted event, analytics event, storage/cookie state | The order exists with the expected id and user; required event was emitted.      |
 
 Missing evidence is not success. If the screenshot cannot be taken or the
 snapshot times out, the verdict is `unobserved`, not `pass`.
