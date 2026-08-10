@@ -120,6 +120,86 @@ test("Claude workspace slug folds dots the way Claude Code names project directo
   assert.deepEqual(workspaceToClaudeSlugVariants("/workspace/project"), ["-workspace-project"]);
 });
 
+test("Claude workspace slug folds underscores the way Claude Code names project directories", () => {
+  const windowsVariants = workspaceToClaudeSlugVariants("c:\\work\\my_project");
+  assert.equal(windowsVariants[0], "c--work-my-project");
+  assert.ok(windowsVariants.includes("c--work-my_project"));
+  assert.deepEqual(workspaceToClaudeSlugVariants("/home/me/my_project"), [
+    "-home-me-my-project",
+    "-home-me-my_project",
+  ]);
+});
+
+test("Claude provider discovers transcripts for underscore workspace paths", async () => {
+  const root = await fixtureRoot("session-claude-underscore-");
+  const home = path.join(root, ".claude");
+  const workspace = path.join(root, "work", "my_project");
+  const sessionId = "44444444-4444-4444-8444-444444444444";
+  const foldedSlug = workspaceToClaudeSlugVariants(workspace)[0];
+  assert.ok(foldedSlug.endsWith("-work-my-project"));
+  await writeJsonl(path.join(home, "projects", foldedSlug, `${sessionId}.jsonl`), [{
+    type: "user",
+    sessionId,
+    cwd: workspace,
+    timestamp: "2026-08-07T01:00:00.000Z",
+    message: { role: "user", content: [{ type: "text", text: "hello from an underscore workspace" }] },
+  }]);
+  const result = await new ClaudeSessionAnalyzer().analyze({ command: "sources", workspace, home });
+  assert.equal(result.sessions.length, 1);
+  assert.equal(result.sessions[0].sessionId, sessionId);
+  assert.equal(result.sources.find((source) => source.kind === "claude-project-jsonl")?.exists, true);
+});
+
+test("Claude provider recovers transcripts from the recorded cwd when no slug variant matches", async () => {
+  const root = await fixtureRoot("session-claude-cwd-recovery-");
+  const home = path.join(root, ".claude");
+  const workspace = path.join(root, "work", "my project");
+  const sessionId = "55555555-5555-4555-8555-555555555555";
+  const otherSessionId = "66666666-6666-4666-8666-666666666666";
+  const unmodelledSlug = "claude-owned-project-dir-name";
+  assert.ok(!workspaceToClaudeSlugVariants(workspace).includes(unmodelledSlug));
+  await writeJsonl(path.join(home, "projects", unmodelledSlug, `${sessionId}.jsonl`), [{
+    type: "user",
+    sessionId,
+    cwd: workspace,
+    timestamp: "2026-08-07T02:00:00.000Z",
+    message: { role: "user", content: [{ type: "text", text: "hello from an unmodelled slug" }] },
+  }]);
+  await writeJsonl(path.join(home, "projects", "-unrelated-project", `${otherSessionId}.jsonl`), [{
+    type: "user",
+    sessionId: otherSessionId,
+    cwd: path.join(root, "work", "unrelated"),
+    timestamp: "2026-08-07T03:00:00.000Z",
+    message: { role: "user", content: [{ type: "text", text: "another workspace" }] },
+  }]);
+
+  const result = await new ClaudeSessionAnalyzer().analyze({ command: "sources", workspace, home });
+  const transcriptSource = result.sources.find((source) => source.kind === "claude-project-jsonl");
+  assert.equal(transcriptSource?.exists, true);
+  assert.equal(transcriptSource.path, path.join(home, "projects", unmodelledSlug));
+  assert.deepEqual(result.sessions.map((session) => session.sessionId), [sessionId]);
+});
+
+test("Claude provider still reports a missing transcript root when no cwd matches", async () => {
+  const root = await fixtureRoot("session-claude-no-evidence-");
+  const home = path.join(root, ".claude");
+  const workspace = path.join(root, "work", "empty_project");
+  await writeJsonl(path.join(home, "projects", "-unrelated-project", "77777777-7777-4777-8777-777777777777.jsonl"), [{
+    type: "user",
+    sessionId: "77777777-7777-4777-8777-777777777777",
+    cwd: path.join(root, "work", "unrelated"),
+    timestamp: "2026-08-07T04:00:00.000Z",
+    message: { role: "user", content: [{ type: "text", text: "another workspace" }] },
+  }]);
+
+  const result = await new ClaudeSessionAnalyzer().analyze({ command: "sources", workspace, home });
+  const transcriptSource = result.sources.find((source) => source.kind === "claude-project-jsonl");
+  assert.equal(transcriptSource?.exists, false);
+  assert.equal(transcriptSource.path, path.join(home, "projects", workspaceToClaudeSlugVariants(workspace)[0]));
+  assert.equal(result.sessions.length, 0);
+  assert.ok(result.warnings.some((warning) => warning.code === "missing-required-root"));
+});
+
 test("Claude provider discovers transcripts for dotted workspace paths", async () => {
   const root = await fixtureRoot("session-claude-dotted-");
   const home = path.join(root, ".claude");
