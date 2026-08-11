@@ -140,6 +140,50 @@ test("Qoder transcript tool_use and tool_result items retain paired observed lat
   assert.doesNotMatch(JSON.stringify(trace), /private|workspace/u);
 });
 
+test("Codex function_call and function_call_output retain paired observed latency", async () => {
+  const { CodexSessionAnalyzer } = await import("../scripts/session-analysis/platforms/codex.mjs");
+  const analyzer = new CodexSessionAnalyzer();
+  const sourceRef = {
+    kind: "codex-session-jsonl",
+    path: "/private/session.jsonl",
+    line: 1,
+    planningScope: "workspace",
+    sessionId: "private-codex-session",
+  };
+  const request = analyzer.normalizeEvent({
+    type: "response_item",
+    timestamp: "2026-08-11T00:00:00.000Z",
+    payload: {
+      type: "function_call",
+      call_id: "call-private-1",
+      name: "exec_command",
+      arguments: JSON.stringify({ cmd: "private command" }),
+    },
+  }, sourceRef, { includeCommandText: true });
+  const result = analyzer.normalizeEvent({
+    type: "response_item",
+    timestamp: "2026-08-11T00:00:02.500Z",
+    payload: {
+      type: "function_call_output",
+      call_id: "call-private-1",
+      output: "Script completed\nWall time 2.5 seconds\nOutput:\nprivate output",
+    },
+  }, { ...sourceRef, line: 2 });
+
+  const trace = buildToolCallTrace([request, result]);
+
+  assert.deepEqual(trace.calls, [{
+    id: "T1",
+    step: 1,
+    toolName: "exec_command",
+    status: "observed",
+    durationStatus: "observed",
+    durationMs: 2500,
+    timingSource: "transcript-pair",
+  }]);
+  assert.doesNotMatch(JSON.stringify(trace), /private command|private output|private-codex-session/u);
+});
+
 test("planning signals detect user-issued spec commands without counting prose", () => {
   const invoked = detectPlanningSignals({
     type: "user",

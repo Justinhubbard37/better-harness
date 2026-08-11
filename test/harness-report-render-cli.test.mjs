@@ -354,6 +354,61 @@ function htmlReportDataWithActivity(dates, { language = "en", activeMinutes } = 
   };
 }
 
+function htmlReportDataWithLongSessions({ callCount = 12, language = "en" } = {}) {
+  const data = htmlReportDataWithActivity(["2026-08-11"], { language, activeMinutes: [90] });
+  const calls = Array.from({ length: callCount }, (_, index) => {
+    const observed = index % 2 === 0;
+    return {
+      id: `T${index + 1}`,
+      step: index + 1,
+      toolName: ["exec_command", "apply_patch", "view_image"][index % 3],
+      status: (index + 1) % 5 === 0 ? "failed" : "observed",
+      durationStatus: observed ? "observed" : "unobserved",
+      ...(observed ? {
+        durationMs: (index + 1) * 250,
+        timingSource: "transcript-pair",
+      } : {}),
+    };
+  });
+  data.summary.usageEfficiency = {
+    ...data.summary.usageEfficiency,
+    selection: {
+      ...data.summary.usageEfficiency.selection,
+      eligibleSessionCount: 6,
+      analyzedSessionCount: 6,
+    },
+    longSessions: {
+      activeCount: 2,
+      wallOnlyCount: 0,
+      longestActiveMinutes: 90,
+      estimate: { activeThresholdMinutes: 45, gapCapMinutes: 5, idleGapMinutes: 30 },
+      samples: [{
+        alias: "S1",
+        role: "user-thread-candidate",
+        activeMinutes: 90,
+        failureCount: calls.filter((call) => call.status === "failed").length,
+        sessionId: "019f-codex-session-1",
+        userRequest: "Inspect <script>unsafe</script> & explain the long session",
+        toolTrace: {
+          schemaVersion: 2,
+          totalCalls: callCount,
+          shownCalls: callCount,
+          truncated: false,
+          calls,
+        },
+      }, {
+        alias: "S2",
+        role: "child-agent-candidate",
+        activeMinutes: 55,
+        failureCount: 0,
+        sessionId: "codex-session-2",
+        userRequest: "Review the validation evidence",
+      }],
+    },
+  };
+  return data;
+}
+
 function attribute(tag, name) {
   return tag.match(new RegExp(`\\b${name}="([^"]*)"`, "u"))?.[1] ?? null;
 }
@@ -1056,6 +1111,50 @@ test("HTML activity chart preserves empty, localized, accessible, and self-conta
   assert.equal(attribute(chineseCell, "aria-label"), attribute(chineseCell, "title"));
   assert.doesNotMatch(chineseHtml, /<link\b|<script[^>]+\bsrc=|fetch\s*\(/iu);
   assert.equal(evaluateHtmlReport(chineseHtml, chineseData).status, "pass");
+});
+
+test("Codex HTML renders accessible collapsed long-session swimlane traces without host runtime dependencies", () => {
+  const reportData = htmlReportDataWithLongSessions();
+  const html = renderHtml(reportData);
+  const details = html.match(/<details class="tool-trace-details"[^>]*>/gu) ?? [];
+  const points = html.match(/<circle class="tool-trace-point[^>]*>[\s\S]*?<\/circle>/gu) ?? [];
+
+  assert.equal((html.match(/data-long-session-alias=/gu) ?? []).length, 2);
+  assert.equal(details.length, 2);
+  assert.ok(details.every((tag) => !/\bopen\b/u.test(tag)));
+  assert.equal((html.match(/data-tool-trace-chart=/gu) ?? []).length, 1);
+  assert.equal(points.length, 12);
+  assert.equal((html.match(/class="tool-trace-point failed"/gu) ?? []).length, 2);
+  assert.ok(points.every((tag) => /tabindex="0"/u.test(tag) && /aria-label="[^"]+"/u.test(tag) && /<title>/u.test(tag)));
+  assert.match(html, /<svg class="tool-trace-svg"[^>]+role="img"[^>]+aria-label="S1 tool calls by tool, sequence, and observed latency"/u);
+  assert.match(html, /<desc>Bubble area represents observed latency/u);
+  assert.match(html, /data-session-locator="019f-codex-session-1"/u);
+  assert.match(html, /Inspect &lt;script&gt;unsafe&lt;\/script&gt; &amp; explain the long session/u);
+  assert.doesNotMatch(html, /<script>unsafe<\/script>|(?:codex|chatgpt):\/\/|qoder\/canvas/iu);
+  assert.match(html, /Observed latency for 6 of 12 shown calls/u);
+  assert.match(html, /\.tool-trace-scroll \{[^}]*overflow-x:auto/u);
+  assert.match(html, /details\.tool-trace-details:not\(\[open\]\) > :not\(summary\)\{display:block!important/u);
+  assert.equal(evaluateHtmlReport(html, reportData).status, "pass");
+});
+
+test("Codex HTML keeps complete wide traces contained and validates exact reviewed points", () => {
+  const reportData = htmlReportDataWithLongSessions({ callCount: 125 });
+  const html = renderHtml(reportData);
+
+  assert.equal((html.match(/data-trace-call-id=/gu) ?? []).length, 125);
+  assert.match(html, /<svg class="tool-trace-svg"[^>]+width="1720"/u);
+  assert.match(html, /Showing 125 of 125 tool calls/u);
+  assert.equal(evaluateHtmlReport(html, reportData).status, "pass");
+
+  const missingPoint = html.replace(/<circle class="tool-trace-point[^>]*>[\s\S]*?<\/circle>/u, "");
+  const missingPointResult = evaluateHtmlReport(missingPoint, reportData);
+  assert.equal(missingPointResult.status, "fail");
+  assert.ok(missingPointResult.errors.some((error) => /tool-trace point count 124/u.test(error)));
+
+  const hostLinked = html.replace("</footer>", "<a href=\"codex://session/private\">open</a></footer>");
+  const hostLinkedResult = evaluateHtmlReport(hostLinked, reportData);
+  assert.equal(hostLinkedResult.status, "fail");
+  assert.ok(hostLinkedResult.errors.some((error) => /forbidden host deep link/u.test(error)));
 });
 
 test("HTML dimension progressbar semantics stay complete and score-bound", () => {
