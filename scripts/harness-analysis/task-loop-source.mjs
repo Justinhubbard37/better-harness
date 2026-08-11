@@ -364,6 +364,67 @@ function safeUsageSummary(value) {
     ?? "unavailable-after-privacy-filtering";
 }
 
+function safeToolName(value) {
+  const label = safeReaderLabel(value, "Unknown tool").slice(0, 64);
+  return /^[\p{L}\p{N}_.: -]+$/u.test(label) ? label : "Unknown tool";
+}
+
+function safeToolDuration(call) {
+  const durationMs = Number(call?.durationMs);
+  const timingSource = call?.timingSource === "transcript-pair" ? "transcript-pair"
+    : call?.timingSource === "lifecycle-pair" ? "lifecycle-pair"
+      : null;
+  if (call?.durationStatus !== "observed"
+    || !Number.isFinite(durationMs)
+    || durationMs < 0
+    || durationMs > 24 * 60 * 60 * 1000
+    || !timingSource) {
+    return { durationStatus: "unobserved" };
+  }
+  return {
+    durationStatus: "observed",
+    durationMs: Math.round(durationMs),
+    timingSource,
+  };
+}
+
+function safeToolCallTrace(value) {
+  const totalCalls = nonNegativeInteger(value?.totalCalls);
+  const sanitizedCalls = rows(value?.calls)
+    .map((call) => ({
+      id: `T${Math.max(1, nonNegativeInteger(call?.step))}`,
+      step: Math.max(1, nonNegativeInteger(call?.step)),
+      toolName: safeToolName(call?.toolName),
+      status: call?.status === "failed" ? "failed" : "observed",
+      ...safeToolDuration(call),
+    }))
+    .filter((call, index, all) => all.findIndex((candidate) => candidate.step === call.step) === index)
+    .sort((left, right) => left.step - right.step);
+  const toolCounts = new Map();
+  const firstSteps = new Map();
+  for (const call of sanitizedCalls) {
+    toolCounts.set(call.toolName, (toolCounts.get(call.toolName) ?? 0) + 1);
+    if (!firstSteps.has(call.toolName)) firstSteps.set(call.toolName, call.step);
+  }
+  const rankedTools = [...toolCounts.keys()].sort((left, right) =>
+    toolCounts.get(right) - toolCounts.get(left)
+      || firstSteps.get(left) - firstSteps.get(right)
+      || left.localeCompare(right));
+  const visibleTools = new Set(rankedTools.slice(0, rankedTools.length > 8 ? 7 : 8));
+  const calls = sanitizedCalls.map((call) => ({
+    ...call,
+    toolName: visibleTools.has(call.toolName) ? call.toolName : "Other tools",
+  }));
+  const observedTotal = Math.max(totalCalls, calls.at(-1)?.step ?? 0);
+  return {
+    schemaVersion: 2,
+    totalCalls: observedTotal,
+    shownCalls: calls.length,
+    truncated: calls.length < observedTotal,
+    calls,
+  };
+}
+
 function projectLongSessionSamples(candidates, scope = {}) {
   return candidates
     .slice()
@@ -383,6 +444,7 @@ function projectLongSessionSamples(candidates, scope = {}) {
       activeMinutes: Number((Number(row?.activeMs ?? 0) / 60_000).toFixed(1)),
       failureCount: nonNegativeInteger(row?.failureCount),
       userInputSummary: safeUsageSummary(row?.userInputSummary),
+      toolTrace: safeToolCallTrace(row?.toolTrace),
     }));
 }
 

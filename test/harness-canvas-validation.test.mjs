@@ -446,6 +446,8 @@ test("validates the shipped Better Harness Canvas template", async () => {
     assert.match(template, /Estimated active-long/);
     assert.match(template, /TaskLoopLongSessionReview/);
     assert.doesNotMatch(template, /sample\.(?:sessionRef|userInputSummary|rawSessionId)/);
+    assert.match(template, /sample\.userRequest/);
+    assert.match(template, /sample\.sessionId/);
     assert.match(template, /Review \$\{pendingCount\} sessions/);
     assert.match(template, /controlled A\/B/);
     assert.doesNotMatch(template, /TaskLoopEvidenceScore|Work-stage coverage/);
@@ -455,7 +457,8 @@ test("validates the shipped Better Harness Canvas template", async () => {
     assert.match(template, /Representative project or global Memory note files/);
     assert.doesNotMatch(template, /function hasIdeCanvasBridge/);
     assert.doesNotMatch(template, /__aicodingCanvasBridge/);
-    assert.doesNotMatch(template, /useCanvasAction/);
+    assert.match(template, /useCanvasAction/);
+    assert.match(template, /aicoding\.canvas\.openQuestSession/);
     assert.doesNotMatch(template, /aicoding\.canvas\.openHarnessInsights/);
     assert.doesNotMatch(template, /Handoff to Better Harness|到 Better Harness 处理/);
     const reportHeader = template.slice(
@@ -525,10 +528,42 @@ test("validates the shipped Better Harness Canvas template", async () => {
       template.indexOf("function TaskLoopLongSessionReview"),
       template.indexOf("function TaskLoopProjectUsage"),
     );
-    assert.match(longSessionReview, /<Stack gap=\{0\}>/);
+    assert.match(template, /function TaskLoopSwimlaneBubbleChart/);
+    assert.match(template, /<svg/);
+    assert.match(template, /<circle/);
+    assert.match(template, /Math\.sqrt/);
+    assert.match(template, /aria-label=\{ariaLabel\}/);
+    assert.doesNotMatch(template, /\n\s*SwimlaneBubbleChart,/);
+    assert.match(longSessionReview, /<TaskLoopSwimlaneBubbleChart/);
+    assert.match(longSessionReview, /sample\.toolTrace/);
+    assert.match(longSessionReview, /trace\.calls/);
+    assert.match(longSessionReview, /<CollapsibleSection/);
+    assert.match(longSessionReview, /defaultOpen=\{false\}/);
+    assert.match(longSessionReview, /title=\{<Text size="sm" weight="semibold">\{taskLoopCopy\("Tool-call chart", "工具调用图表"\)\}<\/Text>\}/);
+    assert.match(longSessionReview, /xMin=\{1\}/);
+    assert.match(longSessionReview, /xAxisLabel=\{taskLoopCopy\("Tool-call step", "工具调用序号"\)\}/);
+    assert.match(longSessionReview, /call\.status === "failed" \? "warning" : "neutral"/);
+    assert.match(longSessionReview, /const durationMs = taskLoopToolCallDurationMs\(call\)/);
+    assert.match(longSessionReview, /\.\.\.\(durationMs === null \? \{\} : \{ value: durationMs \}\)/);
+    assert.match(longSessionReview, /valueLabel=\{taskLoopCopy\("Observed latency", "观测延迟"\)\}/);
+    assert.match(longSessionReview, /valueFormatter=\{formatToolCallLatency\}/);
+    assert.match(longSessionReview, /bubble area scales with observed latency/);
+    assert.match(longSessionReview, /style=\{\{ overflow: "visible" \}\}/);
     assert.match(longSessionReview, /samples\.map/);
     assert.match(longSessionReview, /Review \$\{pendingCount\} sessions/);
-    assert.match(longSessionReview, /Estimated active time/);
+    assert.match(longSessionReview, /formatActivityMinutes\(sample\.activeMinutes\)/);
+    assert.match(longSessionReview, /taskLoopLongSessionRoleLabel\(sample\.role\)/);
+    assert.match(longSessionReview, /formatUsageNumber\(failureCount\)/);
+    assert.match(longSessionReview, /Showing \$\{formatUsageNumber\(shownCalls\)\} of \$\{formatUsageNumber\(totalCalls\)\} tool calls/);
+    assert.match(longSessionReview, /sample\.userRequest/);
+    assert.match(longSessionReview, /sample\.sessionId/);
+    assert.match(longSessionReview, /aicoding\.canvas\.openQuestSession/);
+    assert.match(longSessionReview, /justifyContent: "flex-start"/);
+    assert.match(longSessionReview, /textOverflow: "ellipsis"/);
+    assert.doesNotMatch(longSessionReview, /alignItems: "flex-end"/);
+    assert.match(longSessionReview, /overflowX: "auto"/);
+    assert.match(longSessionReview, /minWidth: chartMinWidth/);
+    assert.match(longSessionReview, /chartMax \* 12 \+ 220/);
     assert.equal((longSessionReview.match(/sample\.sessionRef/g) ?? []).length, 0);
     assert.doesNotMatch(longSessionReview, /sample\.(?:userInputSummary|rawSessionId)/);
     assert.doesNotMatch(longSessionReview, /<Grid\b|<Callout\b/);

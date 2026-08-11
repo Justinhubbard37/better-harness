@@ -1595,6 +1595,10 @@ function projectedUsageEfficiency(source, locale) {
   if (!sourceUsage) return null;
   const usage = JSON.parse(JSON.stringify(sourceUsage));
   for (const sample of rows(usage?.longSessions?.samples)) {
+    const sessionId = String(sample.rawSessionId ?? "").trim();
+    const userRequest = String(sample.userInputSummary ?? "").trim();
+    if (/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(sessionId)) sample.sessionId = sessionId;
+    if (userRequest) sample.userRequest = userRequest;
     delete sample.rawSessionId;
     delete sample.sessionRef;
     delete sample.userInputSummary;
@@ -3581,13 +3585,87 @@ export function validateTaskLoopFindings(data) {
               errors.push(`${prefix} must be an object`);
               continue;
             }
-            errors.push(...unsupportedFields(sample, ["alias", "role", "activeMinutes", "failureCount"], prefix));
+            errors.push(...unsupportedFields(sample, ["alias", "role", "activeMinutes", "failureCount", "sessionId", "userRequest", "toolTrace"], prefix));
             if (sample.alias !== `S${index + 1}`) errors.push(`${prefix}.alias must be the deterministic S${index + 1} alias`);
             if (!new Set(["user-thread-candidate", "child-agent-candidate", "unknown-candidate"]).has(sample.role)) {
               errors.push(`${prefix}.role must be a bounded candidate role`);
             }
             if (!Number.isFinite(sample.activeMinutes) || sample.activeMinutes < 0) errors.push(`${prefix}.activeMinutes must be non-negative`);
             if (!Number.isInteger(sample.failureCount) || sample.failureCount < 0) errors.push(`${prefix}.failureCount must be a non-negative integer`);
+            if (sample.sessionId !== undefined
+              && (typeof sample.sessionId !== "string"
+                || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(sample.sessionId))) {
+              errors.push(`${prefix}.sessionId must be a bounded Canvas session locator`);
+            }
+            if (sample.userRequest !== undefined
+              && (typeof sample.userRequest !== "string"
+                || !sample.userRequest.trim()
+                || [...sample.userRequest].length > 161
+                || PRIVATE_USAGE_SUMMARY_RE.test(sample.userRequest))) {
+              errors.push(`${prefix}.userRequest must be a bounded privacy-safe user request`);
+            }
+            const trace = sample.toolTrace;
+            const traceVersion = trace?.schemaVersion;
+            if (trace !== undefined && (!isObject(trace)
+              || !new Set([1, 2]).has(traceVersion)
+              || !Number.isInteger(trace.totalCalls)
+              || !Number.isInteger(trace.shownCalls)
+              || trace.totalCalls < 0
+              || trace.shownCalls < 0
+              || trace.shownCalls > trace.totalCalls
+              || typeof trace.truncated !== "boolean"
+              || trace.truncated !== (trace.shownCalls < trace.totalCalls)
+              || !Array.isArray(trace.calls)
+              || trace.calls.length !== trace.shownCalls)) {
+              errors.push(`${prefix}.toolTrace must contain a complete or explicitly limited v1 or v2 tool-call trace`);
+            } else if (isObject(trace)) {
+              errors.push(...unsupportedFields(trace, ["schemaVersion", "totalCalls", "shownCalls", "truncated", "calls"], `${prefix}.toolTrace`));
+              let previousStep = 0;
+              const toolNames = new Set();
+              for (const [callIndex, call] of trace.calls.entries()) {
+                const callPrefix = `${prefix}.toolTrace.calls[${callIndex}]`;
+                if (!isObject(call)) {
+                  errors.push(`${callPrefix} must be an object`);
+                  continue;
+                }
+                const callFields = traceVersion === 2
+                  ? ["id", "step", "toolName", "status", "durationStatus", "durationMs", "timingSource"]
+                  : ["id", "step", "toolName", "status"];
+                errors.push(...unsupportedFields(call, callFields, callPrefix));
+                if (!Number.isInteger(call.step) || call.step <= previousStep || call.step > trace.totalCalls) {
+                  errors.push(`${callPrefix}.step must be strictly increasing within the observed call count`);
+                }
+                previousStep = Number.isInteger(call.step) ? call.step : previousStep;
+                if (call.id !== `T${call.step}`) errors.push(`${callPrefix}.id must match its deterministic tool-call step`);
+                if (typeof call.toolName !== "string"
+                  || !call.toolName.trim()
+                  || call.toolName.length > 64
+                  || !/^[\p{L}\p{N}_.: -]+$/u.test(call.toolName)) {
+                  errors.push(`${callPrefix}.toolName must be a bounded privacy-safe label`);
+                }
+                toolNames.add(call.toolName);
+                if (!new Set(["observed", "failed"]).has(call.status)) {
+                  errors.push(`${callPrefix}.status must be observed or failed`);
+                }
+                if (traceVersion === 2) {
+                  if (!new Set(["observed", "unobserved"]).has(call.durationStatus)) {
+                    errors.push(`${callPrefix}.durationStatus must be observed or unobserved`);
+                  } else if (call.durationStatus === "observed") {
+                    if (!Number.isInteger(call.durationMs)
+                      || call.durationMs < 0
+                      || call.durationMs > 24 * 60 * 60 * 1000) {
+                      errors.push(`${callPrefix}.durationMs must be a bounded non-negative integer when observed`);
+                    }
+                    if (!new Set(["transcript-pair", "lifecycle-pair"]).has(call.timingSource)) {
+                      errors.push(`${callPrefix}.timingSource must identify a supported observed lifecycle pair`);
+                    }
+                  } else if (Object.hasOwn(call, "durationMs") || Object.hasOwn(call, "timingSource")) {
+                    errors.push(`${callPrefix} must omit timing values when duration is unobserved`);
+                  }
+                }
+              }
+              if (toolNames.size > 8) errors.push(`${prefix}.toolTrace must stay within eight tool lanes`);
+            }
           }
         }
       }

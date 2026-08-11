@@ -55,6 +55,27 @@ export function eventMillis(event) {
   return Number.isNaN(millis) ? null : millis;
 }
 
+function lifecycleDurationObservation(group) {
+  const request = group.find((event) => event?.lifecyclePhase === "request" && eventMillis(event) !== null)
+    ?? group.find((event) => event?.lifecyclePhase === "pre" && eventMillis(event) !== null);
+  const startedAt = eventMillis(request);
+  if (startedAt === null) return null;
+  const completedAfterStart = (event, phase) => {
+    const completedAt = eventMillis(event);
+    return event?.lifecyclePhase === phase && completedAt !== null && completedAt >= startedAt;
+  };
+  const result = group.find((event) => completedAfterStart(event, "result"))
+    ?? group.find((event) => completedAfterStart(event, "post"));
+  const completedAt = eventMillis(result);
+  if (completedAt === null || completedAt < startedAt) return null;
+  return {
+    durationMs: completedAt - startedAt,
+    durationSource: request?.lifecyclePhase === "request" && result?.lifecyclePhase === "result"
+      ? "transcript-pair"
+      : "lifecycle-pair",
+  };
+}
+
 export function eventEvidenceRefs(event) {
   const refs = [event?.evidenceRef, ...(event?.evidenceRefs ?? [])].filter(Boolean);
   const seen = new Set();
@@ -171,6 +192,7 @@ export function deduplicateLifecycleEvents(events = []) {
     const refs = group.flatMap(eventEvidenceRefs);
     const permissionEvent = group.find((event) => event?.permissionDecision);
     const requestEvent = group.find((event) => event.lifecyclePhase === "pre" || event.lifecyclePhase === "request") ?? group[0];
+    const duration = lifecycleDurationObservation(group);
     merged.push({
       ...canonical,
       ...(requestEvent?.toolName && !canonical?.toolName ? { toolName: requestEvent.toolName } : {}),
@@ -183,6 +205,7 @@ export function deduplicateLifecycleEvents(events = []) {
       evidenceRefs: refs,
       ...(permissionEvent?.permissionDecision ? { permissionDecision: permissionEvent.permissionDecision } : {}),
       ...(permissionEvent?.permissionMode ? { permissionMode: permissionEvent.permissionMode } : {}),
+      ...(duration ?? {}),
       lifecycle: {
         preObserved: group.some((event) => event.lifecyclePhase === "pre" || event.lifecyclePhase === "request"),
         postObserved: group.some((event) => event.lifecyclePhase === "post" || event.lifecyclePhase === "result"),

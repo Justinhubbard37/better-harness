@@ -1642,9 +1642,9 @@ test("task-loop projection preserves the all-eligible usage evidence boundary", 
         idleGapMinutes: 30,
       },
       samples: [
-        { alias: "S1", rawSessionId: "raw-session-1", sessionRef: "qsr1-111111111111111111111111", role: "user-thread-candidate", activeMinutes: 60, failureCount: 2, userInputSummary: "Diagnose the report generation path" },
-        { alias: "S2", rawSessionId: "raw-session-2", sessionRef: "qsr1-222222222222222222222222", role: "user-thread-candidate", activeMinutes: 55, failureCount: 0, userInputSummary: "Implement the bounded session review" },
-        { alias: "S3", rawSessionId: "raw-session-3", sessionRef: "qsr1-333333333333333333333333", role: "child-agent-candidate", activeMinutes: 48, failureCount: 1, userInputSummary: "Review the validation evidence" },
+        { alias: "S1", rawSessionId: "raw-session-1", sessionRef: "qsr1-111111111111111111111111", role: "user-thread-candidate", activeMinutes: 60, failureCount: 2, userInputSummary: "Diagnose the report generation path", toolTrace: { schemaVersion: 2, totalCalls: 4, shownCalls: 4, truncated: false, calls: [{ id: "T1", step: 1, toolName: "Read", status: "observed", durationStatus: "observed", durationMs: 1250, timingSource: "transcript-pair" }, { id: "T2", step: 2, toolName: "Bash", status: "failed", durationStatus: "observed", durationMs: 8000, timingSource: "lifecycle-pair" }, { id: "T3", step: 3, toolName: "Read", status: "observed", durationStatus: "unobserved" }, { id: "T4", step: 4, toolName: "Grep", status: "observed", durationStatus: "observed", durationMs: 500, timingSource: "transcript-pair" }] } },
+        { alias: "S2", rawSessionId: "raw-session-2", sessionRef: "qsr1-222222222222222222222222", role: "user-thread-candidate", activeMinutes: 55, failureCount: 0, userInputSummary: "Implement the bounded session review", toolTrace: { schemaVersion: 1, totalCalls: 3, shownCalls: 3, truncated: false, calls: [{ id: "T1", step: 1, toolName: "Read", status: "observed" }, { id: "T2", step: 2, toolName: "SearchReplace", status: "observed" }, { id: "T3", step: 3, toolName: "Bash", status: "observed" }] } },
+        { alias: "S3", rawSessionId: "raw-session-3", sessionRef: "qsr1-333333333333333333333333", role: "child-agent-candidate", activeMinutes: 48, failureCount: 1, userInputSummary: "Review the validation evidence", toolTrace: { schemaVersion: 1, totalCalls: 2, shownCalls: 2, truncated: false, calls: [{ id: "T1", step: 1, toolName: "Read", status: "observed" }, { id: "T2", step: 2, toolName: "Bash", status: "failed" }] } },
       ],
     },
     accounting: {
@@ -1686,7 +1686,25 @@ test("task-loop projection preserves the all-eligible usage evidence boundary", 
   assert.equal(Object.hasOwn(findings.summary.usageEfficiency.longSessions.samples[0], "rawSessionId"), false);
   assert.equal(Object.hasOwn(findings.summary.usageEfficiency.longSessions.samples[0], "sessionRef"), false);
   assert.equal(Object.hasOwn(findings.summary.usageEfficiency.longSessions.samples[0], "userInputSummary"), false);
+  assert.equal(findings.summary.usageEfficiency.longSessions.samples[0].sessionId, "raw-session-1");
+  assert.equal(findings.summary.usageEfficiency.longSessions.samples[0].userRequest, "Diagnose the report generation path");
+  assert.equal(findings.summary.usageEfficiency.longSessions.samples[0].toolTrace.calls.length, 4);
+  assert.equal(findings.summary.usageEfficiency.longSessions.samples[0].toolTrace.calls[1].status, "failed");
+  assert.equal(findings.summary.usageEfficiency.longSessions.samples[0].toolTrace.schemaVersion, 2);
+  assert.deepEqual(findings.summary.usageEfficiency.longSessions.samples[0].toolTrace.calls[0], {
+    id: "T1",
+    step: 1,
+    toolName: "Read",
+    status: "observed",
+    durationStatus: "observed",
+    durationMs: 1250,
+    timingSource: "transcript-pair",
+  });
   assert.deepEqual(validateTaskLoopFindings(findings), []);
+
+  const legacyWithoutTraces = structuredClone(findings);
+  for (const sample of legacyWithoutTraces.summary.usageEfficiency.longSessions.samples) delete sample.toolTrace;
+  assert.deepEqual(validateTaskLoopFindings(legacyWithoutTraces), []);
 
   const promotedLead = structuredClone(findings);
   const templateFinding = promotedLead.findings[0];
@@ -1699,7 +1717,7 @@ test("task-loop projection preserves the all-eligible usage evidence boundary", 
   });
   assert.ok(validateTaskLoopFindings(promotedLead).some((error) =>
     /must keep unreviewed long-session candidates in summary\.usageEfficiency\.reviewLead/u.test(error)));
-  assert.doesNotMatch(JSON.stringify(findings.summary.usageEfficiency.longSessions.samples), /raw-session|rawSessionId|candidateReasons|evidenceRefs/);
+  assert.doesNotMatch(JSON.stringify(findings.summary.usageEfficiency.longSessions.samples), /rawSessionId|sessionRef|candidateReasons|evidenceRefs/);
 
   const codexSource = reportSource({ sessionEvents: { usageEfficiency: structuredClone(usageEfficiency) } });
   codexSource.manifest.scope.platform = "codex";
@@ -1725,6 +1743,31 @@ test("task-loop projection preserves the all-eligible usage evidence boundary", 
   assert.ok(validateTaskLoopFindings(findings).some((error) => /unsupported field: userInputSummary/.test(error)));
   delete findings.summary.usageEfficiency.longSessions.samples[0].userInputSummary;
 
+  const unsafeSessionLocator = structuredClone(findings);
+  unsafeSessionLocator.summary.usageEfficiency.longSessions.samples[0].sessionId = "/Users/private/session";
+  assert.ok(validateTaskLoopFindings(unsafeSessionLocator).some((error) => /bounded Canvas session locator/.test(error)));
+
+  const unsafeUserRequest = structuredClone(findings);
+  unsafeUserRequest.summary.usageEfficiency.longSessions.samples[0].userRequest = "/Users/private/repo task";
+  assert.ok(validateTaskLoopFindings(unsafeUserRequest).some((error) => /privacy-safe user request/.test(error)));
+
+  const unsafeTrace = structuredClone(findings);
+  unsafeTrace.summary.usageEfficiency.longSessions.samples[0].toolTrace.calls[0].toolName = "/Users/private/tool";
+  assert.ok(validateTaskLoopFindings(unsafeTrace).some((error) => /privacy-safe label/.test(error)));
+
+  const negativeDuration = structuredClone(findings);
+  negativeDuration.summary.usageEfficiency.longSessions.samples[0].toolTrace.calls[0].durationMs = -1;
+  assert.ok(validateTaskLoopFindings(negativeDuration).some((error) => /bounded non-negative integer/.test(error)));
+
+  const unobservedWithTiming = structuredClone(findings);
+  const unobservedCall = unobservedWithTiming.summary.usageEfficiency.longSessions.samples[0].toolTrace.calls[2];
+  unobservedCall.durationMs = 0;
+  assert.ok(validateTaskLoopFindings(unobservedWithTiming).some((error) => /omit timing values when duration is unobserved/.test(error)));
+
+  const unsupportedTimingSource = structuredClone(findings);
+  unsupportedTimingSource.summary.usageEfficiency.longSessions.samples[0].toolTrace.calls[0].timingSource = "wall-clock";
+  assert.ok(validateTaskLoopFindings(unsupportedTimingSource).some((error) => /supported observed lifecycle pair/.test(error)));
+
   const boundedUsage = structuredClone(usageEfficiency);
   boundedUsage.longSessions.activeCount = 6;
   boundedUsage.longSessions.activeRatio = 0.6667;
@@ -1736,6 +1779,7 @@ test("task-loop projection preserves the all-eligible usage evidence boundary", 
     activeMinutes: 46,
     failureCount: 0,
     userInputSummary: "Compare the model outcome evidence",
+    toolTrace: { schemaVersion: 1, totalCalls: 1, shownCalls: 1, truncated: false, calls: [{ id: "T1", step: 1, toolName: "Read", status: "observed" }] },
   });
   const bounded = projectTaskLoopFindings(reportSource({ sessionEvents: { usageEfficiency: boundedUsage } }));
   const boundedPrompt = bounded.summary.usageEfficiency.reviewLead?.aiFixPrompt ?? "";
