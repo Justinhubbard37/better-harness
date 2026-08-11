@@ -183,7 +183,39 @@ test("Stop hook stays quiet when a stop hook is already active", async () => {
   assert.equal(result.status, "skipped");
   assert.equal(result.exitCode, 0);
   assert.equal(result.findings.length, 0);
+  assert.equal(result.result, "pass");
+  assert.equal(result.summary.result, "pass");
   assert.equal(Object.hasOwn(result, "deeplink"), false);
+});
+
+test("Stop hook result is pass when no findings are present", async () => {
+  const repo = await makeRepo({
+    "AGENTS.md": "# Project Rules\n\nRun tests before finishing.\nNever commit secrets.\nNode workspace.\n",
+  });
+
+  try {
+    const result = await runReviewTrigger({ cwd: repo });
+    assert.equal(result.status, "ok");
+    assert.equal(result.result, "pass");
+    assert.equal(result.summary.result, "pass");
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("Stop hook result is fail when findings are present", async () => {
+  const repo = await makeRepo({
+    "AGENTS.md": `${Array.from({ length: 205 }, (_, index) => `line ${index + 1}`).join("\n")}\n`,
+  });
+
+  try {
+    const result = await runReviewTrigger({ cwd: repo });
+    assert.equal(result.status, "findings");
+    assert.equal(result.result, "fail");
+    assert.equal(result.summary.result, "fail");
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
 });
 
 test("runtime emits AGENTS.md length findings from a real workspace", async () => {

@@ -322,3 +322,20 @@ test("post-edit action candidates require at least five project edit events", ()
     /Harness session-evidence review.*affected Task Episodes.*later relevant validation/,
   );
 });
+
+test("review-trigger Stop hook is recorded as a validation event", () => {
+  const { episodes } = buildTaskEpisodes([
+    event({ timestamp: "2026-07-10T10:00:00.000Z", toolName: "Edit", filePath: "src/a.ts" }),
+    event({
+      timestamp: "2026-07-10T10:00:01.000Z",
+      toolName: "Bash",
+      commandText: "node scripts/review-trigger/cli.mjs --mode=stop --json",
+      success: true,
+    }),
+  ]);
+
+  assert.equal(episodes.length, 1);
+  assert.equal(episodes[0].validationSets.length, 1);
+  assert.equal(episodes[0].validationSets[0].category, "review-trigger");
+  assert.equal(episodes[0].validationSets[0].status, "passed");
+});

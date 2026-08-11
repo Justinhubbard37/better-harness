@@ -39,6 +39,7 @@ const VALIDATION_PATTERNS = Object.freeze([
   ["go test", /\bgo\s+test\b/i],
   ["cargo test", /\bcargo\s+test\b/i],
   ["agent-lint", /\bagent-lint\b/i],
+  ["review-trigger", /\breview-trigger\b/i],
   ["typecheck", /\b(?:tsc|vue-tsc)\b|\b(?:npm|pnpm|yarn|bun)\s+run\s+(?:typecheck|type-check|check|compile)\b/i],
   ["lint", /\b(?:eslint|ruff|flake8|pylint)\b|\b(?:npm|pnpm|yarn|bun)\s+run\s+lint\b/i],
   ["git diff --check", /\bgit\s+diff\b[^\n;&|]*\s--check\b/i],
