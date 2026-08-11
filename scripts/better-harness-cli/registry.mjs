@@ -71,6 +71,33 @@ const COMMANDS = [
     summary: "Detect dependency governance files, automation, audit signals, and stale dependency evidence.",
   },
   {
+    name: "commit-session-link",
+    kind: "direct",
+    audience: "advanced",
+    script: "commit-session-link/cli.mjs",
+    summary: "Correlate local git commits with discovered coding-agent sessions and render a commit-view HTML report.",
+    subcommands: [
+      {
+        name: "correlate",
+        audience: "advanced",
+        script: "commit-session-link/cli.mjs",
+        summary: "Emit ranked commit-to-session matches with trailer, time, file, and cwd evidence as JSON.",
+      },
+      {
+        name: "render",
+        audience: "advanced",
+        script: "commit-session-link/cli.mjs",
+        summary: "Write a self-contained commit-view HTML report for one commit and its linked sessions.",
+      },
+      {
+        name: "render-session",
+        audience: "advanced",
+        script: "commit-session-link/cli.mjs",
+        summary: "Write a self-contained Session Viewer with activity, tool-call trace, and linked-commit markers.",
+      },
+    ],
+  },
+  {
     name: "session-analysis",
     kind: "direct",
     audience: "advanced",

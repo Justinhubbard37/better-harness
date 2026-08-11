@@ -28,3 +28,4 @@ export {
 } from "./session-population.mjs";
 export { projectSemanticFacets, validateSemanticFacets } from "./semantic-facets.mjs";
 export { sessionAnalysisRef } from "./session-ref.mjs";
+export { buildToolCallTrace, TOOL_CALL_TRACE_SCHEMA_VERSION } from "./tool-call-trace.mjs";
