@@ -487,5 +487,5 @@ test("Harness Inspector help is workspace-independent and sanitizes bad argv (AC
   const privateValue = path.join(os.tmpdir(), "private-feature-tree");
   const invalid = spawnSync(process.execPath, [CLI_PATH, "render", "--unknown", privateValue], { encoding: "utf8" });
   assert.equal(invalid.status, 64);
-  assert.doesNotMatch(invalid.stderr, new RegExp(privateValue.replaceAll("/", "\\/"), "u"));
+  assert.equal(invalid.stderr.includes(privateValue), false);
 });

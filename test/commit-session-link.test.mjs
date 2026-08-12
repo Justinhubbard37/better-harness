@@ -39,7 +39,7 @@ function git(cwd, args, env = {}) {
     env: {
       ...process.env,
       GIT_CONFIG_GLOBAL: path.join(cwd, ".gitconfig-isolated"),
-      GIT_CONFIG_SYSTEM: os.devNull,
+      GIT_CONFIG_NOSYSTEM: "1",
       GIT_AUTHOR_NAME: "Fixture Author",
       GIT_AUTHOR_EMAIL: "fixture@example.com",
       GIT_COMMITTER_NAME: "Fixture Author",
@@ -62,7 +62,7 @@ function gitInput(cwd, args, input) {
     env: {
       ...process.env,
       GIT_CONFIG_GLOBAL: path.join(cwd, ".gitconfig-isolated"),
-      GIT_CONFIG_SYSTEM: os.devNull,
+      GIT_CONFIG_NOSYSTEM: "1",
       GIT_AUTHOR_NAME: "Fixture Author",
       GIT_AUTHOR_EMAIL: "fixture@example.com",
       GIT_COMMITTER_NAME: "Fixture Author",
@@ -595,7 +595,7 @@ test("cli rejects unknown commands and options without echoing values (AC-5)", (
     { encoding: "utf8" },
   );
   assert.equal(badOption.status, 64);
-  assert.doesNotMatch(badOption.stderr, new RegExp(privateValue.replaceAll("/", "\\/"), "u"));
+  assert.equal(badOption.stderr.includes(privateValue), false);
 });
 
 test("buildSessionTurns folds prompts, steps, and responses into turns (AC-7)", () => {
