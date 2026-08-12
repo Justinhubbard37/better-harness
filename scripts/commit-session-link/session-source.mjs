@@ -1,7 +1,8 @@
 import path from "node:path";
 
-import { buildToolCallTrace, createAnalyzer, sanitizePrivateReviewText } from "../session-analysis/index.mjs";
+import { buildToolCallTrace, createAnalyzer, privacySafeUserInputText } from "../session-analysis/index.mjs";
 import { attributeSessionToolName } from "./tool-attribution.mjs";
+import { normalizeToolActivity } from "./tool-activity.mjs";
 
 export const DEFAULT_MAX_SESSIONS = 20;
 const MAX_PROMPTS_PER_SESSION = 8;
@@ -9,7 +10,8 @@ const MAX_FILES_PER_SESSION = 400;
 const MAX_MODELS_PER_SESSION = 4;
 const PROMPT_SUMMARY_LIMIT = 200;
 const MAX_ENTIRE_TRANSCRIPT_LINES = 200_000;
-const MAX_SESSION_VIEW_TOOL_CALLS = 1_000;
+const PATCH_FILE_RE = /^\*\*\*\s+(?:Add|Update|Delete) File:\s+(.+?)\s*$/gmu;
+const ESCAPED_PATCH_FILE_RE = /(?:^|\\n)\*\*\*\s+(?:Add|Update|Delete) File:\s+(.+?)(?=\\n|$)/gu;
 
 function timestampMillis(value) {
   if (!value) return null;
@@ -25,10 +27,15 @@ export function boundedMaxSessions(value, fallback = DEFAULT_MAX_SESSIONS) {
 
 function repoRelativePath(filePath, repoRoot) {
   if (typeof filePath !== "string" || filePath.length === 0) return null;
-  const absolute = path.isAbsolute(filePath) ? filePath : path.resolve(repoRoot, filePath);
-  const relative = path.relative(repoRoot, absolute);
+  const windowsAbsolute = /^[A-Za-z]:[\\/]|^\\\\/u.test(filePath);
+  const posixAbsolute = path.posix.isAbsolute(filePath);
+  const repoIsWindows = /^[A-Za-z]:[\\/]|^\\\\/u.test(repoRoot);
+  if ((windowsAbsolute && !repoIsWindows) || (posixAbsolute && repoIsWindows)) return null;
+  const pathApi = repoIsWindows ? path.win32 : path.posix;
+  const absolute = pathApi.isAbsolute(filePath) ? filePath : pathApi.resolve(repoRoot, filePath);
+  const relative = pathApi.relative(repoRoot, absolute);
   if (relative.length === 0 || relative.startsWith("..") || path.isAbsolute(relative)) return null;
-  return relative.split(path.sep).join("/");
+  return relative.replaceAll("\\", "/");
 }
 
 function isWithinRepo(candidate, repoRoot) {
@@ -48,9 +55,40 @@ function isFileEditTool(event) {
   return /(?:^|[_-])(?:edit|write|create|patch|replace|update)(?:$|[_-])/iu.test(String(event?.toolName ?? ""));
 }
 
+function invocationKey(event) {
+  return event?.toolInvocationId
+    ?? `${event?.timestamp ?? ""}|${event?.toolName ?? ""}|${event?.commandText ?? event?.filePath ?? ""}`;
+}
+
+function attributedToolEvents(events) {
+  const names = new Map();
+  for (const event of events) {
+    if (!isToolRequest(event)) continue;
+    names.set(invocationKey(event), attributeSessionToolName(event));
+  }
+  return events.map((event) => {
+    const toolName = names.get(invocationKey(event));
+    return toolName ? { ...event, toolName } : event;
+  });
+}
+
+function transientFilePaths(event, repoRoot) {
+  const candidates = [event?.filePath];
+  for (const value of [event?.targetPaths, event?.affectedPaths]) {
+    if (Array.isArray(value)) candidates.push(...value);
+    else if (typeof value === "string") candidates.push(value);
+  }
+  const commandText = String(event?.commandText ?? "");
+  for (const pattern of [PATCH_FILE_RE, ESCAPED_PATCH_FILE_RE]) {
+    for (const match of commandText.matchAll(pattern)) candidates.push(match[1]);
+  }
+  return [...new Set(candidates.map((value) => repoRelativePath(value, repoRoot)).filter(Boolean))];
+}
+
 // Reduce hydrated session events into the bounded, privacy-safe summary shape
 // consumed by correlate.mjs and render-html.mjs. Pure over events + repoRoot.
 export function summarizeSessionEvents(session, events = [], { repoRoot, platform, includeToolTrace = false } = {}) {
+  const attributedEvents = attributedToolEvents(events);
   const files = new Set();
   const prompts = [];
   const models = new Set();
@@ -62,11 +100,13 @@ export function summarizeSessionEvents(session, events = [], { repoRoot, platfor
   let fileEditCount = 0;
   let cwdWithinRepo = false;
   const toolCounts = new Map();
+  const requestFacts = [];
+  const distinctUserTurns = new Set();
   const seenToolInvocations = new Set();
   const tokenTotals = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0 };
   let usageObserved = false;
 
-  for (const event of events) {
+  for (const event of attributedEvents) {
     const eventTime = timestampMillis(event?.timestamp);
     if (eventTime !== null) {
       if (firstSeen === null || eventTime < firstSeen) firstSeen = eventTime;
@@ -74,14 +114,23 @@ export function summarizeSessionEvents(session, events = [], { repoRoot, platfor
     }
     if (event?.cwd && !cwdWithinRepo) cwdWithinRepo = isWithinRepo(event.cwd, repoRoot);
     if (isToolRequest(event)) {
-      const invocationKey = event.toolInvocationId
-        ?? `${event.timestamp ?? ""}|${event.toolName ?? ""}|${event.commandText ?? event.filePath ?? ""}`;
-      if (!seenToolInvocations.has(invocationKey)) {
-        seenToolInvocations.add(invocationKey);
+      const key = invocationKey(event);
+      if (!seenToolInvocations.has(key)) {
+        seenToolInvocations.add(key);
         toolCallCount += 1;
-        const toolName = attributeSessionToolName(event);
+        const toolName = event.toolName;
         toolCounts.set(toolName, (toolCounts.get(toolName) ?? 0) + 1);
-        if (isFileEditTool(event)) fileEditCount += 1;
+        const filePaths = transientFilePaths(event, repoRoot);
+        for (const filePath of filePaths) if (files.size < MAX_FILES_PER_SESSION) files.add(filePath);
+        requestFacts.push({
+          step: toolCallCount,
+          toolName,
+          transientCommandText: event.commandText ?? null,
+          filePath: filePaths[0] ?? null,
+          filePaths,
+          transientInvocationKey: event.toolInvocationId ?? event.requestId ?? event.callId ?? null,
+        });
+        if (isFileEditTool({ toolName })) fileEditCount += 1;
       }
     }
     if (event?.type === "assistant" && typeof event.content === "string" && event.content.trim().length > 0) {
@@ -93,11 +142,10 @@ export function summarizeSessionEvents(session, events = [], { repoRoot, platfor
     }
     if (event?.userPrompt === true) {
       promptCount += 1;
-      if (prompts.length < MAX_PROMPTS_PER_SESSION) {
-        const summary = sanitizePrivateReviewText(event.userText ?? null, { limit: PROMPT_SUMMARY_LIMIT });
-        if (summary && !prompts.some((prompt) => prompt.text === summary)) {
-          prompts.push({ text: summary, timestamp: event.timestamp ?? null });
-        }
+      const summary = privacySafeUserInputText(event.userText ?? null, { limit: PROMPT_SUMMARY_LIMIT });
+      if (summary) distinctUserTurns.add(summary);
+      if (summary && prompts.length < MAX_PROMPTS_PER_SESSION && !prompts.some((prompt) => prompt.text === summary)) {
+        prompts.push({ text: summary, timestamp: event.timestamp ?? null });
       }
     }
     if (event?.modelUsage && typeof event.modelUsage === "object") {
@@ -107,6 +155,17 @@ export function summarizeSessionEvents(session, events = [], { repoRoot, platfor
       tokenTotals.cacheReadInputTokens += Number(event.modelUsage.cacheReadInputTokens) || 0;
     }
     if (event?.model && models.size < MAX_MODELS_PER_SESSION) models.add(String(event.model));
+  }
+
+  const toolTrace = includeToolTrace
+    ? buildToolCallTrace(
+      attributedEvents.filter((event) => event?.category === "tool" || event?.toolName || event?.functionCallName),
+      { laneLimit: 8, includeTransientInvocationKey: true },
+    )
+    : null;
+  const toolActivity = toolTrace ? normalizeToolActivity(toolTrace.calls, requestFacts) : null;
+  if (toolTrace) {
+    toolTrace.calls = toolTrace.calls.map(({ transientInvocationKey: _transientInvocationKey, ...call }) => call);
   }
 
   return {
@@ -119,25 +178,14 @@ export function summarizeSessionEvents(session, events = [], { repoRoot, platfor
     files: [...files].sort(),
     prompts,
     promptCount,
+    promptObservationCount: promptCount,
+    userTurnCount: distinctUserTurns.size,
+    retainedUserTurnCount: prompts.length,
     toolCallCount,
     assistantMessageCount,
     fileEditCount,
     toolCounts: Object.fromEntries([...toolCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))),
-    ...(includeToolTrace
-      ? {
-          // Normalized host streams can include transport diagnostics whose
-          // type happens to contain "tool" (for example MCP end markers).
-          // Only the normalized tool category belongs in the call trace.
-          toolTrace: buildToolCallTrace(
-            events
-              .filter((event) => event?.category === "tool" || event?.toolName || event?.functionCallName)
-              .map((event) => event?.lifecyclePhase === "request"
-                ? { ...event, toolName: attributeSessionToolName(event) }
-                : event),
-            { limit: MAX_SESSION_VIEW_TOOL_CALLS, laneLimit: 8 },
-          ),
-        }
-      : {}),
+    ...(toolTrace ? { toolTrace, toolActivity } : {}),
     models: [...models].sort(),
     tokenUsage: usageObserved ? tokenTotals : null,
   };
@@ -158,6 +206,7 @@ export async function collectSessionSummaries({
   since = null,
   until = null,
   maxSessions = DEFAULT_MAX_SESSIONS,
+  includeToolTrace = false,
 } = {}) {
   const analyzer = await createAnalyzer(platform);
   const scopeOptions = { workspace };
@@ -176,8 +225,13 @@ export async function collectSessionSummaries({
 
   const summaries = [];
   for (const session of selected) {
-    const events = await analyzer.readSession(session, scope, { includeUserText: true });
-    summaries.push(summarizeSessionEvents(session, events, { repoRoot, platform }));
+    const events = await analyzer.readSession(session, scope, {
+      includeUserText: true,
+      // Command text is transient input for nested-tool attribution and exact
+      // structured file extraction. It never enters the returned projection.
+      includeCommandText: includeToolTrace,
+    });
+    summaries.push(summarizeSessionEvents(session, events, { repoRoot, platform, includeToolTrace }));
   }
   return summaries;
 }

@@ -20,6 +20,7 @@ export function buildToolCallTrace(events = [], options = {}) {
       step: index + 1,
       toolName: privacySafeToolName(event?.toolName ?? event?.functionCallName),
       status: isFailure(event) ? FAILURE_STATUS : OBSERVED_STATUS,
+      ...(options.includeTransientInvocationKey ? { transientInvocationKey: lifecycleInvocationKey(event) } : {}),
       ...durationFact(event),
     }));
   const laneNames = boundedLaneNames(canonicalCalls, laneLimit);
@@ -33,6 +34,7 @@ export function buildToolCallTrace(events = [], options = {}) {
     toolName: call.toolName,
     status: call.status,
     durationStatus: call.durationStatus,
+    ...(call.transientInvocationKey ? { transientInvocationKey: call.transientInvocationKey } : {}),
     ...(call.durationStatus === OBSERVED_STATUS ? {
       durationMs: call.durationMs,
       timingSource: call.timingSource,
@@ -46,6 +48,11 @@ export function buildToolCallTrace(events = [], options = {}) {
     truncated: selectedCalls.length < boundedCalls.length,
     calls: selectedCalls,
   };
+}
+
+function lifecycleInvocationKey(event) {
+  const value = event?.toolInvocationId ?? event?.requestId ?? event?.callId ?? null;
+  return value ? String(value) : null;
 }
 
 function durationFact(event) {

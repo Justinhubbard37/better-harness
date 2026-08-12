@@ -538,6 +538,12 @@ test("privacy-safe user input summaries skip injected context and redact private
   assert.equal(hostContextSummary, "Review the final parser change and explain the validation gap");
   assert.equal(hostContextSummary.includes("Private Plugin"), false);
   assert.equal(hostContextSummary.includes("continuation state"), false);
+
+  const desktopRequestSummary = privacySafeUserInputSummary([{
+    type: "user",
+    userText: "## Referenced chats with Codex:\n- hidden task metadata\n\n## My request:\nInspect the real Codex session data",
+  }]);
+  assert.equal(desktopRequestSummary, "Inspect the real Codex session data");
 });
 
 test("privacy-safe user input summaries redact GitLab tokens and hierarchical URL userinfo", () => {
