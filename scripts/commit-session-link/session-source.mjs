@@ -1,6 +1,8 @@
 import path from "node:path";
 
 import { buildToolCallTrace, createAnalyzer, privacySafeUserInputText } from "../session-analysis/index.mjs";
+import { redactTranscriptText } from "./redaction.mjs";
+import { buildSessionTurns } from "./session-view.mjs";
 import { attributeSessionToolName } from "./tool-attribution.mjs";
 import { normalizeToolActivity } from "./tool-activity.mjs";
 
@@ -12,6 +14,8 @@ const PROMPT_SUMMARY_LIMIT = 200;
 const MAX_ENTIRE_TRANSCRIPT_LINES = 200_000;
 const PATCH_FILE_RE = /^\*\*\*\s+(?:Add|Update|Delete) File:\s+(.+?)\s*$/gmu;
 const ESCAPED_PATCH_FILE_RE = /(?:^|\\n)\*\*\*\s+(?:Add|Update|Delete) File:\s+(.+?)(?=\\n|$)/gu;
+const POSIX_PRIVATE_PATH_RE = /(^|[^\p{L}\p{N}_])\/(?:Users|home|var|private|tmp|opt)\/[^\s"'`<>]+/gmu;
+const WINDOWS_PRIVATE_PATH_RE = /[A-Za-z]:\\(?:Users\\)?[^\s"'`<>]+/gu;
 
 function timestampMillis(value) {
   if (!value) return null;
@@ -85,9 +89,51 @@ function transientFilePaths(event, repoRoot) {
   return [...new Set(candidates.map((value) => repoRelativePath(value, repoRoot)).filter(Boolean))];
 }
 
+function safeDialogueText(value, limit) {
+  const redacted = redactTranscriptText(value, { limit });
+  if (!redacted) return null;
+  return redacted
+    .replace(POSIX_PRIVATE_PATH_RE, "$1<absolute-path>")
+    .replace(WINDOWS_PRIVATE_PATH_RE, "<absolute-path>");
+}
+
+function summarizeDialogue(events) {
+  const { turns, truncated } = buildSessionTurns(events);
+  let toolCallStep = 0;
+  return {
+    truncated,
+    turns: turns.map((turn) => ({
+      index: turn.index,
+      anchorId: turn.anchorId,
+      prompt: {
+        text: safeDialogueText(turn.prompt?.text, 1_500),
+        timestamp: turn.prompt?.timestamp ?? null,
+      },
+      steps: (turn.steps ?? []).map((step) => {
+        if (step.kind === "tool") {
+          toolCallStep += 1;
+          return { kind: "tool", callStep: toolCallStep, toolName: String(step.toolName ?? "Unknown tool") };
+        }
+        return { kind: "note", text: safeDialogueText(step.text, 400) };
+      }).filter((step) => step.kind === "tool" || step.text),
+      toolCallCount: Number(turn.toolCallCount) || 0,
+      messageCount: Number(turn.messageCount) || 0,
+      response: safeDialogueText(turn.response, 6_000),
+      durationMs: Number.isFinite(turn.durationMs) ? turn.durationMs : null,
+      startMs: Number.isFinite(turn.startMs) ? turn.startMs : null,
+      endMs: Number.isFinite(turn.endMs) ? turn.endMs : null,
+    })),
+  };
+}
+
 // Reduce hydrated session events into the bounded, privacy-safe summary shape
 // consumed by correlate.mjs and render-html.mjs. Pure over events + repoRoot.
-export function summarizeSessionEvents(session, events = [], { repoRoot, platform, includeToolTrace = false } = {}) {
+export function summarizeSessionEvents(session, events = [], {
+  repoRoot,
+  platform,
+  includeToolTrace = false,
+  includeDialogue = false,
+} = {}) {
   const attributedEvents = attributedToolEvents(events);
   const files = new Set();
   const prompts = [];
@@ -164,6 +210,7 @@ export function summarizeSessionEvents(session, events = [], { repoRoot, platfor
     )
     : null;
   const toolActivity = toolTrace ? normalizeToolActivity(toolTrace.calls, requestFacts) : null;
+  const dialogue = includeDialogue ? summarizeDialogue(attributedEvents) : null;
   if (toolTrace) {
     toolTrace.calls = toolTrace.calls.map(({ transientInvocationKey: _transientInvocationKey, ...call }) => call);
   }
@@ -186,6 +233,7 @@ export function summarizeSessionEvents(session, events = [], { repoRoot, platfor
     fileEditCount,
     toolCounts: Object.fromEntries([...toolCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))),
     ...(toolTrace ? { toolTrace, toolActivity } : {}),
+    ...(dialogue ? { dialogue } : {}),
     models: [...models].sort(),
     tokenUsage: usageObserved ? tokenTotals : null,
   };
@@ -207,6 +255,7 @@ export async function collectSessionSummaries({
   until = null,
   maxSessions = DEFAULT_MAX_SESSIONS,
   includeToolTrace = false,
+  includeDialogue = false,
 } = {}) {
   const analyzer = await createAnalyzer(platform);
   const scopeOptions = { workspace };
@@ -230,8 +279,14 @@ export async function collectSessionSummaries({
       // Command text is transient input for nested-tool attribution and exact
       // structured file extraction. It never enters the returned projection.
       includeCommandText: includeToolTrace,
+      includeContent: includeDialogue,
     });
-    summaries.push(summarizeSessionEvents(session, events, { repoRoot, platform, includeToolTrace }));
+    summaries.push(summarizeSessionEvents(session, events, {
+      repoRoot,
+      platform,
+      includeToolTrace,
+      includeDialogue,
+    }));
   }
   return summaries;
 }
@@ -269,7 +324,12 @@ export async function collectSessionDetail({
     includeCommandText: true,
   });
   return {
-    summary: summarizeSessionEvents(session, events, { repoRoot, platform, includeToolTrace: true }),
+    summary: summarizeSessionEvents(session, events, {
+      repoRoot,
+      platform,
+      includeToolTrace: true,
+      includeDialogue: true,
+    }),
     events,
   };
 }
@@ -327,6 +387,7 @@ export async function normalizeEntireCheckpointSession({
     repoRoot,
     platform: resolvedPlatform,
     includeToolTrace: true,
+    includeDialogue: true,
   });
   if (model && summary.models.length === 0) summary.models = [model];
   if (metadata?.filesTouched?.length) {

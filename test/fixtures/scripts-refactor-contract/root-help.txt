@@ -47,6 +47,10 @@ Commands:
                              evidence-pack, git-history-profile, project-profile,
                              qoder-consistency-schema
 
+  Other
+    harness-inspector        Inspect feature, Story, prompt, session, tool-call, and commit
+                             provenance by product tree or date
+
 Examples:
   better-harness report
   better-harness doctor --platform all --json

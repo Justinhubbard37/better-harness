@@ -19,9 +19,10 @@ function isToolRequest(event) {
   return event?.category === "tool" && event?.lifecyclePhase === "request";
 }
 
-const INJECTED_BLOCK_RE = /<(local-command-caveat|command-message|command-args|environment_context|skill|system-reminder|recommended_plugins|codex_internal_context|local-command-stdout|instructions)\b[^>]*>[\s\S]*?<\/\1>/giu;
+const INJECTED_BLOCK_RE = /<(local-command-caveat|command-message|command-args|environment_context|in-app-browser-context|image|skill|system-reminder|recommended_plugins|codex_internal_context|local-command-stdout|instructions)\b[^>]*>[\s\S]*?<\/\1>/giu;
 const COMMAND_NAME_RE = /<command-name>\s*([^<]+?)\s*<\/command-name>/iu;
 const AGENTS_INSTRUCTION_HEADING_RE = /^#?\s*AGENTS\.md instructions for[^\n]*$/gimu;
+const MY_REQUEST_HEADING_RE = /(?:^|\n)#{1,3}\s*My request(?: for Codex)?:\s*/iu;
 const ASSISTANT_METADATA_BLOCK_RE = /<oai-mem-citation\b[^>]*>[\s\S]*?<\/oai-mem-citation>/giu;
 const ASSISTANT_DIRECTIVE_RE = /^::(?:code-comment|git-stage|git-commit|git-create-branch|git-push|git-create-pr)\{.*\}\s*$/gmu;
 
@@ -32,7 +33,11 @@ export function cleanPromptText(value) {
   if (!value) return null;
   const source = String(value);
   const commandName = source.match(COMMAND_NAME_RE)?.[1] ?? null;
-  const text = source
+  const requestMarker = source.match(MY_REQUEST_HEADING_RE);
+  const userSource = requestMarker?.index !== undefined
+    ? source.slice(requestMarker.index + requestMarker[0].length)
+    : source;
+  const text = userSource
     .replace(COMMAND_NAME_RE, " ")
     .replace(INJECTED_BLOCK_RE, " ")
     .replace(AGENTS_INSTRUCTION_HEADING_RE, " ")
@@ -144,6 +149,7 @@ export function buildSessionTurns(events = [], options = {}) {
   // transcript lanes); count each invocation once.
   const seenToolInvocations = new Set();
   const seenPromptRecords = new Set();
+  let previousPrompt = null;
 
   for (const event of ordered) {
     if (isUserPrompt(event)) {
@@ -154,6 +160,11 @@ export function buildSessionTurns(events = [], options = {}) {
         const promptKey = `${event.timestamp ?? ""}\0${promptText}`;
         if (seenPromptRecords.has(promptKey)) continue;
         seenPromptRecords.add(promptKey);
+        const promptMs = timestampMillis(event.timestamp);
+        const promptFingerprint = promptText.replaceAll(/\s+/gu, " ").trim();
+        if (previousPrompt?.fingerprint === promptFingerprint
+          && (promptMs === null || previousPrompt.timestampMs === null || Math.abs(promptMs - previousPrompt.timestampMs) <= 2_000)) continue;
+        previousPrompt = { fingerprint: promptFingerprint, timestampMs: promptMs };
         if (current) turns.push(closeTurn(current));
         if (turns.length >= MAX_TURNS) {
           truncated = true;
@@ -183,7 +194,7 @@ export function buildSessionTurns(events = [], options = {}) {
       continue;
     }
     const text = assistantText(event);
-    if (text) current._assistantTexts.push(text);
+    if (text && current._assistantTexts.at(-1) !== text) current._assistantTexts.push(text);
   }
   if (current) turns.push(closeTurn(current));
 
