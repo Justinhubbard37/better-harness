@@ -217,6 +217,10 @@ test("NUL numstat parsing preserves tabs, newlines, and rename destinations (AC-
 });
 
 test("collectCommitFacts preserves adversarial Git paths through --numstat -z (AC-10)", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("Windows paths cannot contain tabs or newlines; parseNumstatZ covers the wire format portably");
+    return;
+  }
   const root = await mkdtemp(path.join(os.tmpdir(), "commit-session-paths-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   git(root, ["init", "--initial-branch=main"]);
