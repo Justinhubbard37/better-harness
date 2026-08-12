@@ -54,7 +54,8 @@ function featurePicker(tree) {
     const group = children.length > 0
       ? `<ul class="tree-children" role="group">${children.map(renderNode).join("")}</ul>`
       : "";
-    return `<li class="tree-item ${node.type}" role="treeitem" data-tree-item data-tree-node-id="${escapeHtml(node.id)}"${hasChildren ? ' aria-expanded="true"' : ""}><div class="tree-line">${toggle}<button class="tree-row ${node.type}" type="button" data-feature-id="${escapeHtml(node.id)}"><span class="tree-check ${status}" role="img" aria-label="${statusLabel}"><span aria-hidden="true">${status === "complete" ? "✓" : ""}</span></span><span class="tree-copy"><strong>${escapeHtml(node.title)}</strong><small>${escapeHtml(meta)}</small></span><span class="evidence ${escapeHtml(node.evidence)}">${escapeHtml(node.evidence)}</span></button></div>${group}</li>`;
+    const badge = node.evidence === "declared" ? "" : `<span class="evidence ${escapeHtml(node.evidence)}">${escapeHtml(node.evidence)}</span>`;
+    return `<li class="tree-item ${node.type}" role="treeitem" data-tree-item data-tree-node-id="${escapeHtml(node.id)}"${hasChildren ? ' aria-expanded="true"' : ""}><div class="tree-line">${toggle}<button class="tree-row ${node.type}" type="button" data-feature-id="${escapeHtml(node.id)}"><span class="tree-check ${status}" role="img" aria-label="${statusLabel}"><span aria-hidden="true">${status === "complete" ? "✓" : ""}</span></span><span class="tree-copy"><strong>${escapeHtml(node.title)}</strong><small>${escapeHtml(meta)}</small></span>${badge}</button></div>${group}</li>`;
   };
   const roots = tree.roots.map((id) => byId.get(id)).filter(Boolean);
   return `<ul class="capability-tree" role="tree" aria-label="Delivery capability tree">${roots.map(renderNode).join("")}</ul>`;

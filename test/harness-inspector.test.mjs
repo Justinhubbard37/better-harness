@@ -275,6 +275,8 @@ test("Inspector HTML emits both picker modes, three-lane workbench, expanded cal
   assert.match(html, /role="treeitem"/u);
   assert.match(html, /data-tree-toggle/u);
   assert.match(html, /class="tree-children" role="group"/u);
+  assert.doesNotMatch(html, /class="evidence declared">declared</u);
+  assert.match(html, /class="evidence candidate">candidate</u);
   assert.match(html, /data-date="2026-08-12"/u);
   assert.match(html, /id="workbench-list"/u);
   assert.match(html, /class="workspace-breadcrumb"/u);
@@ -285,6 +287,13 @@ test("Inspector HTML emits both picker modes, three-lane workbench, expanded cal
   assert.doesNotMatch(html, /class="scope-summary"/u);
   assert.doesNotMatch(html, /class="legend"/u);
   assert.match(html, /class="lane prompt-lane/u);
+  assert.match(html, /lane-empty/u);
+  assert.match(html, /No normalized tool call was retained/u);
+  assert.match(html, /Commits without a linked session/u);
+  assert.match(html, /Unlinked commits/u);
+  assert.match(html, /' user turn' \+/u);
+  assert.match(html, /getElementById\('workbench-list'\)\.style/u);
+  assert.doesNotMatch(html, /'Date scope'/u);
   assert.match(html, /Expand.*normalized actions/u);
   assert.match(html, /data-toggle-delivery/u);
   assert.match(html, /delivery-collapsed/u);

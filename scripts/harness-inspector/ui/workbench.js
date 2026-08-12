@@ -18,6 +18,10 @@
   const state = { mode: report.featureTree.nodes.length ? "feature" : "date", scope: report.featureTree.nodes.length ? initialFeature : latestDay };
   const escape = value => String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;");
   const formatDuration = value => Number.isFinite(value) ? (value >= 3600000 ? (value / 3600000).toFixed(1) + "h" : Math.max(1,Math.round(value / 60000)) + "m") : "unknown";
+  const formatClock = value => {
+    const time = new Date(value ?? NaN);
+    return Number.isNaN(time.getTime()) ? 'time unknown' : String(time.getUTCHours()).padStart(2,'0') + ':' + String(time.getUTCMinutes()).padStart(2,'0') + ' UTC';
+  };
   const formatTokens = usage => {
     const total = (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0) + (usage?.cacheReadInputTokens ?? 0);
     return total >= 1000 ? (Math.round(total / 100) / 10) + 'K tokens' : total + ' tokens';
@@ -73,14 +77,18 @@
     const cards = [];
     if (declaredPrompt) cards.push('<article class="intent-card declared-intent"><p>' + escape(declaredPrompt) + '</p><small>Feature Tree intent · ' + escape(item.story.evidence) + '</small></article>');
     prompts.forEach((prompt,index) => cards.push('<article class="intent-card"><p>' + escape(prompt.text) + '</p><small>User turn ' + (index + 1) + (prompt.timestamp ? ' · ' + escape(prompt.timestamp) : '') + '</small></article>'));
-    const counts = session ? session.retainedUserTurnCount + ' shown · ' + session.userTurnCount + ' normalized · ' + session.promptObservationCount + ' observations' : 'no linked session';
-    return '<section class="lane prompt-lane"><div class="lane-title"><strong>User prompts</strong><span>' + escape(counts) + '</span></div>' + (cards.join("") || '<div class="empty-state">No retained privacy-safe user turn for this scope.</div>') + '</section>';
+    const counts = !session ? 'no linked session'
+      : session.retainedUserTurnCount === session.userTurnCount && session.userTurnCount === session.promptObservationCount
+        ? session.userTurnCount + ' user turn' + (session.userTurnCount === 1 ? '' : 's')
+        : session.retainedUserTurnCount + ' shown · ' + session.userTurnCount + ' normalized · ' + session.promptObservationCount + ' observations';
+    return '<section class="lane prompt-lane' + (cards.length ? '' : ' lane-empty') + '"><div class="lane-title"><strong>User prompts</strong><span>' + escape(counts) + '</span></div>' + (cards.join("") || '<div class="empty-state">No retained privacy-safe user turn for this scope.</div>') + '</section>';
   }
 
   function activityLane(item) {
     const session = item.session;
-    if (!session) return '<section class="lane activity-lane"><div class="lane-title"><strong>Normalized activity</strong><span>0 calls</span></div><div class="empty-state">A session link is required before activity can be inspected.</div></section>';
+    if (!session) return '<section class="lane activity-lane lane-empty"><div class="lane-title"><strong>Normalized activity</strong><span>0 calls</span></div><div class="empty-state">A session link is required before activity can be inspected.</div></section>';
     const activity = session.toolActivity;
+    if (!activity.totalCalls) return '<section class="lane activity-lane lane-empty"><div class="lane-title"><strong>Checkpoint activity</strong><span>0 calls</span></div><div class="empty-state">No normalized tool call was retained for this session.</div></section>';
     const actionCounts = new Map();
     activity.calls.forEach(call => actionCounts.set(call.actionLabel,(actionCounts.get(call.actionLabel) ?? 0) + 1));
     const rankedActions = [...actionCounts.entries()].sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0,6);
@@ -114,16 +122,19 @@
       const relation = link ? (link.evidenceKind === 'file-context' ? ' · same-file context' : ' · ' + escape(link.confidence) + ' correlation') : '';
       return '<article class="commit-card"><div class="commit-head"><div class="commit-head-line"><code>' + escape(commit.shortHash) + '</code>' + evidence(kind,label) + '</div><p>' + escape(commit.subject) + '</p><div class="commit-stats">' + commit.fileCount + ' files · +' + commit.linesAdded + ' / -' + commit.linesRemoved + relation + '</div></div><div class="file-tree">' + (fileTree(commit,link) || '<div class="empty-state">No changed paths retained.</div>') + '</div></article>';
     }).join('');
-    return '<section class="lane delivery-lane"><div class="lane-title"><div class="delivery-title-copy"><strong>Commits / files</strong><span>' + commits.length + ' commits</span></div><button class="delivery-toggle" data-toggle-delivery aria-expanded="true" aria-label="Collapse commits and files"><span class="open-label">Hide</span><span class="closed-label">Show files</span></button></div><div class="delivery-content">' + (cards || '<div class="empty-state">No commit is linked to this session or Story.</div>') + '</div></section>';
+    if (!commits.length) return '<section class="lane delivery-lane lane-empty"><div class="lane-title"><div class="delivery-title-copy"><strong>Commits / files</strong><span>0 commits</span></div></div><div class="empty-state">No commit is linked to this session or Story.</div></section>';
+    return '<section class="lane delivery-lane"><div class="lane-title"><div class="delivery-title-copy"><strong>Commits / files</strong><span>' + commits.length + ' commits</span></div><button class="delivery-toggle" data-toggle-delivery aria-expanded="true" aria-label="Collapse commits and files"><span class="open-label">Hide</span><span class="closed-label">Show files</span></button></div><div class="delivery-content">' + cards + '</div></section>';
   }
 
   function workbench(item,index) {
     const commits = commitsFor(item);
-    const title = item.story?.title ?? ('Activity on ' + (item.date?.date ?? item.session?.day ?? 'unknown date'));
     const session = item.session;
+    const title = item.story?.title
+      ?? (item.date ? (session?.prompts?.[0]?.text ?? session?.locator ?? 'Commits without a linked session') : ('Activity on ' + (session?.day ?? 'unknown date')));
+    const kicker = item.story?.featureTitle ?? (item.date ? (session ? 'Session · ' + formatClock(session.firstSeen) : 'Unlinked commits') : 'Unmapped');
     const sessionMeta = session ? session.locator + ' · ' + formatDuration(session.durationMs) : 'No linked session';
     const sessionAction = session ? '<button class="prepare-button" data-open-session="' + index + '">Open session</button>' : '';
-    return '<article class="workbench" data-workbench="' + index + '"><header class="workbench-head"><div><small>' + escape(item.story?.featureTitle ?? (item.date ? 'Date scope' : 'Unmapped')) + '</small><h3>' + escape(title) + '</h3><div class="meta">' + escape(sessionMeta) + '</div></div><div class="head-actions">' + evidence(item.link.evidenceKind) + sessionAction + '</div></header><div class="workbench-grid">' + promptLane(item) + '<div class="lane-resizer prompt" data-resize-lane="prompt" role="separator" aria-orientation="vertical" aria-label="Resize prompt and activity lanes" tabindex="0"></div>' + activityLane(item) + '<div class="lane-resizer delivery" data-resize-lane="delivery" role="separator" aria-orientation="vertical" aria-label="Resize activity and delivery lanes" tabindex="0"></div>' + deliveryLane(item,commits) + '</div></article>';
+    return '<article class="workbench" data-workbench="' + index + '"><header class="workbench-head"><div><small>' + escape(kicker) + '</small><h3>' + escape(title) + '</h3><div class="meta">' + escape(sessionMeta) + '</div></div><div class="head-actions">' + evidence(item.link.evidenceKind) + sessionAction + '</div></header><div class="workbench-grid">' + promptLane(item) + '<div class="lane-resizer prompt" data-resize-lane="prompt" role="separator" aria-orientation="vertical" aria-label="Resize prompt and activity lanes" tabindex="0"></div>' + activityLane(item) + '<div class="lane-resizer delivery" data-resize-lane="delivery" role="separator" aria-orientation="vertical" aria-label="Resize activity and delivery lanes" tabindex="0"></div>' + deliveryLane(item,commits) + '</div></article>';
   }
 
   function continuationText(item) {
@@ -393,10 +404,9 @@
     const handle = event.target.closest('[data-resize-lane]');
     if (!handle) return;
     const grid = handle.closest('.workbench-grid');
-    const workbench = handle.closest('.workbench');
     const prompt = grid.querySelector('.prompt-lane').getBoundingClientRect();
     const delivery = grid.querySelector('.delivery-lane').getBoundingClientRect();
-    state.resize = { handle, grid, workbench, kind:handle.dataset.resizeLane, startX:event.clientX, promptWidth:prompt.width, deliveryWidth:delivery.width };
+    state.resize = { handle, grid, kind:handle.dataset.resizeLane, startX:event.clientX, promptWidth:prompt.width, deliveryWidth:delivery.width };
     handle.classList.add('resizing');
     handle.setPointerCapture?.(event.pointerId);
     event.preventDefault();
@@ -405,13 +415,14 @@
   document.addEventListener('pointermove', event => {
     const resize = state.resize;
     if (!resize) return;
+    const laneWidths = document.getElementById('workbench-list').style;
     const gridWidth = resize.grid.getBoundingClientRect().width;
     if (resize.kind === 'prompt') {
       const next = Math.max(180,Math.min(gridWidth - resize.deliveryWidth - 330,resize.promptWidth + event.clientX - resize.startX));
-      resize.workbench.style.setProperty('--prompt-width',next + 'px');
+      laneWidths.setProperty('--prompt-width',next + 'px');
     } else {
       const next = Math.max(240,Math.min(gridWidth - resize.promptWidth - 330,resize.deliveryWidth - event.clientX + resize.startX));
-      resize.workbench.style.setProperty('--delivery-width',next + 'px');
+      laneWidths.setProperty('--delivery-width',next + 'px');
     }
   });
 
@@ -424,13 +435,14 @@
     const resizeHandle = event.target.closest?.('[data-resize-lane]');
     if (resizeHandle && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
       const workbench = resizeHandle.closest('.workbench');
+      const laneWidths = document.getElementById('workbench-list').style;
       const direction = event.key === 'ArrowRight' ? 1 : -1;
       if (resizeHandle.dataset.resizeLane === 'prompt') {
         const width = workbench.querySelector('.prompt-lane').getBoundingClientRect().width;
-        workbench.style.setProperty('--prompt-width',Math.max(180,width + direction * 24) + 'px');
+        laneWidths.setProperty('--prompt-width',Math.max(180,width + direction * 24) + 'px');
       } else {
         const width = workbench.querySelector('.delivery-lane').getBoundingClientRect().width;
-        workbench.style.setProperty('--delivery-width',Math.max(240,width - direction * 24) + 'px');
+        laneWidths.setProperty('--delivery-width',Math.max(240,width - direction * 24) + 'px');
       }
       event.preventDefault();
       return;
