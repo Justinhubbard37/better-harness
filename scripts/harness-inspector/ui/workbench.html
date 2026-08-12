@@ -11,9 +11,9 @@
 <div class="app" data-harness-inspector>
   <aside class="scope-picker" aria-label="Scope picker">
     <div class="brand"><div class="brand-copy"><small>Better Harness</small><strong>Harness Inspector</strong><span>{{BH_WORKSPACE_NAME}} · real local evidence</span></div><button class="picker-toggle" data-toggle-picker aria-expanded="true" aria-label="Collapse Delivery Tree"><span class="collapse-label">Hide</span><span class="expand-label">Show tree</span></button></div>
-    <div class="mode-tabs" role="tablist" aria-label="Picker mode"><button data-mode="feature" class="{{BH_FEATURE_TAB_CLASS}}">Delivery Tree</button><button data-mode="date" class="{{BH_DATE_TAB_CLASS}}">Date</button></div>
-    <section class="picker-panel {{BH_FEATURE_PANEL_CLASS}}" data-panel="feature"><div class="picker-heading"><strong>Capability tree</strong><span>{{BH_FEATURE_NODE_COUNT}} nodes</span></div>{{BH_FEATURE_PICKER}}</section>
-    <section class="picker-panel {{BH_DATE_PANEL_CLASS}}" data-panel="date"><div class="picker-heading"><strong>UTC activity</strong><span>{{BH_DAY_COUNT}} days</span></div><div class="date-grid">{{BH_DATE_PICKER}}</div></section>
+    <div class="mode-tabs" role="tablist" aria-label="Picker mode"><button id="mode-feature" role="tab" aria-controls="panel-feature" aria-selected="{{BH_FEATURE_TAB_SELECTED}}" data-mode="feature" class="{{BH_FEATURE_TAB_CLASS}}">Delivery Tree</button><button id="mode-date" role="tab" aria-controls="panel-date" aria-selected="{{BH_DATE_TAB_SELECTED}}" data-mode="date" class="{{BH_DATE_TAB_CLASS}}">Date</button></div>
+    <section id="panel-feature" class="picker-panel {{BH_FEATURE_PANEL_CLASS}}" role="tabpanel" aria-labelledby="mode-feature" data-panel="feature"><div class="picker-heading"><strong>Capability tree</strong><span>{{BH_FEATURE_NODE_COUNT}} nodes</span></div>{{BH_FEATURE_PICKER}}</section>
+    <section id="panel-date" class="picker-panel {{BH_DATE_PANEL_CLASS}}" role="tabpanel" aria-labelledby="mode-date" data-panel="date"><div class="picker-heading"><strong>UTC activity</strong><span>{{BH_DAY_COUNT}} days</span></div><div class="date-grid">{{BH_DATE_PICKER}}</div></section>
     <div class="picker-footer">Candidate structure, exact path overlaps, and contextual associations remain visibly distinct.</div>
   </aside>
   <main class="workspace">
@@ -33,6 +33,11 @@
       <section class="workbench-list" id="workbench-list" aria-live="polite"></section>
     </div>
   </main>
+  <aside class="evidence-drawer" id="evidence-drawer" aria-labelledby="evidence-drawer-title" aria-live="polite" hidden>
+    <header class="evidence-drawer-head"><div><small>Selected evidence</small><h2 id="evidence-drawer-title">Evidence</h2></div><button class="evidence-drawer-close" type="button" data-close-evidence aria-label="Close evidence details">Close</button></header>
+    <div class="evidence-drawer-body" id="evidence-drawer-body"></div>
+    <footer class="evidence-drawer-actions"><button type="button" data-copy-evidence-link>Copy evidence link</button><button type="button" data-open-evidence-session hidden>Open in Session View</button></footer>
+  </aside>
 </div>
 <section class="session-view" id="session-view" role="dialog" aria-modal="true" aria-labelledby="session-view-title" hidden>
   <header class="session-nav"><nav class="session-crumbs" aria-label="Session breadcrumb"><span>{{BH_WORKSPACE_NAME}}</span><i>/</i><span>Sessions</span><i>/</i><strong id="session-view-title">Session</strong></nav><button class="session-close" id="session-view-close" data-close-session>Close</button></header>

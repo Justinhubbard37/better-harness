@@ -55,7 +55,10 @@ function featurePicker(tree) {
       ? `<ul class="tree-children" role="group">${children.map(renderNode).join("")}</ul>`
       : "";
     const badge = node.evidence === "declared" ? "" : `<span class="evidence ${escapeHtml(node.evidence)}">${escapeHtml(node.evidence)}</span>`;
-    return `<li class="tree-item ${node.type}" role="treeitem" data-tree-item data-tree-node-id="${escapeHtml(node.id)}"${hasChildren ? ' aria-expanded="true"' : ""}><div class="tree-line">${toggle}<button class="tree-row ${node.type}" type="button" data-feature-id="${escapeHtml(node.id)}"><span class="tree-check ${status}" role="img" aria-label="${statusLabel}"><span aria-hidden="true">${status === "complete" ? "✓" : ""}</span></span><span class="tree-copy"><strong>${escapeHtml(node.title)}</strong><small>${escapeHtml(meta)}</small></span>${badge}</button></div>${group}</li>`;
+    const selection = node.type === "story"
+      ? ` data-selectable data-selection-type="story" data-story-id="${escapeHtml(node.id)}"`
+      : "";
+    return `<li class="tree-item ${node.type}" role="treeitem" data-tree-item data-tree-node-id="${escapeHtml(node.id)}"${hasChildren ? ' aria-expanded="true"' : ""}><div class="tree-line">${toggle}<button class="tree-row ${node.type}" type="button" data-feature-id="${escapeHtml(node.id)}"${selection}><span class="tree-check ${status}" role="img" aria-label="${statusLabel}"><span aria-hidden="true">${status === "complete" ? "✓" : ""}</span></span><span class="tree-copy"><strong>${escapeHtml(node.title)}</strong><small>${escapeHtml(meta)}</small></span>${badge}</button></div>${group}</li>`;
   };
   const roots = tree.roots.map((id) => byId.get(id)).filter(Boolean);
   return `<ul class="capability-tree" role="tree" aria-label="Delivery capability tree">${roots.map(renderNode).join("")}</ul>`;
@@ -157,7 +160,7 @@ function renderSwimlaneBubbleChart(activity = {}) {
     const detail = call.detail ? ` · ${call.detail}` : "";
     const label = `${actionLabel} · ${call.toolName} · call ${call.step} · ${failed ? "failed" : "observed"} · ${timing}${detail}${fileEvidence}`;
     const tone = failed ? "#c34f4f" : (TOOL_FAMILY_COLORS[family] ?? TOOL_FAMILY_COLORS.other);
-    return `<circle class="swimlane-bubble${failed ? " failed" : ""}${timed ? " timed" : " unobserved"}" data-swimlane-step="${call.step}" data-call-id="${escapeHtml(call.id)}" data-action="${escapeHtml(actionLabel)}" data-tool="${escapeHtml(call.toolName)}" data-status="${failed ? "failed" : "observed"}" data-duration="${escapeHtml(timed ? formatToolDuration(call.durationMs) : "timing unavailable")}" data-detail="${escapeHtml(call.detail ?? "")}" data-files="${escapeHtml((call.filePaths ?? []).join(" · "))}" data-family="${escapeHtml(family)}" cx="${xFor(call.step)}" cy="${center}" r="${radiusFor(call)}" fill="${timed || failed ? tone : "#ffffff"}" stroke="${tone}" stroke-width="${timed || failed ? 1.25 : 2}" tabindex="0" aria-label="${escapeHtml(label)}"><title>${escapeHtml(label)}</title></circle>`;
+    return `<circle class="swimlane-bubble${failed ? " failed" : ""}${timed ? " timed" : " unobserved"}" data-selectable data-selection-type="tool-call" data-swimlane-step="${call.step}" data-call-id="${escapeHtml(call.id)}" data-action="${escapeHtml(actionLabel)}" data-tool="${escapeHtml(call.toolName)}" data-status="${failed ? "failed" : "observed"}" data-duration="${escapeHtml(timed ? formatToolDuration(call.durationMs) : "timing unavailable")}" data-detail="${escapeHtml(call.detail ?? "")}" data-files="${escapeHtml((call.filePaths ?? []).join(" · "))}" data-family="${escapeHtml(family)}" cx="${xFor(call.step)}" cy="${center}" r="${radiusFor(call)}" fill="${timed || failed ? tone : "#ffffff"}" stroke="${tone}" stroke-width="${timed || failed ? 1.25 : 2}" tabindex="0" role="button" aria-label="${escapeHtml(label)}"><title>${escapeHtml(label)}</title></circle>`;
   }).join("");
   const tickLabels = ticks.map((tick) => `<text class="swimlane-tick" data-swimlane-step="${tick}" x="${xFor(tick)}" y="${laneAreaHeight + 20}" text-anchor="middle">${tick}</text>`).join("");
   const aria = `${totalCalls} normalized tool calls by action, sequence, status, and observed latency`;
@@ -180,14 +183,17 @@ function platformBadge(report) {
 
 export function renderHarnessInspectorHtml(report) {
   if (report?.kind !== "HarnessInspectorReportV1") throw new Error("renderHarnessInspectorHtml requires HarnessInspectorReportV1");
-  const initialMode = report.featureTree.nodes.length > 0 ? "feature" : "date";
+  const hasFeatureEvidence = report.stories.some((story) => story.sessionLinks.length > 0 || story.commitHashes.length > 0);
+  const initialMode = report.featureTree.nodes.length > 0 && hasFeatureEvidence ? "feature" : "date";
   const workspaceName = escapeHtml(report.workspace.name);
   return fillHtmlTemplate({
     PAGE_TITLE: `Harness Inspector · ${workspaceName}`,
     STYLES,
     WORKSPACE_NAME: workspaceName,
     FEATURE_TAB_CLASS: initialMode === "feature" ? "active" : "",
+    FEATURE_TAB_SELECTED: initialMode === "feature" ? "true" : "false",
     DATE_TAB_CLASS: initialMode === "date" ? "active" : "",
+    DATE_TAB_SELECTED: initialMode === "date" ? "true" : "false",
     FEATURE_PANEL_CLASS: initialMode === "feature" ? "active" : "",
     FEATURE_NODE_COUNT: report.featureTree.nodes.length,
     FEATURE_PICKER: featurePicker(report.featureTree),

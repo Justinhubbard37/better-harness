@@ -345,6 +345,48 @@ function candidateSessionForStory(story, sessions) {
   return ranked[0];
 }
 
+const EDGE_LIMITATIONS = Object.freeze({
+  declared: "A reviewed declaration identifies intended scope; it does not prove that every session action contributed to the delivery.",
+  explicit: "Explicit metadata links the objects; it does not attribute every changed line to a specific tool call.",
+  observed: "Exact shared repository paths are direct same-path evidence, not proof that the session authored the commit.",
+  candidate: "Heuristic evidence suggests a relationship but requires reviewer confirmation.",
+  contextual: "Shared path or date context keeps the objects nearby; it is not a correlated delivery claim.",
+});
+
+function edgeEvidence({ kind, source, facts = [], limitation }) {
+  const strength = ["declared", "explicit"].includes(kind) ? "direct"
+    : kind === "observed-overlap" ? "observed"
+      : kind === "candidate" ? "candidate"
+        : "contextual";
+  const limitationKind = kind === "observed-overlap" ? "observed"
+    : ["file-context", "contextual"].includes(kind) ? "contextual"
+      : kind;
+  return {
+    strength,
+    source,
+    facts: facts.map((fact) => safeText(fact, 240)).filter(Boolean).slice(0, 8),
+    limitations: [safeText(limitation ?? EDGE_LIMITATIONS[limitationKind], 320)].filter(Boolean),
+  };
+}
+
+function sessionCommitEdge(match, overlappingFiles) {
+  const explicit = Boolean(match.evidence.linkType);
+  const kind = explicit ? "explicit" : overlappingFiles.length > 0 ? "observed-overlap" : "candidate";
+  const facts = [];
+  if (explicit) facts.push(`Commit metadata declares ${match.evidence.linkType}.`);
+  if (match.evidence.timeOverlap) facts.push("Session activity and commit time windows overlap.");
+  if (overlappingFiles.length > 0) facts.push(`${overlappingFiles.length} exact repository path(s) occur in both objects.`);
+  if (match.evidence.cwdWithinRepo) facts.push("The observed session working directory is within this repository.");
+  return {
+    evidenceKind: kind,
+    ...edgeEvidence({
+      kind,
+      source: "commit-session-link",
+      facts,
+    }),
+  };
+}
+
 function buildStoryLinks(tree, sessions, commits, diagnostics) {
   const stories = tree.nodes.filter((node) => node.type === "story").map((story) => {
     const explicitSessions = sessions.filter((session) => story.refs.sessions.some((ref) => sessionRefMatches(ref, session)));
@@ -360,6 +402,11 @@ function buildStoryLinks(tree, sessions, commits, diagnostics) {
       sessionId: session.sessionId,
       evidenceKind: treeEvidenceKind,
       confidence: "explicit",
+      ...edgeEvidence({
+        kind: treeEvidenceKind,
+        source: "feature-tree",
+        facts: [`Feature Tree declares session ${session.locator}.`],
+      }),
     }]));
     for (const commit of declaredCommits) {
       for (const match of commit.matches) {
@@ -369,6 +416,14 @@ function buildStoryLinks(tree, sessions, commits, diagnostics) {
             sessionId: match.sessionId,
             evidenceKind: match.confidence === "explicit" ? "explicit" : "candidate",
             confidence: match.confidence,
+            ...edgeEvidence({
+              kind: match.confidence === "explicit" ? "explicit" : "candidate",
+              source: "declared-commit-correlation",
+              facts: [
+                `Feature Tree declares commit ${commit.shortHash}.`,
+                `Commit correlation resolves to session ${match.sessionId}.`,
+              ],
+            }),
           });
         }
       }
@@ -380,6 +435,11 @@ function buildStoryLinks(tree, sessions, commits, diagnostics) {
           sessionId: candidate.session.sessionId,
           evidenceKind: "candidate",
           confidence: "text-overlap",
+          ...edgeEvidence({
+            kind: "candidate",
+            source: "retained-text-overlap",
+            facts: [`Story title and retained prompts share ${candidate.score} significant term(s).`],
+          }),
         });
       }
     }
@@ -395,7 +455,7 @@ function buildStoryLinks(tree, sessions, commits, diagnostics) {
   for (const story of stories) {
     for (const link of story.sessionLinks) {
       const session = sessions.find((item) => item.sessionId === link.sessionId);
-      if (session) session.storyLinks.push({ storyId: story.id, evidenceKind: link.evidenceKind, confidence: link.confidence });
+      if (session) session.storyLinks.push({ storyId: story.id, ...link });
     }
   }
   for (const commit of commits) {
@@ -407,8 +467,8 @@ function buildStoryLinks(tree, sessions, commits, diagnostics) {
       session.commitLinks.push({
         hash: commit.hash,
         confidence: match.confidence,
-        evidenceKind: match.evidence.linkType ? "explicit" : overlappingFiles.length > 0 ? "observed-overlap" : "candidate",
         overlappingFiles,
+        ...sessionCommitEdge(match, overlappingFiles),
       });
     }
   }
@@ -425,6 +485,11 @@ function buildStoryLinks(tree, sessions, commits, diagnostics) {
         confidence: "contextual",
         evidenceKind: "file-context",
         overlappingFiles,
+        ...edgeEvidence({
+          kind: "file-context",
+          source: "exact-repository-path",
+          facts: [`${overlappingFiles.length} exact repository path(s) occur in both objects.`],
+        }),
       });
     }
   }

@@ -98,7 +98,7 @@ function fixtureSession(overrides = {}) {
       files: [{ path: "scripts/harness-inspector/render-html.mjs", callCount: 1, callIds: ["A1"], families: ["inspect"] }],
       calls: [
         { id: "A1", step: 1, toolName: "Read", operation: "read-files", actionLabel: "Read files", family: "inspect", status: "observed", durationStatus: "observed", durationMs: 120, filePath: "scripts/harness-inspector/render-html.mjs", detail: "scripts/harness-inspector/render-html.mjs", detailKind: "redacted-input-summary" },
-        { id: "A2", step: 2, toolName: "Bash", operation: "run-tests", actionLabel: "Run tests", family: "verify", status: "failed", durationStatus: "unobserved", detail: "node --test test/harness-inspector.test.mjs", detailKind: "redacted-input-summary" },
+        { id: "A2", step: 2, toolName: "Bash", operation: "run-tests", actionLabel: "Run tests", family: "verify", status: "failed", durationStatus: "unobserved", filePath: "test/harness-inspector.test.mjs", detail: "node --test test/harness-inspector.test.mjs", detailKind: "redacted-input-summary" },
       ],
     },
     ...overrides,
@@ -246,11 +246,29 @@ test("report model keeps declared, candidate, exact-file, and date evidence dist
   assert.equal(report.days.length, 2);
   assert.deepEqual(report.days[1].sessionIds, ["session-a"]);
   assert.deepEqual(report.days[1].commitHashes, ["a".repeat(40), "b".repeat(40)]);
-  assert.deepEqual(report.stories[0].sessionLinks, [{ sessionId: "session-a", evidenceKind: "declared", confidence: "explicit" }]);
-  assert.deepEqual(report.stories[1].sessionLinks, [{ sessionId: "session-a", evidenceKind: "candidate", confidence: "high" }]);
+  assert.deepEqual(report.stories[0].sessionLinks[0], {
+    sessionId: "session-a",
+    evidenceKind: "declared",
+    confidence: "explicit",
+    strength: "direct",
+    source: "feature-tree",
+    facts: ["Feature Tree declares session codex/session-a."],
+    limitations: ["A reviewed declaration identifies intended scope; it does not prove that every session action contributed to the delivery."],
+  });
+  assert.equal(report.stories[1].sessionLinks[0].evidenceKind, "candidate");
+  assert.equal(report.stories[1].sessionLinks[0].strength, "candidate");
+  assert.equal(report.stories[1].sessionLinks[0].source, "declared-commit-correlation");
   assert.equal(report.sessions[0].commitLinks[0].confidence, "explicit");
-  assert.deepEqual(report.sessions[0].commitLinks[0].overlappingFiles, ["scripts/harness-inspector/render-html.mjs"]);
+  assert.deepEqual(report.sessions[0].commitLinks[0].overlappingFiles, [
+    "scripts/harness-inspector/render-html.mjs",
+    "test/harness-inspector.test.mjs",
+  ]);
+  assert.equal(report.sessions[0].commitLinks[0].strength, "direct");
+  assert.equal(report.sessions[0].commitLinks[0].source, "commit-session-link");
+  assert.match(report.sessions[0].commitLinks[0].facts.join("\n"), /declares harness-session/u);
   assert.equal(report.sessions[0].commitLinks[1].confidence, "high");
+  assert.equal(report.sessions[0].commitLinks[1].strength, "observed");
+  assert.match(report.sessions[0].commitLinks[1].limitations.join("\n"), /not proof.*authored/u);
   assert.equal(report.sessions[0].toolActivity.kind, "NormalizedToolActivityV1");
   assert.equal(report.sessions[0].promptObservationCount, 2);
   assert.equal(report.sessions[0].commitLinks.some((link) => link.evidenceKind === "file-context"), true);
@@ -270,6 +288,8 @@ test("Inspector HTML emits both picker modes, three-lane workbench, expanded cal
   assert.match(html, /data-harness-inspector/u);
   assert.match(html, /data-mode="feature"/u);
   assert.match(html, /data-mode="date"/u);
+  assert.match(html, /role="tab" aria-controls="panel-feature" aria-selected="true"/u);
+  assert.match(html, /role="tabpanel" aria-labelledby="mode-feature"/u);
   assert.match(html, /data-feature-id="harness-inspector"/u);
   assert.match(html, /class="capability-tree" role="tree"/u);
   assert.match(html, /role="treeitem"/u);
@@ -303,6 +323,20 @@ test("Inspector HTML emits both picker modes, three-lane workbench, expanded cal
   assert.match(html, /data-resize-lane="delivery"/u);
   assert.match(html, /role="separator"/u);
   assert.match(html, /Open session/u);
+  assert.match(html, /id="evidence-drawer"/u);
+  assert.match(html, /data-copy-evidence-link/u);
+  assert.match(html, /data-open-evidence-session/u);
+  assert.match(html, /data-selection-type="story"/u);
+  assert.match(html, /data-selection-type="tool-call"/u);
+  assert.match(html, /type:'file'/u);
+  assert.match(html, /type:'commit'/u);
+  assert.match(html, /function setSelection/u);
+  assert.match(html, /function relatedSelections/u);
+  assert.match(html, /function renderEvidenceDrawer/u);
+  assert.match(html, /new URLSearchParams\(location\.search\)/u);
+  assert.match(html, /history\.replaceState/u);
+  assert.match(html, /Unplaced evidence/u);
+  assert.match(html, /state\.sessionTrigger/u);
   assert.match(html, /class="session-view"/u);
   assert.match(html, /data-session-kind-filter="prompts"/u);
   assert.match(html, /data-session-kind-filter="intermediate"/u);
@@ -392,6 +426,8 @@ test("Inspector tree renders checklist todo state and nested branches (AC-3)", (
   assert.match(html, /data-tree-node-id="inspector" aria-expanded="true"/u);
   assert.match(html, /setTreeItemExpanded/u);
   assert.match(html, /initializeTree/u);
+  assert.match(html, /role="tab" aria-controls="panel-feature" aria-selected="false"/u);
+  assert.match(html, /role="tab" aria-controls="panel-date" aria-selected="true"/u);
 });
 
 test("Inspector final HTML redacts credentials and omits absolute roots (AC-7)", () => {
