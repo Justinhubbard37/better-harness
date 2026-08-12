@@ -43,6 +43,7 @@ export {
 } from "./session-report-model.mjs";
 export {
   boundedMaxSessions,
+  collectMultiPlatformSessionSummaries,
   collectSessionDetail,
   collectSessionSummaries,
   DEFAULT_MAX_SESSIONS,

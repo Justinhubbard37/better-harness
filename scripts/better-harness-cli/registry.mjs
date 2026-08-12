@@ -103,6 +103,7 @@ const COMMANDS = [
     audience: "advanced",
     script: "harness-inspector/cli.mjs",
     summary: "Inspect feature, Story, prompt, session, tool-call, and commit provenance by product tree or date.",
+    aliases: [{ name: "inspector", hidden: true }],
     subcommands: [
       {
         name: "render",

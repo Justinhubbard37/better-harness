@@ -291,6 +291,77 @@ export async function collectSessionSummaries({
   return summaries;
 }
 
+// Discover sessions across several platforms for one workspace, merge the
+// candidates by recency under one global maxSessions bound, and hydrate only
+// the selected candidates. One provider failing or having no local evidence
+// roots never fails the whole collection; each provider reports its own
+// status so callers can surface bounded diagnostics.
+export async function collectMultiPlatformSessionSummaries({
+  workspace,
+  repoRoot,
+  platforms = [],
+  since = null,
+  until = null,
+  maxSessions = DEFAULT_MAX_SESSIONS,
+  includeToolTrace = false,
+  includeDialogue = false,
+  createAnalyzer: createPlatformAnalyzer = createAnalyzer,
+} = {}) {
+  const requested = [...new Set(platforms)];
+  const sinceMs = timestampMillis(since);
+  const untilMs = timestampMillis(until);
+  const providers = [];
+  const candidates = [];
+  for (const platform of requested) {
+    const provider = { platform, status: "ok", discovered: 0, included: 0 };
+    providers.push(provider);
+    try {
+      const analyzer = await createPlatformAnalyzer(platform);
+      const scopeOptions = { workspace };
+      if (since) scopeOptions.since = since;
+      if (until) scopeOptions.until = until;
+      const scope = await analyzer.resolveScope(scopeOptions);
+      const roots = await analyzer.discoverSourceRoots(scope);
+      if (!roots.some((root) => root.exists && root.enabled !== false)) {
+        provider.status = "no-evidence";
+        continue;
+      }
+      const discovered = (await analyzer.discoverSessions(scope, roots))
+        .filter((session) => withinRange(session, sinceMs, untilMs));
+      provider.discovered = discovered.length;
+      for (const session of discovered) candidates.push({ platform, provider, analyzer, scope, session });
+    } catch (error) {
+      provider.status = "error";
+      provider.message = String(error?.message ?? error);
+    }
+  }
+
+  const selected = candidates
+    .sort((a, b) => (timestampMillis(b.session.lastSeen) ?? 0) - (timestampMillis(a.session.lastSeen) ?? 0))
+    .slice(0, boundedMaxSessions(maxSessions));
+  const summaries = [];
+  for (const candidate of selected) {
+    try {
+      const events = await candidate.analyzer.readSession(candidate.session, candidate.scope, {
+        includeUserText: true,
+        includeCommandText: includeToolTrace,
+        includeContent: includeDialogue,
+      });
+      summaries.push(summarizeSessionEvents(candidate.session, events, {
+        repoRoot,
+        platform: candidate.platform,
+        includeToolTrace,
+        includeDialogue,
+      }));
+      candidate.provider.included += 1;
+    } catch (error) {
+      candidate.provider.status = "error";
+      candidate.provider.message = String(error?.message ?? error);
+    }
+  }
+  return { sessions: summaries, providers };
+}
+
 // Hydrate one session with full transcript options for the session view.
 // Picks the requested session id (exact or unique prefix) or the most recent
 // session when no id is given.

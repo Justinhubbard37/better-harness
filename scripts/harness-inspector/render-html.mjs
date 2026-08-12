@@ -169,6 +169,15 @@ function traceTemplates(sessions) {
   return sessions.map((session) => `<template data-trace-session="${escapeHtml(session.sessionId)}">${renderSwimlaneBubbleChart(session.toolActivity)}</template>`).join("");
 }
 
+// Badge names the providers that contributed sessions; the requested filter
+// text is only a fallback when no provider produced evidence.
+function platformBadge(report) {
+  const contributing = (report.providers ?? []).filter((provider) => provider.sessionCount > 0);
+  if (contributing.length === 0) return report.filters.platform;
+  if (contributing.length <= 3) return contributing.map((provider) => provider.platform).join(" · ");
+  return `${contributing.length} providers`;
+}
+
 export function renderHarnessInspectorHtml(report) {
   if (report?.kind !== "HarnessInspectorReportV1") throw new Error("renderHarnessInspectorHtml requires HarnessInspectorReportV1");
   const initialMode = report.featureTree.nodes.length > 0 ? "feature" : "date";
@@ -185,7 +194,7 @@ export function renderHarnessInspectorHtml(report) {
     DATE_PANEL_CLASS: initialMode === "date" ? "active" : "",
     DAY_COUNT: report.days.length,
     DATE_PICKER: datePicker(report.days),
-    PLATFORM: escapeHtml(report.filters.platform),
+    PLATFORM: escapeHtml(platformBadge(report)),
     SESSION_COUNT: report.sessions.length,
     TRACE_TEMPLATES: traceTemplates(report.sessions),
     REPORT_JSON: safeJson(report),

@@ -465,11 +465,32 @@ function buildDays(sessions, commits) {
   return [...byDay.values()].sort((left, right) => left.date.localeCompare(right.date));
 }
 
+const PROVIDER_STATUSES = new Set(["ok", "no-evidence", "error"]);
+
+// Providers keep only platform identity, a status whitelist, and bounded
+// counts; raw provider error text stays in CLI-side diagnostics.
+function projectProviders(providers, sessions) {
+  const includedByPlatform = new Map();
+  for (const session of sessions) {
+    includedByPlatform.set(session.platform, (includedByPlatform.get(session.platform) ?? 0) + 1);
+  }
+  return (providers ?? []).map((provider) => {
+    const platform = safeText(provider?.platform, 40, "unknown");
+    return {
+      platform,
+      status: PROVIDER_STATUSES.has(provider?.status) ? provider.status : "ok",
+      discovered: Math.max(0, Math.trunc(Number(provider?.discovered) || 0)),
+      sessionCount: includedByPlatform.get(platform) ?? 0,
+    };
+  });
+}
+
 export function buildHarnessInspectorReport({
   repoRoot,
   featureTree,
   sessions = [],
   correlation,
+  providers = [],
   filters = {},
   diagnostics = [],
 } = {}) {
@@ -487,13 +508,14 @@ export function buildHarnessInspectorReport({
     generatedAt: new Date().toISOString(),
     workspace: { name: path.basename(repoRoot ?? "workspace") },
     filters: {
-      platform: safeText(filters.platform, 40, "qoder"),
+      platform: safeText(filters.platform, 120, "all"),
       since: filters.since ?? null,
       until: filters.until ?? null,
       stage: safeText(filters.stage, 64),
       commitLimit: Number(filters.commitLimit) || null,
       sessionLimit: Number(filters.sessionLimit) || null,
     },
+    providers: projectProviders(providers, projectedSessions),
     featureTree: tree,
     stages,
     stories,

@@ -10,11 +10,12 @@ import {
   boundedMaxSessions,
   collectCommitFacts,
   collectEntireCheckpointFacts,
-  collectSessionSummaries,
+  collectMultiPlatformSessionSummaries,
   correlateCommitsWithSessions,
   DEFAULT_COMMIT_LIMIT,
   DEFAULT_MAX_SESSIONS,
 } from "../commit-session-link/index.mjs";
+import { SUPPORTED_SESSION_PLATFORMS } from "../session-analysis/index.mjs";
 import { emptyFeatureTree, FeatureTreeParseError, parseFeatureTreeMarkdown } from "./feature-tree.mjs";
 import { renderHarnessInspectorHtml } from "./render-html.mjs";
 import { buildHarnessInspectorReport } from "./report-model.mjs";
@@ -25,11 +26,11 @@ Render a read-only feature/story/prompt/session/commit provenance report with
 Feature Tree and Date scope pickers.
 
 Usage:
-  node scripts/harness-inspector/cli.mjs render [--workspace <dir>] [--platform <host>] [--feature-tree <file>] [--since <date>] [--until <date>] [--stage <name>] [--commits <n>] [--max-sessions <n>] [--out <file>]
+  node scripts/harness-inspector/cli.mjs render [--workspace <dir>] [--platform <hosts>] [--feature-tree <file>] [--since <date>] [--until <date>] [--stage <name>] [--commits <n>] [--max-sessions <n>] [--out <file>]
 
 Options:
   --workspace <dir>      Repository to inspect (default: current directory)
-  --platform <host>      Session platform such as qoder, claude, codex (default: qoder)
+  --platform <hosts>     "all", one host, or a comma list such as qoder,claude (default: all)
   --feature-tree <file>  Markdown Feature Tree; defaults to .better-harness/feature-tree.md when present
   --since <date>         Earliest included session/commit timestamp or YYYY-MM-DD
   --until <date>         Latest included session/commit timestamp or YYYY-MM-DD
@@ -112,9 +113,22 @@ async function loadFeatureTree(repoRoot, requestedPath) {
   return parseFeatureTreeMarkdown(markdown, { source: filePath });
 }
 
+// Resolve "all", one host, or a comma list into a validated platform list
+// without echoing unrecognized values into error output.
+function parsePlatforms(value) {
+  const text = String(value ?? "all").trim().toLowerCase();
+  if (text === "all") return [...SUPPORTED_SESSION_PLATFORMS];
+  const requested = [...new Set(text.split(",").map((item) => item.trim()).filter(Boolean))];
+  if (requested.length === 0 || requested.some((platform) => !SUPPORTED_SESSION_PLATFORMS.includes(platform))) {
+    throw new UsageError(`--platform expects all or a comma list of ${SUPPORTED_SESSION_PLATFORMS.join(", ")}`);
+  }
+  return requested;
+}
+
 async function runRender(options) {
   const workspace = path.resolve(options["--workspace"] ?? process.cwd());
-  const platform = options["--platform"] ?? "qoder";
+  const requestedPlatform = options["--platform"] ?? "all";
+  const platforms = parsePlatforms(requestedPlatform);
   const since = normalizedBound(options["--since"]);
   const until = normalizedBound(options["--until"], { endOfDay: true });
   if (since && until && new Date(since) > new Date(until)) throw new UsageError("--since must not be after --until");
@@ -122,10 +136,10 @@ async function runRender(options) {
   const sessionLimit = boundedMaxSessions(options["--max-sessions"]);
   const collected = collectCommitFacts({ workspace, limit: commitLimit });
   const commits = collected.commits.filter((commit) => withinBounds(commit.committedAt ?? commit.authoredAt, since, until));
-  const summaries = await collectSessionSummaries({
+  const { sessions: summaries, providers } = await collectMultiPlatformSessionSummaries({
     workspace,
     repoRoot: collected.repoRoot,
-    platform,
+    platforms,
     since,
     until,
     maxSessions: sessionLimit,
@@ -144,16 +158,25 @@ async function runRender(options) {
     })),
   };
   const featureTree = await loadFeatureTree(collected.repoRoot, options["--feature-tree"]);
-  const diagnostics = checkpointResolution.unresolved.length > 0
-    ? [`${checkpointResolution.unresolved.length} Entire checkpoint link(s) could not be resolved locally.`]
-    : [];
+  const failedProviders = providers.filter((provider) => provider.status === "error");
+  const missingProviders = providers.filter((provider) => provider.status === "no-evidence");
+  const diagnostics = [
+    ...(checkpointResolution.unresolved.length > 0
+      ? [`${checkpointResolution.unresolved.length} Entire checkpoint link(s) could not be resolved locally.`]
+      : []),
+    ...failedProviders.map((provider) => `Session provider ${provider.platform} failed: ${provider.message ?? "unknown error"}`),
+    ...(missingProviders.length > 0
+      ? [`No local session evidence for ${missingProviders.map((provider) => provider.platform).join(", ")}.`]
+      : []),
+  ];
   const report = buildHarnessInspectorReport({
     repoRoot: collected.repoRoot,
     featureTree,
     sessions,
     correlation,
+    providers,
     filters: {
-      platform,
+      platform: requestedPlatform,
       since,
       until,
       stage: options["--stage"] ?? null,
@@ -177,6 +200,7 @@ async function runRender(options) {
     sessions: report.sessions.length,
     commits: report.commits.length,
     toolCalls: report.sessions.reduce((sum, session) => sum + session.toolTrace.totalCalls, 0),
+    providers: report.providers,
   }, null, 2)}\n`);
 }
 
@@ -185,7 +209,9 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdout.write(HELP);
     return 0;
   }
-  const [command, ...rest] = argv;
+  // A leading option flag implies render, so "inspector --out report.html"
+  // works without the explicit subcommand.
+  const [command, ...rest] = argv[0].startsWith("--") ? ["render", ...argv] : argv;
   if (command !== "render") {
     process.stderr.write("Unknown command; expected render\n");
     return 64;
