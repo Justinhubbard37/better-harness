@@ -112,3 +112,15 @@ quality rather than by mechanically banning regular expressions.
   present. This change does not alter production visuals or prompts. A future
   change to those behaviors still requires the repository's browser evidence or
   a dedicated scenario evaluation.
+- Follow-up hardcode cleanup removed 147 `assert.match` / `assert.doesNotMatch`
+  calls across six suites. It deleted private TSX identifier and style checks,
+  packaging-script source inspection, a duplicate template spelling test, a
+  private-function source slice, catalog ownership inferred from source tokens,
+  and an exact HTML-markup test. Focused verification passed 191/191; `npm test`,
+  `npm run pack:verify` (504 npm entries and 526 runtime ZIP entries), and
+  `git diff --check` passed. Public package metadata, Canvas validators, CLI
+  integration, catalog data, privacy, schema, and artifact checks remain.
+- Follow-up gap: future-version Canvas sidecar merge behavior no longer has a
+  focused unit test because its only seam was a source slice bounded by private
+  function names. Restore that coverage only after the merge owner is exposed
+  as a directly importable production function.

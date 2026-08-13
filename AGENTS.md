@@ -73,8 +73,8 @@ Adding support for a new Coding Agent host starts with
 ## Doc Link Integrity
 
 - All relative `.md` references across `skills/`, `references/`, `templates/`, `models/`, `docs/`, and `case-studies/`
-  must resolve; `test/doc-link-graph.test.mjs` enforces this in `npm test`.
-- After adding, moving, or renaming markdown docs, run `node --test test/doc-link-graph.test.mjs` before committing,
+  must resolve; `test/skills-docs/doc-link-graph.test.mjs` enforces this in `npm test`.
+- After adding, moving, or renaming markdown docs, run `node --test test/skills-docs/doc-link-graph.test.mjs` before committing,
   and regenerate the routing graph with `node scripts/doc-link-graph/cli.mjs skills/better-harness`
   (it rewrites `docs/better-harness-doc-links.mmd`, which the test checks for staleness).
 - Every reference doc shipped under `skills/better-harness/references/` must stay reachable from `SKILL.md` routing,
