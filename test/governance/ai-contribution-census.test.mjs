@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { after, before, describe, test } from "node:test";
 
 import {
   analyzeAiContributionCensus,
@@ -113,9 +113,18 @@ async function makeFixtureRepo() {
   return repo;
 }
 
-test("AI contribution census separates AI code candidates from weak mentions and merge automation", async () => {
-  const repo = await makeFixtureRepo();
-  try {
+describe("AI contribution census", { concurrency: false }, () => {
+  let repo;
+
+  before(async () => {
+    repo = await makeFixtureRepo();
+  });
+
+  after(async () => {
+    await rm(repo, { recursive: true, force: true });
+  });
+
+  test("separates AI code candidates from weak mentions and merge automation", () => {
     const result = analyzeAiContributionCensus({ cwd: repo, maxCommits: 20 });
 
     assert.equal(result.status, "ok");
@@ -141,15 +150,10 @@ test("AI contribution census separates AI code candidates from weak mentions and
     assert.equal(bySubject.get("Merge branch 'feature/claude-path' into main").aiCodeContributionCandidate, false);
     assert.equal(bySubject.get("scm-auto: merge feature into dev").ai.automationMergeOrSync, true);
     assert.equal(bySubject.get("scm-auto: merge feature into dev").aiCodeContributionCandidate, false);
-  } finally {
-    await rm(repo, { recursive: true, force: true });
-  }
-});
+  });
 
-test("AI contribution census CLI emits parser-safe JSON and compact Markdown", async () => {
-  const repo = await makeFixtureRepo();
-  const script = path.join(process.cwd(), "scripts/ai-contribution-census/cli.mjs");
-  try {
+  test("CLI emits parser-safe JSON and compact Markdown", () => {
+    const script = path.join(process.cwd(), "scripts/ai-contribution-census/cli.mjs");
     const jsonRun = spawnSync(process.execPath, [
       script,
       "--cwd",
@@ -171,7 +175,5 @@ test("AI contribution census CLI emits parser-safe JSON and compact Markdown", a
     assert.match(markdown, /Missing both spec and test evidence: 1/);
     assert.match(markdown, /weak mention only/);
     assert.match(markdown, /merge\/sync integration/);
-  } finally {
-    await rm(repo, { recursive: true, force: true });
-  }
+  });
 });

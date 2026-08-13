@@ -5,7 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { artifactPackage, buildHostPluginArtifact } from "../../scripts/packaging/build-host-plugin.mjs";
+import {
+  artifactPackage,
+  assertReplaceable,
+  buildHostPluginArtifact,
+  publishStagedArtifact,
+} from "../../scripts/packaging/build-host-plugin.mjs";
 import {
   ARTIFACT_KIND,
   ARTIFACT_MARKER,
@@ -235,7 +240,7 @@ test("host artifact verifier rejects the retired logo asset", async () => {
   }
 });
 
-test("Codex host plugin artifact is isolated, portable, and replaceable", async () => {
+test("Codex host plugin artifact is isolated and portable", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-host-plugin-"));
   const pluginRoot = path.join(root, "better-harness");
 
@@ -244,6 +249,7 @@ test("Codex host plugin artifact is isolated, portable, and replaceable", async 
     assert.equal(first.host, "codex");
     assert.equal(first.pluginName, "better-harness");
     assert.equal(first.replaced, false);
+    assert.equal(await assertReplaceable(pluginRoot), true);
     assert.ok(first.fileCount > 100);
     assert.ok(first.totalBytes > 1_000_000);
 
@@ -305,16 +311,32 @@ test("Codex host plugin artifact is isolated, portable, and replaceable", async 
     assert.equal(cli.status, 0, cli.stderr);
     assert.match(cli.stdout, /Better Harness CLI/);
 
-    const second = await buildHostPluginArtifact({ outputRoot: pluginRoot });
-    assert.equal(second.replaced, true);
-    assert.equal(second.version, first.version);
-
     await mkdir(path.join(pluginRoot, ".qoder-plugin"));
     await writeFile(path.join(pluginRoot, ".qoder-plugin", "plugin.json"), "{}\n");
     await assert.rejects(
       verifyHostPluginArtifact(pluginRoot),
       /forbidden top-level path: \.qoder-plugin/,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("host plugin publication replaces an owned artifact atomically", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-host-plugin-publish-"));
+  const outputRoot = path.join(root, "better-harness");
+  const stageRoot = path.join(root, "stage", "better-harness");
+  try {
+    await mkdir(outputRoot, { recursive: true });
+    await writeFile(path.join(outputRoot, "old.txt"), "old\n");
+    await mkdir(stageRoot, { recursive: true });
+    await writeFile(path.join(stageRoot, "new.txt"), "new\n");
+
+    await publishStagedArtifact(stageRoot, outputRoot, true);
+
+    assert.equal(await lstat(path.join(outputRoot, "old.txt")).catch(() => null), null);
+    assert.equal(await readFile(path.join(outputRoot, "new.txt"), "utf8"), "new\n");
+    assert.equal(await lstat(`${outputRoot}.previous-${process.pid}`).catch(() => null), null);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

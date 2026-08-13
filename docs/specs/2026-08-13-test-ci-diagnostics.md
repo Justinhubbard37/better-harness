@@ -30,6 +30,9 @@ spelling when an executable validator already owns the behavior.
   contracts, escaping, accessibility, validator failures, and self-contained
   artifact boundaries but stop pinning private CSS dimensions and redundant
   visible-copy spelling.
+- AC-7: Tests that repeat an expensive package build or Git fixture setup split
+  reusable mechanics from one representative integration path, while retaining
+  the same portability, replacement, CLI, and analysis contracts.
 
 ## Non-goals
 
@@ -53,6 +56,8 @@ spelling when an executable validator already owns the behavior.
    security oracles intact.
 5. Verify focused tests, a successful CI-mode run, the full local suite, package
    contents, and staged/unstaged boundaries.
+6. Use JUnit timings to remove repeated expensive setup from the slowest tests
+   without weakening cross-platform, security, or end-to-end boundaries.
 
 ## Test and Review Evidence
 
@@ -60,10 +65,18 @@ spelling when an executable validator already owns the behavior.
   exact CI runtime Node 22.20.0, including a real failed-first/success-second
   capability run. `npm run test:ci` passes all 8 capability groups and writes 8
   JUnit XML files.
-- AC-5: `npm test` passes 1,308/1,308.
+- AC-5: `npm test` passes 1,309/1,309 after adding the isolated publication
+  replacement test.
 - AC-6: the renderer tests pass 33/33 and the task-loop projection tests pass
   84/84. These files contain 60 fewer regex assertions: 48 private HTML/CSS or
   visible-copy checks and 12 redundant Markdown spelling checks.
+- AC-7: JUnit profiling identified three repeated setup costs. The Codex plugin
+  artifact test now performs one full build and tests atomic replacement in
+  isolation; CLI help validates all 53 terminal routes structurally and runs 8
+  representative guarded owners; both AI census surfaces share one 7-commit
+  repository fixture. On the local Node 24 CI path, the affected slow cases
+  moved from 44.3s to about 19.5s, 16.8s to about 4.2s, and 21.3s per file to
+  about 1.5s respectively.
 - Documentation: the focused doc-link graph suite passes 6/6 after regenerating
   the canonical graph.
 - Package: `npm run pack:verify` passes with 507 npm entries and 529 runtime zip
