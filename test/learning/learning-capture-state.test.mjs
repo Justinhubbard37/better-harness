@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { loadPriorLearningCaptureState } from "../../scripts/harness-analysis/learning-capture-state.mjs";
 import { projectInterventionLedger } from "../../scripts/harness-analysis/intervention-ledger.mjs";

@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import test from "node:test";
+import { test } from "vitest";
 
 import { workspaceToQoderSlug } from "../../scripts/session-analysis/platforms/qoder.mjs";
 import { buildUsageSummary } from "../../scripts/session-analysis/usage-summary.mjs";

@@ -36,13 +36,13 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - name: Run categorized tests
+      - name: Run Vitest
         run: npm run test:ci
       - name: Upload JUnit test results
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ matrix.os }}-node-${{ matrix.node }}
-          path: test-results/*.xml
+          path: test-results/vitest.junit.xml
           if-no-files-found: error
       - run: npm run pack:verify

@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { analyzeCloc } from "../../scripts/cloc/analyze.mjs";
 import { countFile, countFilesSummary } from "../../scripts/cloc/count-file.mjs";

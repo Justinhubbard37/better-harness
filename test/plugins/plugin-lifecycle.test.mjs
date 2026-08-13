@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { getHostProfile } from "../../scripts/host-support/index.mjs";
 import { runHarnessDoctor } from "../../scripts/harness-doctor/index.mjs";

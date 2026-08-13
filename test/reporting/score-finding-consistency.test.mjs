@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import {
   AGENT_WORK_LOOP_CURRENT_TASK_DIMENSION_IDS,

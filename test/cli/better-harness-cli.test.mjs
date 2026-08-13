@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 import { pathToFileURL } from "node:url";
 import { main, resolveDispatch } from "../../scripts/better-harness-cli/cli.mjs";
 import { commandInventory } from "../../scripts/better-harness-cli/registry.mjs";
@@ -1109,7 +1109,7 @@ test("cloc CLI runs from a spaced symlink installation path", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "better-harness cloc install-"));
   const linkedClocDir = path.join(root, "linked cloc");
   const workspace = path.join(root, "workspace with spaces");
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   await writeFixtureFile(workspace, "src/app.mjs", "export const value = 1;\n");
   try {
     await symlink(

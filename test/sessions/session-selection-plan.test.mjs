@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { buildObservationManifest } from "../../scripts/session-analysis/observation-manifest.mjs";
 import { CodexSessionAnalyzer } from "../../scripts/session-analysis/platforms/codex.mjs";
@@ -407,7 +407,10 @@ test("selection entry collection bounds concurrency and never asks adapters for 
   assert.ok(optionsSeen.every((options) => options.includeContent === false));
 });
 
-test("Qoder and Codex insight adapters apply the same validated AI plan", async (context) => {
+test.each([
+  { label: "Qoder", platform: "qoder", Analyzer: QoderSessionAnalyzer },
+  { label: "Codex", platform: "codex", Analyzer: CodexSessionAnalyzer },
+])("$label insight adapter applies the same validated AI plan", async ({ platform, Analyzer }) => {
   const sessions = Array.from({ length: 6 }, (_, index) => ({
     sessionId: `session-${index}`,
     workspace: "/workspace/project",
@@ -454,38 +457,34 @@ test("Qoder and Codex insight adapters apply the same validated AI plan", async 
   const precomputedEntries = sessions.map((session) =>
     buildSessionSelectionEntry(session, eventsBySession.get(session.sessionId) ?? []));
 
-  for (const [name, Analyzer] of [["qoder", QoderSessionAnalyzer], ["codex", CodexSessionAnalyzer]]) {
-    await context.test(name, async () => {
-      const analyzer = new Analyzer();
-      let readCount = 0;
-      analyzer.resolveScope = async () => ({
-        platform: name,
-        workspace: "/workspace/project",
-        since: null,
-        until: null,
-        sinceTime: null,
-        untilTime: null,
-        includeGlobalCapabilities: false,
-      });
-      analyzer.discoverSourceRoots = async () => [];
-      analyzer.discoverSessions = async () => sessions;
-      analyzer.readSession = async (session) => {
-        readCount += 1;
-        return eventsBySession.get(session.sessionId) ?? [];
-      };
+  const analyzer = new Analyzer();
+  let readCount = 0;
+  analyzer.resolveScope = async () => ({
+    platform,
+    workspace: "/workspace/project",
+    since: null,
+    until: null,
+    sinceTime: null,
+    untilTime: null,
+    includeGlobalCapabilities: false,
+  });
+  analyzer.discoverSourceRoots = async () => [];
+  analyzer.discoverSessions = async () => sessions;
+  analyzer.readSession = async (session) => {
+    readCount += 1;
+    return eventsBySession.get(session.sessionId) ?? [];
+  };
 
-      const result = await analyzer.analyze({
-        command: "insights",
-        selectionPlan: adapterPlan,
-        selectionEntries: precomputedEntries,
-      });
+  const result = await analyzer.analyze({
+    command: "insights",
+    selectionPlan: adapterPlan,
+    selectionEntries: precomputedEntries,
+  });
 
-      assert.equal(result.selection.requestedStrategy, "ai-plan");
-      assert.equal(result.selection.analyzedCount, 2);
-      assert.deepEqual(result.sessions.map((session) => session.sessionId), ["session-0", "session-1"]);
-      assert.deepEqual(result.selection.strata, ["closed", "unvalidated"]);
-      assert.equal(result.selection.plan.planner, "ai");
-      assert.equal(readCount, 2);
-    });
-  }
+  assert.equal(result.selection.requestedStrategy, "ai-plan");
+  assert.equal(result.selection.analyzedCount, 2);
+  assert.deepEqual(result.sessions.map((session) => session.sessionId), ["session-0", "session-1"]);
+  assert.deepEqual(result.selection.strata, ["closed", "unvalidated"]);
+  assert.equal(result.selection.plan.planner, "ai");
+  assert.equal(readCount, 2);
 });

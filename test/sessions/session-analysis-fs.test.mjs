@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { walkFiles } from "../../scripts/session-analysis/fs.mjs";
 import { collectSkillFiles } from "../../scripts/agent-customize/core/items.mjs";

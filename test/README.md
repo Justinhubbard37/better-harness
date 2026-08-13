@@ -2,9 +2,9 @@
 
 Tests are grouped by the production capability that owns the behavior. Keep a
 new test beside its primary owner even when it crosses unit, integration, and
-CLI boundaries. Shared fixtures stay in `test/fixtures`. CI-only reporters and
-the categorized runner stay in `test/support`; they are not published with the
-package and are not discovered as tests.
+CLI boundaries. Shared fixtures stay in `test/fixtures`. Vitest discovers tests
+directly from the capability directories; test support code is not published
+with the package.
 
 ## Categories
 
@@ -32,7 +32,8 @@ Run the complete suite:
 npm test
 ```
 
-Run the CI presentation locally, including compact progress and JUnit files:
+Run the CI presentation locally, including human-readable failures, GitHub
+Actions reporting when applicable, and the JUnit file:
 
 ```sh
 npm run test:ci
@@ -41,16 +42,16 @@ npm run test:ci
 Run one capability:
 
 ```sh
-node --test "test/sessions/*.test.mjs"
-node --test "test/reporting/*.test.mjs"
+npx vitest run test/sessions
+npx vitest run test/reporting
 ```
 
 Run one file:
 
 ```sh
-node --test test/plugins/plugin-lifecycle.test.mjs
+npx vitest run test/plugins/plugin-lifecycle.test.mjs
 ```
 
-Do not add a second test manifest. Both local and CI runners discover
-`*.test.mjs` files from the capability directories; this document explains
+Do not add a second test manifest. Both local and CI commands use the same
+Vitest discovery configuration for `*.test.mjs` files; this document explains
 ownership and routing.

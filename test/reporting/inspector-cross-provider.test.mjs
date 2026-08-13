@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
-import test from "node:test";
+import { test } from "vitest";
 import { fileURLToPath } from "node:url";
 
 import { collectMultiPlatformSessionSummaries } from "../../scripts/commit-session-link/index.mjs";

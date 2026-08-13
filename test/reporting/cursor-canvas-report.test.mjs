@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { renderCursorCanvasTsx } from "../../scripts/harness-analysis/renderers/cursor-canvas.mjs";
 import {

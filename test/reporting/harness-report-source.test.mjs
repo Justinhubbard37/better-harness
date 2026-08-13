@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { createHarnessReportSource, validateHarnessReportSource } from "../../scripts/harness-analysis/report-source.mjs";
 import { buildObservationManifest } from "../../scripts/session-analysis/observation-manifest.mjs";

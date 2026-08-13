@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -158,7 +158,7 @@ function fixtureSession(overrides = {}) {
 
 test("collectCommitFacts parses numstat, subject, and session trailers (AC-1, AC-2)", async (t) => {
   const root = await createFixtureRepo();
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
 
   const { repoRoot, commits } = collectCommitFacts({ workspace: root, limit: 10 });
   assert.equal(commits.length, 2);
@@ -177,7 +177,7 @@ test("collectCommitFacts parses numstat, subject, and session trailers (AC-1, AC
 
 test("collectCommitFacts rejects unknown commits", async (t) => {
   const root = await createFixtureRepo();
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
 
   assert.throws(
     () => collectCommitFacts({ workspace: root, commit: "0000000000000000000000000000000000000000" }),
@@ -222,7 +222,7 @@ test("collectCommitFacts preserves adversarial Git paths through --numstat -z (A
     return;
   }
   const root = await mkdtemp(path.join(os.tmpdir(), "commit-session-paths-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   git(root, ["init", "--initial-branch=main"]);
   await mkdir(path.join(root, "src"), { recursive: true });
   const paths = ["src/tab\tname.mjs", "src/line\nname.mjs"];
@@ -235,7 +235,7 @@ test("collectCommitFacts preserves adversarial Git paths through --numstat -z (A
 
 test("reference-shape checkpoint refs resolve three ULIDs to a distinct session UUID (AC-9, AC-13)", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "commit-session-checkpoints-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   git(root, ["init", "--initial-branch=main"]);
   await mkdir(path.join(root, "src"), { recursive: true });
   await writeFile(path.join(root, "src", "app.mjs"), "export const value = 0;\n");
@@ -272,7 +272,7 @@ test("reference-shape checkpoint refs resolve three ULIDs to a distinct session 
 
 test("legacy entire/checkpoints/v1 metadata resolves without checking out the branch (AC-9)", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "commit-session-checkpoint-branch-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   git(root, ["init", "--initial-branch=main"]);
   const checkpointId = "a3b2c4d5e6f7";
   const sessionId = "legacy-session-id";
@@ -288,7 +288,7 @@ test("legacy entire/checkpoints/v1 metadata resolves without checking out the br
 
 test("render-session prefers the newest self-contained transcript when one Entire session has several checkpoints (AC-9, AC-12)", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "commit-session-entire-transcript-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   git(root, ["init", "--initial-branch=main"]);
   await mkdir(path.join(root, "src"), { recursive: true });
   await writeFile(path.join(root, "src", "app.mjs"), "export const value = 1;\n");
@@ -1084,7 +1084,7 @@ test("miniMarkdownToHtml renders the bounded subset and escapes HTML (AC-7)", ()
 
 test("cli correlate runs end-to-end against a fixture repo (AC-1)", async (t) => {
   const root = await createFixtureRepo();
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
 
   const result = spawnSync(
     process.execPath,

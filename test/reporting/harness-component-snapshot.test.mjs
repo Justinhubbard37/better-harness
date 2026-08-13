@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { collectAgentCustomizeInventory } from "../../scripts/agent-customize/index.mjs";
 import {
@@ -28,7 +28,7 @@ async function fixtureWorkspace(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-component-snapshot-"));
   const workspace = path.join(root, "workspace");
   await cp(FIXTURE, workspace, { recursive: true });
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   return workspace;
 }
 
@@ -228,7 +228,7 @@ test("population references reject cross-project reuse and preserve explicit rel
     cp(FIXTURE, firstWorkspace, { recursive: true }),
     cp(FIXTURE, secondWorkspace, { recursive: true }),
   ]);
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
 
   const first = await createHarnessComponentSnapshot({ workspace: firstWorkspace });
   const second = await createHarnessComponentSnapshot({ workspace: secondWorkspace });
@@ -255,7 +255,7 @@ test("workspace evidence roots are scoped to each snapshot assembly", async (t) 
     cp(FIXTURE, secondWorkspace, { recursive: true }),
   ]);
   await writeFile(path.join(secondWorkspace, ".qoder", "workflows", "review.yml"), "name: changed\n", "utf8");
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
 
   try {
     await symlink(firstWorkspace, workspaceAlias, process.platform === "win32" ? "junction" : "dir");
@@ -330,7 +330,7 @@ test("workspace scope rejects user-home aliases and regular files", async (t) =>
   const workspace = await fixtureWorkspace(t);
   const previousQoderHome = process.env.QODER_HOME;
   process.env.QODER_HOME = path.join(workspace, ".qoder");
-  t.after(() => {
+  t.onTestFinished(() => {
     if (previousQoderHome === undefined) delete process.env.QODER_HOME;
     else process.env.QODER_HOME = previousQoderHome;
   });
@@ -359,7 +359,7 @@ test("tilde QODER_HOME aliases cannot masquerade as project scope", async (t) =>
   const originalHomedir = os.homedir;
   process.env.QODER_HOME = "~/.qoder";
   os.homedir = () => root;
-  t.after(async () => {
+  t.onTestFinished(async () => {
     os.homedir = originalHomedir;
     if (previousQoderHome === undefined) delete process.env.QODER_HOME;
     else process.env.QODER_HOME = previousQoderHome;

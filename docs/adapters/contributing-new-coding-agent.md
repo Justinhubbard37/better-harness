@@ -210,7 +210,7 @@ moved, regenerate and verify the link graph:
 
 ```bash
 node scripts/doc-link-graph/cli.mjs skills/better-harness
-node --test test/skills-docs/doc-link-graph.test.mjs
+npx vitest run test/skills-docs/doc-link-graph.test.mjs
 npm test
 npm run pack:verify
 git diff --check

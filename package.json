@@ -80,8 +80,8 @@
     "prepublishOnly": "npm run check",
     "preview": "node scripts/harness-analysis/canvas-preview-server.mjs",
     "preview:canvas": "node scripts/harness-analysis/canvas-preview-server.mjs",
-    "test": "node --test \"test/**/*.test.mjs\"",
-    "test:ci": "node test/support/run-ci.mjs"
+    "test": "vitest run",
+    "test:ci": "vitest run --config vitest.ci.config.mjs"
   },
   "packageManager": "npm@10.9.3",
   "publishConfig": {
@@ -96,5 +96,8 @@
   "dependencies": {
     "@vscode/tree-sitter-wasm": "0.3.1",
     "esbuild-wasm": "0.28.1"
+  },
+  "devDependencies": {
+    "vitest": "4.1.10"
   }
 }

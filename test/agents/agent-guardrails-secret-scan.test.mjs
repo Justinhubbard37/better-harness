@@ -4,7 +4,7 @@ import { promises as fsPromises } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import {
   handleHookEvent,
@@ -158,7 +158,7 @@ test("workspace-contained scanning refuses a swap to an external symlink at read
   const outsidePath = path.join(root, "outside.yaml");
   const probePath = path.join(workspace, "symlink-probe");
   const outsideKey = syntheticOpenAiKey();
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   await mkdir(workspace, { recursive: true });
   await writeFile(configPath, "name: safe\n");
   await writeFile(outsidePath, `OPENAI_API_KEY=${outsideKey}\n`);
@@ -261,7 +261,7 @@ test("secret-scan CLI hook mode reads JSON stdin and emits a block payload", () 
 
 test("secret-scan CLI fails closed when an explicit path cannot be scanned", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-secret-scan-missing-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   const result = spawnSync(process.execPath, [scannerCli, "missing.txt", "--json"], {
     cwd: root,
     encoding: "utf8",
@@ -276,7 +276,7 @@ test("secret-scan CLI fails closed when an explicit path cannot be scanned", asy
 
 test("secret-scan CLI reports complete coverage and exits zero for a clean explicit file", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-secret-scan-clean-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   await writeFile(path.join(root, "clean.txt"), "ordinary fixture text\n");
   const result = spawnSync(process.execPath, [scannerCli, "clean.txt", "--json"], {
     cwd: root,
@@ -295,7 +295,7 @@ test("secret-scan CLI treats an explicitly supplied symbolic-link file as incomp
   const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-secret-scan-link-"));
   const target = path.join(root, "target.txt");
   const link = path.join(root, "linked.txt");
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   await writeFile(target, "safe fixture\n");
   try {
     await symlink(target, link);
@@ -320,7 +320,7 @@ test("secret-scan CLI treats symbolic links nested in a scanned directory as inc
   const scanRoot = path.join(root, "scan");
   const target = path.join(root, "target.txt");
   const link = path.join(scanRoot, "linked.txt");
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   await mkdir(scanRoot, { recursive: true });
   await writeFile(target, "safe fixture\n");
   try {

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import {
   getHostDescriptor,
@@ -113,7 +113,7 @@ test("selection profiles route every declared host home through the generic anal
 
 test("asset-integrity CLI accepts every declared asset host and rejects unknown hosts", (t) => {
   const isolatedRoot = mkdtempSync(path.join(os.tmpdir(), "better-harness-host-gate-"));
-  t.after(() => rmSync(isolatedRoot, { recursive: true, force: true }));
+  t.onTestFinished(() => rmSync(isolatedRoot, { recursive: true, force: true }));
   const cliPath = path.join(process.cwd(), "scripts", "better-harness.mjs");
   for (const hostId of hostIdsFor(HOST_CAPABILITIES.ASSET_PRACTICES)) {
     const host = getHostDescriptor(hostId);

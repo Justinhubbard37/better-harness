@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 const ROOT = process.cwd();
 const CLI = path.join(ROOT, "scripts", "better-harness.mjs");
