@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" alt="Better Harness logo" width="56" height="56">
+</p>
+
 <h1 align="center">Better Harness</h1>
 
 <p align="center">
