@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { groupCommand } from "../../scripts/better-harness-cli/registry.mjs";
 import {

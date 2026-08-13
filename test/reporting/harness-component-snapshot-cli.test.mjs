@@ -3,7 +3,7 @@ import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import test from "node:test";
+import { test } from "vitest";
 
 const ROOT = process.cwd();
 const CLI = path.join(ROOT, "scripts", "harness-component-snapshot", "cli.mjs");
@@ -13,7 +13,7 @@ async function fixtureWorkspace(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-component-cli-"));
   const workspace = path.join(root, "workspace");
   await cp(FIXTURE, workspace, { recursive: true });
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   return { root, workspace };
 }
 

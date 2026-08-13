@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { after, before, describe, test } from "node:test";
+import { afterAll, beforeAll, describe, test } from "vitest";
 
 import {
   analyzeAiContributionCensus,
@@ -116,11 +116,11 @@ async function makeFixtureRepo() {
 describe("AI contribution census", { concurrency: false }, () => {
   let repo;
 
-  before(async () => {
+  beforeAll(async () => {
     repo = await makeFixtureRepo();
   });
 
-  after(async () => {
+  afterAll(async () => {
     await rm(repo, { recursive: true, force: true });
   });
 

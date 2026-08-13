@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import {
   applySourcePatch,
@@ -670,7 +670,7 @@ test("source patch rejects symbolic links in the target path", async (t) => {
       "workspace:linked/settings.json": sha256(original),
     },
   };
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   await mkdir(workspace, { recursive: true });
   await mkdir(outside, { recursive: true });
   await writeFile(path.join(outside, "settings.json"), original);
@@ -709,7 +709,7 @@ test("source patch rejects a symbolic-link backup root", async (t) => {
       "workspace:settings.json": sha256(original),
     },
   };
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   await mkdir(workspace, { recursive: true });
   await mkdir(outside, { recursive: true });
   await writeFile(sourcePath, original);

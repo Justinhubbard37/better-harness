@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import path from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { listHostProfiles } from "../../scripts/host-support/index.mjs";
 import { buildPluginLifecyclePlan } from "../../scripts/plugin-lifecycle/index.mjs";

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import path from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { getHostProfile, getHostSurface } from "../../scripts/host-support/index.mjs";
 import { inspectPluginLifecycle } from "../../scripts/plugin-lifecycle/index.mjs";

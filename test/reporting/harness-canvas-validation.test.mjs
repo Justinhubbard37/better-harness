@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 import { promisify } from "node:util";
 
 import { analyzeCanvasModuleBoundaries } from "../../scripts/harness-analysis/canvas-module-boundaries.mjs";

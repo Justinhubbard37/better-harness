@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import test from "node:test";
+import { test } from "vitest";
 
 import {
   WORKFLOW_DEMAND_BUILT_IN_CAPABILITIES,

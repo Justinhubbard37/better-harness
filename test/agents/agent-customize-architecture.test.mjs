@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import * as inventory from "../../scripts/agent-customize/inventory.mjs";
 import {

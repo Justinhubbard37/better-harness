@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import { test } from "vitest";
 
 import { main as topologyMain, parseArgs as parseTopologyArgs } from "../../scripts/workspace-topology/cli.mjs";
 import { pathIdentityKey } from "../../scripts/workspace-topology/contract.mjs";
