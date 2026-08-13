@@ -76,7 +76,7 @@
   .picker-empty { margin:14px 8px; color:var(--muted); font-size:11px; }
   .picker-footer { margin-top:auto; padding:12px 16px 15px; border-top:1px solid var(--line); color:var(--muted); font-size:9px; }
   .workspace { min-width:0; }
-  .workspace-header { min-height:42px; position:sticky; top:0; z-index:1; padding:5px 14px; display:flex; align-items:center; justify-content:space-between; gap:12px; border-bottom:1px solid var(--line); background:rgba(255,255,255,.97); backdrop-filter:blur(10px); }
+  .workspace-header { min-height:42px; position:sticky; top:0; z-index:3; padding:5px 14px; display:flex; align-items:center; justify-content:space-between; gap:12px; border-bottom:1px solid var(--line); background:#fff; }
   .workspace-breadcrumb { min-width:0; flex:1; display:flex; align-items:center; gap:7px; color:var(--muted); font-size:10px; }
   .workspace-breadcrumb span, .workspace-breadcrumb strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .workspace-breadcrumb i { color:#b1bac6; font-style:normal; }

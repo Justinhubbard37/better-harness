@@ -37,6 +37,9 @@ layout continues to prioritize what the Inspector can actually attribute.
   delivery lane so the timeline receives the available width. The reviewer can
   reopen Commits / files while Activity stays open, and closing Activity does
   not force another layout change.
+- AC-7: While the page scrolls, the sticky workspace header paints above the
+  workbench lanes with an opaque surface, so lane dividers and resizers never
+  show through or overlap the header boundary.
 
 ## Non-goals
 
@@ -53,6 +56,8 @@ layout continues to prioritize what the Inspector can actually attribute.
 - Add compact layout styles and a visible compact-count label.
 - Reuse the delivery-lane collapse owner when Checkpoint Activity opens; keep a
   manual delivery-lane toggle authoritative after that open transition.
+- Give the sticky workspace header a higher stacking layer than workbench lane
+  resizers and an opaque background that cannot reveal scrolled content.
 - Add focused behavior coverage for the evidence-kind presentation policy and
   verify the real self-contained report in a browser at desktop width.
 
@@ -62,6 +67,8 @@ layout continues to prioritize what the Inspector can actually attribute.
   same-file, direct, observed, candidate, and declared evidence kinds.
 - AC-2/AC-3/AC-5: browser verification inspects the generated report's native
   disclosure state, expansion, commit selection, Evidence Drawer, and layout.
+- AC-7: browser verification scrolls a three-lane workbench beneath the sticky
+  header and checks the visible boundary plus computed stacking/background.
 - Regression: run the focused Inspector test file, the documentation-link graph
   test, `npm test`, and `git diff --check`.
 
