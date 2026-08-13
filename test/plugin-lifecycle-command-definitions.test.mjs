@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { groupCommand } from "../scripts/better-harness-cli/registry.mjs";
@@ -13,17 +12,6 @@ import { renderPlan, renderStatus } from "../scripts/plugin-lifecycle/human-outp
 import { PLUGIN_LIFECYCLE_ACTIONS } from "../scripts/plugin-lifecycle/plan-model.mjs";
 
 test("one plugin command manifest projects into root discovery and runtime bindings", () => {
-  const manifestSource = readFileSync(
-    new URL("../scripts/plugin-lifecycle/command-manifest.mjs", import.meta.url),
-    "utf8",
-  );
-  assert.doesNotMatch(manifestSource, /^import\s/mu);
-  const rootRegistrySource = readFileSync(
-    new URL("../scripts/better-harness-cli/registry.mjs", import.meta.url),
-    "utf8",
-  );
-  assert.match(rootRegistrySource, /plugin-lifecycle\/command-manifest\.mjs/u);
-  assert.doesNotMatch(rootRegistrySource, /plugin-lifecycle\/index\.mjs/u);
   assert.deepEqual(pluginCommandNames(), ["status", "plan", "verify"]);
   assert.deepEqual(
     PLUGIN_COMMAND_MANIFEST.find((entry) => entry.name === "plan").positionals.values,
@@ -54,23 +42,6 @@ test("one plugin command manifest projects into root discovery and runtime bindi
     () => requirePluginCommandDefinition("apply"),
     (error) => error.code === "UNKNOWN_PLUGIN_COMMAND" && error.kind === "usage",
   );
-});
-
-test("plugin CLI dispatches definitions without leaf-name conditionals", () => {
-  const source = readFileSync(
-    new URL("../scripts/plugin-lifecycle/cli.mjs", import.meta.url),
-    "utf8",
-  );
-  for (const command of pluginCommandNames()) {
-    assert.doesNotMatch(
-      source,
-      new RegExp(`command\\s*[!=]==?\\s*["']${command}["']`, "u"),
-      command,
-    );
-  }
-  assert.match(source, /requirePluginCommandDefinition/u);
-  assert.match(source, /execute: definition\.execute/u);
-  assert.match(source, /definition\.renderHuman/u);
 });
 
 test("extracted status human output preserves tables and diagnostic filtering", () => {

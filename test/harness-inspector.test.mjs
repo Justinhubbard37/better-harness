@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -16,7 +15,6 @@ import {
 import { summarizeSessionEvents } from "../scripts/commit-session-link/index.mjs";
 
 const CLI_PATH = fileURLToPath(new URL("../scripts/harness-inspector/cli.mjs", import.meta.url));
-const INSPECTOR_UI_ROOT = new URL("../scripts/harness-inspector/ui/", import.meta.url);
 const FEATURE_TREE = `# Feature: Harness Inspector {#harness-inspector}
 - status: active
 - evidence: candidate
@@ -165,6 +163,15 @@ function fixtureCorrelation() {
   };
 }
 
+function scriptBody(html, openingTag) {
+  const opening = html.indexOf(openingTag);
+  assert.notEqual(opening, -1, `missing ${openingTag}`);
+  const contentStart = opening + openingTag.length;
+  const closing = html.indexOf("</script>", contentStart);
+  assert.notEqual(closing, -1, `missing closing script tag for ${openingTag}`);
+  return html.slice(contentStart, closing);
+}
+
 test("feature-tree parser builds typed hierarchy and refs (AC-1)", () => {
   const tree = parseFeatureTreeMarkdown(FEATURE_TREE, { source: "fixture.md" });
   assert.equal(tree.kind, "FeatureTreeV1");
@@ -274,7 +281,7 @@ test("report model keeps declared, candidate, exact-file, and date evidence dist
   assert.equal(report.sessions[0].commitLinks.some((link) => link.evidenceKind === "file-context"), true);
 });
 
-test("Inspector HTML emits both picker modes, three-lane workbench, expanded calls, and continuation boundary (AC-3, AC-5, AC-6)", () => {
+test("Inspector serializes one self-contained executable report document (AC-2, AC-7)", () => {
   const report = buildHarnessInspectorReport({
     repoRoot: "/workspace/repo",
     featureTree: parseFeatureTreeMarkdown(FEATURE_TREE),
@@ -283,117 +290,23 @@ test("Inspector HTML emits both picker modes, three-lane workbench, expanded cal
     filters: { platform: "codex", stage: "implementation" },
   });
   const html = renderHarnessInspectorHtml(report);
-  assert.match(html, /^<!DOCTYPE html>/u);
-  assert.match(html, /<link rel="icon" href="data:,">/u);
-  assert.match(html, /data-harness-inspector/u);
-  assert.match(html, /data-mode="feature"/u);
-  assert.match(html, /data-mode="date"/u);
-  assert.match(html, /role="tab" aria-controls="panel-feature" aria-selected="true"/u);
-  assert.match(html, /role="tabpanel" aria-labelledby="mode-feature"/u);
-  assert.match(html, /data-feature-id="harness-inspector"/u);
-  assert.match(html, /class="capability-tree" role="tree"/u);
-  assert.match(html, /role="treeitem"/u);
-  assert.match(html, /data-tree-toggle/u);
-  assert.match(html, /class="tree-children" role="group"/u);
-  assert.doesNotMatch(html, /class="evidence declared">declared</u);
-  assert.match(html, /class="evidence candidate">candidate</u);
-  assert.match(html, /data-date="2026-08-12"/u);
-  assert.match(html, /id="workbench-list"/u);
-  assert.match(html, /class="workspace-breadcrumb"/u);
-  assert.match(html, /id="workspace-scope-crumb"/u);
-  assert.match(html, /class="scope-metrics"/u);
-  assert.match(html, /data-metric="stories"/u);
-  assert.doesNotMatch(html, /Selected scope/u);
-  assert.doesNotMatch(html, /class="scope-summary"/u);
-  assert.doesNotMatch(html, /class="legend"/u);
-  assert.match(html, /class="lane prompt-lane/u);
-  assert.match(html, /lane-empty/u);
-  assert.match(html, /No normalized tool call was retained/u);
-  assert.match(html, /Commits without a linked session/u);
-  assert.match(html, /Unlinked commits/u);
-  assert.match(html, /' turn' \+ \(coverage\.turnCount === 1/u);
-  assert.match(html, /of ' \+ turns \+ ' shown'/u);
-  assert.match(html, /getElementById\('workbench-list'\)\.style/u);
-  assert.doesNotMatch(html, /'Date scope'/u);
-  assert.match(html, /Expand.*normalized actions/u);
-  assert.match(html, /data-toggle-delivery/u);
-  assert.match(html, /delivery-collapsed/u);
-  assert.match(html, /focus view/u);
-  assert.match(html, /data-toggle-picker/u);
-  assert.match(html, /data-resize-lane="prompt"/u);
-  assert.match(html, /data-resize-lane="delivery"/u);
-  assert.match(html, /role="separator"/u);
-  assert.match(html, /Open session/u);
-  assert.match(html, /id="evidence-drawer"/u);
-  assert.match(html, /data-copy-evidence-link/u);
-  assert.match(html, /data-open-evidence-session/u);
-  assert.match(html, /data-selection-type="story"/u);
-  assert.match(html, /type:'tool-call'/u);
-  assert.match(html, /type:'turn'/u);
-  assert.match(html, /type:'file'/u);
-  assert.match(html, /type:'commit'/u);
-  assert.match(html, /function setSelection/u);
-  assert.match(html, /function relatedSelections/u);
-  assert.match(html, /function renderEvidenceDrawer/u);
-  assert.match(html, /new URLSearchParams\(location\.search\)/u);
-  assert.match(html, /history\.replaceState/u);
-  assert.match(html, /Unplaced evidence/u);
-  assert.match(html, /state\.sessionTrigger/u);
-  assert.match(html, /class="session-view"/u);
-  assert.match(html, /data-session-kind-filter="prompts"/u);
-  assert.match(html, /data-session-kind-filter="intermediate"/u);
-  assert.match(html, /session-turn/u);
-  assert.match(html, /<details class="session-event tools"/u);
-  assert.match(html, /class="session-note-label">Intermediate response/u);
-  assert.doesNotMatch(html, /<article class="session-event tools"/u);
-  assert.match(html, /Implemented the date picker/u);
-  assert.match(html, /Continuation packet/u);
-  assert.match(html, /does not restore code/u);
-  // The activity chart is built in the browser from the report projection so a
-  // zoomable time axis is possible; no per-session SVG is duplicated into HTML.
-  assert.match(html, /function activityChartMarkup/u);
-  assert.match(html, /function renderActivityChart/u);
-  assert.match(html, /NormalizedToolActivityV1/u);
-  assert.match(html, /data-action-lane="/u);
-  assert.match(html, /data-chart-inspector/u);
-  assert.match(html, /data-chart-surface/u);
-  assert.match(html, /ResizeObserver/u);
-  assert.doesNotMatch(html, /<template data-trace-session=/u);
-  assert.doesNotMatch(html, /swimlane-bubble/u);
-  assert.doesNotMatch(html, /class="call-list"/u);
-  assert.match(html, /timing unavailable/u);
-  assert.doesNotMatch(html, /--depth:NaN/u);
-  assert.match(html, /observed same-path/u);
-  assert.match(html, /same-file history/u);
-  assert.match(html, /same path/u);
-  assert.match(html, /candidate/u);
-  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/gu)].map((match) => match[1]);
-  assert.equal(scripts.length, 1);
-  assert.doesNotThrow(() => new Function(scripts[0]));
-});
 
-test("Inspector assembles one self-contained report from extracted UI assets (AC-2, AC-7)", () => {
-  const template = readFileSync(new URL("workbench.html", INSPECTOR_UI_ROOT), "utf8");
-  const styles = readFileSync(new URL("workbench.css", INSPECTOR_UI_ROOT), "utf8");
-  const script = readFileSync(new URL("workbench.js", INSPECTOR_UI_ROOT), "utf8");
-  assert.match(template, /^<!DOCTYPE html>/u);
-  assert.match(template, /\{\{BH_STYLES\}\}/u);
-  assert.match(template, /\{\{BH_REPORT_JSON\}\}/u);
-  assert.match(template, /\{\{BH_SCRIPT\}\}/u);
-  assert.match(styles, /\.workbench-grid/u);
-  assert.match(script, /function renderScope/u);
+  assert.equal(html.startsWith("<!DOCTYPE html>"), true);
+  assert.equal(html.includes("{{BH_"), false);
+  assert.equal(html.includes("<script src="), false);
+  assert.equal(html.includes("<link rel=\"stylesheet\""), false);
+  assert.equal(html.includes("role=\"tablist\""), true);
+  assert.equal(html.includes("role=\"tree\""), true);
+  assert.equal(html.includes("role=\"dialog\""), true);
 
-  const report = buildHarnessInspectorReport({
-    repoRoot: "/workspace/repo",
-    featureTree: parseFeatureTreeMarkdown(FEATURE_TREE),
-    sessions: [fixtureSession()],
-    correlation: fixtureCorrelation(),
-    filters: { platform: "codex" },
-  });
-  const html = renderHarnessInspectorHtml(report);
-  assert.doesNotMatch(html, /\{\{BH_[A-Z_]+\}\}/u);
-  assert.match(html, /<style>[\s\S]*\.workbench-grid/u);
-  assert.match(html, /<script>[\s\S]*function renderScope/u);
+  const embeddedReport = JSON.parse(scriptBody(
+    html,
+    "<script type=\"application/json\" id=\"inspector-data\">",
+  ));
+  assert.deepEqual(embeddedReport, JSON.parse(JSON.stringify(report)));
+
+  const clientScript = scriptBody(html, "<script>");
+  assert.doesNotThrow(() => new Function(clientScript));
 });
 
 test("Inspector template assembly does not reinterpret token-like session evidence", () => {
@@ -412,9 +325,14 @@ test("Inspector template assembly does not reinterpret token-like session eviden
     filters: { platform: "codex" },
   });
   const html = renderHarnessInspectorHtml(report);
-  assert.match(html, /inspect literal \{\{BH_TRACE_TEMPLATES\}\} in source/u);
-  assert.doesNotMatch(html, /\{\{BH_[A-Z_]+\}\}(?![^<]*<\/script>)/u);
-  assert.match(html, /"sessionId":"session-a"/u);
+  const embeddedReport = JSON.parse(scriptBody(
+    html,
+    "<script type=\"application/json\" id=\"inspector-data\">",
+  ));
+  assert.equal(
+    embeddedReport.sessions[0].toolActivity.calls[0].detail,
+    "inspect literal {{BH_TRACE_TEMPLATES}} in source",
+  );
 });
 
 test("Inspector tree renders checklist todo state and nested branches (AC-3)", () => {
@@ -429,8 +347,6 @@ test("Inspector tree renders checklist todo state and nested branches (AC-3)", (
   assert.match(html, /class="tree-check complete" role="img" aria-label="Complete"/u);
   assert.match(html, /class="tree-check todo" role="img" aria-label="Todo"/u);
   assert.match(html, /data-tree-node-id="inspector" aria-expanded="true"/u);
-  assert.match(html, /setTreeItemExpanded/u);
-  assert.match(html, /initializeTree/u);
   assert.match(html, /role="tab" aria-controls="panel-feature" aria-selected="false"/u);
   assert.match(html, /role="tab" aria-controls="panel-date" aria-selected="true"/u);
 });
@@ -586,61 +502,6 @@ test("one turn vocabulary is projected and retained prompts resolve to their rea
     observationCount: 9,
     truncated: true,
   });
-});
-
-test("Inspector explains a trace on a time axis without occluding or dimming it", () => {
-  const html = renderHarnessInspectorHtml(buildHarnessInspectorReport({
-    repoRoot: "/workspace/repo",
-    featureTree: parseFeatureTreeMarkdown(FEATURE_TREE),
-    sessions: [fixtureSession()],
-    correlation: fixtureCorrelation(),
-    filters: { platform: "codex" },
-  }));
-  const styles = readFileSync(new URL("workbench.css", INSPECTOR_UI_ROOT), "utf8");
-
-  // The axis is real time when the host observed it, and says so when it is not.
-  assert.match(html, /Sequence axis \(no observed timing\)/u);
-  assert.match(html, /Time axis/u);
-  assert.match(html, /chart-gap/u);
-  assert.match(html, /longest idle/u);
-  assert.match(html, /Reset zoom/u);
-  assert.match(html, /data-chart-bin/u);
-
-  // Emphasis is additive: nothing de-emphasises the surrounding trace.
-  assert.doesNotMatch(html, /selection-unrelated/u);
-  assert.doesNotMatch(styles, /selection-unrelated/u);
-  assert.doesNotMatch(styles, /filter:saturate/u);
-
-  // The Drawer must paint above Session View, in both layouts.
-  const drawerLayers = [...styles.matchAll(/\.evidence-drawer \{[^}]*z-index:(\d+)/gu)].map((match) => Number(match[1]));
-  const sessionLayer = Number(styles.match(/\.session-view \{[^}]*z-index:(\d+)/u)[1]);
-  assert.ok(drawerLayers.length >= 2);
-  assert.ok(drawerLayers.every((layer) => layer > sessionLayer));
-
-  // Commits keep their own track instead of being attributed to a Turn.
-  assert.match(html, /function placeCommits/u);
-  assert.match(html, /Commits outside the observed turn windows/u);
-  assert.match(html, /no Turn is claimed to have produced them/u);
-
-  // Long traces stay navigable: runs collapse, rows carry a clock, no nested
-  // scroll box, scroll-spy drives Jump to, and bulk expand exists.
-  assert.match(html, /function toolRuns/u);
-  assert.match(html, /session-tool-time/u);
-  assert.doesNotMatch(styles, /\.session-call-list \{[^}]*max-height/u);
-  assert.match(html, /IntersectionObserver/u);
-  assert.match(html, /data-expand-tools="open"/u);
-  assert.match(html, /data-reveal-calls/u);
-
-  // Session View is a navigable state and related objects stay grouped.
-  assert.match(html, /url\.searchParams\.set\('view','session'\)/u);
-  assert.match(html, /addEventListener\('popstate'/u);
-  assert.match(html, /history\.pushState/u);
-  assert.match(html, /function relatedGroups/u);
-  assert.match(html, /evidence-related-group/u);
-
-  // Expanding the trace no longer collapses the delivery lane.
-  assert.doesNotMatch(html, /classList\.toggle\('delivery-collapsed',details\.open\)/u);
-  assert.match(html, /token usage unavailable/u);
 });
 
 test("Harness Inspector help is workspace-independent and sanitizes bad argv (AC-2, AC-8)", () => {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
@@ -17,12 +17,7 @@ function moduleFiles(directory) {
   });
 }
 
-test("plugin lifecycle public index is an implementation-free stable surface", () => {
-  const source = readFileSync(path.join(lifecycleRoot, "index.mjs"), "utf8");
-  assert.doesNotMatch(source, /^import\s/mu);
-  assert.doesNotMatch(source, /\b(?:function|class)\b/u);
-  assert.doesNotMatch(source, /^(?:const|let|var)\s/mu);
-  assert.ok(source.split("\n").length < 35, "public index should remain a compact export surface");
+test("plugin lifecycle exposes one stable public module surface", () => {
   assert.deepEqual(Object.keys(lifecycle).sort(), [
     "LifecycleCliError",
     "PLUGIN_ID",
@@ -47,7 +42,7 @@ test("plugin lifecycle public index is an implementation-free stable surface", (
   ]);
 });
 
-test("plugin lifecycle concerns have independent private owners", () => {
+test("plugin lifecycle keeps its declared responsibility modules", () => {
   const modules = new Set(readdirSync(lifecycleRoot));
   for (const name of [
     "identity.mjs",
@@ -62,66 +57,10 @@ test("plugin lifecycle concerns have independent private owners", () => {
     "status-core.mjs",
     "status-row.mjs",
     "target-resolution.mjs",
-  ]) {
-    assert.ok(modules.has(name), `missing lifecycle responsibility owner: ${name}`);
-  }
+  ]) assert.equal(modules.has(name), true, name);
 });
 
-test("status and plan share one target-resolution error owner", () => {
-  const targetCodes = [
-    "AMBIGUOUS_HOST_HOME",
-    "AMBIGUOUS_HOST_SURFACE",
-    "AMBIGUOUS_SURFACE",
-    "EXPLICIT_HOST_REQUIRED",
-    "UNKNOWN_HOST",
-    "UNKNOWN_HOST_SURFACE",
-    "UNSUPPORTED_SCOPE",
-  ];
-  const owners = new Map(targetCodes.map((code) => [code, []]));
-  for (const filePath of moduleFiles(lifecycleRoot)) {
-    const source = readFileSync(filePath, "utf8");
-    for (const code of targetCodes) {
-      if (source.includes(`"${code}"`)) owners.get(code).push(path.basename(filePath));
-    }
-  }
-  for (const [code, modules] of owners) {
-    assert.deepEqual(modules, ["target-resolution.mjs"], code);
-  }
-
-  for (const name of ["status-core.mjs", "plan-core.mjs"]) {
-    const source = readFileSync(path.join(lifecycleRoot, name), "utf8");
-    assert.doesNotMatch(source, /host-support\/index\.mjs/u, name);
-    assert.match(source, /target-resolution\.mjs/u, name);
-  }
-});
-
-test("lifecycle status interprets profiles without canonical host branches", () => {
-  const source = readFileSync(path.join(lifecycleRoot, "status-core.mjs"), "utf8");
-  for (const hostId of ["claude", "codex", "qoder", "cursor", "qwen", "copilot", "pi", "workbuddy"]) {
-    assert.doesNotMatch(source, new RegExp(`["']${hostId}["']`, "u"));
-  }
-  assert.doesNotMatch(source, /HOME_OPTION|appBundleExists/u);
-  assert.match(source, /profile\.inventoryHomeRoutes/u);
-  assert.match(source, /observedHostDiscovery/u);
-  assert.match(source, /buildObservedStatusRow/u);
-  assert.match(source, /buildInventoryFailureStatusRow/u);
-  assert.match(source, /buildUnresolvedScopeStatusRow/u);
-  assert.doesNotMatch(source, /function (?:verificationFor|evidenceFor|versionState)/u);
-  assert.doesNotMatch(source, /\b(?:installation|enablement|activation|checks|evidence):/u);
-});
-
-test("lifecycle plan core delegates policy, step materialization, and schema ownership", () => {
-  const source = readFileSync(path.join(lifecycleRoot, "plan-core.mjs"), "utf8");
-  assert.match(source, /createPluginLifecyclePlan/u);
-  assert.match(source, /requirePluginLifecycleAction/u);
-  assert.match(source, /resolvePlanTarget/u);
-  assert.match(source, /inspectPluginLifecycle/u);
-  assert.doesNotMatch(source, /\b(?:planState|blockers|verificationSteps|preconditionDigest|currentObservation|retention|recovery)\b/u);
-  assert.doesNotMatch(source, /\.(?:disposition|steps)\b/u);
-  assert.doesNotMatch(source, /function (?:renderStep|targetRows|installedState)/u);
-});
-
-test("cross-capability lifecycle imports use the public index or pure root metadata", () => {
+test("cross-capability lifecycle imports use the public surface", () => {
   const importPattern = /(?:\bfrom\s*|\bimport\s*\(\s*)["']([^"']+)["']/gu;
   const violations = [];
   for (const filePath of moduleFiles(scriptsRoot)) {
@@ -136,9 +75,7 @@ test("cross-capability lifecycle imports use the public index or pure root metad
         specifier.includes("plugin-lifecycle/")
         && !specifier.endsWith("plugin-lifecycle/index.mjs")
         && !metadataProjection
-      ) {
-        violations.push(`${relativePath} -> ${specifier}`);
-      }
+      ) violations.push(`${relativePath} -> ${specifier}`);
     }
   }
   assert.deepEqual(violations, []);

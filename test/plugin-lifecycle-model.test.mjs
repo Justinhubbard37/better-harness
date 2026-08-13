@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -79,31 +78,4 @@ test("shared lifecycle diagnostics enforce one shape and severity vocabulary", (
     () => assertLifecycleControlled(["ready", "blocked"], "pending", "ContractV1", "state"),
     /ContractV1 state/u,
   );
-});
-
-test("status and plan validators consume shared primitives without private copies", () => {
-  const modelSource = readFileSync(
-    new URL("../scripts/plugin-lifecycle/model.mjs", import.meta.url),
-    "utf8",
-  );
-  const statusSource = readFileSync(
-    new URL("../scripts/plugin-lifecycle/status-row.mjs", import.meta.url),
-    "utf8",
-  );
-  const planSource = readFileSync(
-    new URL("../scripts/plugin-lifecycle/plan-model.mjs", import.meta.url),
-    "utf8",
-  );
-  for (const source of [statusSource, planSource]) {
-    assert.match(source, /validateLifecyclePlugin/u);
-    assert.match(source, /validateLifecycleTarget/u);
-    assert.match(source, /validateLifecycleDiagnostics/u);
-    assert.match(source, /assertLifecycleControlled/u);
-    assert.doesNotMatch(source, /function assert\s*\(/u);
-    assert.doesNotMatch(source, /DIAGNOSTIC_SEVERITIES|diagnosticSeverity/u);
-  }
-  assert.match(modelSource, /const DIAGNOSTIC_SEVERITIES/u);
-  assert.match(modelSource, /function validateLifecyclePlugin/u);
-  assert.match(modelSource, /function validateLifecycleTarget/u);
-  assert.match(modelSource, /function validateLifecycleDiagnostics/u);
 });

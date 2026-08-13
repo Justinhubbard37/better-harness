@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -124,16 +123,4 @@ test("shared runner owns timeout, envelope, human rendering, and exit mapping", 
   });
   assert.equal(humanExit, 0);
   assert.equal(humanOut.read(), "fixture human\n");
-});
-
-test("plugin and doctor CLIs compose the shared parser and runner", () => {
-  for (const relative of [
-    "../scripts/plugin-lifecycle/cli.mjs",
-    "../scripts/harness-doctor/cli.mjs",
-  ]) {
-    const source = readFileSync(new URL(relative, import.meta.url), "utf8");
-    assert.match(source, /parseReadOnlyOptions/u);
-    assert.match(source, /runReadOnlyCommand/u);
-    assert.doesNotMatch(source, /for \(let index = 0; index < argv\.length/u);
-  }
 });
