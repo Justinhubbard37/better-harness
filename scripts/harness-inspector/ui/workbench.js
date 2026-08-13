@@ -248,7 +248,7 @@
       : directCommits.length
         ? '<p class="commit-bridge">' + directCommits.length + ' commit' + (directCommits.length === 1 ? ' was' : 's were') + ' created in this session, but no Edit/Write path was observed before the commit. The files may have entered the session as existing workspace changes.</p>'
         : '';
-    return '<section class="lane activity-lane"><div class="lane-title"><strong>Checkpoint activity</strong><span>' + pathSummary + '</span></div><div class="activity-summary"><div class="activity-total"><strong>' + activity.totalCalls + '</strong><span>calls · ' + activity.failedCalls + ' failed' + escape(spanCopy) + '</span></div><div class="family-bars">' + bars + '</div></div>' + commitBridge + '<details class="activity-details" data-activity-session="' + escape(session.sessionId) + '"><summary><span>Expand ' + activity.totalCalls + ' normalized actions</span><small>focus view</small></summary><div class="trace-target" data-activity-chart="' + escape(session.sessionId) + '"></div></details></section>';
+    return '<section class="lane activity-lane"><div class="lane-title"><strong>Checkpoint activity</strong><span>' + pathSummary + '</span></div><div class="activity-summary"><div class="activity-total"><strong>' + activity.totalCalls + '</strong><span>calls · ' + activity.failedCalls + ' failed' + escape(spanCopy) + '</span></div><div class="family-bars">' + bars + '</div></div>' + commitBridge + '<details class="activity-details" data-activity-session="' + escape(session.sessionId) + '"><summary><span>Expand ' + activity.totalCalls + ' normalized actions</span><small>focus view</small></summary><div class="activity-actions"><button type="button" class="activity-action" ' + selectionAttrs({ type:'session', sessionId:session.sessionId }) + '>Open detail</button><button type="button" class="activity-action primary" data-open-session-for="' + escape(session.sessionId) + '">Open session</button></div><div class="trace-target" data-activity-chart="' + escape(session.sessionId) + '"></div></details></section>';
   }
 
   function fileTree(commit, link) {
@@ -1321,12 +1321,9 @@
   }
 
   function initializeTree() {
-    document.querySelectorAll('[data-tree-item][aria-expanded]').forEach(item => setTreeItemExpanded(item,false));
-    let item = document.querySelector('[data-feature-id="' + CSS.escape(state.scope ?? '') + '"]')?.closest('[data-tree-item]') ?? null;
-    while (item) {
-      setTreeItemExpanded(item,true);
-      item = item.parentElement?.closest('[data-tree-item]') ?? null;
-    }
+    // The capability tree opens fully expanded so every declared node is
+    // visible without hunting; the picker is short and reviewers scan it whole.
+    document.querySelectorAll('[data-tree-item][aria-expanded]').forEach(item => setTreeItemExpanded(item,true));
   }
 
   document.addEventListener('click', event => {
@@ -1370,10 +1367,12 @@
     }
     const feature = event.target.closest('[data-feature-id]');
     if (feature) {
+      // Selecting a capability node only navigates scope. It must not set the
+      // evidence selection, so the detail header stays unhighlighted until the
+      // reviewer clicks an actual object inside the workbench.
       state.scope = feature.dataset.featureId;
       setTreeItemExpanded(feature.closest('[data-tree-item]'),true);
       setMode('feature');
-      if (feature.dataset.selectionType === 'story') setSelection(descriptorFromElement(feature));
       return;
     }
     const pickerToggle = event.target.closest('[data-toggle-picker]');

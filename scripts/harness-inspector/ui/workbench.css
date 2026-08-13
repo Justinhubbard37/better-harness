@@ -134,6 +134,11 @@
   .commit-bridge.linked { border-left-color:#16805b; color:#155f48; background:#edf8f3; }
   .activity-details > summary { min-height:34px; padding:8px 2px; display:flex; align-items:center; justify-content:space-between; gap:12px; cursor:pointer; color:#35445a; font-size:10px; font-weight:700; }
   .activity-details > summary small { color:var(--muted); font-size:8px; font-weight:500; }
+  .activity-actions { display:flex; flex-wrap:wrap; gap:7px; padding:2px 2px 9px; }
+  .activity-action { min-height:28px; border:1px solid #cad6e6; border-radius:7px; padding:5px 9px; color:#244f86; background:#f5f9ff; cursor:pointer; font-size:9px; font-weight:700; }
+  .activity-action:hover { background:#eaf2ff; }
+  .activity-action.primary { color:#fff; border-color:#2f5fa8; background:#376fcb; }
+  .activity-action.primary:hover { background:#2f5fa8; }
   .trace-target { min-width:0; border-top:1px solid var(--line); }
   .chart-card { min-width:0; color:#526072; }
   .chart-toolbar { padding:7px 2px 5px; display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:9px; }

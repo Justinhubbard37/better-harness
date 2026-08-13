@@ -395,10 +395,10 @@ const STORY_MATCH_STOP_WORDS = new Set([
 ]);
 
 function matchTokens(value) {
-  return new Set(String(value ?? "")
+  return new Set((String(value ?? "")
     .normalize("NFKC")
     .toLowerCase()
-    .match(/[\p{L}\p{N}_-]{4,}/gu) ?? []
+    .match(/[\p{L}\p{N}_-]{4,}/gu) ?? [])
     .filter((token) => !STORY_MATCH_STOP_WORDS.has(token)));
 }
 
