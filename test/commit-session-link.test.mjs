@@ -39,7 +39,7 @@ function git(cwd, args, env = {}) {
     env: {
       ...process.env,
       GIT_CONFIG_GLOBAL: path.join(cwd, ".gitconfig-isolated"),
-      GIT_CONFIG_SYSTEM: os.devNull,
+      GIT_CONFIG_NOSYSTEM: "1",
       GIT_AUTHOR_NAME: "Fixture Author",
       GIT_AUTHOR_EMAIL: "fixture@example.com",
       GIT_COMMITTER_NAME: "Fixture Author",
@@ -62,7 +62,7 @@ function gitInput(cwd, args, input) {
     env: {
       ...process.env,
       GIT_CONFIG_GLOBAL: path.join(cwd, ".gitconfig-isolated"),
-      GIT_CONFIG_SYSTEM: os.devNull,
+      GIT_CONFIG_NOSYSTEM: "1",
       GIT_AUTHOR_NAME: "Fixture Author",
       GIT_AUTHOR_EMAIL: "fixture@example.com",
       GIT_COMMITTER_NAME: "Fixture Author",
@@ -217,6 +217,10 @@ test("NUL numstat parsing preserves tabs, newlines, and rename destinations (AC-
 });
 
 test("collectCommitFacts preserves adversarial Git paths through --numstat -z (AC-10)", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("Windows paths cannot contain tabs or newlines; parseNumstatZ covers the wire format portably");
+    return;
+  }
   const root = await mkdtemp(path.join(os.tmpdir(), "commit-session-paths-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   git(root, ["init", "--initial-branch=main"]);
@@ -467,6 +471,27 @@ test("summarizeSessionEvents extracts repo-relative files, prompts, tools, and t
   assert.equal(summary.toolTrace.totalCalls, 2);
 });
 
+test("summarizeSessionEvents projects Entire-style dialogue without raw command payloads", () => {
+  const repoRoot = path.resolve("/tmp/fixture-repo");
+  const secret = "ghp_abcdefghijklmnop123456";
+  const summary = summarizeSessionEvents(
+    { sessionId: "dialogue-session", firstSeen: null, lastSeen: null },
+    [
+      { type: "user", userPrompt: true, userText: "inspect the session", timestamp: "2026-08-02T10:00:00Z" },
+      { type: "tool.requested", category: "tool", lifecyclePhase: "request", toolName: "Bash", commandText: `curl -H 'Authorization: Bearer ${secret}' https://example.invalid`, toolInvocationId: "call-1", timestamp: "2026-08-02T10:01:00Z" },
+      { type: "assistant", content: "I checked /Users/private/session.jsonl.", timestamp: "2026-08-02T10:02:00Z" },
+      { type: "assistant", content: `Done without ${secret}.`, timestamp: "2026-08-02T10:03:00Z" },
+    ],
+    { repoRoot, platform: "codex", includeToolTrace: true, includeDialogue: true },
+  );
+  assert.equal(summary.dialogue.turns.length, 1);
+  assert.equal(summary.dialogue.turns[0].prompt.text, "inspect the session");
+  assert.deepEqual(summary.dialogue.turns[0].steps[0], { kind: "tool", callStep: 1, toolName: "Bash" });
+  assert.match(summary.dialogue.turns[0].steps[1].text, /<absolute-path>/u);
+  assert.doesNotMatch(JSON.stringify(summary.dialogue), /curl|ghp_|\/Users\/private/u);
+  assert.match(summary.dialogue.turns[0].response, /<secret>/u);
+});
+
 test("Codex exec attribution exposes the nested local capability (AC-16)", () => {
   assert.equal(attributeSessionToolName({
     toolName: "exec",
@@ -574,7 +599,7 @@ test("cli rejects unknown commands and options without echoing values (AC-5)", (
     { encoding: "utf8" },
   );
   assert.equal(badOption.status, 64);
-  assert.doesNotMatch(badOption.stderr, new RegExp(privateValue.replaceAll("/", "\\/"), "u"));
+  assert.equal(badOption.stderr.includes(privateValue), false);
 });
 
 test("buildSessionTurns folds prompts, steps, and responses into turns (AC-7)", () => {
@@ -646,13 +671,255 @@ test("buildSessionTurns skips meta and injected-only prompts and unwraps JSON pa
       type: "user",
       userPrompt: true,
       userText: "<command-message>run it</command-message><command-name>/better-harness</command-name>",
-      timestamp: "2026-08-02T10:00:00Z",
+      timestamp: "2026-08-02T10:00:00.002Z",
     },
   ];
   const { turns } = buildSessionTurns(events);
   assert.equal(turns.length, 1);
   assert.equal(turns[0].prompt.text, "/better-harness");
   assert.equal(turns[0].response, "All checks green.");
+});
+
+test("buildSessionTurns removes ambient browser/file context and dedupes Codex transport copies", () => {
+  const prompt = `# Files mentioned by the user:\n\n## screenshot.png: /tmp/private.png\n\n<in-app-browser-context source="ambient-ui-state">ignore browser state</in-app-browser-context>\n\n## My request:\nshow the complete conversation`;
+  const { turns } = buildSessionTurns([
+    { type: "user", userPrompt: true, userText: prompt, timestamp: "2026-08-02T10:00:00.000Z" },
+    { type: "user", userPrompt: true, userText: prompt, timestamp: "2026-08-02T10:00:00.002Z" },
+    { type: "assistant", content: "Working on it.", timestamp: "2026-08-02T10:00:01.000Z" },
+    { type: "assistant", content: "Working on it.", timestamp: "2026-08-02T10:00:01.002Z" },
+    { type: "assistant", content: "Done.", timestamp: "2026-08-02T10:00:02.000Z" },
+  ]);
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0].prompt.text, "show the complete conversation");
+  assert.deepEqual(turns[0].steps, [{ kind: "note", text: "Working on it." }]);
+  assert.equal(turns[0].response, "Done.");
+});
+
+test("summarizeSessionEvents keeps the user request instead of injected desktop context", () => {
+  const summary = summarizeSessionEvents(
+    { sessionId: "session-real", firstSeen: null, lastSeen: null },
+    [
+      {
+        type: "user",
+        userPrompt: true,
+        userText: "<recommended_plugins>injected</recommended_plugins>\n<skill>injected</skill>",
+        timestamp: "2026-08-02T09:59:00Z",
+      },
+      {
+        type: "user",
+        userPrompt: true,
+        userText: "## Referenced chats with Codex:\n- task metadata\n\n## My request:\nInspect the real Codex session data",
+        timestamp: "2026-08-02T10:00:00Z",
+      },
+    ],
+    { repoRoot: "/tmp/repo", platform: "codex" },
+  );
+
+  assert.equal(summary.promptCount, 2);
+  assert.deepEqual(summary.prompts, [{
+    text: "Inspect the real Codex session data",
+    timestamp: "2026-08-02T10:00:00Z",
+  }]);
+});
+
+test("summarizeSessionEvents transiently attributes nested tools and patch file paths", () => {
+  const summary = summarizeSessionEvents(
+    { sessionId: "session-attribution", firstSeen: null, lastSeen: null },
+    [
+      {
+        type: "tool.call",
+        category: "tool",
+        lifecyclePhase: "request",
+        toolName: "exec",
+        toolInvocationId: "call-patch",
+        commandText: 'const patch = "*** Begin Patch\\n*** Update File: /workspace/repo/src/app.mjs\\n@@\\n-old\\n+new\\n*** End Patch"; await tools.apply_patch(patch);',
+        timestamp: "2026-08-02T10:00:00Z",
+      },
+      {
+        type: "tool.result",
+        category: "tool",
+        lifecyclePhase: "result",
+        toolName: "exec",
+        toolInvocationId: "call-patch",
+        timestamp: "2026-08-02T10:00:01Z",
+        durationMs: 1_000,
+        durationSource: "lifecycle-pair",
+      },
+    ],
+    { repoRoot: "/workspace/repo", platform: "codex", includeToolTrace: true },
+  );
+
+  assert.deepEqual(summary.files, ["src/app.mjs"]);
+  assert.equal(summary.fileEditCount, 1);
+  assert.equal(summary.toolCounts.apply_patch, 1);
+  assert.equal(summary.toolTrace.calls[0].toolName, "apply_patch");
+  assert.equal(summary.toolActivity.kind, "NormalizedToolActivityV1");
+  assert.equal(summary.toolActivity.calls[0].family, "change");
+  assert.equal(summary.toolActivity.calls[0].operation, "edit-files");
+  assert.equal(summary.toolActivity.calls[0].actionLabel, "Edit files");
+  assert.equal(summary.toolActivity.calls[0].filePath, "src/app.mjs");
+  assert.equal(JSON.stringify(summary).includes("const patch"), false);
+});
+
+test("normalized activity classifies provider-neutral shell actions and keeps only redacted bounded detail", () => {
+  const repoRoot = "/workspace/repo";
+  const events = [
+    ["search", "Bash", "rg -n HarnessInspector scripts test"],
+    ["test", "exec_command", "node --test test/harness-inspector.test.mjs"],
+    ["git", "shell", "git status --short"],
+    ["secret", "Bash", "curl -H 'Authorization: Bearer ghp_abcdefghijklmnop123456' https://example.invalid/health"],
+  ].map(([id,toolName,commandText],index) => ({
+    type: "tool.requested",
+    category: "tool",
+    lifecyclePhase: "request",
+    toolInvocationId: id,
+    toolName,
+    commandText,
+    timestamp: `2026-08-02T10:0${index}:00Z`,
+  }));
+  const summary = summarizeSessionEvents(
+    { sessionId: "actions", firstSeen: null, lastSeen: null },
+    events,
+    { repoRoot, platform: "qoder", includeToolTrace: true },
+  );
+  assert.deepEqual(summary.toolActivity.calls.map((call) => call.operation), [
+    "search-repository", "run-tests", "inspect-git", "check-runtime",
+  ]);
+  assert.deepEqual(summary.toolActivity.calls.map((call) => call.actionLabel), [
+    "Search repository", "Run tests", "Inspect Git", "Check runtime",
+  ]);
+  assert.equal(summary.toolActivity.calls.every((call) => call.detailKind === "redacted-input-summary"), true);
+  assert.doesNotMatch(JSON.stringify(summary.toolActivity), /ghp_/u);
+  assert.match(summary.toolActivity.calls[3].detail, /<redacted>|<secret>/u);
+});
+
+test("normalized activity extracts checkpoint detail from a Codex orchestration wrapper", () => {
+  const summary = summarizeSessionEvents(
+    { sessionId: "codex-wrapper", firstSeen: null, lastSeen: null },
+    [{
+      type: "tool.requested",
+      category: "tool",
+      lifecyclePhase: "request",
+      toolInvocationId: "wrapped-call",
+      toolName: "exec",
+      commandText: 'const r = await tools.exec_command({"cmd":"node --test test/harness-inspector.test.mjs","workdir":"/Users/private/repo"}); text(r.output);',
+      timestamp: "2026-08-02T10:00:00Z",
+    }],
+    { repoRoot: "/workspace/repo", platform: "codex", includeToolTrace: true },
+  );
+  assert.equal(summary.toolActivity.calls[0].toolName, "exec_command");
+  assert.equal(summary.toolActivity.calls[0].actionLabel, "Run tests");
+  assert.equal(summary.toolActivity.calls[0].detail, "node --test test/harness-inspector.test.mjs");
+  assert.doesNotMatch(JSON.stringify(summary.toolActivity), /Users\/private/u);
+});
+
+test("normalized activity preserves host tool names beyond the legacy trace lane budget", () => {
+  const events = Array.from({ length: 9 }, (_unused, index) => ({
+    type: "tool.requested",
+    category: "tool",
+    lifecyclePhase: "request",
+    toolInvocationId: `tool-${index}`,
+    toolName: `provider_tool_${index}`,
+    timestamp: `2026-08-02T10:0${index}:00Z`,
+  }));
+  const summary = summarizeSessionEvents(
+    { sessionId: "wide-provider-tools", firstSeen: null, lastSeen: null },
+    events,
+    { repoRoot: "/workspace/repo", platform: "qoder", includeToolTrace: true },
+  );
+  assert.equal(summary.toolTrace.calls.some((call) => call.toolName === "Other tools"), true);
+  assert.deepEqual(summary.toolActivity.calls.map((call) => call.toolName), events.map((event) => event.toolName));
+});
+
+test("normalized activity retains every safe path from one multi-file patch", () => {
+  const summary = summarizeSessionEvents(
+    { sessionId: "session-multi-path", firstSeen: null, lastSeen: null },
+    [{
+      type: "tool.call",
+      category: "tool",
+      lifecyclePhase: "request",
+      toolName: "exec",
+      toolInvocationId: "call-multi-patch",
+      commandText: 'const patch = "*** Begin Patch\\n*** Update File: /workspace/repo/src/app.mjs\\n*** Update File: /workspace/repo/test/app.test.mjs\\n*** End Patch"; await tools.apply_patch(patch);',
+      timestamp: "2026-08-02T10:00:00Z",
+    }],
+    { repoRoot: "/workspace/repo", platform: "codex", includeToolTrace: true },
+  );
+
+  assert.deepEqual(summary.files, ["src/app.mjs", "test/app.test.mjs"]);
+  assert.deepEqual(summary.toolActivity.calls[0].filePaths, ["src/app.mjs", "test/app.test.mjs"]);
+  assert.deepEqual(summary.toolActivity.files.map((file) => file.path), ["src/app.mjs", "test/app.test.mjs"]);
+});
+
+test("normalized activity joins file facts by invocation instead of trace ordinal", () => {
+  const summary = summarizeSessionEvents(
+    { sessionId: "session-orphan-result", firstSeen: null, lastSeen: null },
+    [
+      {
+        type: "tool.result",
+        category: "tool",
+        lifecyclePhase: "result",
+        toolName: "exec",
+        toolInvocationId: "orphan-result",
+        timestamp: "2026-08-02T09:59:59Z",
+      },
+      {
+        type: "tool.call",
+        category: "tool",
+        lifecyclePhase: "request",
+        toolName: "exec",
+        toolInvocationId: "real-patch",
+        commandText: 'const patch = "*** Begin Patch\\n*** Update File: /workspace/repo/src/a.mjs\\n*** End Patch"; await tools.apply_patch(patch);',
+        timestamp: "2026-08-02T10:00:00Z",
+      },
+    ],
+    { repoRoot: "/workspace/repo", platform: "codex", includeToolTrace: true },
+  );
+
+  assert.equal(summary.toolActivity.calls[0].toolName, "exec");
+  assert.equal(summary.toolActivity.calls[0].filePath, undefined);
+  assert.equal(summary.toolActivity.calls[1].toolName, "apply_patch");
+  assert.equal(summary.toolActivity.calls[1].filePath, "src/a.mjs");
+  assert.equal(JSON.stringify(summary).includes("transientInvocationKey"), false);
+  assert.equal(JSON.stringify(summary).includes("real-patch"), false);
+});
+
+test("session summary rejects foreign-platform absolute paths", () => {
+  const summary = summarizeSessionEvents(
+    { sessionId: "session-foreign-path", firstSeen: null, lastSeen: null },
+    [{
+      type: "tool.call",
+      category: "tool",
+      lifecyclePhase: "request",
+      toolName: "Read",
+      toolInvocationId: "foreign-read",
+      filePath: "C:\\Users\\alice\\secret.txt",
+      timestamp: "2026-08-02T10:00:00Z",
+    }],
+    { repoRoot: "/workspace/repo", platform: "codex", includeToolTrace: true },
+  );
+
+  assert.deepEqual(summary.files, []);
+  assert.deepEqual(summary.toolActivity.files, []);
+});
+
+test("normalized user-turn counts include safe requests beyond the display bound", () => {
+  const events = Array.from({ length: 10 }, (_, index) => ({
+    type: "user",
+    userPrompt: true,
+    userText: `User request ${index + 1}`,
+    timestamp: new Date(Date.UTC(2026, 7, 2, 10, index)).toISOString(),
+  }));
+  const summary = summarizeSessionEvents(
+    { sessionId: "session-many-turns", firstSeen: null, lastSeen: null },
+    events,
+    { repoRoot: "/workspace/repo", platform: "codex" },
+  );
+
+  assert.equal(summary.promptObservationCount, 10);
+  assert.equal(summary.userTurnCount, 10);
+  assert.equal(summary.retainedUserTurnCount, 8);
+  assert.equal(summary.prompts.length, 8);
 });
 
 test("buildSessionTurns removes Codex transport metadata from assistant prose (AC-7, AC-11)", () => {

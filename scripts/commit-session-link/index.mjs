@@ -30,6 +30,11 @@ export {
 export { changeBreakdown, classifyChangePath, renderCommitSessionHtml } from "./render-html.mjs";
 export { redactTranscriptText } from "./redaction.mjs";
 export { attributeSessionToolName } from "./tool-attribution.mjs";
+export {
+  NORMALIZED_TOOL_ACTIVITY_KIND,
+  NORMALIZED_TOOL_ACTIVITY_SCHEMA_VERSION,
+  normalizeToolActivity,
+} from "./tool-activity.mjs";
 export { miniMarkdownToHtml, renderSessionViewerHtml } from "./render-session-html.mjs";
 export {
   buildSessionViewerReport,
@@ -38,6 +43,7 @@ export {
 } from "./session-report-model.mjs";
 export {
   boundedMaxSessions,
+  collectMultiPlatformSessionSummaries,
   collectSessionDetail,
   collectSessionSummaries,
   DEFAULT_MAX_SESSIONS,

@@ -70,6 +70,10 @@ function lifecycleDurationObservation(group) {
   const completedAt = eventMillis(result);
   if (completedAt === null || completedAt < startedAt) return null;
   return {
+    // The merged event is canonically the result, so the request stamp is the
+    // only honest start for a paired lifecycle. Consumers plotting a time axis
+    // must not read the completion stamp as the moment the call began.
+    startedAt,
     durationMs: completedAt - startedAt,
     durationSource: request?.lifecyclePhase === "request" && result?.lifecyclePhase === "result"
       ? "transcript-pair"

@@ -98,6 +98,22 @@ const COMMANDS = [
     ],
   },
   {
+    name: "harness-inspector",
+    kind: "direct",
+    audience: "advanced",
+    script: "harness-inspector/cli.mjs",
+    summary: "Inspect feature, Story, prompt, session, tool-call, and commit provenance by product tree or date.",
+    aliases: [{ name: "inspector", hidden: true }],
+    subcommands: [
+      {
+        name: "render",
+        audience: "advanced",
+        script: "harness-inspector/cli.mjs",
+        summary: "Write a self-contained Harness Inspector with Feature Tree and Date scope pickers.",
+      },
+    ],
+  },
+  {
     name: "session-analysis",
     kind: "direct",
     audience: "advanced",

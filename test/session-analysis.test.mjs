@@ -65,6 +65,8 @@ test("tool-call traces deduplicate lifecycles and keep only bounded privacy-safe
     step: 1,
     toolName: "Read",
     status: "observed",
+    // A wall-clock start lets the Inspector plot a call on a real time axis.
+    startedAt: Date.parse("2026-08-10T10:00:00.000Z"),
     durationStatus: "observed",
     durationMs: 1000,
     timingSource: "lifecycle-pair",
@@ -134,8 +136,8 @@ test("Qoder transcript tool_use and tool_result items retain paired observed lat
 
   const trace = buildToolCallTrace([...requests, ...results]);
   assert.deepEqual(trace.calls, [
-    { id: "T1", step: 1, toolName: "Bash", status: "observed", durationStatus: "observed", durationMs: 4250, timingSource: "transcript-pair" },
-    { id: "T2", step: 2, toolName: "Write", status: "failed", durationStatus: "observed", durationMs: 4250, timingSource: "transcript-pair" },
+    { id: "T1", step: 1, toolName: "Bash", status: "observed", startedAt: trace.calls[0].startedAt, durationStatus: "observed", durationMs: 4250, timingSource: "transcript-pair" },
+    { id: "T2", step: 2, toolName: "Write", status: "failed", startedAt: trace.calls[1].startedAt, durationStatus: "observed", durationMs: 4250, timingSource: "transcript-pair" },
   ]);
   assert.doesNotMatch(JSON.stringify(trace), /private|workspace/u);
 });
@@ -177,6 +179,7 @@ test("Codex function_call and function_call_output retain paired observed latenc
     step: 1,
     toolName: "exec_command",
     status: "observed",
+    startedAt: trace.calls[0].startedAt,
     durationStatus: "observed",
     durationMs: 2500,
     timingSource: "transcript-pair",
@@ -538,6 +541,12 @@ test("privacy-safe user input summaries skip injected context and redact private
   assert.equal(hostContextSummary, "Review the final parser change and explain the validation gap");
   assert.equal(hostContextSummary.includes("Private Plugin"), false);
   assert.equal(hostContextSummary.includes("continuation state"), false);
+
+  const desktopRequestSummary = privacySafeUserInputSummary([{
+    type: "user",
+    userText: "## Referenced chats with Codex:\n- hidden task metadata\n\n## My request:\nInspect the real Codex session data",
+  }]);
+  assert.equal(desktopRequestSummary, "Inspect the real Codex session data");
 });
 
 test("privacy-safe user input summaries redact GitLab tokens and hierarchical URL userinfo", () => {
