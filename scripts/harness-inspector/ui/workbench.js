@@ -4,6 +4,7 @@
   const byStory = new Map(report.stories.map(story => [story.id,story]));
   const bySession = new Map(report.sessions.map(session => [session.sessionId,session]));
   const byCommit = new Map(report.commits.map(commit => [commit.hash,commit]));
+  const defaultCompactCommitKinds = new Set(report.presentation?.defaultCompactCommitEvidenceKinds ?? []);
   const callsBySession = new Map(report.sessions.map(session => [session.sessionId,new Map(session.toolActivity.calls.map(call => [call.id,call]))]));
   const retainedFilePaths = new Set([
     ...report.sessions.flatMap(session => session.toolActivity.files.map(file => file.path)),
@@ -278,18 +279,30 @@
     }).join('')).join('');
   }
 
+  function commitLaneContext(item, commit) {
+    const link = item.session?.commitLinks?.find(candidate => candidate.hash === commit.hash) ?? null;
+    const kind = link?.evidenceKind ?? (item.story?.commitHashes?.includes(commit.hash) ? item.story.evidence : 'contextual');
+    return { link, kind, compact:defaultCompactCommitKinds.has(kind) };
+  }
+
   function deliveryLane(item, commits) {
-    const cards = commits.map(commit => {
-      const link = item.session?.commitLinks?.find(candidate => candidate.hash === commit.hash) ?? null;
-      const kind = link?.evidenceKind ?? (item.story?.commitHashes?.includes(commit.hash) ? item.story.evidence : 'contextual');
+    const commitContexts = commits.map(commit => ({ commit, ...commitLaneContext(item,commit) }));
+    const compactCount = commitContexts.filter(context => context.compact).length;
+    const cards = commitContexts.map(({ commit, link, kind, compact }) => {
       const label = kind === 'file-context' ? 'same-file history' : kind === 'observed-overlap' ? 'observed same-path' : kind === 'observed-commit' ? 'created in session' : kind;
       const relation = link ? (link.evidenceKind === 'file-context' ? ' · same-file context' : link.evidenceKind === 'observed-commit' ? ' · observed commit action' : ' · ' + escape(link.confidence) + ' correlation') : '';
       const contextSessionId = item.session?.sessionId ?? null;
       const linked = link ? { ...link, sessionId:contextSessionId } : null;
-      return '<article class="commit-card"><button type="button" class="commit-head" ' + selectionAttrs({ type:'commit', hash:commit.hash, contextSessionId }) + '><div class="commit-head-line"><code>' + escape(commit.shortHash) + '</code>' + evidence(kind,label) + '</div><p>' + escape(commit.subject) + '</p><div class="commit-stats">' + commit.fileCount + ' files · +' + commit.linesAdded + ' / -' + commit.linesRemoved + relation + '</div></button><div class="file-tree">' + (fileTree(commit,linked) || '<div class="empty-state">No changed paths retained.</div>') + '</div></article>';
+      const stats = commit.fileCount + ' files · +' + commit.linesAdded + ' / -' + commit.linesRemoved + relation;
+      const files = '<div class="file-tree">' + (fileTree(commit,linked) || '<div class="empty-state">No changed paths retained.</div>') + '</div>';
+      if (compact) {
+        return '<details class="commit-card commit-card-compact"><summary class="commit-head" ' + selectionAttrs({ type:'commit', hash:commit.hash, contextSessionId }) + '><div class="commit-head-line compact"><span class="commit-chevron" aria-hidden="true">›</span><code>' + escape(commit.shortHash) + '</code><span class="commit-subject" title="' + escape(commit.subject) + '">' + escape(commit.subject) + '</span><span class="commit-stats">' + stats + '</span>' + evidence(kind,label) + '</div></summary>' + files + '</details>';
+      }
+      return '<details class="commit-card commit-card-expanded" open><summary class="commit-head" ' + selectionAttrs({ type:'commit', hash:commit.hash, contextSessionId }) + '><div class="commit-head-line"><span class="commit-id"><span class="commit-chevron" aria-hidden="true">›</span><code>' + escape(commit.shortHash) + '</code></span>' + evidence(kind,label) + '</div><p>' + escape(commit.subject) + '</p><div class="commit-stats">' + stats + '</div></summary>' + files + '</details>';
     }).join('');
     if (!commits.length) return '<section class="lane delivery-lane lane-empty"><div class="lane-title"><div class="delivery-title-copy"><strong>Commits / files</strong><span>0 commits</span></div></div><div class="empty-state">No commit is linked to this session or Story.</div></section>';
-    return '<section class="lane delivery-lane"><div class="lane-title"><div class="delivery-title-copy"><strong>Commits / files</strong><span>' + commits.length + ' commits</span></div><button class="delivery-toggle" data-toggle-delivery aria-expanded="true" aria-label="Collapse commits and files"><span class="open-label">Hide</span><span class="closed-label">Show files</span></button></div><div class="delivery-content">' + cards + '</div></section>';
+    const compactLabel = compactCount ? ' · ' + compactCount + ' compact' : '';
+    return '<section class="lane delivery-lane"><div class="lane-title"><div class="delivery-title-copy"><strong>Commits / files</strong><span>' + commits.length + ' commits' + compactLabel + '</span></div><button class="delivery-toggle" data-toggle-delivery aria-expanded="true" aria-label="Collapse commits and files"><span class="open-label">Hide</span><span class="closed-label">Show files</span></button></div><div class="delivery-content">' + cards + '</div></section>';
   }
 
   function workbench(item,index) {
@@ -406,13 +419,21 @@
     const laneArea = topPad + lanes.length * rowHeight + 4;
     const height = laneArea + 30;
     const domainWidth = Math.max(1,domain.max - domain.min);
-    const xFor = position => plotLeft + ((Math.min(domain.max,Math.max(domain.min,position)) - domain.min) / domainWidth) * plotWidth;
+    const timelineScale = buildCompressedTimelineScale({
+      min:domain.min,
+      max:domain.max,
+      positions:inDomain.map(call => callPosition(call,domain.timeBasis)),
+      plotLeft,
+      plotWidth,
+      timeBasis:domain.timeBasis,
+    });
+    const xFor = timelineScale.xFor;
     const laneTop = index => topPad + index * rowHeight;
     const laneCenter = index => laneTop(index) + rowHeight / 2;
 
     const binPx = 5;
     const binCount = Math.max(1,Math.min(600,Math.floor(plotWidth / binPx)));
-    const binOf = position => Math.min(binCount - 1,Math.max(0,Math.floor(((position - domain.min) / domainWidth) * binCount)));
+    const binOf = position => Math.min(binCount - 1,Math.max(0,Math.floor(timelineScale.visualFractionFor(position) * binCount)));
     const bins = new Map();
     for (const call of inDomain) {
       const position = callPosition(call,domain.timeBasis);
@@ -453,11 +474,21 @@
         const gap = positions[index] - positions[index - 1];
         if (gap < threshold) continue;
         if (!longestGap || gap > longestGap.gap) longestGap = { gap, at:positions[index - 1] };
-        const left = xFor(positions[index - 1]);
+        const gapStart = positions[index - 1];
+        const gapEnd = positions[index];
+        const compressed = timelineScale.gaps.some(candidate => candidate.from === gapStart && candidate.to === gapEnd);
+        const left = xFor(gapStart);
         const right = Math.max(xFor(positions[index]),left + 3);
-        const caption = 'No observed call for ' + formatSpan(gap) + ' (' + formatShortClock(positions[index - 1]) + ' → ' + formatShortClock(positions[index]) + ' UTC)';
-        const label = right - left > 46 ? '<text class="chart-gap-label" x="' + ((left + right) / 2) + '" y="' + (topPad + 10) + '" text-anchor="middle">idle ' + escape(formatSpan(gap)) + '</text>' : '';
-        gapMarkup += '<g class="chart-gap"><rect x="' + left + '" y="' + topPad + '" width="' + (right - left) + '" height="' + (laneArea - topPad) + '"><title>' + escape(caption) + '</title></rect>' + label + '</g>';
+        const caption = 'No observed call for ' + formatSpan(gap) + ' (' + formatShortClock(gapStart) + ' → ' + formatShortClock(gapEnd) + ' UTC)' + (compressed ? '. This idle window is visually compressed.' : '');
+        const label = compressed
+          ? '<text class="chart-gap-label" x="0" y="0" transform="translate(' + ((left + right) / 2) + ' ' + (laneArea - 9) + ') rotate(-90)" text-anchor="start">idle ' + escape(formatSpan(gap)) + ' · compressed</text>'
+          : right - left > 46
+            ? '<text class="chart-gap-label" x="' + ((left + right) / 2) + '" y="' + (topPad + 10) + '" text-anchor="middle">idle ' + escape(formatSpan(gap)) + '</text>'
+            : '';
+        const breakMark = compressed
+          ? '<path class="chart-gap-break" d="M ' + (((left + right) / 2) - 7) + ' ' + (laneArea - 4) + ' l 4 -4 l 4 4 l 4 -4 l 4 4"></path>'
+          : '';
+        gapMarkup += '<g class="chart-gap' + (compressed ? ' compressed' : '') + '"><rect x="' + left + '" y="' + topPad + '" width="' + (right - left) + '" height="' + (laneArea - topPad) + '"><title>' + escape(caption) + '</title></rect>' + label + breakMark + '</g>';
       }
     }
 
@@ -474,7 +505,7 @@
         const timed = call.durationStatus === 'observed' && Number.isFinite(call.durationMs);
         const left = xFor(position);
         const blockWidth = timed
-          ? Math.max(1.5,Math.min(plotLeft + plotWidth - left,(call.durationMs / domainWidth) * plotWidth))
+          ? Math.max(1.5,Math.min(plotLeft + plotWidth - left,timelineScale.durationWidth(position,call.durationMs)))
           : 1.5;
         const failed = call.status === 'failed';
         const stamp = formatStamp(call.startedAt);
@@ -504,7 +535,7 @@
         const lane = laneIndex.get(laneFor(call)) ?? 0;
         const timed = call.durationStatus === 'observed' && Number.isFinite(call.durationMs);
         const markWidth = domain.timeBasis && timed
-          ? Math.max(3,Math.min(plotWidth,(call.durationMs / domainWidth) * plotWidth))
+          ? Math.max(3,Math.min(plotWidth,timelineScale.durationWidth(position,call.durationMs)))
           : 4;
         const failed = call.status === 'failed';
         const tone = failed ? '#c34f4f' : familyColor(call.family);
@@ -530,7 +561,7 @@
           : 'calls ' + Math.round(bin.min) + '–' + Math.round(bin.max);
         const label = bin.count + ' call' + (bin.count === 1 ? '' : 's') + ' · ' + lanes[bin.lane].label + ' · ' + slice + (bin.failed ? ' · ' + bin.failed + ' failed' : '');
         return '<rect class="chart-bin' + (bin.failed ? ' failed' : '') + '" data-chart-bin data-bin-from="' + bin.min + '" data-bin-to="' + bin.max + '" data-bin-count="' + bin.count + '" data-session-id="' + escape(session.sessionId) + '" data-call-id="' + escape(bin.ids[0]) + '" data-chart-detail="' + escape(label) + '"'
-          + ' x="' + (plotLeft + (bin.index / binCount) * plotWidth) + '" y="' + top + '" width="' + Math.max(2,binPx - 1) + '" height="' + barHeight + '" rx="1" fill="' + tone + '"'
+          + ' x="' + xFor(bin.min) + '" y="' + top + '" width="' + Math.max(2,binPx - 1) + '" height="' + barHeight + '" rx="1" fill="' + tone + '"'
           + ' tabindex="0" role="button" aria-label="' + escape(label) + '"><title>' + escape(label) + '</title></rect>';
       }).join('');
     }
@@ -551,21 +582,24 @@
     }).join('');
 
     const tickCount = Math.max(2,Math.min(7,Math.floor(plotWidth / 92)));
-    const ticks = Array.from({ length:tickCount },(_,index) => domain.min + (domainWidth * index) / (tickCount - 1));
-    const tickMarkup = ticks.map(position => '<g><line class="chart-grid-line" x1="' + xFor(position) + '" x2="' + xFor(position) + '" y1="' + topPad + '" y2="' + laneArea + '"></line><text class="chart-tick" x="' + xFor(position) + '" y="' + (laneArea + 17) + '" text-anchor="middle">' + escape(domain.timeBasis ? formatShortClock(position) : String(Math.round(position))) + '</text></g>').join('');
+    const ticks = Array.from({ length:tickCount },(_,index) => plotLeft + (plotWidth * index) / (tickCount - 1));
+    const tickMarkup = ticks.map(x => {
+      const position = timelineScale.positionForX(x);
+      return '<g><line class="chart-grid-line" x1="' + x + '" x2="' + x + '" y1="' + topPad + '" y2="' + laneArea + '"></line><text class="chart-tick" x="' + x + '" y="' + (laneArea + 17) + '" text-anchor="middle">' + escape(domain.timeBasis ? formatShortClock(position) : String(Math.round(position))) + '</text></g>';
+    }).join('');
 
     const basisNote = domain.timeBasis
-      ? 'Wall-clock time; bar height counts calls in that slice.'
+      ? (timelineScale.compressed ? 'Wall-clock timestamps; long idle windows are visually compressed and bar height counts calls in that slice.' : 'Wall-clock time; bar height counts calls in that slice.')
       : 'No observed call timing in this session; the axis falls back to call order.';
     const aria = activity.totalCalls + ' normalized tool calls by action over ' + (domain.timeBasis ? 'observed time, with ' + commitEvents.length + ' commit events in view' : 'call sequence');
 
     return '<section class="chart-card" aria-label="NormalizedToolActivityV1 provider-neutral actions">'
-      + '<div class="chart-toolbar"><span class="chart-basis' + (domain.timeBasis ? '' : ' fallback') + '">' + escape(domain.timeBasis ? 'Time axis' : 'Sequence axis (no observed timing)') + '</span>'
+      + '<div class="chart-toolbar"><span class="chart-basis' + (domain.timeBasis ? '' : ' fallback') + '">' + escape(domain.timeBasis ? (timelineScale.compressed ? 'Time axis · idle compressed' : 'Time axis') : 'Sequence axis (no observed timing)') + '</span>'
       + '<span class="chart-range">' + escape(domain.timeBasis ? formatShortClock(domain.min) + ' → ' + formatShortClock(domain.max) + ' UTC · ' + formatSpan(domain.max - domain.min) : 'calls ' + Math.round(domain.min) + '–' + Math.round(domain.max)) + '</span>'
       + '<button type="button" class="chart-reset" data-chart-reset="' + escape(session.sessionId) + '"' + (zoom ? '' : ' disabled') + '>Reset zoom</button></div>'
       + '<svg class="activity-chart" data-activity-svg="' + escape(session.sessionId) + '" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + escape(aria) + '">'
-      + '<title>' + escape(aria) + '</title><desc>' + escape(basisNote + ' Shaded columns are windows with no observed call. Red marks are failed calls. Green diamonds mark directly linked commit times. Drag across the plot to zoom.') + '</desc>'
-      + '<rect class="chart-surface" data-chart-surface x="' + plotLeft + '" y="' + topPad + '" width="' + plotWidth + '" height="' + (laneArea - topPad) + '" data-plot-left="' + plotLeft + '" data-plot-width="' + plotWidth + '" data-domain-min="' + domain.min + '" data-domain-max="' + domain.max + '" data-full-min="' + domain.fullMin + '" data-full-max="' + domain.fullMax + '" data-session-id="' + escape(session.sessionId) + '"></rect>'
+      + '<title>' + escape(aria) + '</title><desc>' + escape(basisNote + ' Shaded columns are windows with no observed call. Compressed idle windows retain their real UTC duration and use a broken scale. Red marks are failed calls. Green diamonds mark directly linked commit times. Drag across the plot to zoom.') + '</desc>'
+      + '<rect class="chart-surface" data-chart-surface x="' + plotLeft + '" y="' + topPad + '" width="' + plotWidth + '" height="' + (laneArea - topPad) + '" data-plot-left="' + plotLeft + '" data-plot-width="' + plotWidth + '" data-domain-min="' + domain.min + '" data-domain-max="' + domain.max + '" data-full-min="' + domain.fullMin + '" data-full-max="' + domain.fullMax + '" data-axis-segments="' + escape(JSON.stringify(timelineScale.segments)) + '" data-session-id="' + escape(session.sessionId) + '"></rect>'
       + laneMarkup + gapMarkup + tickMarkup + ribbonMarkup + marksMarkup + commitMarkup
       + '<rect class="chart-brush" data-chart-brush x="0" y="' + topPad + '" width="0" height="' + (laneArea - topPad) + '" hidden></rect>'
       + '<line class="chart-axis-line" x1="' + labelWidth + '" x2="' + (plotRight + 6) + '" y1="' + laneArea + '" y2="' + laneArea + '"></line>'
@@ -599,6 +633,24 @@
     if (!inspector || !element.dataset.chartDetail) return;
     const hint = element.hasAttribute('data-chart-bin') ? 'Click to zoom into this slice.' : 'Click to explain it in the Evidence Drawer.';
     inspector.innerHTML = '<strong>' + escape(element.dataset.chartDetail) + '</strong><span>' + escape(hint) + '</span>';
+  }
+
+  function chartPositionAt(surface, x) {
+    const plotLeft = Number(surface.dataset.plotLeft);
+    const plotWidth = Math.max(1,Number(surface.dataset.plotWidth));
+    const ratio = (Math.min(plotLeft + plotWidth,Math.max(plotLeft,x)) - plotLeft) / plotWidth;
+    try {
+      const segments = JSON.parse(surface.dataset.axisSegments ?? '[]');
+      const visualSpan = Number(segments.at(-1)?.visualTo);
+      if (segments.length && Number.isFinite(visualSpan) && visualSpan > 0) {
+        const visual = ratio * visualSpan;
+        const segment = segments.find(candidate => visual <= candidate.visualTo) ?? segments.at(-1);
+        const within = (visual - segment.visualFrom) / Math.max(Number.EPSILON,segment.visualTo - segment.visualFrom);
+        return segment.from + within * (segment.to - segment.from);
+      }
+    } catch { /* Fall back to the linear report contract below. */ }
+    const domainMin = Number(surface.dataset.domainMin);
+    return domainMin + ratio * (Number(surface.dataset.domainMax) - domainMin);
   }
 
   function setZoom(sessionId, from, to) {
@@ -1860,14 +1912,9 @@
       brush.brush.setAttribute('width','0');
       state.brush = null;
       if (right - left > 6) {
-        const plotLeft = Number(brush.surface.dataset.plotLeft);
-        const plotWidth = Number(brush.surface.dataset.plotWidth);
-        const domainMin = Number(brush.surface.dataset.domainMin);
-        const domainMax = Number(brush.surface.dataset.domainMax);
         const fullMin = Number(brush.surface.dataset.fullMin);
         const fullWidth = Math.max(1,Number(brush.surface.dataset.fullMax) - fullMin);
-        const at = x => domainMin + ((Math.min(plotLeft + plotWidth,Math.max(plotLeft,x)) - plotLeft) / plotWidth) * (domainMax - domainMin);
-        setZoom(brush.surface.dataset.sessionId,(at(left) - fullMin) / fullWidth,(at(right) - fullMin) / fullWidth);
+        setZoom(brush.surface.dataset.sessionId,(chartPositionAt(brush.surface,left) - fullMin) / fullWidth,(chartPositionAt(brush.surface,right) - fullMin) / fullWidth);
       }
       return;
     }

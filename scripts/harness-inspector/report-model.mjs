@@ -5,6 +5,11 @@ import { emptyFeatureTree } from "./feature-tree.mjs";
 
 export const HARNESS_INSPECTOR_REPORT_KIND = "HarnessInspectorReportV1";
 export const HARNESS_INSPECTOR_REPORT_SCHEMA_VERSION = 1;
+export const DEFAULT_COMPACT_COMMIT_EVIDENCE_KINDS = Object.freeze(["contextual", "file-context"]);
+
+export function commitStartsCompact(evidenceKind) {
+  return DEFAULT_COMPACT_COMMIT_EVIDENCE_KINDS.includes(evidenceKind);
+}
 
 const SAFE_LOCATOR_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/u;
 const TOOL_FAMILIES = new Set(["inspect", "change", "execute", "verify", "coordinate", "deliver", "other"]);
@@ -878,6 +883,9 @@ export function buildHarnessInspectorReport({
     schemaVersion: HARNESS_INSPECTOR_REPORT_SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     workspace: { name: path.basename(repoRoot ?? "workspace") },
+    presentation: {
+      defaultCompactCommitEvidenceKinds: [...DEFAULT_COMPACT_COMMIT_EVIDENCE_KINDS],
+    },
     filters: {
       platform: safeText(filters.platform, 120, "all"),
       since: filters.since ?? null,

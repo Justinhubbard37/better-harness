@@ -1,9 +1,12 @@
 import { readFileSync } from "node:fs";
 
+import { buildCompressedTimelineScale } from "./timeline-scale.mjs";
+
 const UI_ASSET_ROOT = new URL("./ui/", import.meta.url);
 const HTML_TEMPLATE = readFileSync(new URL("workbench.html", UI_ASSET_ROOT), "utf8");
 const STYLES = readFileSync(new URL("workbench.css", UI_ASSET_ROOT), "utf8");
 const SCRIPT = readFileSync(new URL("workbench.js", UI_ASSET_ROOT), "utf8");
+const CLIENT_SCRIPT = `const buildCompressedTimelineScale = ${buildCompressedTimelineScale.toString()};\n${SCRIPT}`;
 const TEMPLATE_TOKEN_PATTERN = /\{\{BH_[A-Z_]+\}\}/gu;
 
 function fillHtmlTemplate(replacements) {
@@ -114,6 +117,6 @@ export function renderHarnessInspectorHtml(report, {
     PLATFORM: escapeHtml(platformBadge(report)),
     SESSION_COUNT: report.sessions.length,
     REPORT_JSON: safeJson(report),
-    SCRIPT,
+    SCRIPT: CLIENT_SCRIPT,
   });
 }
