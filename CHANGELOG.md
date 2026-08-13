@@ -3,6 +3,40 @@
 This file records notable public changes to Better Harness. Entries describe
 observable behavior and compatibility, not every internal refactor.
 
+## 0.6.1 - 2026-08-13
+
+### Added
+
+- Harness Inspector now includes a read-only Session Replay that advances
+  through retained prompts, intermediate responses, normalized tool calls,
+  assistant responses, and observed commit events without rerunning tools or
+  resuming the coding-agent session.
+
+- The GitHub Pages site has a first-class Inspector tab with an interactive,
+  deterministic English sample. The bilingual wrapper explains the Workbench,
+  its three evidence lanes, usage flow, evidence labels, and the command for
+  generating a private self-contained report from a local repository.
+
+### Changed
+
+- Session View places the elapsed-time activity chart beside the retained Turn
+  trace, links chart selections into the corresponding calls, and shows a
+  continuous ribbon that distinguishes observed tool execution from
+  unattributed time.
+
+- Capability navigation opens the declared Delivery Tree by default and keeps
+  scope navigation separate from evidence selection. Short sessions expose
+  their tool calls by default while repeated call runs remain compact.
+
+### Fixed
+
+- Story-to-session candidate matching filters generic stop words before scoring
+  overlap, reducing incorrect associations caused by broad terms such as
+  `project`, `session`, or `harness`.
+
+- Session View filters now keep visible tool-call totals and collapsed run
+  groups aligned with the current selection.
+
 ## 0.6.0 - 2026-08-13
 
 ### Added
