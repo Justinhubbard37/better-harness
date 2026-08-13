@@ -9,6 +9,19 @@ const REPO_ROOT = path.resolve(SUPPORT_DIR, "../..");
 const TEST_ROOT = path.join(REPO_ROOT, "test");
 const RESULTS_ROOT = path.join(REPO_ROOT, "test-results");
 const REPORTER_PATH = path.join(SUPPORT_DIR, "github-actions-reporter.mjs");
+const REPORTER_SPECIFIER = pathToFileURL(REPORTER_PATH).href;
+
+export function nodeTestFileArgument(filePath, {
+  cwd = REPO_ROOT,
+  pathApi = path,
+} = {}) {
+  const relativePath = pathApi.relative(cwd, filePath);
+  if (!relativePath || pathApi.isAbsolute(relativePath)) {
+    throw new Error("test files must be on the same filesystem root as the test runner");
+  }
+  const portablePath = relativePath.split(pathApi.sep).join("/");
+  return portablePath.startsWith(".") ? portablePath : `./${portablePath}`;
+}
 
 export async function discoverTestCategories(testRoot = TEST_ROOT) {
   const entries = await readdir(testRoot, { withFileTypes: true });
@@ -75,11 +88,11 @@ export async function runCiTests(selectedNames = process.argv.slice(2), {
     const started = performance.now();
     const result = spawnSync(process.execPath, [
       "--test",
-      `--test-reporter=${REPORTER_PATH}`,
+      `--test-reporter=${REPORTER_SPECIFIER}`,
       "--test-reporter=junit",
       "--test-reporter-destination=stdout",
       `--test-reporter-destination=${junitPath}`,
-      ...category.files,
+      ...category.files.map((filePath) => nodeTestFileArgument(filePath, { cwd })),
     ], {
       cwd,
       env: childEnv,

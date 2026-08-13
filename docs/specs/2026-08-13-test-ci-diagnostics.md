@@ -33,6 +33,9 @@ spelling when an executable validator already owns the behavior.
 - AC-7: Tests that repeat an expensive package build or Git fixture setup split
   reusable mechanics from one representative integration path, while retaining
   the same portability, replacement, CLI, and analysis contracts.
+- AC-8: The categorized runner passes test modules as portable paths relative
+  to its working directory and loads its custom reporter through a file URL, so
+  Windows drive letters are never interpreted as ESM URL schemes.
 
 ## Non-goals
 
@@ -58,15 +61,18 @@ spelling when an executable validator already owns the behavior.
    contents, and staged/unstaged boundaries.
 6. Use JUnit timings to remove repeated expensive setup from the slowest tests
    without weakening cross-platform, security, or end-to-end boundaries.
+7. Normalize test and reporter module arguments for the Windows Node test
+   runner, and cover the drive-letter projection with a platform-independent
+   behavior test.
 
 ## Test and Review Evidence
 
-- AC-1..AC-4: the CI reporting behavior tests pass 4/4 on local Node 24 and
-  exact CI runtime Node 22.20.0, including a real failed-first/success-second
-  capability run. `npm run test:ci` passes all 8 capability groups and writes 8
-  JUnit XML files.
-- AC-5: `npm test` passes 1,309/1,309 after adding the isolated publication
-  replacement test.
+- AC-1..AC-4/AC-8: the CI reporting behavior tests pass 5/5 on local Node 24,
+  including a real failed-first/success-second capability run and a Windows
+  drive-letter path projection. `npm run test:ci` passes all 8 capability
+  groups and writes 8 JUnit XML files.
+- AC-5: `npm test` passes 1,310/1,310 after adding the Windows runner
+  regression test.
 - AC-6: the renderer tests pass 33/33 and the task-loop projection tests pass
   84/84. These files contain 60 fewer regex assertions: 48 private HTML/CSS or
   visible-copy checks and 12 redundant Markdown spelling checks.

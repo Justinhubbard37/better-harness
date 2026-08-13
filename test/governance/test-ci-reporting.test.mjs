@@ -7,7 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { githubFailureAnnotation } from "../support/github-actions-reporter.mjs";
-import { discoverTestCategories, runCiTests } from "../support/run-ci.mjs";
+import { discoverTestCategories, nodeTestFileArgument, runCiTests } from "../support/run-ci.mjs";
 
 const REPORTER_PATH = fileURLToPath(new URL("../support/github-actions-reporter.mjs", import.meta.url));
 
@@ -28,6 +28,16 @@ test("CI test discovery finds capability tests without treating support or fixtu
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("CI test files use portable relative arguments on Windows", () => {
+  assert.equal(nodeTestFileArgument(
+    "D:\\a\\better-harness\\better-harness\\test\\agents\\example.test.mjs",
+    {
+      cwd: "D:\\a\\better-harness\\better-harness",
+      pathApi: path.win32,
+    },
+  ), "./test/agents/example.test.mjs");
 });
 
 test("GitHub failure annotations retain location and escape command data", () => {
