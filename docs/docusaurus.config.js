@@ -110,6 +110,13 @@ const config = {
             label: "Docs",
           },
           {
+            to: "/inspector/",
+            label: "Inspector",
+            position: "left",
+            className: "navbar__link--inspector-new",
+            "aria-label": "Inspector",
+          },
+          {
             to: "/blog",
             label: "Blog",
             position: "left",

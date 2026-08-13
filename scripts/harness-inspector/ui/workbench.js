@@ -298,7 +298,7 @@
     const title = itemTitle(item);
     const kicker = item.story?.featureTitle ?? (item.date ? (session ? 'Session · ' + formatClock(session.firstSeen) : 'Unlinked commits') : 'Unmapped');
     const sessionMeta = session ? session.locator + ' · ' + formatDuration(session.durationMs) : 'No linked session';
-    const sessionAction = session ? '<button class="prepare-button" data-open-session="' + index + '">Open session</button>' : '';
+    const sessionAction = session ? '<button class="prepare-button" data-open-session="' + escape(session.sessionId) + '">Open session</button>' : '';
     const headerSelection = session
       ? { type:'session', sessionId:session.sessionId }
       : item.story ? { type:'story', id:item.story.id } : null;
@@ -1655,8 +1655,8 @@
     }
     const openSession = event.target.closest('[data-open-session]');
     if (openSession) {
-      const item = state.items?.[Number(openSession.dataset.openSession)];
-      if (item?.session) openSessionView(item,state.selection,openSession);
+      const item = itemForSession(bySession.get(openSession.dataset.openSession));
+      if (item) openSessionView(item,state.selection,openSession);
       return;
     }
     const openSessionFor = event.target.closest('[data-open-session-for]');
