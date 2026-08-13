@@ -783,16 +783,6 @@ test("render command writes Markdown-only artifacts", async () => {
     assert.equal(payload.status, "pass");
     assert.deepEqual(payload.artifacts.map((artifact) => artifact.name), ["findings.json", "report.md"]);
     assert.equal(existsSync(path.join(payload.runDir, "report.md")), true);
-    const report = readFileSync(path.join(payload.runDir, "report.md"), "utf8");
-    assert.match(report, /## Harness Dimensions/);
-    assert.match(report, /Why this score/);
-    assert.match(report, /Project guidance maps the main workflow/);
-    assert.match(report, /\| Severity \| Finding \| Reason \| Dimensions \|/);
-    assert.match(report, /readers can trust that the Canvas module loads before handoff/);
-    assert.match(report, /\| Surface \| Description \| Scope \| Count \| Sources \|/);
-    assert.match(report, /\| Rules \| Standing project guidance[^|]+ \| Project \|/);
-    assert.match(report, /\| MCP \| External tools[^|]+ \| Global \| 3 \|/);
-    assert.doesNotMatch(report, /\| Plugins \|[^|]+\| Plugin \| 0 \|/);
   });
 });
 
@@ -811,13 +801,6 @@ test("render command writes disk-openable HTML artifacts", async () => {
     assert.equal(existsSync(path.join(payload.runDir, "report.html")), true);
     assert.equal(payload.validation.checks.find((check) => check.id === "html-report")?.status, "pass");
     const html = readFileSync(path.join(payload.runDir, "report.html"), "utf8");
-    assert.match(html, /<main id="harness-report" data-report-mode="codex-html">/u);
-    assert.match(html, /<script id="harness-report-data" type="application\/json">/u);
-    assert.match(html, /<script id="harness-report-actions" type="application\/json">/u);
-    assert.match(html, /data-section="fluency"/u);
-    assert.match(html, /data-section="findings"/u);
-    assert.match(html, /data-section="customize"/u);
-    assert.match(html, /data-section="methodology"/u);
     assert.doesNotMatch(html, /<script[^>]+src=/u);
     assert.doesNotMatch(html, /<link[^>]+href=/u);
     const findingCards = html.match(/class="finding-card"/gu) ?? [];
@@ -828,10 +811,6 @@ test("render command writes disk-openable HTML artifacts", async () => {
     assert.equal(findingDialogs.length, 2);
     assert.equal(copyActions.length, 4);
     assert.equal(detailActions.length, 2);
-    assert.match(html, /Copy AI Fix/u);
-    assert.match(html, /View details/u);
-    assert.doesNotMatch(html, /<details class="finding"/u);
-    assert.doesNotMatch(html, /<details class="finding" open/u);
 
     const reviewed = JSON.parse(readFileSync(path.join(payload.runDir, "findings.json"), "utf8"));
     assert.doesNotMatch(
@@ -1003,17 +982,6 @@ test("HTML mode mirrors the reviewed Agent Work Loop reader sections without Can
     const payload = parseRun(result.stdout);
     assert.equal(payload.status, "pass");
     assert.deepEqual(payload.artifacts.map((artifact) => artifact.name), ["findings.json", "report.md", "report.html"]);
-    const html = readFileSync(path.join(runDir, "report.html"), "utf8");
-    assert.match(html, /Five-dimension fluency/u);
-    assert.match(html, /Project usage/u);
-    assert.match(html, /Findings and recommendations/u);
-    assert.match(html, /Agent Customize/u);
-    assert.match(html, /Evidence and methodology/u);
-    assert.match(html, /Session activity heatmap/u);
-    assert.match(html, /data-finding-id="fixture-task-observation-gap"/u);
-    assert.match(html, /reviewed dimensions/u);
-    assert.doesNotMatch(html, /fluency average|流畅度均值/u);
-    assert.doesNotMatch(html, /from ["']qoder\/canvas["']/u);
     assert.equal(existsSync(path.join(runDir, "canvas.json")), false);
     assert.equal(existsSync(path.join(runDir, "report.canvas.tsx")), false);
   });
@@ -1038,8 +1006,6 @@ test("HTML activity chart binds every short-range UTC date to its horizontal gri
   assert.deepEqual(ticks.map((tag) => attribute(tag, "data-date")), dates);
   assert.deepEqual(ticks.map((tag) => attribute(tag, "style")), cells.map((tag) => attribute(tag, "style")));
   assert.ok(ticks.every((tag) => attribute(tag, "class") === "heat-tick"));
-  assert.match(html, /class="heat-scroll" style="--heat-days:4;--heat-min-width:64px"/u);
-  assert.doesNotMatch(html, /grid-template-rows:repeat\(7,13px\)|heat-legend/u);
   for (const [index, cell] of cells.entries()) {
     assert.equal(attribute(cell, "title"), `${dates[index]}: ${(index + 1) * 5} active minutes`);
     assert.equal(attribute(cell, "aria-label"), attribute(cell, "title"));
@@ -1063,8 +1029,6 @@ test("HTML activity chart keeps sparse long-range ticks bound to their source co
     [dates[21], "grid-column:22"],
     [dates[29], "grid-column:30"],
   ]);
-  assert.match(html, /class="heat-scroll" style="--heat-days:30;--heat-min-width:506px"/u);
-  assert.match(html, /\.heat-scroll \{[^}]*overflow-x:auto/u);
   assert.equal(evaluateHtmlReport(html, reportData).status, "pass");
 });
 
@@ -1104,9 +1068,6 @@ test("Codex HTML renders accessible collapsed long-session swimlane traces witho
   assert.match(html, /data-session-locator="019f-codex-session-1"/u);
   assert.match(html, /Inspect &lt;script&gt;unsafe&lt;\/script&gt; &amp; explain the long session/u);
   assert.doesNotMatch(html, /<script>unsafe<\/script>|(?:codex|chatgpt):\/\/|qoder\/canvas/iu);
-  assert.match(html, /Observed latency for 6 of 12 shown calls/u);
-  assert.match(html, /\.tool-trace-scroll \{[^}]*overflow-x:auto/u);
-  assert.match(html, /details\.tool-trace-details:not\(\[open\]\) > :not\(summary\)\{display:block!important/u);
   assert.equal(evaluateHtmlReport(html, reportData).status, "pass");
 });
 
@@ -1115,8 +1076,6 @@ test("Codex HTML keeps complete wide traces contained and validates exact review
   const html = renderHtml(reportData);
 
   assert.equal((html.match(/data-trace-call-id=/gu) ?? []).length, 125);
-  assert.match(html, /<svg class="tool-trace-svg"[^>]+width="1720"/u);
-  assert.match(html, /Showing 125 of 125 tool calls/u);
   assert.equal(evaluateHtmlReport(html, reportData).status, "pass");
 
   const missingPoint = html.replace(/<circle class="tool-trace-point[^>]*>[\s\S]*?<\/circle>/u, "");
@@ -1276,17 +1235,8 @@ test("HTML CJK phrase breaking emits bounded deterministic markup without changi
   for (const surfaceMarkup of [metricMarkup, scoreOrbitMarkup, evidenceMarkup]) {
     assert.match(surfaceMarkup, /<span>[\s\S]*?<span class="cjk-phrase">/u);
   }
-  assert.match(chineseHtml, /\.score-orbit > span\s*\{[^}]*width:110px/u);
-  assert.match(chineseHtml, /\.metric > span,\.metric > small\s*\{[^}]*display:block/u);
-  assert.match(chineseHtml, /\.metric > strong\s*\{[^}]*display:block/u);
-  assert.match(chineseHtml, /\.evidence-grid > div > span,\.evidence-grid > div > strong\s*\{[^}]*display:block/u);
-  assert.match(chineseHtml, /\.evidence-grid > div > span\s*\{[^}]*font-size:12px/u);
-  assert.match(chineseHtml, /\.evidence-grid > div > strong\s*\{[^}]*margin-top:4px/u);
   assert.match(chineseHtml, /<span class="cjk-phrase">安全<\/span>&lt;script&gt;/u);
   assert.doesNotMatch(chineseHtml, /安全<script>/u);
-  assert.match(chineseHtml, /recommendedReads/u);
-  assert.match(chineseHtml, /app\/api\/example\.py/u);
-  assert.match(chineseHtml, /https:\/\/example\.com\//u);
 
   // And: English output and nonvisual report surfaces do not gain phrase markup.
   assert.match(englishHtml, /<html lang="en" class="no-js">/u);

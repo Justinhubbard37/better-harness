@@ -4,6 +4,7 @@
 node_modules/
 dist/
 outputs/
+test-results/
 .qoder-cache/
 .harness/state/
 .codex-plugin/skills/

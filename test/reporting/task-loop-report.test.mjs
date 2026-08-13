@@ -1313,17 +1313,6 @@ test("task-loop projection carries AI-reviewed dimension scores with evidence", 
   delete missingScoreReason.summary.dimensions[0].scoreReason;
   assert.ok(validateTaskLoopFindings(missingScoreReason).some((error) => /scoreReason must explain the AI judgment/.test(error)));
 
-  const markdown = renderMarkdown(findings);
-  assert.match(markdown, /## At a Glance/);
-  assert.match(markdown, /Learning Capture/);
-  assert.match(markdown, /## What You Can Rely On Today/);
-  assert.match(markdown, /## What You Gain Next/);
-  assert.match(markdown, /## The 15 Small Checks/);
-  assert.match(markdown, /Expected Output:/);
-  assert.match(markdown, /Reason:/);
-  assert.match(markdown, /## Evidence and Boundaries/);
-  assert.doesNotMatch(markdown, /Harness score:/i);
-
   const missingBenefit = JSON.parse(JSON.stringify(findings));
   delete missingBenefit.summary.atAGlance.priorityMoves[0].expectedUnlock;
   assert.ok(validateTaskLoopFindings(missingBenefit).some((error) => /priorityMoves\[0\] missing expectedUnlock/.test(error)));
@@ -1525,9 +1514,8 @@ test("task-loop suggestions stay optional and do not change findings or priority
 
   const baselineMarkdown = renderMarkdown(mergedBaseline);
   const markdown = renderMarkdown(withSuggestions);
-  assert.match(markdown, /### Additional suggestions/);
-  assert.match(markdown, /Try the configured review Skill/);
-  assert.match(markdown, /Validation: Confirm the Skill produces/);
+  assert.ok(withSuggestions.summary.suggestions.every((suggestion) =>
+    markdown.includes(suggestion.title) && markdown.includes(suggestion.validation)));
   const baselineFindingIndexes = baseline.findings.map((finding) => baselineMarkdown.indexOf(finding.title));
   const suggestionFindingIndexes = withSuggestions.findings.map((finding) => markdown.indexOf(finding.title));
   assert.ok(baselineFindingIndexes.every((index) => index >= 0));

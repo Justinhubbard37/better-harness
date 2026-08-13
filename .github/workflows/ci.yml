@@ -36,5 +36,13 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - run: npm test
+      - name: Run categorized tests
+        run: npm run test:ci
+      - name: Upload JUnit test results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}-node-${{ matrix.node }}
+          path: test-results/*.xml
+          if-no-files-found: error
       - run: npm run pack:verify

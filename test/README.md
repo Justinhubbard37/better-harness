@@ -2,7 +2,9 @@
 
 Tests are grouped by the production capability that owns the behavior. Keep a
 new test beside its primary owner even when it crosses unit, integration, and
-CLI boundaries. Shared fixtures stay in `test/fixtures`.
+CLI boundaries. Shared fixtures stay in `test/fixtures`. CI-only reporters and
+the categorized runner stay in `test/support`; they are not published with the
+package and are not discovered as tests.
 
 ## Categories
 
@@ -30,6 +32,12 @@ Run the complete suite:
 npm test
 ```
 
+Run the CI presentation locally, including compact progress and JUnit files:
+
+```sh
+npm run test:ci
+```
+
 Run one capability:
 
 ```sh
@@ -43,5 +51,6 @@ Run one file:
 node --test test/plugins/plugin-lifecycle.test.mjs
 ```
 
-Do not add a second test manifest. Node's recursive discovery is the source of
-truth, while this document explains ownership and routing.
+Do not add a second test manifest. Both local and CI runners discover
+`*.test.mjs` files from the capability directories; this document explains
+ownership and routing.
