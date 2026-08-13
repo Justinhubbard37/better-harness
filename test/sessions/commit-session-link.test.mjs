@@ -405,6 +405,40 @@ test("grace window boundary controls time overlap (AC-2)", () => {
   assert.equal(correlateCommitSession(commit, session, { graceMs: 30 * 60_000 }), null);
 });
 
+test("a commit inside an observed Create commit call outranks broad session-window candidates", () => {
+  const commitTime = Date.parse("2026-08-02T03:30:00.000Z");
+  const commit = {
+    hash: "c".repeat(40),
+    shortHash: "ccccccc",
+    subject: "test: commit existing workspace changes",
+    authoredAt: new Date(commitTime).toISOString(),
+    files: [{ path: "test/example.test.mjs", added: 2, removed: 1 }],
+    sessionLinks: [],
+    sessionTrailers: [],
+  };
+  const observed = fixtureSession({
+    sessionId: "observed-commit-session",
+    files: [],
+    toolActivity: {
+      calls: [{
+        id: "A3",
+        operation: "create-commit",
+        status: "observed",
+        durationStatus: "observed",
+        startedAt: commitTime - 4_000,
+        durationMs: 9_000,
+      }],
+    },
+  });
+  const nearby = fixtureSession({ sessionId: "nearby-session", files: [] });
+
+  const matches = correlateCommitsWithSessions([commit], [nearby, observed]).commits[0].matches;
+  assert.deepEqual(matches.map((match) => match.sessionId), ["observed-commit-session", "nearby-session"]);
+  assert.equal(matches[0].confidence, "high");
+  assert.equal(matches[0].evidence.commitObservedInCall, "A3");
+  assert.equal(matches[1].evidence.commitObservedInCall, null);
+});
+
 test("heuristic correlation uses committer time rather than preserved author time (AC-10)", () => {
   const match = correlateCommitSession({
     hash: "b".repeat(40),

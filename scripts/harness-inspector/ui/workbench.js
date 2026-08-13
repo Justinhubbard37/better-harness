@@ -77,6 +77,7 @@
     return total >= 1000 ? (Math.round(total / 100) / 10) + 'K tokens' : total + ' tokens';
   };
   const evidence = (kind, label = kind) => '<span class="evidence ' + escape(kind) + '">' + escape(label) + '</span>';
+  const isDirectCommitLink = link => link?.evidenceKind === 'explicit' || link?.evidenceKind === 'observed-commit';
   const FAMILY_COLORS = { inspect:'#4f73b6', change:'#7658b5', execute:'#64748b', verify:'#258675', coordinate:'#b27627', deliver:'#628b37', other:'#8993a2' };
   const familyColor = family => FAMILY_COLORS[family] ?? FAMILY_COLORS.other;
 
@@ -173,7 +174,7 @@
     if (state.mode === "date") {
       const day = report.days.find(item => item.date === state.scope);
       const rows = (day?.sessionIds ?? []).map(sessionId => ({ story:null, session:bySession.get(sessionId), link:{ evidenceKind:"contextual", confidence:"date" }, date:day })).filter(item => item.session);
-      const sessionLinked = new Set(rows.flatMap(row => row.session.commitLinks.filter(link => byCommit.get(link.hash)?.day === day?.date).map(link => link.hash)));
+      const sessionLinked = new Set(rows.flatMap(row => row.session.commitLinks.filter(link => isDirectCommitLink(link) && byCommit.get(link.hash)?.day === day?.date).map(link => link.hash)));
       const unassignedCommitHashes = (day?.commitHashes ?? []).filter(hash => !sessionLinked.has(hash));
       if (unassignedCommitHashes.length) rows.push({ story:null, session:null, link:{ evidenceKind:"contextual", confidence:"date" }, date:day, unassignedCommitHashes });
       return rows;
@@ -190,7 +191,7 @@
   function commitsFor(item) {
     const hashes = new Set(item.story?.commitHashes ?? []);
     for (const link of item.session?.commitLinks ?? []) {
-      if (!item.date || byCommit.get(link.hash)?.day === item.date.date) hashes.add(link.hash);
+      if (!item.date || (isDirectCommitLink(link) && byCommit.get(link.hash)?.day === item.date.date)) hashes.add(link.hash);
     }
     for (const hash of item.unassignedCommitHashes ?? []) hashes.add(hash);
     return [...hashes].map(hash => byCommit.get(hash)).filter(Boolean).sort((a,b) => String(b.committedAt).localeCompare(String(a.committedAt)));
@@ -235,11 +236,24 @@
     const bars = rankedActions.map(([actionLabel,count]) => '<div class="family-row"><span title="' + escape(actionLabel) + '">' + escape(actionLabel) + '</span><div class="family-track"><div class="family-fill" style="width:' + Math.max(2,(count/max)*100) + '%"></div></div><strong>' + count + '</strong></div>').join("");
     const span = activity.timeline?.spanMs;
     const spanCopy = Number.isFinite(span) && span > 0 ? ' · ' + formatSpan(span) + ' span' : '';
-    return '<section class="lane activity-lane"><div class="lane-title"><strong>Checkpoint activity</strong><span>' + activity.files.length + ' file-attributed paths</span></div><div class="activity-summary"><div class="activity-total"><strong>' + activity.totalCalls + '</strong><span>calls · ' + activity.failedCalls + ' failed' + escape(spanCopy) + '</span></div><div class="family-bars">' + bars + '</div></div><details class="activity-details" data-activity-session="' + escape(session.sessionId) + '"><summary><span>Expand ' + activity.totalCalls + ' normalized actions</span><small>focus view</small></summary><div class="trace-target" data-activity-chart="' + escape(session.sessionId) + '"></div></details></section>';
+    const directCommits = commitsFor(item).filter(commit => isDirectCommitLink(session.commitLinks.find(link => link.hash === commit.hash)));
+    const directLinks = directCommits.map(commit => session.commitLinks.find(link => link.hash === commit.hash)).filter(Boolean);
+    const linkedEditCallIds = new Set(directLinks.flatMap(link => link.linkedEditCallIds ?? []));
+    const linkedEditFiles = new Set(directLinks.flatMap(link => link.linkedEditFiles ?? []));
+    const committedPaths = new Set(directCommits.flatMap(commit => commit.files.map(file => file.path)));
+    const pathSummary = activity.files.length + ' tool-attributed path' + (activity.files.length === 1 ? '' : 's')
+      + (directCommits.length ? ' · ' + committedPaths.size + ' committed path' + (committedPaths.size === 1 ? '' : 's') : '');
+    const commitBridge = linkedEditCallIds.size > 0
+      ? '<p class="commit-bridge linked">' + directCommits.length + ' commit' + (directCommits.length === 1 ? '' : 's') + ' linked to ' + linkedEditCallIds.size + ' observed Edit/Write call' + (linkedEditCallIds.size === 1 ? '' : 's') + ' across ' + linkedEditFiles.size + ' exact changed path' + (linkedEditFiles.size === 1 ? '' : 's') + ' before the commit.</p>'
+      : directCommits.length
+        ? '<p class="commit-bridge">' + directCommits.length + ' commit' + (directCommits.length === 1 ? ' was' : 's were') + ' created in this session, but no Edit/Write path was observed before the commit. The files may have entered the session as existing workspace changes.</p>'
+        : '';
+    return '<section class="lane activity-lane"><div class="lane-title"><strong>Checkpoint activity</strong><span>' + pathSummary + '</span></div><div class="activity-summary"><div class="activity-total"><strong>' + activity.totalCalls + '</strong><span>calls · ' + activity.failedCalls + ' failed' + escape(spanCopy) + '</span></div><div class="family-bars">' + bars + '</div></div>' + commitBridge + '<details class="activity-details" data-activity-session="' + escape(session.sessionId) + '"><summary><span>Expand ' + activity.totalCalls + ' normalized actions</span><small>focus view</small></summary><div class="trace-target" data-activity-chart="' + escape(session.sessionId) + '"></div></details></section>';
   }
 
   function fileTree(commit, link) {
     const overlap = new Set(link?.overlappingFiles ?? []);
+    const linkedEdits = new Set(link?.linkedEditFiles ?? []);
     const groups = new Map();
     for (const file of commit.files) {
       const parts = file.path.split('/');
@@ -248,11 +262,12 @@
       groups.get(folder).push({ ...file, display:parts.join('/') || file.path });
     }
     return [...groups.entries()].map(([folder,files]) => '<div class="folder">' + escape(folder) + '</div>' + files.map(file => {
+      const editedBeforeCommit = linkedEdits.has(file.path);
       const shared = overlap.has(file.path);
-      const sharedKind = link?.evidenceKind === 'file-context' ? 'file-context' : 'observed-overlap';
-      const sharedLabel = link?.evidenceKind === 'file-context' ? 'same path' : 'observed same-path';
+      const sharedKind = editedBeforeCommit ? 'observed-commit' : link?.evidenceKind === 'file-context' ? 'file-context' : 'observed-overlap';
+      const sharedLabel = editedBeforeCommit ? 'edited before commit' : link?.evidenceKind === 'file-context' ? 'same path' : 'observed same-path';
       const fileSelection = { type:'file', path:file.path, contextSessionId:link?.sessionId ?? null };
-      return '<button type="button" class="file-row" ' + selectionAttrs(fileSelection) + '><code title="' + escape(file.path) + '">' + escape(file.display) + '</code><span class="delta">' + (Number.isFinite(file.added) ? '+' + file.added : 'bin') + ' / ' + (Number.isFinite(file.removed) ? '-' + file.removed : 'bin') + ' ' + evidence(shared ? sharedKind : 'commit-change', shared ? sharedLabel : 'commit') + '</span></button>';
+      return '<button type="button" class="file-row" ' + selectionAttrs(fileSelection) + '><code title="' + escape(file.path) + '">' + escape(file.display) + '</code><span class="delta">' + (Number.isFinite(file.added) ? '+' + file.added : 'bin') + ' / ' + (Number.isFinite(file.removed) ? '-' + file.removed : 'bin') + ' ' + evidence(editedBeforeCommit || shared ? sharedKind : 'commit-change', editedBeforeCommit || shared ? sharedLabel : 'commit') + '</span></button>';
     }).join('')).join('');
   }
 
@@ -260,8 +275,8 @@
     const cards = commits.map(commit => {
       const link = item.session?.commitLinks?.find(candidate => candidate.hash === commit.hash) ?? null;
       const kind = link?.evidenceKind ?? (item.story?.commitHashes?.includes(commit.hash) ? item.story.evidence : 'contextual');
-      const label = kind === 'file-context' ? 'same-file history' : kind === 'observed-overlap' ? 'observed same-path' : kind;
-      const relation = link ? (link.evidenceKind === 'file-context' ? ' · same-file context' : ' · ' + escape(link.confidence) + ' correlation') : '';
+      const label = kind === 'file-context' ? 'same-file history' : kind === 'observed-overlap' ? 'observed same-path' : kind === 'observed-commit' ? 'created in session' : kind;
+      const relation = link ? (link.evidenceKind === 'file-context' ? ' · same-file context' : link.evidenceKind === 'observed-commit' ? ' · observed commit action' : ' · ' + escape(link.confidence) + ' correlation') : '';
       const contextSessionId = item.session?.sessionId ?? null;
       const linked = link ? { ...link, sessionId:contextSessionId } : null;
       return '<article class="commit-card"><button type="button" class="commit-head" ' + selectionAttrs({ type:'commit', hash:commit.hash, contextSessionId }) + '><div class="commit-head-line"><code>' + escape(commit.shortHash) + '</code>' + evidence(kind,label) + '</div><p>' + escape(commit.subject) + '</p><div class="commit-stats">' + commit.fileCount + ' files · +' + commit.linesAdded + ' / -' + commit.linesRemoved + relation + '</div></button><div class="file-tree">' + (fileTree(commit,linked) || '<div class="empty-state">No changed paths retained.</div>') + '</div></article>';
@@ -360,6 +375,12 @@
       const position = callPosition(call,domain.timeBasis);
       return position !== null && position >= domain.min && position <= domain.max;
     });
+    const commitEvents = domain.timeBasis ? session.commitLinks
+      .filter(isDirectCommitLink)
+      .map(link => ({ link, commit:byCommit.get(link.hash) }))
+      .map(item => ({ ...item, position:new Date(item.commit?.committedAt ?? item.commit?.authoredAt ?? NaN).getTime() }))
+      .filter(item => item.commit && Number.isFinite(item.position) && item.position >= domain.min && item.position <= domain.max)
+      .sort((left,right) => left.position - right.position) : [];
 
     const labelWidth = 132;
     const rowHeight = 26;
@@ -464,6 +485,21 @@
       }).join('');
     }
 
+    const commitMarkup = commitEvents.map(({ commit, link, position }) => {
+      const linkedCalls = link.linkedEditCallIds?.length ?? 0;
+      const linkedPaths = link.linkedEditFiles?.length ?? 0;
+      const association = linkedCalls
+        ? linkedCalls + ' linked Edit/Write call' + (linkedCalls === 1 ? '' : 's') + ' across ' + linkedPaths + ' exact changed path' + (linkedPaths === 1 ? '' : 's')
+        : 'no linked Edit/Write path observed before this commit';
+      const label = 'Commit ' + commit.shortHash + ' · ' + commit.subject + ' · ' + formatShortClock(position) + ' UTC · ' + association;
+      const x = xFor(position);
+      const markerY = topPad + 7;
+      return '<line class="chart-commit-line" x1="' + x + '" x2="' + x + '" y1="' + (markerY + 5) + '" y2="' + laneArea + '"></line>'
+        + '<path class="chart-commit chart-commit-marker" ' + selectionAttrs({ type:'commit', hash:commit.hash, contextSessionId:session.sessionId })
+        + ' data-chart-detail="' + escape(label) + '" d="M ' + x + ' ' + (markerY - 5) + ' L ' + (x + 5) + ' ' + markerY + ' L ' + x + ' ' + (markerY + 5) + ' L ' + (x - 5) + ' ' + markerY + ' Z"'
+        + ' tabindex="0" role="button" aria-label="' + escape(label) + '"><title>' + escape(label) + '</title></path>';
+    }).join('');
+
     const tickCount = Math.max(2,Math.min(7,Math.floor(plotWidth / 92)));
     const ticks = Array.from({ length:tickCount },(_,index) => domain.min + (domainWidth * index) / (tickCount - 1));
     const tickMarkup = ticks.map(position => '<g><line class="chart-grid-line" x1="' + xFor(position) + '" x2="' + xFor(position) + '" y1="' + topPad + '" y2="' + laneArea + '"></line><text class="chart-tick" x="' + xFor(position) + '" y="' + (laneArea + 17) + '" text-anchor="middle">' + escape(domain.timeBasis ? formatShortClock(position) : String(Math.round(position))) + '</text></g>').join('');
@@ -471,25 +507,26 @@
     const basisNote = domain.timeBasis
       ? 'Wall-clock time; bar height counts calls in that slice.'
       : 'No observed call timing in this session; the axis falls back to call order.';
-    const aria = activity.totalCalls + ' normalized tool calls by action over ' + (domain.timeBasis ? 'observed time' : 'call sequence');
+    const aria = activity.totalCalls + ' normalized tool calls by action over ' + (domain.timeBasis ? 'observed time, with ' + commitEvents.length + ' commit events in view' : 'call sequence');
 
     return '<section class="chart-card" aria-label="NormalizedToolActivityV1 provider-neutral actions">'
       + '<div class="chart-toolbar"><span class="chart-basis' + (domain.timeBasis ? '' : ' fallback') + '">' + escape(domain.timeBasis ? 'Time axis' : 'Sequence axis (no observed timing)') + '</span>'
       + '<span class="chart-range">' + escape(domain.timeBasis ? formatShortClock(domain.min) + ' → ' + formatShortClock(domain.max) + ' UTC · ' + formatSpan(domain.max - domain.min) : 'calls ' + Math.round(domain.min) + '–' + Math.round(domain.max)) + '</span>'
       + '<button type="button" class="chart-reset" data-chart-reset="' + escape(session.sessionId) + '"' + (zoom ? '' : ' disabled') + '>Reset zoom</button></div>'
       + '<svg class="activity-chart" data-activity-svg="' + escape(session.sessionId) + '" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + escape(aria) + '">'
-      + '<title>' + escape(aria) + '</title><desc>' + escape(basisNote + ' Shaded columns are windows with no observed call. Red marks are failed calls. Drag across the plot to zoom.') + '</desc>'
-      + laneMarkup + gapMarkup + tickMarkup + marksMarkup
+      + '<title>' + escape(aria) + '</title><desc>' + escape(basisNote + ' Shaded columns are windows with no observed call. Red marks are failed calls. Green diamonds mark directly linked commit times. Drag across the plot to zoom.') + '</desc>'
       + '<rect class="chart-surface" data-chart-surface x="' + plotLeft + '" y="' + topPad + '" width="' + plotWidth + '" height="' + (laneArea - topPad) + '" data-plot-left="' + plotLeft + '" data-plot-width="' + plotWidth + '" data-domain-min="' + domain.min + '" data-domain-max="' + domain.max + '" data-full-min="' + domain.fullMin + '" data-full-max="' + domain.fullMax + '" data-session-id="' + escape(session.sessionId) + '"></rect>'
+      + laneMarkup + gapMarkup + tickMarkup + marksMarkup + commitMarkup
       + '<rect class="chart-brush" data-chart-brush x="0" y="' + topPad + '" width="0" height="' + (laneArea - topPad) + '" hidden></rect>'
       + '<line class="chart-axis-line" x1="' + labelWidth + '" x2="' + (plotRight + 6) + '" y1="' + laneArea + '" y2="' + laneArea + '"></line>'
       + '<text class="chart-axis-label" x="' + (labelWidth - 10) + '" y="' + (laneArea + 17) + '" text-anchor="end">' + escape(domain.timeBasis ? 'UTC' : 'Call') + '</text>'
       + '</svg>'
-      + '<div class="chart-inspector" data-chart-inspector aria-live="polite"><strong>Hover, focus, or click a mark</strong><span>' + escape(detailMode ? 'Each mark is one call; its width is the observed latency.' : 'Each bar counts calls in a time slice — click to zoom in until individual calls appear.') + '</span></div>'
+      + '<div class="chart-inspector" data-chart-inspector aria-live="polite"><strong>Hover, focus, or click an event</strong><span>' + escape((detailMode ? 'Each action mark is one call; its width is the observed latency.' : 'Each action bar counts calls in a time slice — click to zoom in until individual calls appear.') + (commitEvents.length ? ' Green diamonds open Commit evidence.' : '')) + '</span></div>'
       + '<footer class="chart-legend"><span>' + inDomain.length + ' of ' + activity.totalCalls + ' calls in view</span>'
       + (longestGap ? '<span>longest idle ' + escape(formatSpan(longestGap.gap)) + ' at ' + escape(formatShortClock(longestGap.at)) + ' UTC</span>' : '')
       + (untimed ? '<span class="chart-warning">' + untimed + ' without observed timing</span>' : '')
       + '<span><i class="legend-dot failed"></i>failed</span><span><i class="legend-dot gap"></i>idle window</span>'
+      + (domain.timeBasis ? '<span><i class="legend-dot commit"></i>directly linked commit</span>' : '')
       + '<span>' + escape(basisNote) + '</span></footer></section>';
   }
 
@@ -621,7 +658,7 @@
       const toolEvent = calls.length ? '<details class="session-event tools" data-session-event="tools"><summary class="session-event-head"><strong>' + calls.length + ' tool call' + (calls.length === 1 ? '' : 's') + '</strong><span>' + turn.toolCallCount + ' observed in turn</span></summary>' + toolListMarkup(session,calls) + '</details>' : '';
       const response = '<article class="session-event response' + (turn.response ? '' : ' session-unavailable') + '" data-session-event="responses"><header class="session-event-head"><strong>Assistant response</strong><span>' + (turn.response ? 'retained' : 'unavailable') + '</span></header><div class="session-event-body session-prose"><p>' + escape(turn.response ?? 'Response body was unavailable or removed by privacy filtering.') + '</p></div></article>';
       const clock = Number.isFinite(turn.startMs) ? formatShortClock(turn.startMs) + (Number.isFinite(turn.endMs) ? '–' + formatShortClock(turn.endMs) : '') + ' UTC · ' : '';
-      const summary = clock + turn.messageCount + ' messages · ' + turn.toolCallCount + ' tool calls' + (Number.isFinite(turn.durationMs) ? ' · ' + formatDuration(turn.durationMs) : '');
+      const summary = clock + turn.messageCount + ' intermediate events · ' + turn.toolCallCount + ' tool calls' + (Number.isFinite(turn.durationMs) ? ' · ' + formatDuration(turn.durationMs) : '');
       const turnCommits = (placement.inTurn.get(turn.index) ?? []).map(commit => commitEventMarkup(session,commit,'within this turn window')).join('');
       return '<section class="session-turn" id="session-' + escape(anchor) + '" data-turn-index="' + turn.index + '"><header class="session-turn-head"><button type="button" class="turn-select" ' + selectionAttrs({ type:'turn', sessionId:session.sessionId, turnIndex:turn.index }) + '>Turn ' + turn.index + '</button><span>' + escape(summary) + '</span></header>' + prompt + notes + toolEvent + response + turnCommits + '</section>';
     }).join('');
@@ -810,7 +847,8 @@
       session.dialogue?.turns?.forEach(turn => add({ type:'turn', sessionId:session.sessionId, turnIndex:turn.index }));
       session.toolActivity.calls.forEach(call => add({ type:'tool-call', sessionId:session.sessionId, callId:call.id }));
       session.toolActivity.files.forEach(file => add({ type:'file', path:file.path, contextSessionId:session.sessionId }));
-      session.commitLinks.forEach(link => add({ type:'commit', hash:link.hash, contextSessionId:session.sessionId }));
+      const directCommitLinks = session.commitLinks.filter(isDirectCommitLink);
+      (directCommitLinks.length ? directCommitLinks : session.commitLinks).forEach(link => add({ type:'commit', hash:link.hash, contextSessionId:session.sessionId }));
     };
     const session = sessionForSelection(selection);
     if (selection.type === 'story') {
@@ -833,7 +871,10 @@
       });
       session?.storyLinks.forEach(link => add({ type:'story', id:link.storyId }));
       const paths = new Set(calls.flatMap(call => call.filePaths ?? []));
-      session?.commitLinks.filter(link => link.overlappingFiles.some(path => paths.has(path))).forEach(link => add({ type:'commit', hash:link.hash, contextSessionId:selection.sessionId }));
+      const callIds = new Set(calls.map(call => call.callId));
+      session?.commitLinks.filter(link => isDirectCommitLink(link)
+        ? (link.commitCallId && callIds.has(link.commitCallId)) || link.linkedEditCallIds?.some(callId => callIds.has(callId))
+        : link.overlappingFiles.some(path => paths.has(path))).forEach(link => add({ type:'commit', hash:link.hash, contextSessionId:selection.sessionId }));
       return related;
     }
     if (selection.type === 'tool-call') {
@@ -843,7 +884,9 @@
       if (turnIndex) add({ type:'turn', sessionId:selection.sessionId, turnIndex });
       const paths = new Set(call?.filePaths ?? []);
       paths.forEach(path => add({ type:'file', path, contextSessionId:selection.sessionId }));
-      session?.commitLinks.filter(link => link.overlappingFiles.some(path => paths.has(path))).forEach(link => add({ type:'commit', hash:link.hash, contextSessionId:selection.sessionId }));
+      session?.commitLinks.filter(link => isDirectCommitLink(link)
+        ? link.commitCallId === selection.callId || link.linkedEditCallIds?.includes(selection.callId)
+        : link.overlappingFiles.some(path => paths.has(path))).forEach(link => add({ type:'commit', hash:link.hash, contextSessionId:selection.sessionId }));
       return related;
     }
     if (selection.type === 'file') {
@@ -858,10 +901,17 @@
     if (selection.type === 'commit') {
       const commit = byCommit.get(selection.hash);
       commit?.files.forEach(file => add({ type:'file', path:file.path, contextSessionId:session?.sessionId }));
-      report.sessions.filter(item => item.commitLinks.some(link => link.hash === selection.hash)).forEach(item => {
+      const linkedSessions = report.sessions.map(item => ({
+        item,
+        link:item.commitLinks.find(link => link.hash === selection.hash),
+      })).filter(entry => entry.link);
+      const directlyLinkedSessions = linkedSessions.filter(entry => isDirectCommitLink(entry.link));
+      (directlyLinkedSessions.length ? directlyLinkedSessions : linkedSessions).forEach(({ item, link }) => {
         add({ type:'session', sessionId:item.sessionId });
-        const link = item.commitLinks.find(candidate => candidate.hash === selection.hash);
-        item.toolActivity.calls.filter(call => call.filePaths?.some(path => link.overlappingFiles.includes(path))).forEach(call => add({ type:'tool-call', sessionId:item.sessionId, callId:call.id }));
+        const linkedCallIds = new Set([link.commitCallId,...(link.linkedEditCallIds ?? [])].filter(Boolean));
+        item.toolActivity.calls.filter(call => isDirectCommitLink(link)
+          ? linkedCallIds.has(call.id)
+          : call.filePaths?.some(path => link.overlappingFiles.includes(path))).forEach(call => add({ type:'tool-call', sessionId:item.sessionId, callId:call.id }));
         item.storyLinks.forEach(storyLink => add({ type:'story', id:storyLink.storyId }));
       });
     }
@@ -913,18 +963,23 @@
         : null;
       return { ...base,
         title:'Turn ' + selection.turnIndex, source:'session-dialogue',
-        facts:[(turn?.toolCallCount ?? 0) + ' Tool Calls are observed in this Turn.',(turn?.messageCount ?? 0) + ' retained messages define its dialogue window.',observedWindow].filter(Boolean),
+        facts:[(turn?.toolCallCount ?? 0) + ' Tool Calls are observed in this Turn.',(turn?.messageCount ?? 0) + ' intermediate events sit between its retained prompt and response.',observedWindow].filter(Boolean),
         limitations:['Turn membership places activity in dialogue order; it does not prove which later Commit contains the result.'],
         path:[session?.locator ?? selection.sessionId,'observed-in','Turn ' + selection.turnIndex],
       };
     }
     if (selection.type === 'tool-call') {
       const call = session?.toolActivity.calls.find(item => item.id === selection.callId);
+      const linkedEditCommit = session?.commitLinks.find(link => link.linkedEditCallIds?.includes(selection.callId));
+      const createdCommit = session?.commitLinks.find(link => link.commitCallId === selection.callId);
+      const linkedCommit = linkedEditCommit ?? createdCommit;
+      const commit = linkedCommit ? byCommit.get(linkedCommit.hash) : null;
       const turnIndex = callTurnIndex(session,selection.callId);
       const path = [session?.locator ?? selection.sessionId];
       if (turnIndex) path.push('observed-in','Turn ' + turnIndex);
       path.push('observed',call?.id + ' · ' + call?.actionLabel);
       if (call?.filePaths?.[0]) path.push(call.operation ?? 'touched',call.filePaths[0]);
+      if (commit) path.push(linkedEditCommit ? 'linked-before' : 'contains-commit-time',commit.shortHash);
       const stamp = formatStamp(call?.startedAt);
       return { ...base,
         title:call ? call.id + ' · ' + call.actionLabel : selection.callId,
@@ -933,8 +988,14 @@
           stamp ? 'Observed start: ' + stamp + ' UTC.' : 'Start time evidence is unavailable.',
           call?.status ? 'Observed status: ' + call.status + '.' : null,
           call?.durationStatus === 'observed' ? 'Observed duration: ' + formatLatency(call.durationMs) + '.' : 'Duration evidence is unavailable.',
+          linkedEditCommit ? 'This Edit/Write call precedes commit ' + commit.shortHash + ' and shares an exact changed path.' : null,
+          createdCommit ? 'Commit ' + commit.shortHash + ' was created during this observed call.' : null,
           ...(call?.filePaths?.map(item => 'Attributed path: ' + item + '.') ?? [])].filter(Boolean),
-        limitations:['A Tool Call observation proves retained activity metadata, not that a later Commit contains or was authored by that activity.'],
+        limitations:[linkedEditCommit
+          ? 'Exact path overlap and event order link this call to the Commit; they do not prove the final committed contents came exclusively from this call.'
+          : createdCommit
+            ? 'The call contains the Commit time, but it does not prove when or by which event the committed files were edited.'
+          : 'A Tool Call observation proves retained activity metadata, not that a later Commit contains or was authored by that activity.'],
         path,
       };
     }
@@ -1123,7 +1184,13 @@
       const metric = document.querySelector('[data-metric="' + name + '"]');
       const output = metric?.querySelector('strong');
       if (output) output.textContent = value;
-      if (metric) metric.hidden = value === 0;
+      if (metric) {
+        metric.hidden = value === 0;
+        const metricLabel = value === 1
+          ? metric.dataset.metricSingular ?? metric.dataset.metricLabel ?? name
+          : metric.dataset.metricLabel ?? name;
+        metric.setAttribute('aria-label',value + ' ' + metricLabel);
+      }
     });
     state.items = items;
     document.getElementById('workbench-list').innerHTML = items.map(workbench).join('') || '<div class="empty-state">No provenance workbench exists in this scope.</div>';
@@ -1182,6 +1249,8 @@
   document.addEventListener('click', event => {
     const chartReset = event.target.closest('[data-chart-reset]');
     if (chartReset) { setZoom(chartReset.dataset.chartReset,0,1); return; }
+    const commitEvent = event.target.closest('.chart-commit');
+    if (commitEvent) { showChartDetail(commitEvent); setSelection(descriptorFromElement(commitEvent)); return; }
     const bin = event.target.closest('[data-chart-bin]');
     if (bin) {
       const sessionId = bin.dataset.sessionId;
@@ -1297,12 +1366,12 @@
   });
 
   document.addEventListener('mouseover', event => {
-    const mark = event.target.closest?.('.chart-mark, [data-chart-bin]');
+    const mark = event.target.closest?.('.chart-mark, .chart-commit, [data-chart-bin]');
     if (mark) showChartDetail(mark);
   });
 
   document.addEventListener('focusin', event => {
-    const mark = event.target.closest?.('.chart-mark, [data-chart-bin]');
+    const mark = event.target.closest?.('.chart-mark, .chart-commit, [data-chart-bin]');
     if (mark) showChartDetail(mark);
   });
 

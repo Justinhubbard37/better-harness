@@ -47,8 +47,25 @@ function overlappingFiles(commit, session) {
     .filter((filePath) => sessionFiles.has(filePath));
 }
 
-function confidenceFor({ explicit, overlapsTime, fileOverlapCount, cwdWithinRepo }) {
+// A commit whose recorded time falls inside an observed `git commit` tool call
+// has stronger provenance than a broad session-window match. This deliberately
+// proves only that the session created the Git object; it does not claim that
+// the same session authored the already-dirty workspace files.
+function observedCommitCall(commitTime, session) {
+  if (commitTime === null) return null;
+  const toleranceMs = 2_000;
+  return (session?.toolActivity?.calls ?? []).find((call) => {
+    if (call?.operation !== "create-commit" || call?.status !== "observed") return false;
+    if (call?.durationStatus !== "observed" || !Number.isFinite(call?.startedAt) || !Number.isFinite(call?.durationMs)) return false;
+    const start = call.startedAt - toleranceMs;
+    const end = call.startedAt + Math.max(0, call.durationMs) + toleranceMs;
+    return commitTime >= start && commitTime <= end;
+  }) ?? null;
+}
+
+function confidenceFor({ explicit, observedCommit, overlapsTime, fileOverlapCount, cwdWithinRepo }) {
   if (explicit) return "explicit";
+  if (observedCommit) return "high";
   if (!overlapsTime) return null;
   if (fileOverlapCount > 0) return "high";
   if (cwdWithinRepo) return "medium";
@@ -58,11 +75,13 @@ function confidenceFor({ explicit, overlapsTime, fileOverlapCount, cwdWithinRepo
 export function correlateCommitSession(commit, session, { graceMs } = {}) {
   const commitTime = timestampMillis(commit.committedAt ?? commit.authoredAt);
   const link = linkMatch(commit, session);
+  const commitCall = observedCommitCall(commitTime, session);
   const overlapsTime = timeOverlap(commitTime, session, graceMs ?? DEFAULT_GRACE_MINUTES * 60_000);
   const overlap = overlappingFiles(commit, session);
   const cwdWithinRepo = session.cwdWithinRepo === true;
   const confidence = confidenceFor({
     explicit: Boolean(link),
+    observedCommit: Boolean(commitCall),
     overlapsTime,
     fileOverlapCount: overlap.length,
     cwdWithinRepo,
@@ -78,6 +97,7 @@ export function correlateCommitSession(commit, session, { graceMs } = {}) {
       linkType: link?.type ?? null,
       trailer: link?.value ?? null,
       checkpointId: link?.type === "entire-checkpoint" ? link.value : null,
+      commitObservedInCall: commitCall?.id ?? null,
       commitTimeBasis: commit.committedAt ? "committedAt" : "authoredAt",
       timeOverlap: overlapsTime,
       commitToLastSeenMs: commitTime !== null && lastSeen !== null ? commitTime - lastSeen : null,
@@ -91,6 +111,8 @@ export function correlateCommitSession(commit, session, { graceMs } = {}) {
 function matchOrder(a, b) {
   const rank = CONFIDENCE_RANK[a.confidence] - CONFIDENCE_RANK[b.confidence];
   if (rank !== 0) return rank;
+  const observed = Number(Boolean(b.evidence.commitObservedInCall)) - Number(Boolean(a.evidence.commitObservedInCall));
+  if (observed !== 0) return observed;
   const files = b.evidence.overlappingFileCount - a.evidence.overlappingFileCount;
   if (files !== 0) return files;
   const aDistance = Math.abs(a.evidence.commitToLastSeenMs ?? Number.MAX_SAFE_INTEGER);

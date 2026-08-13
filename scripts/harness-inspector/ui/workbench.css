@@ -7,7 +7,6 @@
      a grid column, so opening it cannot reflow the lanes underneath it. */
   body { --drawer-inset:0px; }
   body.drawer-open { --drawer-inset:var(--drawer-width); }
-  @media (max-width:1199px) { body.drawer-open { --drawer-inset:0px; } }
   .visually-hidden { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
   .app { min-height:100vh; display:grid; grid-template-columns:270px minmax(0,1fr); margin-right:var(--drawer-inset); }
   .app.picker-collapsed { grid-template-columns:46px minmax(0,1fr); }
@@ -84,6 +83,7 @@
   .metric[hidden] { display:none; }
   .metric strong { color:var(--ink); font-size:11px; line-height:1; }
   .metric span { color:var(--muted); font-size:8px; text-transform:uppercase; letter-spacing:.04em; }
+  .metric-short { display:none; }
   .window-badge { border:1px solid var(--line); border-radius:999px; padding:4px 8px; color:var(--muted); background:#fff; font-size:9px; white-space:nowrap; }
   .workspace-scroll { padding:10px 12px 48px; overflow-x:auto; }
   .workbench-list { min-width:730px; display:grid; gap:14px; }
@@ -130,6 +130,8 @@
   .family-track { height:5px; overflow:hidden; border-radius:999px; background:#e2e7ed; }
   .family-fill { height:100%; min-width:2px; border-radius:999px; background:var(--violet); }
   .activity-details { margin-top:9px; border-top:1px solid var(--line); }
+  .commit-bridge { margin:9px 0 0; padding:8px 9px; border-left:3px solid var(--amber); color:#714317; background:var(--amber-soft); font-size:9px; line-height:1.5; }
+  .commit-bridge.linked { border-left-color:#16805b; color:#155f48; background:#edf8f3; }
   .activity-details > summary { min-height:34px; padding:8px 2px; display:flex; align-items:center; justify-content:space-between; gap:12px; cursor:pointer; color:#35445a; font-size:10px; font-weight:700; }
   .activity-details > summary small { color:var(--muted); font-size:8px; font-weight:500; }
   .trace-target { min-width:0; border-top:1px solid var(--line); }
@@ -152,8 +154,13 @@
   .chart-axis-label { font-weight:700; }
   .chart-gap rect { fill:rgba(148,163,184,.13); }
   .chart-gap-label { fill:#8a96a6; font-size:8px; font-style:italic; }
-  .chart-bin, .chart-mark { cursor:pointer; }
-  .chart-bin:hover, .chart-bin:focus, .chart-mark:hover, .chart-mark:focus { outline:none; stroke:#163f77; stroke-width:2; }
+  .chart-lane, .chart-gap, .chart-grid-line, .chart-tick, .chart-axis-line, .chart-axis-label { pointer-events:none; }
+  .chart-bin, .chart-mark, .chart-commit { cursor:pointer; }
+  .chart-bin:hover, .chart-bin:focus, .chart-mark:hover, .chart-mark:focus, .chart-commit:hover, .chart-commit:focus { outline:none; }
+  .chart-bin:hover, .chart-bin:focus, .chart-mark:hover, .chart-mark:focus { stroke:#163f77; stroke-width:2; }
+  .chart-commit-line { stroke:#16805b; stroke-width:1; stroke-dasharray:3 2; opacity:.65; pointer-events:none; }
+  .chart-commit-marker { fill:#16805b; stroke:#fff; stroke-width:1.5; }
+  .chart-commit:hover, .chart-commit:focus { stroke:#163f77; stroke-width:2.5; }
   .chart-surface { fill:transparent; cursor:crosshair; }
   .chart-brush { fill:rgba(55,111,203,.16); stroke:#376fcb; stroke-width:1; pointer-events:none; }
   .chart-inspector { min-height:36px; margin-top:4px; padding:7px 9px; display:grid; gap:2px; border:1px solid #e6ebf0; border-radius:7px; background:var(--soft); font-size:9px; }
@@ -165,6 +172,7 @@
   .legend-dot { width:8px; height:8px; display:inline-block; border-radius:2px; background:var(--blue); }
   .legend-dot.failed { background:var(--red); }
   .legend-dot.gap { background:rgba(148,163,184,.45); }
+  .legend-dot.commit { border-radius:1px; background:#16805b; transform:rotate(45deg); }
   .chart-empty { padding:18px; color:var(--muted); text-align:center; font-size:9px; }
   .commit-card { margin-bottom:8px; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
   .commit-head { width:100%; padding:8px 9px; border:0; color:inherit; background:#fbfcfd; text-align:left; cursor:pointer; }
@@ -196,6 +204,8 @@
   body.has-evidence-selection [data-selectable].selection-selected { background-color:rgba(55,111,203,.08); box-shadow:0 0 0 2px rgba(55,111,203,.75), 0 5px 16px rgba(55,111,203,.16); }
   .chart-mark.selection-related { stroke:#2b5fa8; stroke-width:2; }
   .chart-mark.selection-selected { stroke:#163f77; stroke-width:3; }
+  .chart-commit.selection-related { stroke:#2b5fa8; stroke-width:2.5; }
+  .chart-commit.selection-selected { stroke:#163f77; stroke-width:3; }
   .evidence-drawer { position:fixed; top:0; right:0; width:min(var(--drawer-width),100%); height:100vh; z-index:40; display:flex; flex-direction:column; border-left:1px solid var(--line); background:#fff; box-shadow:-12px 0 32px rgba(15,23,42,.12); }
   .evidence-drawer[hidden] { display:none; }
   .evidence-drawer-head { min-height:78px; padding:15px 15px 13px; display:flex; align-items:flex-start; justify-content:space-between; gap:12px; border-bottom:1px solid var(--line); }
@@ -330,4 +340,17 @@
     .workbench.delivery-collapsed .delivery-title-copy { display:flex; }
     .workbench.delivery-collapsed .delivery-toggle { width:auto; min-height:0; margin:0; padding:4px 6px; writing-mode:horizontal-tb; }
   }
-  @media (max-width:760px) { .app { display:block; margin-right:0; } .scope-picker { position:relative; width:100%; height:auto; max-height:340px; border-right:0; border-bottom:1px solid var(--line); } .picker-footer { display:none; } .workspace-header { position:relative; padding:5px 9px; } .workspace-breadcrumb span:first-child, .workspace-breadcrumb i:first-of-type, .window-badge { display:none; } .workspace-header-meta { gap:0; } .metric { padding:0 5px; } .metric span { display:none; } .workspace-scroll { padding:8px 7px 36px; } .workbench { overflow-x:auto; } .evidence-drawer { position:fixed; inset:auto 0 0; top:auto; width:100%; height:min(72vh,620px); z-index:41; border-top:1px solid var(--line); border-left:0; border-radius:16px 16px 0 0; box-shadow:0 -18px 50px rgba(15,23,42,.18); } .evidence-drawer-head { min-height:62px; padding:11px 14px; } .session-shell { padding:16px 14px 38px; } .session-layout { grid-template-columns:1fr; } .session-sidebar { position:static; grid-row:1; } }
+  /* A side Drawer reduces the Workbench's available width before the viewport
+     itself reaches the normal stacking breakpoint. Stack only while the side
+     Drawer is open so no lane sits underneath it. */
+  @media (min-width:1101px) and (max-width:1199px) {
+    body.drawer-open .workbench-list { min-width:0; }
+    body.drawer-open .workbench-grid, body.drawer-open .workbench.delivery-collapsed .workbench-grid { min-width:0; display:block; }
+    body.drawer-open .lane { border-right:0; border-bottom:1px solid var(--line); }
+    body.drawer-open .lane:last-child { border-bottom:0; }
+    body.drawer-open .lane-resizer { display:none; }
+    body.drawer-open .workbench.delivery-collapsed .delivery-lane { padding:13px; }
+    body.drawer-open .workbench.delivery-collapsed .delivery-title-copy { display:flex; }
+    body.drawer-open .workbench.delivery-collapsed .delivery-toggle { width:auto; min-height:0; margin:0; padding:4px 6px; writing-mode:horizontal-tb; }
+  }
+  @media (max-width:760px) { body.drawer-open { --drawer-inset:0px; } .app { display:block; margin-right:0; } .scope-picker { position:relative; width:100%; height:auto; max-height:340px; border-right:0; border-bottom:1px solid var(--line); } .picker-footer { display:none; } .workspace-header { position:relative; padding:5px 9px; } .workspace-breadcrumb span:first-child, .workspace-breadcrumb i:first-of-type, .window-badge { display:none; } .workspace-header-meta { gap:0; } .metric { padding:0 4px; } .metric .metric-label { display:none; } .metric .metric-short { display:inline; } .workspace-scroll { padding:8px 7px 36px; } .workbench { overflow-x:auto; } .evidence-drawer { position:fixed; inset:auto 0 0; top:auto; width:100%; height:min(72vh,620px); z-index:41; border-top:1px solid var(--line); border-left:0; border-radius:16px 16px 0 0; box-shadow:0 -18px 50px rgba(15,23,42,.18); } .evidence-drawer-head { min-height:62px; padding:11px 14px; } .session-shell { padding:16px 14px 38px; } .session-layout { grid-template-columns:1fr; } .session-sidebar { position:static; grid-row:1; } }

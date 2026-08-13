@@ -281,6 +281,109 @@ test("report model keeps declared, candidate, exact-file, and date evidence dist
   assert.equal(report.sessions[0].commitLinks.some((link) => link.evidenceKind === "file-context"), true);
 });
 
+test("report model distinguishes a session-created commit from files edited in that session", () => {
+  const report = buildHarnessInspectorReport({
+    repoRoot: "/workspace/repo",
+    featureTree: parseFeatureTreeMarkdown(FEATURE_TREE),
+    sessions: [fixtureSession({
+      files: [],
+      fileEditCount: 0,
+      toolActivity: {
+        ...fixtureSession().toolActivity,
+        calls: fixtureSession().toolActivity.calls.map(({ filePath: _filePath, filePaths: _filePaths, ...call }) => call),
+      },
+    })],
+    correlation: {
+      schemaVersion: 1,
+      commits: [{
+        hash: "d".repeat(40),
+        shortHash: "ddddddd",
+        subject: "test: commit existing workspace changes",
+        authoredAt: "2026-08-12T08:45:00.000Z",
+        committedAt: "2026-08-12T08:45:00.000Z",
+        fileCount: 1,
+        files: [{ path: "test/example.test.mjs", added: 2, removed: 1 }],
+        linesAdded: 2,
+        linesRemoved: 1,
+        matches: [{
+          sessionId: "session-a",
+          confidence: "high",
+          evidence: {
+            linkType: null,
+            commitObservedInCall: "A3",
+            timeOverlap: true,
+            overlappingFileCount: 0,
+            overlappingFiles: [],
+            cwdWithinRepo: true,
+          },
+        }],
+      }],
+    },
+    filters: { platform: "codex" },
+  });
+
+  assert.equal(report.sessions[0].fileEditCount, 0);
+  assert.deepEqual(report.sessions[0].toolActivity.files, []);
+  assert.equal(report.sessions[0].commitLinks[0].evidenceKind, "observed-commit");
+  assert.equal(report.sessions[0].commitLinks[0].strength, "observed");
+  assert.equal(report.sessions[0].commitLinks[0].commitCallId, "A3");
+  assert.deepEqual(report.sessions[0].commitLinks[0].linkedEditCallIds, []);
+  assert.deepEqual(report.sessions[0].commitLinks[0].linkedEditFiles, []);
+  assert.match(report.sessions[0].commitLinks[0].facts.join("\n"), /Create commit call A3/u);
+  assert.match(report.sessions[0].commitLinks[0].facts.join("\n"), /No observed Edit\/Write path/u);
+  assert.match(report.sessions[0].commitLinks[0].limitations.join("\n"), /files may have been changed before/u);
+});
+
+test("report model links Edit/Write calls to the next direct commit by time and exact path", () => {
+  const session = fixtureSession();
+  const firstPath = "src/first.mjs";
+  const secondPath = "src/second.mjs";
+  const report = buildHarnessInspectorReport({
+    repoRoot: "/workspace/repo",
+    featureTree: parseFeatureTreeMarkdown(FEATURE_TREE),
+    sessions: [fixtureSession({
+      files: [firstPath, secondPath],
+      fileEditCount: 2,
+      toolActivity: {
+        ...session.toolActivity,
+        calls: [
+          { id: "A1", step: 1, toolName: "Edit", operation: "edit-files", actionLabel: "Edit files", family: "change", status: "observed", durationStatus: "observed", durationMs: 100, startedAt: Date.parse("2026-08-12T08:10:00.000Z"), filePath:firstPath },
+          { id: "A2", step: 2, toolName: "Write", operation: "edit-files", actionLabel: "Edit files", family: "change", status: "observed", durationStatus: "observed", durationMs: 100, startedAt: Date.parse("2026-08-12T08:50:00.000Z"), filePath:secondPath },
+        ],
+      },
+    })],
+    correlation: {
+      schemaVersion: 1,
+      commits: [
+        {
+          hash: "c".repeat(40), shortHash: "ccccccc", subject: "feat: first change",
+          authoredAt: "2026-08-12T08:45:00.000Z", committedAt: "2026-08-12T08:45:00.000Z",
+          fileCount: 1, files: [{ path:firstPath, added: 1, removed: 0 }], linesAdded: 1, linesRemoved: 0,
+          matches: [{ sessionId:"session-a", confidence:"high", evidence:{ commitObservedInCall:"A3", timeOverlap:true, cwdWithinRepo:true } }],
+        },
+        {
+          hash: "e".repeat(40), shortHash: "eeeeeee", subject: "feat: second change",
+          authoredAt: "2026-08-12T09:00:00.000Z", committedAt: "2026-08-12T09:00:00.000Z",
+          fileCount: 2, files: [{ path:firstPath, added: 1, removed: 0 }, { path:secondPath, added: 1, removed: 0 }], linesAdded: 2, linesRemoved: 0,
+          matches: [{ sessionId:"session-a", confidence:"high", evidence:{ commitObservedInCall:"A4", timeOverlap:true, cwdWithinRepo:true } }],
+        },
+      ],
+    },
+    filters: { platform:"codex" },
+  });
+
+  const first = report.sessions[0].commitLinks.find((link) => link.hash === "c".repeat(40));
+  const second = report.sessions[0].commitLinks.find((link) => link.hash === "e".repeat(40));
+  assert.deepEqual(first.linkedEditCallIds, ["A1"]);
+  assert.deepEqual(first.linkedEditFiles, [firstPath]);
+  assert.equal(first.commitCallId, "A3");
+  assert.deepEqual(second.linkedEditCallIds, ["A2"]);
+  assert.deepEqual(second.linkedEditFiles, [secondPath]);
+  assert.equal(second.commitCallId, "A4");
+  assert.match(second.facts.join("\n"), /1 observed Edit\/Write call.*1 exact changed path/u);
+  assert.match(second.limitations.join("\n"), /event order link the observed edits/u);
+});
+
 test("Inspector serializes one self-contained executable report document (AC-2, AC-7)", () => {
   const report = buildHarnessInspectorReport({
     repoRoot: "/workspace/repo",

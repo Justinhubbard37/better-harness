@@ -116,6 +116,7 @@ function projectCommit(commit) {
       confidence: match.confidence,
       evidence: {
         linkType: match.evidence?.linkType ?? null,
+        commitObservedInCall: safeText(match.evidence?.commitObservedInCall, 64),
         timeOverlap: match.evidence?.timeOverlap === true,
         overlappingFileCount: Number(match.evidence?.overlappingFileCount) || 0,
         overlappingFiles: (match.evidence?.overlappingFiles ?? []).map(safeRelativeFile).filter(Boolean),
@@ -419,6 +420,7 @@ function candidateSessionForStory(story, sessions) {
 const EDGE_LIMITATIONS = Object.freeze({
   declared: "A reviewed declaration identifies intended scope; it does not prove that every session action contributed to the delivery.",
   explicit: "Explicit metadata links the objects; it does not attribute every changed line to a specific tool call.",
+  "observed-commit": "The session created this Git commit, but its files may have been changed before the observed session began.",
   observed: "Exact shared repository paths are direct same-path evidence, not proof that the session authored the commit.",
   candidate: "Heuristic evidence suggests a relationship but requires reviewer confirmation.",
   contextual: "Shared path or date context keeps the objects nearby; it is not a correlated delivery claim.",
@@ -426,7 +428,7 @@ const EDGE_LIMITATIONS = Object.freeze({
 
 function edgeEvidence({ kind, source, facts = [], limitation }) {
   const strength = ["declared", "explicit"].includes(kind) ? "direct"
-    : kind === "observed-overlap" ? "observed"
+    : ["observed-commit", "observed-overlap"].includes(kind) ? "observed"
       : kind === "candidate" ? "candidate"
         : "contextual";
   const limitationKind = kind === "observed-overlap" ? "observed"
@@ -440,11 +442,19 @@ function edgeEvidence({ kind, source, facts = [], limitation }) {
   };
 }
 
-function sessionCommitEdge(match, overlappingFiles) {
+function sessionCommitEdge(match, overlappingFiles, editEvidence) {
   const explicit = Boolean(match.evidence.linkType);
-  const kind = explicit ? "explicit" : overlappingFiles.length > 0 ? "observed-overlap" : "candidate";
+  const observedCommit = Boolean(match.evidence.commitObservedInCall);
+  const direct = explicit || observedCommit;
+  const kind = explicit ? "explicit" : observedCommit ? "observed-commit" : overlappingFiles.length > 0 ? "observed-overlap" : "candidate";
   const facts = [];
   if (explicit) facts.push(`Commit metadata declares ${match.evidence.linkType}.`);
+  if (observedCommit) facts.push(`Observed Create commit call ${match.evidence.commitObservedInCall} contains this commit time.`);
+  if (editEvidence.callIds.length > 0) {
+    facts.push(`${editEvidence.callIds.length} observed Edit/Write call(s) share ${editEvidence.files.length} exact changed path(s) before this commit.`);
+  } else if (direct) {
+    facts.push("No observed Edit/Write path in this session links to this commit.");
+  }
   if (match.evidence.timeOverlap) facts.push("Session activity and commit time windows overlap.");
   if (overlappingFiles.length > 0) facts.push(`${overlappingFiles.length} exact repository path(s) occur in both objects.`);
   if (match.evidence.cwdWithinRepo) facts.push("The observed session working directory is within this repository.");
@@ -454,8 +464,47 @@ function sessionCommitEdge(match, overlappingFiles) {
       kind,
       source: "commit-session-link",
       facts,
+      limitation: editEvidence.callIds.length > 0
+        ? "Exact path overlap and event order link the observed edits to this commit; they do not prove the final committed contents came exclusively from those calls."
+        : undefined,
     }),
   };
+}
+
+function commitTimeMs(commit) {
+  const value = Date.parse(commit.committedAt ?? commit.authoredAt ?? "");
+  return Number.isFinite(value) ? value : null;
+}
+
+function directCommitMatch(commit, sessionId) {
+  return commit.matches.find((match) => match.sessionId === sessionId
+    && Boolean(match.evidence.linkType || match.evidence.commitObservedInCall)) ?? null;
+}
+
+// An Edit/Write call is linked to a Commit only when its observed start sits
+// after the preceding directly linked Commit, before this Commit, and at least
+// one of its exact repository paths occurs in the Commit. This keeps a single
+// edit from leaking forward into every later Commit in the same session.
+function linkedEditEvidence(session, commit, match, commits) {
+  const direct = Boolean(match.evidence.linkType || match.evidence.commitObservedInCall);
+  const currentTime = commitTimeMs(commit);
+  if (!direct || currentTime === null) return { callIds: [], files: [] };
+
+  const previousCommitTime = commits
+    .filter((candidate) => candidate.hash !== commit.hash && directCommitMatch(candidate, session.sessionId))
+    .map(commitTimeMs)
+    .filter((time) => time !== null && time < currentTime)
+    .sort((left, right) => right - left)[0] ?? Date.parse(session.firstSeen ?? "");
+  const lowerBound = Number.isFinite(previousCommitTime) ? previousCommitTime : Number.NEGATIVE_INFINITY;
+  const changedPaths = new Set(commit.files.map((file) => file.path));
+  const calls = session.toolActivity.calls.filter((call) => call.operation === "edit-files"
+    && Number.isFinite(call.startedAt)
+    && call.startedAt > lowerBound
+    && call.startedAt <= currentTime
+    && (call.filePaths ?? (call.filePath ? [call.filePath] : [])).some((filePath) => changedPaths.has(filePath)));
+  const files = [...new Set(calls.flatMap((call) => call.filePaths ?? (call.filePath ? [call.filePath] : []))
+    .filter((filePath) => changedPaths.has(filePath)))];
+  return { callIds: calls.map((call) => call.id), files };
 }
 
 function buildStoryLinks(tree, sessions, commits, diagnostics) {
@@ -535,11 +584,15 @@ function buildStoryLinks(tree, sessions, commits, diagnostics) {
       if (!session) continue;
       const activityFiles = new Set(session.toolActivity.files.map((file) => file.path));
       const overlappingFiles = commit.files.map((file) => file.path).filter((file) => activityFiles.has(file));
+      const editEvidence = linkedEditEvidence(session, commit, match, commits);
       session.commitLinks.push({
         hash: commit.hash,
         confidence: match.confidence,
         overlappingFiles,
-        ...sessionCommitEdge(match, overlappingFiles),
+        commitCallId: match.evidence.commitObservedInCall ?? null,
+        linkedEditCallIds: editEvidence.callIds,
+        linkedEditFiles: editEvidence.files,
+        ...sessionCommitEdge(match, overlappingFiles, editEvidence),
       });
     }
   }
@@ -556,6 +609,9 @@ function buildStoryLinks(tree, sessions, commits, diagnostics) {
         confidence: "contextual",
         evidenceKind: "file-context",
         overlappingFiles,
+        commitCallId: null,
+        linkedEditCallIds: [],
+        linkedEditFiles: [],
         ...edgeEvidence({
           kind: "file-context",
           source: "exact-repository-path",
