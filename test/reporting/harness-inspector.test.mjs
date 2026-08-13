@@ -574,6 +574,81 @@ test("activity projection carries a wall-clock timeline and falls back to call o
   assert.equal(Object.hasOwn(untimed.calls[0], "startedAt"), false);
 });
 
+test("SessionReplay preserves retained order and labels observed versus sequence-only time", () => {
+  const report = buildHarnessInspectorReport({
+    repoRoot: "/workspace/repo",
+    featureTree: parseFeatureTreeMarkdown(FEATURE_TREE),
+    sessions: [fixtureSession()],
+    correlation: fixtureCorrelation(),
+  });
+  const replay = report.sessions[0].replay;
+  assert.equal(replay.kind, "SessionReplay");
+  assert.equal(replay.schemaVersion, 1);
+  assert.equal(replay.timeBasis, "observed-time");
+  assert.deepEqual(replay.events.map((event) => event.type), [
+    "prompt",
+    "tool-call",
+    "intermediate",
+    "commit",
+    "tool-call",
+    "response",
+  ]);
+  assert.deepEqual(replay.events.map((event) => event.order), [1, 2, 3, 4, 5, 6]);
+  assert.equal(replay.events.find((event) => event.type === "intermediate").timeBasis, "sequence-only");
+  assert.equal(replay.events.find((event) => event.type === "response").timeBasis, "turn-boundary");
+  assert.equal(replay.events.find((event) => event.type === "commit").title.startsWith("aaaaaaa"), true);
+  assert.equal(replay.events.some((event) => event.id === `commit:${"b".repeat(40)}`), false);
+  assert.deepEqual(
+    replay.files.find((file) => file.path === "scripts/harness-inspector/render-html.mjs").eventIds,
+    ["call:A1", `commit:${"a".repeat(40)}`],
+  );
+
+  const base = fixtureSession();
+  const sequenceReplay = buildHarnessInspectorReport({
+    repoRoot: "/workspace/repo",
+    featureTree: parseFeatureTreeMarkdown(FEATURE_TREE),
+    sessions: [{
+      ...base,
+      dialogue: {
+        ...base.dialogue,
+        turns: base.dialogue.turns.map((turn) => ({
+          ...turn,
+          prompt: { ...turn.prompt, timestamp: null },
+          startMs: null,
+          endMs: null,
+        })),
+      },
+      toolActivity: { ...base.toolActivity, calls: base.toolActivity.calls.map(({ startedAt, ...call }) => call) },
+    }],
+    correlation: { commits: [] },
+  }).sessions[0].replay;
+  assert.equal(sequenceReplay.timeBasis, "call-sequence");
+  assert.equal(sequenceReplay.timedEventCount, 0);
+  assert.equal(sequenceReplay.events.every((event) => event.timeBasis === "sequence-only"), true);
+});
+
+test("SessionReplay flags a clipped body as an excerpt and leaves whole bodies unmarked", () => {
+  const base = fixtureSession();
+  const longDetail = `rg -n ${"pattern ".repeat(80)}`;
+  const replay = buildHarnessInspectorReport({
+    repoRoot: "/workspace/repo",
+    featureTree: parseFeatureTreeMarkdown(FEATURE_TREE),
+    sessions: [{
+      ...base,
+      toolActivity: {
+        ...base.toolActivity,
+        calls: base.toolActivity.calls.map((call, index) => (index === 0 ? { ...call, detail: longDetail } : call)),
+      },
+    }],
+    correlation: fixtureCorrelation(),
+  }).sessions[0].replay;
+  const clipped = replay.events.find((event) => event.id === "call:A1");
+  const prompt = replay.events.find((event) => event.type === "prompt");
+  assert.equal(clipped.body.endsWith("\u2026"), true);
+  assert.equal(clipped.bodyExcerpt, true);
+  assert.equal(Object.hasOwn(prompt, "bodyExcerpt"), false);
+});
+
 test("one turn vocabulary is projected and retained prompts resolve to their real Turn", () => {
   const base = fixtureSession();
   const report = buildHarnessInspectorReport({

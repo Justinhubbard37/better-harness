@@ -623,6 +623,184 @@ function buildStoryLinks(tree, sessions, commits, diagnostics) {
   return stories;
 }
 
+function replayClock(value) {
+  if (Number.isFinite(value)) return Math.round(value);
+  const parsed = Date.parse(value ?? "");
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function buildSessionReplay(session, commits) {
+  const callsById = new Map(session.toolActivity.calls.map((call) => [call.id, call]));
+  const events = [];
+  const placedCallIds = new Set();
+  let sequence = 0;
+  const append = (event) => {
+    sequence += 1;
+    // Bounded projection text keeps its ellipsis, so Replay can say the body is an
+    // excerpt instead of showing a silently clipped command.
+    const bodyExcerpt = typeof event.body === "string" && event.body.endsWith("…");
+    events.push({ ...event, ...(bodyExcerpt ? { bodyExcerpt: true } : {}), order: sequence });
+  };
+
+  for (const turn of session.dialogue.turns) {
+    const promptAt = replayClock(turn.prompt?.timestamp);
+    const turnStart = replayClock(turn.startMs);
+    append({
+      id: `turn:${turn.index}:prompt`,
+      type: "prompt",
+      turnIndex: turn.index,
+      label: "Prompt",
+      title: `User prompt ${turn.index}`,
+      body: safeText(turn.prompt?.text, 1_500, "Prompt unavailable after privacy filtering"),
+      timeBasis: promptAt !== null ? "observed" : turnStart !== null ? "turn-boundary" : "sequence-only",
+      ...(promptAt !== null || turnStart !== null ? { atMs: promptAt ?? turnStart } : {}),
+      selection: { type: "turn", sessionId: session.sessionId, turnIndex: turn.index },
+      files: [],
+    });
+
+    let noteIndex = 0;
+    for (const step of turn.steps) {
+      if (step.kind === "note") {
+        noteIndex += 1;
+        append({
+          id: `turn:${turn.index}:note:${noteIndex}`,
+          type: "intermediate",
+          turnIndex: turn.index,
+          label: "Intermediate",
+          title: `Intermediate response ${noteIndex}`,
+          body: safeText(step.text, 400, "Intermediate response unavailable"),
+          timeBasis: "sequence-only",
+          selection: { type: "turn", sessionId: session.sessionId, turnIndex: turn.index },
+          files: [],
+        });
+        continue;
+      }
+      if (step.kind !== "tool") continue;
+      const call = callsById.get(step.callId);
+      if (!call) continue;
+      placedCallIds.add(call.id);
+      const atMs = replayClock(call.startedAt);
+      const files = [...(call.filePaths ?? (call.filePath ? [call.filePath] : []))];
+      append({
+        id: `call:${call.id}`,
+        type: "tool-call",
+        turnIndex: turn.index,
+        label: call.actionLabel,
+        title: `${call.id} · ${call.actionLabel}`,
+        body: safeText(call.detail, 240, `${call.toolName} input was not retained`),
+        meta: safeText(call.toolName, 64, "Unknown tool"),
+        status: call.status,
+        timeBasis: atMs !== null ? "observed" : "sequence-only",
+        ...(atMs !== null ? { atMs } : {}),
+        ...(call.durationStatus === "observed" && Number.isFinite(call.durationMs) ? { durationMs: call.durationMs } : {}),
+        selection: { type: "tool-call", sessionId: session.sessionId, callId: call.id },
+        files,
+      });
+    }
+
+    const responseAt = replayClock(turn.endMs);
+    append({
+      id: `turn:${turn.index}:response`,
+      type: "response",
+      turnIndex: turn.index,
+      label: "Response",
+      title: "Assistant response",
+      body: safeText(turn.response, 6_000, "Response body was unavailable or removed by privacy filtering."),
+      availability: turn.response ? "retained" : "unavailable",
+      timeBasis: responseAt !== null ? "turn-boundary" : "sequence-only",
+      ...(responseAt !== null ? { atMs: responseAt } : {}),
+      selection: { type: "turn", sessionId: session.sessionId, turnIndex: turn.index },
+      files: [],
+    });
+  }
+
+  const insertByObservedTime = (event) => {
+    const nextIndex = events.findIndex((candidate) => Number.isFinite(candidate.atMs) && candidate.atMs > event.atMs);
+    if (nextIndex === -1) events.push(event);
+    else events.splice(nextIndex, 0, event);
+  };
+
+  const unplacedCalls = session.toolActivity.calls
+    .filter((call) => !placedCallIds.has(call.id))
+    .slice()
+    .sort((left, right) => (replayClock(left.startedAt) ?? Number.POSITIVE_INFINITY)
+      - (replayClock(right.startedAt) ?? Number.POSITIVE_INFINITY) || left.step - right.step);
+  for (const call of unplacedCalls) {
+    const atMs = replayClock(call.startedAt);
+    const files = [...(call.filePaths ?? (call.filePath ? [call.filePath] : []))];
+    const event = {
+      id: `call:${call.id}`,
+      type: "tool-call",
+      turnIndex: null,
+      label: call.actionLabel,
+      title: `${call.id} · ${call.actionLabel}`,
+      body: safeText(call.detail, 240, `${call.toolName} input was not retained`),
+      meta: safeText(call.toolName, 64, "Unknown tool"),
+      status: call.status,
+      timeBasis: atMs !== null ? "observed" : "sequence-only",
+      ...(atMs !== null ? { atMs } : {}),
+      ...(call.durationStatus === "observed" && Number.isFinite(call.durationMs) ? { durationMs: call.durationMs } : {}),
+      selection: { type: "tool-call", sessionId: session.sessionId, callId: call.id },
+      files,
+    };
+    if (atMs === null) events.push(event);
+    else insertByObservedTime(event);
+  }
+
+  const directCommitLinks = session.commitLinks.filter((link) => ["explicit", "observed-commit"].includes(link.evidenceKind));
+  for (const link of directCommitLinks) {
+    const commit = commits.find((candidate) => candidate.hash === link.hash);
+    const atMs = commit ? commitTimeMs(commit) : null;
+    if (!commit || atMs === null) continue;
+    insertByObservedTime({
+      id: `commit:${commit.hash}`,
+      type: "commit",
+      turnIndex: null,
+      label: "Commit",
+      title: `${commit.shortHash} · ${commit.subject}`,
+      body: safeText(`${commit.fileCount} files · +${commit.linesAdded} / -${commit.linesRemoved}. ${link.limitations[0] ?? ""}`, 600),
+      meta: link.evidenceKind,
+      timeBasis: "observed",
+      atMs,
+      selection: { type: "commit", hash: commit.hash, contextSessionId: session.sessionId },
+      files: commit.files.map((file) => file.path),
+    });
+  }
+
+  events.forEach((event, index) => { event.order = index + 1; });
+  const eventTimes = events.map((event) => event.atMs).filter(Number.isFinite);
+  const observedStart = replayClock(session.firstSeen);
+  const observedEnd = replayClock(session.lastSeen);
+  const startCandidates = [...eventTimes, observedStart].filter(Number.isFinite);
+  const endCandidates = [...events.map((event) => Number.isFinite(event.atMs)
+    ? event.atMs + (Number.isFinite(event.durationMs) ? event.durationMs : 0)
+    : null), observedEnd].filter(Number.isFinite);
+  const files = new Map();
+  for (const event of events) {
+    for (const filePath of event.files) {
+      const file = files.get(filePath) ?? { path: filePath, eventIds: [] };
+      file.eventIds.push(event.id);
+      files.set(filePath, file);
+    }
+  }
+  for (const file of session.toolActivity.files) {
+    if (!files.has(file.path)) files.set(file.path, { path: file.path, eventIds: [] });
+  }
+
+  return {
+    kind: "SessionReplay",
+    schemaVersion: 1,
+    timeBasis: eventTimes.length ? "observed-time" : "call-sequence",
+    startMs: startCandidates.length ? Math.min(...startCandidates) : null,
+    endMs: endCandidates.length ? Math.max(...endCandidates) : null,
+    eventCount: events.length,
+    timedEventCount: eventTimes.length,
+    sequenceOnlyCount: events.filter((event) => event.timeBasis === "sequence-only").length,
+    files: [...files.values()].sort((left, right) => left.path.localeCompare(right.path)),
+    events,
+  };
+}
+
 function buildDays(sessions, commits) {
   const byDay = new Map();
   const ensure = (day) => {
@@ -691,6 +869,7 @@ export function buildHarnessInspectorReport({
   const commits = (correlation?.commits ?? []).map(projectCommit);
   const reportDiagnostics = diagnostics.map((item) => safeText(item, 240)).filter(Boolean);
   const stories = buildStoryLinks(tree, projectedSessions, commits, reportDiagnostics);
+  for (const session of projectedSessions) session.replay = buildSessionReplay(session, commits);
   const stages = [...new Set(tree.nodes.map((node) => node.stage).filter(Boolean))].sort();
   const unmappedSessionIds = projectedSessions.filter((session) => session.storyLinks.length === 0).map((session) => session.sessionId);
 
