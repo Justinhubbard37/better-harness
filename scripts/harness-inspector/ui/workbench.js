@@ -525,7 +525,7 @@
       + '<footer class="chart-legend"><span>' + inDomain.length + ' of ' + activity.totalCalls + ' calls in view</span>'
       + (longestGap ? '<span>longest idle ' + escape(formatSpan(longestGap.gap)) + ' at ' + escape(formatShortClock(longestGap.at)) + ' UTC</span>' : '')
       + (untimed ? '<span class="chart-warning">' + untimed + ' without observed timing</span>' : '')
-      + '<span><i class="legend-dot failed"></i>failed</span><span><i class="legend-dot gap"></i>idle window</span>'
+      + '<span><i class="legend-dot failed"></i>failed</span><span><i class="legend-dot gap"></i>idle window (no observed call, not user wait)</span>'
       + (domain.timeBasis ? '<span><i class="legend-dot commit"></i>directly linked commit</span>' : '')
       + '<span>' + escape(basisNote) + '</span></footer></section>';
   }
@@ -616,7 +616,7 @@
       const first = run.calls[0];
       const last = run.calls.at(-1);
       const total = run.calls.reduce((sum,call) => sum + (call.durationStatus === 'observed' ? call.durationMs : 0),0);
-      return '<details class="session-tool-run" id="' + escape(session.sessionId + '-run-' + index) + '"><summary><span class="session-tool-id">' + escape(first.id) + '–' + escape(last.id) + '</span>'
+      return '<details class="session-tool-run" data-tool="' + escape(first.toolName) + '" data-call-count="' + run.calls.length + '" id="' + escape(session.sessionId + '-run-' + index) + '"><summary><span class="session-tool-id">' + escape(first.id) + '–' + escape(last.id) + '</span>'
         + '<span class="session-tool-copy"><strong>' + escape(first.actionLabel) + ' ×' + run.calls.length + '</strong><code>' + escape(first.toolName) + '</code></span>'
         + '<span class="session-tool-time"><code>' + escape(formatStamp(first.startedAt) ?? '—') + '</code><small>' + escape(total ? formatLatency(total) + ' total' : '—') + '</small></span>'
         + (first.detail ? '<code class="session-tool-detail">' + escape(first.detail) + '</code>' : '')
@@ -649,13 +649,17 @@
     });
     const turns = session.dialogue?.turns?.length ? session.dialogue.turns : fallbackTurns;
     const placement = placeCommits(commits,turns,session);
+    // Short sessions open every Turn's tool calls by default so the trace reads
+    // top to bottom without a click per Turn; long sessions stay collapsed and
+    // lean on the linked timeline strip to jump into a dense stretch instead.
+    const denseTurns = turns.length > 12;
 
     const turnEvents = turns.map(turn => {
       const anchor = turn.anchorId ?? ('turn-' + turn.index);
       const prompt = '<button type="button" class="session-event prompt" data-session-event="prompts" ' + selectionAttrs({ type:'turn', sessionId:session.sessionId, turnIndex:turn.index }) + '><header class="session-event-head"><strong>User prompt ' + turn.index + '</strong><span>' + escape(turn.prompt?.timestamp ? formatClock(turn.prompt.timestamp) : '') + '</span></header><div class="session-event-body session-prose"><p>' + escape(turn.prompt?.text ?? 'Prompt unavailable after privacy filtering') + '</p></div></button>';
       const notes = turn.steps.filter(step => step.kind === 'note').map((step,noteIndex) => '<article class="session-event intermediate" data-session-event="intermediate"><div class="session-note-label">Intermediate response ' + (noteIndex + 1) + '</div><p>' + escape(step.text) + '</p></article>').join('');
       const calls = turn.steps.filter(step => step.kind === 'tool').map(step => callsById.get(step.callId)).filter(Boolean);
-      const toolEvent = calls.length ? '<details class="session-event tools" data-session-event="tools"><summary class="session-event-head"><strong>' + calls.length + ' tool call' + (calls.length === 1 ? '' : 's') + '</strong><span>' + turn.toolCallCount + ' observed in turn</span></summary>' + toolListMarkup(session,calls) + '</details>' : '';
+      const toolEvent = calls.length ? '<details class="session-event tools" data-session-event="tools"' + (denseTurns ? '' : ' open') + '><summary class="session-event-head"><strong>' + calls.length + ' tool call' + (calls.length === 1 ? '' : 's') + '</strong><span>' + turn.toolCallCount + ' observed in turn</span></summary>' + toolListMarkup(session,calls) + '</details>' : '';
       const response = '<article class="session-event response' + (turn.response ? '' : ' session-unavailable') + '" data-session-event="responses"><header class="session-event-head"><strong>Assistant response</strong><span>' + (turn.response ? 'retained' : 'unavailable') + '</span></header><div class="session-event-body session-prose"><p>' + escape(turn.response ?? 'Response body was unavailable or removed by privacy filtering.') + '</p></div></article>';
       const clock = Number.isFinite(turn.startMs) ? formatShortClock(turn.startMs) + (Number.isFinite(turn.endMs) ? '–' + formatShortClock(turn.endMs) : '') + ' UTC · ' : '';
       const summary = clock + turn.messageCount + ' intermediate events · ' + turn.toolCallCount + ' tool calls' + (Number.isFinite(turn.durationMs) ? ' · ' + formatDuration(turn.durationMs) : '');
@@ -664,13 +668,23 @@
     }).join('');
 
     const placedCallIds = new Set(turns.flatMap(turn => turn.steps.filter(step => step.kind === 'tool').map(step => step.callId)));
-    const unplacedCalls = session.toolActivity.calls.filter(call => !placedCallIds.has(call.id));
+    // Order the page-tail bucket by observed start time so a session with no
+    // dialogue Turns still reads as a trace. This reuses the same startedAt the
+    // timeline strip plots; it never infers a time the host did not observe.
+    const unplacedCalls = session.toolActivity.calls
+      .filter(call => !placedCallIds.has(call.id))
+      .slice()
+      .sort((left,right) => {
+        const leftTime = Number.isFinite(left.startedAt) ? left.startedAt : Infinity;
+        const rightTime = Number.isFinite(right.startedAt) ? right.startedAt : Infinity;
+        return leftTime - rightTime || String(left.id).localeCompare(String(right.id));
+      });
     const unplacedFiles = unplacedCalls.length || turns.length === 0 ? session.toolActivity.files : [];
     const unplacedFileEvent = unplacedFiles.length
       ? '<article class="session-event files"><header class="session-event-head"><strong>' + unplacedFiles.length + ' attributed file path' + (unplacedFiles.length === 1 ? '' : 's') + '</strong><span>observed tool evidence</span></header><div class="session-file-list">' + unplacedFiles.map(file => '<button type="button" ' + selectionAttrs({ type:'file', path:file.path, contextSessionId:session.sessionId }) + '>' + escape(file.path) + '</button>').join('') + '</div></article>'
       : '';
     const unplacedToolEvent = unplacedCalls.length
-      ? '<details class="session-event tools" data-session-event="tools" open><summary class="session-event-head"><strong>' + unplacedCalls.length + ' unplaced tool call' + (unplacedCalls.length === 1 ? '' : 's') + '</strong><span>retained without a dialogue Turn</span></summary>' + toolListMarkup(session,unplacedCalls) + '</details>'
+      ? '<details class="session-event tools" data-session-event="tools" open><summary class="session-event-head"><strong>' + unplacedCalls.length + ' tool call' + (unplacedCalls.length === 1 ? '' : 's') + ' not tied to a Turn</strong><span>ordered by observed time</span></summary>' + toolListMarkup(session,unplacedCalls) + '</details>'
       : '';
     const unplacedMarkup = unplacedToolEvent || unplacedFileEvent
       ? '<section class="session-turn session-unplaced" id="session-unplaced"><header class="session-turn-head"><strong>Unplaced evidence</strong><span>observed evidence retained outside dialogue</span></header>' + unplacedToolEvent + unplacedFileEvent + '</section>'
@@ -689,7 +703,7 @@
       + (unplacedMarkup ? '<option value="session-unplaced">Unplaced evidence</option>' : '')
       + (outsideMarkup ? '<option value="session-outside-commits">Commits outside turn windows</option>' : '');
     const timeline = turnEvents + unplacedMarkup + outsideMarkup || '<div class="empty-state">No retained dialogue or observed evidence exists for this session.</div>';
-    return { title, html:'<div class="session-shell"><header class="session-titlebar"><div><h2>' + escape(title) + '</h2><div class="session-meta"><span class="session-platform">' + escape(session.platform) + '</span><span>' + escape(session.models.join(', ') || 'model unavailable') + '</span><span>' + formatDuration(session.durationMs) + '</span><span title="' + escape(coverageTitle(session)) + '">' + coverage.turnCount + ' turns</span><span>' + session.toolActivity.totalCalls + ' tool calls</span><span>' + session.fileEditCount + ' file edits</span><span>' + escape(formatTokens(session.tokenUsage)) + '</span>' + truncatedNote + '</div></div><button class="session-context-button" data-session-context>Continuation packet</button></header><div class="session-layout"><main class="session-timeline">' + timeline + '</main><aside class="session-sidebar"><section><h3>Jump to</h3><select class="jump-select" data-session-jump>' + jumpOptions + '</select><div class="session-bulk"><button type="button" data-expand-tools="open">Expand all calls</button><button type="button" data-expand-tools="close">Collapse all</button></div></section><section><h3>Filters</h3><div class="session-filter-list"><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="prompts"><span>Prompts</span><em>' + turns.length + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="responses"><span>Responses</span><em>' + responseCount + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="intermediate"><span>Intermediate</span><em>' + noteCount + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="commits"><span>Commits</span><em>' + commits.length + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="tools"><span>Tool calls</span><em>' + session.toolActivity.totalCalls + '</em></label>' + filters + '<label class="session-filter subtype"><input type="checkbox" checked data-session-file-filter><span>File paths</span><em>' + session.toolActivity.files.length + '</em></label></div></section><section><h3>Source</h3><div class="session-meta"><span>' + sourceLabel + '</span></div></section></aside></div></div>' };
+    return { title, html:'<div class="session-shell"><header class="session-titlebar"><div><h2>' + escape(title) + '</h2><div class="session-meta"><span class="session-platform">' + escape(session.platform) + '</span><span>' + escape(session.models.join(', ') || 'model unavailable') + '</span><span>' + formatDuration(session.durationMs) + '</span><span title="' + escape(coverageTitle(session)) + '">' + coverage.turnCount + ' turns</span><span>' + session.toolActivity.totalCalls + ' tool calls</span><span>' + session.fileEditCount + ' file edits</span><span>' + escape(formatTokens(session.tokenUsage)) + '</span>' + truncatedNote + '</div></div><button class="session-context-button" data-session-context>Continuation packet</button></header>' + (session.toolActivity.totalCalls ? '<details class="session-axis-panel" data-session-axis open><summary><span>Activity timeline</span><small>click a bar to jump to those calls · drag to zoom</small></summary><div class="session-axis" data-activity-chart="' + escape(session.sessionId) + '"></div></details>' : '') + '<div class="session-layout"><main class="session-timeline">' + timeline + '</main><aside class="session-sidebar"><section><h3>Jump to</h3><select class="jump-select" data-session-jump>' + jumpOptions + '</select><div class="session-bulk"><button type="button" data-expand-tools="open">Expand all calls</button><button type="button" data-expand-tools="close">Collapse all</button></div></section><section><h3>Filters</h3><div class="session-filter-list"><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="prompts"><span>Prompts</span><em>' + turns.length + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="responses"><span>Responses</span><em>' + responseCount + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="intermediate"><span>Intermediate</span><em>' + noteCount + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="commits"><span>Commits</span><em>' + commits.length + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="tools"><span>Tool calls</span><em>' + session.toolActivity.totalCalls + '</em></label>' + filters + '<label class="session-filter subtype"><input type="checkbox" checked data-session-file-filter><span>File paths</span><em>' + session.toolActivity.files.length + '</em></label></div></section><section><h3>Source</h3><div class="session-meta"><span>' + sourceLabel + '</span></div></section></aside></div></div>' };
   }
 
   function applySessionFilters() {
@@ -697,10 +711,30 @@
       document.querySelectorAll('[data-session-event="' + CSS.escape(input.dataset.sessionKindFilter) + '"]').forEach(event => event.classList.toggle('session-hidden',!input.checked));
     });
     document.querySelectorAll('[data-session-tool-filter]').forEach(input => {
-      document.querySelectorAll('[data-session-tool-row][data-tool="' + CSS.escape(input.dataset.sessionToolFilter) + '"]').forEach(row => row.classList.toggle('session-hidden',!input.checked));
+      const selector = '[data-tool="' + CSS.escape(input.dataset.sessionToolFilter) + '"]';
+      // A collapsed run stands in for its own tool, so hide the run summary with
+      // the rows it represents; otherwise unchecking a tool leaves the run band
+      // visible and the filter contradicts what is on screen.
+      document.querySelectorAll('.session-tool-row' + selector + ', details.session-tool-run' + selector).forEach(row => row.classList.toggle('session-hidden',!input.checked));
     });
     const fileFilter = document.querySelector('[data-session-file-filter]');
     document.querySelectorAll('.session-tool-file').forEach(file => file.classList.toggle('session-hidden',fileFilter && !fileFilter.checked));
+    // Report how many calls survive the current filters, counting a collapsed
+    // run once per grouped call, so the sidebar total tracks what is shown.
+    const toolsEm = document.querySelector('[data-session-kind-filter="tools"]')?.closest('.session-filter')?.querySelector('em');
+    if (toolsEm) {
+      let visible = 0;
+      // Standalone rows count once; a run's inner rows are represented by the
+      // run's own callCount, so they are excluded here to avoid double counting.
+      // Disclosure state (closed details, "show more" overflow) is deliberately
+      // ignored — the total tracks the filters, not what is expanded.
+      document.querySelectorAll('#session-view .session-tool-row').forEach(row => {
+        if (row.closest('.session-tool-run')) return;
+        if (!row.closest('.session-hidden')) visible += 1;
+      });
+      document.querySelectorAll('#session-view details.session-tool-run').forEach(run => { if (!run.closest('.session-hidden')) visible += Number(run.dataset.callCount) || 0; });
+      toolsEm.textContent = String(visible);
+    }
   }
 
   function sessionSelectionTarget(selection,item) {
@@ -767,6 +801,11 @@
     }
     renderEvidenceDrawer();
     requestAnimationFrame(() => {
+      const axis = document.querySelector('[data-session-axis] [data-activity-chart]');
+      if (axis && !axis.childElementCount) {
+        renderActivityChart(axis);
+        chartObserver?.observe(axis);
+      }
       revealSelectionTarget(sessionSelectionTarget(selection,item));
       observeTurnsForJump();
       applySelectionPresentation();
@@ -1254,7 +1293,11 @@
     const bin = event.target.closest('[data-chart-bin]');
     if (bin) {
       const sessionId = bin.dataset.sessionId;
-      if (Number(bin.dataset.binCount) === 1) { setSelection({ type:'tool-call', sessionId, callId:bin.dataset.callId }); return; }
+      // Inside Session View the strip is a minimap: a bar always scrolls the
+      // list to the calls under it, and a multi-call bar zooms in as well.
+      const inSession = event.target.closest('#session-view');
+      const locate = () => inSession && revealSelectionTarget(sessionSelectionTarget({ type:'tool-call', sessionId, callId:bin.dataset.callId },state.sessionItem));
+      if (Number(bin.dataset.binCount) === 1) { setSelection({ type:'tool-call', sessionId, callId:bin.dataset.callId }); locate(); return; }
       const surface = bin.ownerSVGElement?.querySelector('[data-chart-surface]');
       const fullMin = Number(surface?.dataset.fullMin);
       const fullWidth = Math.max(1,Number(surface?.dataset.fullMax) - fullMin);
@@ -1262,10 +1305,17 @@
       const to = (Number(bin.dataset.binTo) - fullMin) / fullWidth;
       const padding = Math.max(0.004,(to - from) * 0.3);
       setZoom(sessionId,Math.max(0,from - padding),Math.min(1,to + padding));
+      locate();
       return;
     }
     const mark = event.target.closest('.chart-mark');
-    if (mark) { showChartDetail(mark); setSelection(descriptorFromElement(mark)); return; }
+    if (mark) {
+      showChartDetail(mark);
+      const descriptor = descriptorFromElement(mark);
+      setSelection(descriptor);
+      if (event.target.closest('#session-view')) revealSelectionTarget(sessionSelectionTarget(descriptor,state.sessionItem));
+      return;
+    }
     const mode = event.target.closest('[data-mode]');
     if (mode) { setMode(mode.dataset.mode); return; }
     const treeToggle = event.target.closest('[data-tree-toggle]');
@@ -1376,6 +1426,16 @@
   });
 
   document.addEventListener('toggle', event => {
+    const axisPanel = event.target.closest?.('[data-session-axis]');
+    if (axisPanel) {
+      if (!axisPanel.open) return;
+      const axis = axisPanel.querySelector('[data-activity-chart]');
+      if (axis && !axis.childElementCount) {
+        renderActivityChart(axis);
+        chartObserver?.observe(axis);
+      }
+      return;
+    }
     const details = event.target.closest?.('[data-activity-session]');
     if (!details) return;
     // Expanding the trace no longer collapses the delivery lane: reading what
