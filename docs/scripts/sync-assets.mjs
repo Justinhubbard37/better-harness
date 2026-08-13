@@ -1,8 +1,10 @@
 // Sync published assets from the repository root into docs/static/.
 // assets/ stays the single source of truth; synced targets are gitignored.
-import { cpSync, mkdirSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { renderHarnessInspectorDemoHtml } from "../../scripts/harness-inspector/demo-report.mjs";
 
 export function syncAssets({ repoRoot, siteRoot }) {
   const generatedDemoRoot = join(siteRoot, "static", "demo");
@@ -42,7 +44,11 @@ export function syncAssets({ repoRoot, siteRoot }) {
     mkdirSync(dirname(to), { recursive: true });
     cpSync(from, to, { recursive: true });
   }
-  return copies.length;
+  const inspectorDemo = join(generatedDemoRoot, "harness-inspector", "index.html");
+  mkdirSync(dirname(inspectorDemo), { recursive: true });
+  writeFileSync(inspectorDemo, renderHarnessInspectorDemoHtml(), "utf8");
+
+  return copies.length + 1;
 }
 
 const currentFile = fileURLToPath(import.meta.url);

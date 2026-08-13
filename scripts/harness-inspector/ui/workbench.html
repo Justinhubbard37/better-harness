@@ -3,14 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+{{BH_ROBOTS_META}}
 <link rel="icon" href="data:,">
 <title>{{BH_PAGE_TITLE}}</title>
 <style>{{BH_STYLES}}</style>
 </head>
-<body>
+<body{{BH_BODY_ATTRIBUTES}}>
 <div class="app" data-harness-inspector>
   <aside class="scope-picker" aria-label="Scope picker">
-    <div class="brand"><div class="brand-copy"><small>Better Harness</small><strong>Harness Inspector</strong><span>{{BH_WORKSPACE_NAME}} · real local evidence</span></div><button class="picker-toggle" data-toggle-picker aria-expanded="true" aria-label="Collapse Delivery Tree"><span class="collapse-label">Hide</span><span class="expand-label">Show tree</span></button></div>
+    <div class="brand"><div class="brand-copy"><small>Better Harness</small><strong>Harness Inspector</strong><span>{{BH_WORKSPACE_NAME}} · {{BH_CONTEXT_LABEL}}</span></div><button class="picker-toggle" data-toggle-picker aria-expanded="true" aria-label="Collapse Delivery Tree"><span class="collapse-label">Hide</span><span class="expand-label">Show tree</span></button></div>
     <div class="mode-tabs" role="tablist" aria-label="Picker mode"><button id="mode-feature" role="tab" aria-controls="panel-feature" aria-selected="{{BH_FEATURE_TAB_SELECTED}}" data-mode="feature" class="{{BH_FEATURE_TAB_CLASS}}">Delivery Tree</button><button id="mode-date" role="tab" aria-controls="panel-date" aria-selected="{{BH_DATE_TAB_SELECTED}}" data-mode="date" class="{{BH_DATE_TAB_CLASS}}">Date</button></div>
     <section id="panel-feature" class="picker-panel {{BH_FEATURE_PANEL_CLASS}}" role="tabpanel" aria-labelledby="mode-feature" data-panel="feature"><div class="picker-heading"><strong>Capability tree</strong><span>{{BH_FEATURE_NODE_COUNT}} nodes</span></div>{{BH_FEATURE_PICKER}}</section>
     <section id="panel-date" class="picker-panel {{BH_DATE_PANEL_CLASS}}" role="tabpanel" aria-labelledby="mode-date" data-panel="date"><div class="picker-heading"><strong>UTC activity</strong><span>{{BH_DAY_COUNT}} days</span></div><div class="date-grid">{{BH_DATE_PICKER}}</div></section>

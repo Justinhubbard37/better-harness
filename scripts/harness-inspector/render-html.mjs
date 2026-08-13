@@ -82,15 +82,25 @@ function platformBadge(report) {
   return `${contributing.length} providers`;
 }
 
-export function renderHarnessInspectorHtml(report) {
+export function renderHarnessInspectorHtml(report, {
+  contextLabel = "real local evidence",
+  robots = null,
+  sample = false,
+} = {}) {
   if (report?.kind !== "HarnessInspectorReportV1") throw new Error("renderHarnessInspectorHtml requires HarnessInspectorReportV1");
+  if (robots !== null && robots !== "noindex, follow" && robots !== "noindex, nofollow") {
+    throw new Error("Harness Inspector robots must be noindex, follow or noindex, nofollow");
+  }
   const hasFeatureEvidence = report.stories.some((story) => story.sessionLinks.length > 0 || story.commitHashes.length > 0);
   const initialMode = report.featureTree.nodes.length > 0 && hasFeatureEvidence ? "feature" : "date";
   const workspaceName = escapeHtml(report.workspace.name);
   return fillHtmlTemplate({
     PAGE_TITLE: `Harness Inspector · ${workspaceName}`,
+    ROBOTS_META: robots ? `<meta name="robots" content="${robots}">` : "",
     STYLES,
+    BODY_ATTRIBUTES: sample ? ' data-report-context="sample"' : "",
     WORKSPACE_NAME: workspaceName,
+    CONTEXT_LABEL: escapeHtml(contextLabel),
     FEATURE_TAB_CLASS: initialMode === "feature" ? "active" : "",
     FEATURE_TAB_SELECTED: initialMode === "feature" ? "true" : "false",
     DATE_TAB_CLASS: initialMode === "date" ? "active" : "",
