@@ -347,7 +347,7 @@
 
   // ---------------------------------------------------------------- activity chart
 
-  function chartLanes(activity) {
+  function chartLanes(activity, maxLanes = 7) {
     const counts = new Map();
     const firstStep = new Map();
     for (const call of activity.calls) {
@@ -356,7 +356,8 @@
       if (!firstStep.has(label)) firstStep.set(label,call.step);
     }
     const ranked = [...counts.keys()].sort((left,right) => counts.get(right) - counts.get(left) || firstStep.get(left) - firstStep.get(right) || left.localeCompare(right));
-    const visibleCount = ranked.length > 7 ? 6 : 7;
+    const laneLimit = Math.max(2,maxLanes);
+    const visibleCount = ranked.length > laneLimit ? laneLimit - 1 : laneLimit;
     const visible = new Set(ranked.slice(0,visibleCount));
     const lanes = ranked.slice(0,visibleCount).map(label => ({ label, title:label, count:counts.get(label) }));
     if (ranked.length > visibleCount) {
@@ -392,12 +393,12 @@
     ? (Number.isFinite(call.startedAt) ? call.startedAt : null)
     : call.step;
 
-  function activityChartMarkup(session, availableWidth) {
+  function activityChartMarkup(session, availableWidth, { compact = false } = {}) {
     const activity = session.toolActivity;
     if (!activity.totalCalls) return '<div class="chart-empty">No normalized tool call was retained for this session.</div>';
     const zoom = state.zoom.get(session.sessionId) ?? null;
     const domain = chartDomain(activity,zoom);
-    const { lanes, laneFor } = chartLanes(activity);
+    const { lanes, laneFor } = chartLanes(activity,compact ? 4 : 7);
     const laneIndex = new Map(lanes.map((lane,index) => [lane.label,index]));
     const untimed = domain.timeBasis ? activity.calls.filter(call => !Number.isFinite(call.startedAt)).length : 0;
     const inDomain = activity.calls.filter(call => {
@@ -411,22 +412,22 @@
       .filter(item => item.commit && Number.isFinite(item.position) && item.position >= domain.min && item.position <= domain.max)
       .sort((left,right) => left.position - right.position) : [];
 
-    const labelWidth = 132;
-    const rowHeight = 26;
+    const labelWidth = compact ? 88 : 132;
+    const rowHeight = compact ? 18 : 26;
     // The ribbon fills the whole observed span with no holes, so the time
     // between calls stays visible instead of reading as blank canvas. It only
     // makes sense against real clock time; on the call-order fallback the
     // spacing would be an artefact of ordinal position, so it is omitted.
     const showRibbon = domain.timeBasis;
-    const ribbonTop = 8;
-    const ribbonHeight = 22;
-    const topPad = showRibbon ? ribbonTop + ribbonHeight + 14 : 8;
+    const ribbonTop = compact ? 4 : 8;
+    const ribbonHeight = compact ? 12 : 22;
+    const topPad = showRibbon ? ribbonTop + ribbonHeight + (compact ? 8 : 14) : (compact ? 4 : 8);
     const width = Math.max(300,Math.floor(availableWidth || 640));
     const plotLeft = labelWidth + 12;
-    const plotRight = width - 14;
+    const plotRight = width - (compact ? 8 : 14);
     const plotWidth = Math.max(60,plotRight - plotLeft);
     const laneArea = topPad + lanes.length * rowHeight + 4;
-    const height = laneArea + 30;
+    const height = laneArea + (compact ? 22 : 30);
     const domainWidth = Math.max(1,domain.max - domain.min);
     const timelineScale = buildCompressedTimelineScale({
       min:domain.min,
@@ -554,9 +555,10 @@
           + ' · ' + (failed ? 'failed' : 'observed') + ' · ' + (timed ? formatLatency(call.durationMs) : 'timing unavailable')
           + (call.detail ? ' · ' + call.detail : '')
           + (call.filePaths?.length ? ' · ' + call.filePaths.join(' · ') : '');
+        const markHeight = compact ? 8 : 10;
         return '<rect class="chart-mark' + (failed ? ' failed' : '') + '" ' + selectionAttrs({ type:'tool-call', sessionId:session.sessionId, callId:call.id })
           + ' data-chart-detail="' + escape(label) + '"'
-          + ' x="' + xFor(position) + '" y="' + (laneCenter(lane) - 5) + '" width="' + markWidth + '" height="10" rx="2"'
+          + ' x="' + xFor(position) + '" y="' + (laneCenter(lane) - markHeight / 2) + '" width="' + markWidth + '" height="' + markHeight + '" rx="2"'
           + ' fill="' + (timed || failed ? tone : '#ffffff') + '" stroke="' + tone + '" stroke-width="' + (timed || failed ? 1 : 1.5) + '"'
           + ' tabindex="0" role="button" aria-label="' + escape(label) + '"><title>' + escape(label) + '</title></rect>';
       }).join('');
@@ -594,7 +596,7 @@
     const ticks = Array.from({ length:tickCount },(_,index) => plotLeft + (plotWidth * index) / (tickCount - 1));
     const tickMarkup = ticks.map(x => {
       const position = timelineScale.positionForX(x);
-      return '<g><line class="chart-grid-line" x1="' + x + '" x2="' + x + '" y1="' + topPad + '" y2="' + laneArea + '"></line><text class="chart-tick" x="' + x + '" y="' + (laneArea + 17) + '" text-anchor="middle">' + escape(domain.timeBasis ? formatShortClock(position) : String(Math.round(position))) + '</text></g>';
+      return '<g><line class="chart-grid-line" x1="' + x + '" x2="' + x + '" y1="' + topPad + '" y2="' + laneArea + '"></line><text class="chart-tick" x="' + x + '" y="' + (laneArea + (compact ? 14 : 17)) + '" text-anchor="middle">' + escape(domain.timeBasis ? formatShortClock(position) : String(Math.round(position))) + '</text></g>';
     }).join('');
 
     const basisNote = domain.timeBasis
@@ -602,7 +604,7 @@
       : 'No observed call timing in this session; the axis falls back to call order.';
     const aria = activity.totalCalls + ' normalized tool calls by action over ' + (domain.timeBasis ? 'observed time, with ' + commitEvents.length + ' commit events in view' : 'call sequence');
 
-    return '<section class="chart-card" aria-label="NormalizedToolActivityV1 provider-neutral actions">'
+    return '<section class="chart-card' + (compact ? ' chart-compact' : '') + '" aria-label="NormalizedToolActivityV1 provider-neutral actions">'
       + '<div class="chart-toolbar"><span class="chart-basis' + (domain.timeBasis ? '' : ' fallback') + '">' + escape(domain.timeBasis ? (timelineScale.compressed ? 'Time axis · idle compressed' : 'Time axis') : 'Sequence axis (no observed timing)') + '</span>'
       + '<span class="chart-range">' + escape(domain.timeBasis ? formatShortClock(domain.min) + ' → ' + formatShortClock(domain.max) + ' UTC · ' + formatSpan(domain.max - domain.min) : 'calls ' + Math.round(domain.min) + '–' + Math.round(domain.max)) + '</span>'
       + '<button type="button" class="chart-reset" data-chart-reset="' + escape(session.sessionId) + '"' + (zoom ? '' : ' disabled') + '>Reset zoom</button></div>'
@@ -612,7 +614,7 @@
       + laneMarkup + gapMarkup + tickMarkup + ribbonMarkup + marksMarkup + commitMarkup
       + '<rect class="chart-brush" data-chart-brush x="0" y="' + topPad + '" width="0" height="' + (laneArea - topPad) + '" hidden></rect>'
       + '<line class="chart-axis-line" x1="' + labelWidth + '" x2="' + (plotRight + 6) + '" y1="' + laneArea + '" y2="' + laneArea + '"></line>'
-      + '<text class="chart-axis-label" x="' + (labelWidth - 10) + '" y="' + (laneArea + 17) + '" text-anchor="end">' + escape(domain.timeBasis ? 'UTC' : 'Call') + '</text>'
+      + '<text class="chart-axis-label" x="' + (labelWidth - 10) + '" y="' + (laneArea + (compact ? 14 : 17)) + '" text-anchor="end">' + escape(domain.timeBasis ? 'UTC' : 'Call') + '</text>'
       + '</svg>'
       + '<div class="chart-inspector" data-chart-inspector aria-live="polite"><strong>Hover, focus, or click an event</strong><span>' + escape((detailMode ? 'Each action mark is one call; its width is the observed latency.' : 'Each action bar counts calls in a time slice — click to zoom in until individual calls appear.') + (commitEvents.length ? ' Green diamonds open Commit evidence.' : '')) + '</span></div>'
       + '<footer class="chart-legend"><span>' + inDomain.length + ' of ' + activity.totalCalls + ' calls in view</span>'
@@ -627,7 +629,7 @@
   function renderActivityChart(container) {
     const session = bySession.get(container.dataset.activityChart);
     if (!session || !container.clientWidth) return;
-    container.innerHTML = activityChartMarkup(session,container.clientWidth);
+    container.innerHTML = activityChartMarkup(session,container.clientWidth,{ compact:Boolean(container.closest('.session-axis-panel')) });
     applySelectionPresentation();
   }
 
@@ -761,17 +763,12 @@
     });
     const turns = session.dialogue?.turns?.length ? session.dialogue.turns : fallbackTurns;
     const placement = placeCommits(commits,turns,session);
-    // Short sessions open every Turn's tool calls by default so the trace reads
-    // top to bottom without a click per Turn; long sessions stay collapsed and
-    // lean on the linked timeline strip to jump into a dense stretch instead.
-    const denseTurns = turns.length > 12;
-
     const turnEvents = turns.map(turn => {
       const anchor = turn.anchorId ?? ('turn-' + turn.index);
       const prompt = '<button type="button" class="session-event prompt" data-session-event="prompts" ' + selectionAttrs({ type:'turn', sessionId:session.sessionId, turnIndex:turn.index }) + '><header class="session-event-head"><strong>User prompt ' + turn.index + '</strong><span>' + escape(turn.prompt?.timestamp ? formatClock(turn.prompt.timestamp) : '') + '</span></header><div class="session-event-body session-prose"><p>' + escape(turn.prompt?.text ?? 'Prompt unavailable after privacy filtering') + '</p></div></button>';
       const notes = turn.steps.filter(step => step.kind === 'note').map((step,noteIndex) => '<article class="session-event intermediate" data-session-event="intermediate"><div class="session-note-label">Intermediate response ' + (noteIndex + 1) + '</div><p>' + escape(step.text) + '</p></article>').join('');
       const calls = turn.steps.filter(step => step.kind === 'tool').map(step => callsById.get(step.callId)).filter(Boolean);
-      const toolEvent = calls.length ? '<details class="session-event tools" data-session-event="tools"' + (denseTurns ? '' : ' open') + '><summary class="session-event-head"><strong>' + calls.length + ' tool call' + (calls.length === 1 ? '' : 's') + '</strong><span>' + turn.toolCallCount + ' observed in turn</span></summary>' + toolListMarkup(session,calls) + '</details>' : '';
+      const toolEvent = calls.length ? '<details class="session-event tools" data-session-event="tools"><summary class="session-event-head"><strong>' + calls.length + ' tool call' + (calls.length === 1 ? '' : 's') + '</strong><span>' + turn.toolCallCount + ' observed in turn</span></summary>' + toolListMarkup(session,calls) + '</details>' : '';
       const response = '<article class="session-event response' + (turn.response ? '' : ' session-unavailable') + '" data-session-event="responses"><header class="session-event-head"><strong>Assistant response</strong><span>' + (turn.response ? 'retained' : 'unavailable') + '</span></header><div class="session-event-body session-prose"><p>' + escape(turn.response ?? 'Response body was unavailable or removed by privacy filtering.') + '</p></div></article>';
       const clock = Number.isFinite(turn.startMs) ? formatShortClock(turn.startMs) + (Number.isFinite(turn.endMs) ? '–' + formatShortClock(turn.endMs) : '') + ' UTC · ' : '';
       const summary = clock + turn.messageCount + ' intermediate events · ' + turn.toolCallCount + ' tool calls' + (Number.isFinite(turn.durationMs) ? ' · ' + formatDuration(turn.durationMs) : '');
@@ -816,7 +813,7 @@
       + (outsideMarkup ? '<option value="session-outside-commits">Commits outside turn windows</option>' : '');
     const timeline = turnEvents + unplacedMarkup + outsideMarkup || '<div class="empty-state">No retained dialogue or observed evidence exists for this session.</div>';
     const tracePanel = '<section class="session-mode-panel" id="session-panel-trace" role="tabpanel" aria-labelledby="session-tab-trace" data-session-mode-panel="trace">'
-      + (session.toolActivity.totalCalls ? '<details class="session-axis-panel" data-session-axis open><summary><span>Activity timeline</span><small>click a bar to jump to those calls · drag to zoom</small></summary><div class="session-axis" data-activity-chart="' + escape(session.sessionId) + '"></div></details>' : '')
+      + (session.toolActivity.totalCalls ? '<details class="session-axis-panel" data-session-axis open><summary><span>Activity timeline <em>' + session.toolActivity.totalCalls + ' calls</em></span><small>click a bar to jump · drag to zoom</small></summary><div class="session-axis" data-activity-chart="' + escape(session.sessionId) + '"></div></details>' : '')
       + '<div class="session-layout"><main class="session-timeline">' + timeline + '</main><aside class="session-sidebar"><section><h3>Jump to</h3><select class="jump-select" data-session-jump>' + jumpOptions + '</select><div class="session-bulk"><button type="button" data-expand-tools="open">Expand all calls</button><button type="button" data-expand-tools="close">Collapse all</button></div></section><section><h3>Filters</h3><div class="session-filter-list"><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="prompts"><span>Prompts</span><em>' + turns.length + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="responses"><span>Responses</span><em>' + responseCount + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="intermediate"><span>Intermediate</span><em>' + noteCount + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="commits"><span>Commits</span><em>' + commits.length + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="tools"><span>Tool calls</span><em>' + session.toolActivity.totalCalls + '</em></label>' + filters + '<label class="session-filter subtype"><input type="checkbox" checked data-session-file-filter><span>File paths</span><em>' + session.toolActivity.files.length + '</em></label></div></section><section><h3>Source</h3><div class="session-meta"><span>' + sourceLabel + '</span></div></section></aside></div></section>';
     const replayPanel = '<section class="session-mode-panel replay-shell" id="session-panel-replay" role="tabpanel" aria-labelledby="session-tab-replay" data-session-mode-panel="replay" hidden>'
       + '<div class="replay-boundary"><strong>Read-only evidence playback</strong><span>Replay advances through retained evidence. It never reruns tools, resumes the host session, or invents missing time.</span></div>'
