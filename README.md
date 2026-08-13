@@ -276,20 +276,34 @@ session in the repository you want to analyze and run the report prompt:
 ```
 
 Only when using Qoder CLI without Qoder Desktop, inspect the current manual
-installation disposition before following Qoder's native marketplace flow:
+installation disposition before following:
+
+##### From marketplace
 
 ```bash
-better-harness plugin plan install --host qoder --surface cli --scope user
-```
+# Add the plugin marketplace source
+qodercli plugin marketplace add 'https://github.com/QoderAI/better-harness.git'
 
-The planner does not emit the older install syntax because the current native
-help and this repository's historical documentation disagree. After a manual
-installation, verify only the currently observed inventory command:
+# Install the plugin
+qodercli plugin install better-harness@better-harness
 
-```bash
+# Check installation
 qodercli plugin list
-better-harness plugin verify --host qoder --surface cli
 ```
+
+##### From git
+
+```bash
+# Make sure directory exist
+mkdir -p $HOME/.qoder/plugins/marketplaces/
+
+git clone https://github.com/QoderAI/better-harness.git \
+  $HOME/.qoder/plugins/marketplaces/better-harness --depth 1
+
+qodercli plugin install $HOME/.qoder/plugins/marketplaces/better-harness
+```
+
+Replace `.qoder` to `.qoder-cn` in urls for Qoder CN series.
 
 Then start a new Qoder CLI session before using `/better-harness`.
 

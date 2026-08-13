@@ -280,20 +280,36 @@ Better Harness 已内置于 [Qoder](https://qoder.com/) 桌面应用，因此无
 /better-harness 分析此项目的 AI 编码工作流并生成基于证据的报告
 ```
 
-只有在未安装 Qoder Desktop、单独使用 Qoder CLI 时，才需要在遵循 Qoder 原生
-Marketplace 流程前检查当前手工安装状态：
+只有在未安装 Qoder Desktop、单独使用 Qoder CLI 时，才需要按照以下步骤手动安装：
+
+##### 从 Marketplace 安装
 
 ```bash
-better-harness plugin plan install --host qoder --surface cli --scope user
-```
+# 添加插件 Marketplace 源
+qodercli plugin marketplace add 'https://github.com/QoderAI/better-harness.git'
 
-由于当前原生 help 与本仓库历史文档不一致，计划器不会输出旧版安装语法。
-手工安装后，只使用已经观察到的 inventory 命令验证：
+# 安装插件
+qodercli plugin install better-harness@better-harness
 
-```bash
+# 检查安装
 qodercli plugin list
-better-harness plugin verify --host qoder --surface cli
 ```
+
+##### 从 Git 安装
+
+```bash
+# 确保目录存在
+mkdir -p $HOME/.qoder/plugins/marketplaces/
+
+# 克隆仓库
+git clone https://github.com/QoderAI/better-harness.git \
+  $HOME/.qoder/plugins/marketplaces/better-harness --depth 1
+
+# 安装插件
+qodercli plugin install $HOME/.qoder/plugins/marketplaces/better-harness
+```
+
+在 Qoder CN 系列中，把 urls 中的 `.qoder` 替换为 `.qoder-cn`。
 
 然后启动新的 Qoder CLI 会话，再使用 `/better-harness`。
 
