@@ -158,6 +158,22 @@ present.
 - AC-14: The idle legend states the shading is a window with no observed call,
   not a user wait; a session with no observed timing keeps the sequence-axis
   label rather than implying a time.
+- AC-15: Above the action lanes the chart carries a ribbon that fills the whole
+  domain: observed calls are painted over a continuous band, so the time not
+  spent inside a tool is a visible share of the trace rather than blank canvas.
+  The bare band is labelled unattributed — model work or waiting — and never as
+  a model turn. The ribbon is omitted on the call-order fallback, where spacing
+  would be an artefact of ordinal position rather than elapsed time.
+
+**Why the ribbon.** The lanes plot the instant a call ran, so a reader saw only
+the moments a tool was executing. Measured on a real local report, 1 178 gaps
+between consecutive calls had a median of 6.6 s and a p90 of 29.7 s, while the
+idle threshold that produced any shading was 45 s: 1 113 of those gaps (94.5 %)
+had no visual representation at all. On one 2.2 h session the observed tool time
+totals 14 m — the chart was drawing 21 % of the trace and leaving 79 % blank.
+The ribbon makes that residue a first-class part of the picture without claiming
+to know what happened inside it: `projectDialogue` keeps note text but no note
+timestamp, so the host observed when tools ran, not when the model worked.
 
 Verified on a real local report: on a dialogue-less 235-call session the strip
 renders on open and clicking a bar zooms to ~18 calls in view and scrolls the

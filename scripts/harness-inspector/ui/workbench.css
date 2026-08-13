@@ -152,6 +152,10 @@
   .chart-lane-label { fill:#526072; font-size:10px; font-weight:700; }
   .chart-tick, .chart-axis-label { fill:#8a96a6; font-size:9px; }
   .chart-axis-label { font-weight:700; }
+  .chart-ribbon-base { fill:#e9edf3; }
+  .chart-ribbon-block { cursor:pointer; }
+  .chart-ribbon-block:hover, .chart-ribbon-block:focus { outline:none; stroke:#163f77; stroke-width:2; }
+  .chart-ribbon-label { fill:#41506a; }
   .chart-gap rect { fill:rgba(148,163,184,.13); }
   .chart-gap-label { fill:#8a96a6; font-size:8px; font-style:italic; }
   .chart-lane, .chart-gap, .chart-grid-line, .chart-tick, .chart-axis-line, .chart-axis-label { pointer-events:none; }
@@ -172,6 +176,7 @@
   .legend-dot { width:8px; height:8px; display:inline-block; border-radius:2px; background:var(--blue); }
   .legend-dot.failed { background:var(--red); }
   .legend-dot.gap { background:rgba(148,163,184,.45); }
+  .legend-dot.between { background:#e9edf3; box-shadow:inset 0 0 0 1px #cbd3de; }
   .legend-dot.commit { border-radius:1px; background:#16805b; transform:rotate(45deg); }
   .chart-empty { padding:18px; color:var(--muted); text-align:center; font-size:9px; }
   .commit-card { margin-bottom:8px; border:1px solid var(--line); border-radius:8px; overflow:hidden; }

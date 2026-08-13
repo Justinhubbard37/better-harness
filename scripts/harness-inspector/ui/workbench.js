@@ -384,7 +384,14 @@
 
     const labelWidth = 132;
     const rowHeight = 26;
-    const topPad = 8;
+    // The ribbon fills the whole observed span with no holes, so the time
+    // between calls stays visible instead of reading as blank canvas. It only
+    // makes sense against real clock time; on the call-order fallback the
+    // spacing would be an artefact of ordinal position, so it is omitted.
+    const showRibbon = domain.timeBasis;
+    const ribbonTop = 8;
+    const ribbonHeight = 22;
+    const topPad = showRibbon ? ribbonTop + ribbonHeight + 14 : 8;
     const width = Math.max(300,Math.floor(availableWidth || 640));
     const plotLeft = labelWidth + 12;
     const plotRight = width - 14;
@@ -445,6 +452,42 @@
         const label = right - left > 46 ? '<text class="chart-gap-label" x="' + ((left + right) / 2) + '" y="' + (topPad + 10) + '" text-anchor="middle">idle ' + escape(formatSpan(gap)) + '</text>' : '';
         gapMarkup += '<g class="chart-gap"><rect x="' + left + '" y="' + topPad + '" width="' + (right - left) + '" height="' + (laneArea - topPad) + '"><title>' + escape(caption) + '</title></rect>' + label + '</g>';
       }
+    }
+
+    // The base band is the span itself; every observed call is painted over it,
+    // so whatever stays bare is time this session did not spend inside a tool.
+    // That residue is labelled as unattributed, never as a model turn: the host
+    // timestamps calls, not the model's own work, and the projection drops the
+    // note stamps that would be needed to claim otherwise.
+    let ribbonMarkup = '';
+    if (showRibbon) {
+      const ribbonMid = ribbonTop + ribbonHeight / 2;
+      const blocks = inDomain.map(call => {
+        const position = callPosition(call,true);
+        const timed = call.durationStatus === 'observed' && Number.isFinite(call.durationMs);
+        const left = xFor(position);
+        const blockWidth = timed
+          ? Math.max(1.5,Math.min(plotLeft + plotWidth - left,(call.durationMs / domainWidth) * plotWidth))
+          : 1.5;
+        const failed = call.status === 'failed';
+        const stamp = formatStamp(call.startedAt);
+        const label = call.id + ' · ' + (call.actionLabel ?? call.toolName) + ' · ' + call.toolName
+          + (stamp ? ' · ' + stamp + ' UTC' : '')
+          + ' · ' + (timed ? formatLatency(call.durationMs) : 'timing unavailable')
+          + (failed ? ' · failed' : '');
+        return '<rect class="chart-ribbon-block' + (failed ? ' failed' : '') + '" ' + selectionAttrs({ type:'tool-call', sessionId:session.sessionId, callId:call.id })
+          + ' data-chart-detail="' + escape(label) + '"'
+          + ' x="' + left + '" y="' + ribbonTop + '" width="' + blockWidth + '" height="' + ribbonHeight + '"'
+          + ' fill="' + (failed ? '#c34f4f' : familyColor(call.family)) + '"'
+          + ' tabindex="0" role="button" aria-label="' + escape(label) + '"><title>' + escape(label) + '</title></rect>';
+      }).join('');
+      const toolMs = inDomain.reduce((sum,call) => sum + (call.durationStatus === 'observed' && Number.isFinite(call.durationMs) ? call.durationMs : 0),0);
+      const baseLabel = 'Full observed span. Coloured blocks are observed tool calls; bare band is time not attributed to any tool call — model work or waiting the host did not separately observe.';
+      ribbonMarkup = '<g class="chart-ribbon">'
+        + '<rect class="chart-ribbon-base" x="' + plotLeft + '" y="' + ribbonTop + '" width="' + plotWidth + '" height="' + ribbonHeight + '" rx="3"><title>' + escape(baseLabel) + '</title></rect>'
+        + blocks
+        + '<text class="chart-lane-label chart-ribbon-label" x="' + (labelWidth - 10) + '" y="' + (ribbonMid + 3) + '" text-anchor="end"><title>' + escape('Observed tool time ' + formatSpan(toolMs) + ' of ' + formatSpan(domain.max - domain.min) + ' in view') + '</title>All activity</text>'
+        + '</g>';
     }
 
     let marksMarkup = '';
@@ -516,7 +559,7 @@
       + '<svg class="activity-chart" data-activity-svg="' + escape(session.sessionId) + '" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="' + escape(aria) + '">'
       + '<title>' + escape(aria) + '</title><desc>' + escape(basisNote + ' Shaded columns are windows with no observed call. Red marks are failed calls. Green diamonds mark directly linked commit times. Drag across the plot to zoom.') + '</desc>'
       + '<rect class="chart-surface" data-chart-surface x="' + plotLeft + '" y="' + topPad + '" width="' + plotWidth + '" height="' + (laneArea - topPad) + '" data-plot-left="' + plotLeft + '" data-plot-width="' + plotWidth + '" data-domain-min="' + domain.min + '" data-domain-max="' + domain.max + '" data-full-min="' + domain.fullMin + '" data-full-max="' + domain.fullMax + '" data-session-id="' + escape(session.sessionId) + '"></rect>'
-      + laneMarkup + gapMarkup + tickMarkup + marksMarkup + commitMarkup
+      + laneMarkup + gapMarkup + tickMarkup + ribbonMarkup + marksMarkup + commitMarkup
       + '<rect class="chart-brush" data-chart-brush x="0" y="' + topPad + '" width="0" height="' + (laneArea - topPad) + '" hidden></rect>'
       + '<line class="chart-axis-line" x1="' + labelWidth + '" x2="' + (plotRight + 6) + '" y1="' + laneArea + '" y2="' + laneArea + '"></line>'
       + '<text class="chart-axis-label" x="' + (labelWidth - 10) + '" y="' + (laneArea + 17) + '" text-anchor="end">' + escape(domain.timeBasis ? 'UTC' : 'Call') + '</text>'
@@ -525,6 +568,7 @@
       + '<footer class="chart-legend"><span>' + inDomain.length + ' of ' + activity.totalCalls + ' calls in view</span>'
       + (longestGap ? '<span>longest idle ' + escape(formatSpan(longestGap.gap)) + ' at ' + escape(formatShortClock(longestGap.at)) + ' UTC</span>' : '')
       + (untimed ? '<span class="chart-warning">' + untimed + ' without observed timing</span>' : '')
+      + (showRibbon ? '<span><i class="legend-dot between"></i>between calls (unattributed — model work or wait)</span>' : '')
       + '<span><i class="legend-dot failed"></i>failed</span><span><i class="legend-dot gap"></i>idle window (no observed call, not user wait)</span>'
       + (domain.timeBasis ? '<span><i class="legend-dot commit"></i>directly linked commit</span>' : '')
       + '<span>' + escape(basisNote) + '</span></footer></section>';
@@ -1308,7 +1352,7 @@
       locate();
       return;
     }
-    const mark = event.target.closest('.chart-mark');
+    const mark = event.target.closest('.chart-mark, .chart-ribbon-block');
     if (mark) {
       showChartDetail(mark);
       const descriptor = descriptorFromElement(mark);
@@ -1416,12 +1460,12 @@
   });
 
   document.addEventListener('mouseover', event => {
-    const mark = event.target.closest?.('.chart-mark, .chart-commit, [data-chart-bin]');
+    const mark = event.target.closest?.('.chart-mark, .chart-ribbon-block, .chart-commit, [data-chart-bin]');
     if (mark) showChartDetail(mark);
   });
 
   document.addEventListener('focusin', event => {
-    const mark = event.target.closest?.('.chart-mark, .chart-commit, [data-chart-bin]');
+    const mark = event.target.closest?.('.chart-mark, .chart-ribbon-block, .chart-commit, [data-chart-bin]');
     if (mark) showChartDetail(mark);
   });
 
