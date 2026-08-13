@@ -14,6 +14,15 @@ const config = {
   tagline:
     "Open-source insights for the Agent Work Loop.",
   favicon: "img/favicon.svg",
+  headTags: [
+    {
+      tagName: "meta",
+      attributes: {
+        name: "google-site-verification",
+        content: "0hOARr2OBFHmWVFf1Bank71Vem1i36aGZnnwKLevZbM",
+      },
+    },
+  ],
 
   url: "https://qoderai.github.io",
   baseUrl: "/better-harness/",
