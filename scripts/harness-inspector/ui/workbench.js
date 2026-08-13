@@ -305,6 +305,15 @@
     return '<section class="lane delivery-lane"><div class="lane-title"><div class="delivery-title-copy"><strong>Commits / files</strong><span>' + commits.length + ' commits' + compactLabel + '</span></div><button class="delivery-toggle" data-toggle-delivery aria-expanded="true" aria-label="Collapse commits and files"><span class="open-label">Hide</span><span class="closed-label">Show files</span></button></div><div class="delivery-content">' + cards + '</div></section>';
   }
 
+  function setDeliveryCollapsed(workbench, collapsed) {
+    if (!workbench) return;
+    workbench.classList.toggle('delivery-collapsed',collapsed);
+    const toggle = workbench.querySelector('[data-toggle-delivery]');
+    if (!toggle) return;
+    toggle.setAttribute('aria-expanded',String(!collapsed));
+    toggle.setAttribute('aria-label',collapsed ? 'Expand commits and files' : 'Collapse commits and files');
+  }
+
   function workbench(item,index) {
     const commits = commitsFor(item);
     const session = item.session;
@@ -1720,9 +1729,7 @@
     const deliveryToggle = event.target.closest('[data-toggle-delivery]');
     if (deliveryToggle) {
       const workbench = deliveryToggle.closest('.workbench');
-      const collapsed = workbench.classList.toggle('delivery-collapsed');
-      deliveryToggle.setAttribute('aria-expanded',String(!collapsed));
-      deliveryToggle.setAttribute('aria-label',collapsed ? 'Expand commits and files' : 'Collapse commits and files');
+      setDeliveryCollapsed(workbench,!workbench.classList.contains('delivery-collapsed'));
       return;
     }
     const revealCalls = event.target.closest('[data-reveal-calls]');
@@ -1827,10 +1834,13 @@
     }
     const details = event.target.closest?.('[data-activity-session]');
     if (!details) return;
-    // Expanding the trace no longer collapses the delivery lane: reading what
-    // ran and what changed at the same time is the point of the workbench.
-    details.closest('.workbench')?.classList.toggle('activity-expanded',details.open);
+    const workbench = details.closest('.workbench');
+    workbench?.classList.toggle('activity-expanded',details.open);
     if (!details.open) return;
+    // Activity is the focus surface. Give its chart the delivery width on each
+    // open transition, while leaving the delivery toggle available for a
+    // reviewer who wants both surfaces visible afterward.
+    setDeliveryCollapsed(workbench,true);
     const target = details.querySelector('[data-activity-chart]');
     if (!target || target.childElementCount) return;
     // Render synchronously: the open Details already has layout, and a hidden

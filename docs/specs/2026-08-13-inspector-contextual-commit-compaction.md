@@ -33,6 +33,10 @@ layout continues to prioritize what the Inspector can actually attribute.
   changed-file list cannot dominate the delivery lane.
 - AC-5: The compact disclosure exposes native keyboard and expanded-state
   semantics, and the delivery lane labels how many commits start compact.
+- AC-6: Opening Checkpoint Activity automatically collapses that workbench's
+  delivery lane so the timeline receives the available width. The reviewer can
+  reopen Commits / files while Activity stays open, and closing Activity does
+  not force another layout change.
 
 ## Non-goals
 
@@ -47,6 +51,8 @@ layout continues to prioritize what the Inspector can actually attribute.
 - Render every commit card as a `details` disclosure: contextual and same-file
   evidence starts closed, while stronger evidence starts open.
 - Add compact layout styles and a visible compact-count label.
+- Reuse the delivery-lane collapse owner when Checkpoint Activity opens; keep a
+  manual delivery-lane toggle authoritative after that open transition.
 - Add focused behavior coverage for the evidence-kind presentation policy and
   verify the real self-contained report in a browser at desktop width.
 
