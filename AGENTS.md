@@ -45,6 +45,26 @@ Adding support for a new Coding Agent host starts with
 
 ## Test and Verify
 
+- Assert on behaviour, not on text that happens to contain it. Prefer calling the
+  function and checking its returned value, shape, or error over matching a
+  pattern against source code, rendered markup, or CLI output.
+- Do not add pattern-matching assertions as a shortcut for coverage. A
+  `assert.match(source, /functionName/)` proves a string exists; it does not prove
+  the behaviour works, it passes while the feature is broken, and it fails when an
+  unrelated rename touches the text. If the only way to observe something is to
+  grep for it, the code needs an exported seam, not a regex.
+- Never add a test that walks the repository and greps every file for a forbidden
+  literal. Such tests fail on unrelated local files, editor state, and tool config
+  that the change did not touch, and they train contributors to obfuscate strings
+  rather than fix anything. Enforce naming and branding in review or in lint, not
+  as a repo-wide scan.
+- Regex is acceptable where it is the actual contract: a frozen CLI help or error
+  channel, a redaction guarantee (`doesNotMatch` for a secret or absolute path),
+  or a schema-shaped string. Keep those narrow and name the contract in the
+  assertion's test title.
+- When a test does need to read a file, assert a property of the parsed result
+  (imports resolved, exports present, JSON shape valid) rather than a property of
+  its raw characters.
 - Design scripts and code for AI-friendly automated use, and validate automation with an AI agent when relevant,
   e.g. Qoder via `qodercli -p` or Codex via `codex -p`.
 - For visual changes, verify with Playwright against the preview URL, inspect console/page errors, and save a screenshot for layout review.
