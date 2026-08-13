@@ -97,8 +97,8 @@ function fixtureSession(overrides = {}) {
       segments: [],
       files: [{ path: "scripts/harness-inspector/render-html.mjs", callCount: 1, callIds: ["A1"], families: ["inspect"] }],
       calls: [
-        { id: "A1", step: 1, toolName: "Read", operation: "read-files", actionLabel: "Read files", family: "inspect", status: "observed", durationStatus: "observed", durationMs: 120, filePath: "scripts/harness-inspector/render-html.mjs", detail: "scripts/harness-inspector/render-html.mjs", detailKind: "redacted-input-summary" },
-        { id: "A2", step: 2, toolName: "Bash", operation: "run-tests", actionLabel: "Run tests", family: "verify", status: "failed", durationStatus: "unobserved", filePath: "test/harness-inspector.test.mjs", detail: "node --test test/harness-inspector.test.mjs", detailKind: "redacted-input-summary" },
+        { id: "A1", step: 1, toolName: "Read", operation: "read-files", actionLabel: "Read files", family: "inspect", status: "observed", durationStatus: "observed", durationMs: 120, startedAt: Date.parse("2026-08-12T08:05:00.000Z"), filePath: "scripts/harness-inspector/render-html.mjs", detail: "scripts/harness-inspector/render-html.mjs", detailKind: "redacted-input-summary" },
+        { id: "A2", step: 2, toolName: "Bash", operation: "run-tests", actionLabel: "Run tests", family: "verify", status: "failed", durationStatus: "unobserved", startedAt: Date.parse("2026-08-12T09:10:00.000Z"), filePath: "test/harness-inspector.test.mjs", detail: "node --test test/harness-inspector.test.mjs", detailKind: "redacted-input-summary" },
       ],
     },
     ...overrides,
@@ -311,7 +311,8 @@ test("Inspector HTML emits both picker modes, three-lane workbench, expanded cal
   assert.match(html, /No normalized tool call was retained/u);
   assert.match(html, /Commits without a linked session/u);
   assert.match(html, /Unlinked commits/u);
-  assert.match(html, /' user turn' \+/u);
+  assert.match(html, /' turn' \+ \(coverage\.turnCount === 1/u);
+  assert.match(html, /of ' \+ turns \+ ' shown'/u);
   assert.match(html, /getElementById\('workbench-list'\)\.style/u);
   assert.doesNotMatch(html, /'Date scope'/u);
   assert.match(html, /Expand.*normalized actions/u);
@@ -327,7 +328,8 @@ test("Inspector HTML emits both picker modes, three-lane workbench, expanded cal
   assert.match(html, /data-copy-evidence-link/u);
   assert.match(html, /data-open-evidence-session/u);
   assert.match(html, /data-selection-type="story"/u);
-  assert.match(html, /data-selection-type="tool-call"/u);
+  assert.match(html, /type:'tool-call'/u);
+  assert.match(html, /type:'turn'/u);
   assert.match(html, /type:'file'/u);
   assert.match(html, /type:'commit'/u);
   assert.match(html, /function setSelection/u);
@@ -347,18 +349,20 @@ test("Inspector HTML emits both picker modes, three-lane workbench, expanded cal
   assert.match(html, /Implemented the date picker/u);
   assert.match(html, /Continuation packet/u);
   assert.match(html, /does not restore code/u);
-  assert.match(html, /<svg class="swimlane-bubble-chart"/u);
+  // The activity chart is built in the browser from the report projection so a
+  // zoomable time axis is possible; no per-session SVG is duplicated into HTML.
+  assert.match(html, /function activityChartMarkup/u);
+  assert.match(html, /function renderActivityChart/u);
   assert.match(html, /NormalizedToolActivityV1/u);
-  assert.match(html, /data-action-lane="Read files"/u);
-  assert.match(html, /data-swimlane-inspector/u);
-  assert.match(html, /data-swimlane-responsive/u);
+  assert.match(html, /data-action-lane="/u);
+  assert.match(html, /data-chart-inspector/u);
+  assert.match(html, /data-chart-surface/u);
   assert.match(html, /ResizeObserver/u);
-  assert.match(html, /data-action="Run tests"/u);
-  assert.match(html, /data-tool="Bash"/u);
+  assert.doesNotMatch(html, /<template data-trace-session=/u);
+  assert.doesNotMatch(html, /swimlane-bubble/u);
   assert.doesNotMatch(html, /class="call-list"/u);
   assert.match(html, /timing unavailable/u);
   assert.doesNotMatch(html, /--depth:NaN/u);
-  assert.equal((html.match(/class="swimlane-bubble(?: failed)?(?: timed| unobserved)"/gu) ?? []).length, 2);
   assert.match(html, /observed same-path/u);
   assert.match(html, /same-file history/u);
   assert.match(html, /same path/u);
@@ -409,7 +413,8 @@ test("Inspector template assembly does not reinterpret token-like session eviden
   });
   const html = renderHarnessInspectorHtml(report);
   assert.match(html, /inspect literal \{\{BH_TRACE_TEMPLATES\}\} in source/u);
-  assert.match(html, /<template data-trace-session="session-a">/u);
+  assert.doesNotMatch(html, /\{\{BH_[A-Z_]+\}\}(?![^<]*<\/script>)/u);
+  assert.match(html, /"sessionId":"session-a"/u);
 });
 
 test("Inspector tree renders checklist todo state and nested branches (AC-3)", () => {
@@ -520,6 +525,122 @@ test("session summary retains more than one thousand tool calls unless a caller 
   assert.equal(summary.toolTrace.totalCalls, 1_005);
   assert.equal(summary.toolTrace.shownCalls, 1_005);
   assert.equal(summary.toolTrace.truncated, false);
+});
+
+test("activity projection carries a wall-clock timeline and falls back to call order", () => {
+  const timed = buildHarnessInspectorReport({
+    repoRoot: "/workspace/repo",
+    featureTree: parseFeatureTreeMarkdown(FEATURE_TREE),
+    sessions: [fixtureSession()],
+    correlation: fixtureCorrelation(),
+  }).sessions[0].toolActivity;
+  assert.equal(timed.timeline.basis, "observed-time");
+  assert.equal(timed.timeline.startMs, Date.parse("2026-08-12T08:05:00.000Z"));
+  assert.equal(timed.timeline.spanMs, 65 * 60_000);
+  assert.equal(timed.timeline.timedCallCount, 2);
+  assert.equal(timed.calls[0].startedAt, Date.parse("2026-08-12T08:05:00.000Z"));
+
+  const base = fixtureSession();
+  const untimed = buildHarnessInspectorReport({
+    repoRoot: "/workspace/repo",
+    featureTree: parseFeatureTreeMarkdown(FEATURE_TREE),
+    sessions: [{
+      ...base,
+      toolActivity: { ...base.toolActivity, calls: base.toolActivity.calls.map(({ startedAt, ...call }) => call) },
+    }],
+    correlation: fixtureCorrelation(),
+  }).sessions[0].toolActivity;
+  assert.equal(untimed.timeline.basis, "call-sequence");
+  assert.equal(untimed.timeline.timedCallCount, 0);
+  assert.equal(Object.hasOwn(untimed.calls[0], "startedAt"), false);
+});
+
+test("one turn vocabulary is projected and retained prompts resolve to their real Turn", () => {
+  const base = fixtureSession();
+  const report = buildHarnessInspectorReport({
+    repoRoot: "/workspace/repo",
+    featureTree: parseFeatureTreeMarkdown(FEATURE_TREE),
+    sessions: [{
+      ...base,
+      // A capped, de-duplicated prompt list must not be read as Turn numbers.
+      prompts: [{ text: "Second question", timestamp: "2026-08-12T08:40:00.000Z" }],
+      userTurnCount: 3,
+      promptObservationCount: 9,
+      dialogue: {
+        truncated: false,
+        turns: [
+          { index: 1, anchorId: "turn-1", prompt: { text: "First question", timestamp: "2026-08-12T08:00:00.000Z" }, steps: [], toolCallCount: 0, messageCount: 2, response: null },
+          { index: 2, anchorId: "turn-2", prompt: { text: "Second question", timestamp: "2026-08-12T08:40:00.000Z" }, steps: [], toolCallCount: 0, messageCount: 2, response: null },
+        ],
+      },
+    }],
+    correlation: fixtureCorrelation(),
+  });
+  const session = report.sessions[0];
+  assert.equal(session.prompts[0].turnIndex, 2);
+  assert.deepEqual(session.turnCoverage, {
+    basis: "dialogue-turns",
+    turnCount: 2,
+    shownPromptCount: 1,
+    normalizedUserTurnCount: 3,
+    observationCount: 9,
+    truncated: true,
+  });
+});
+
+test("Inspector explains a trace on a time axis without occluding or dimming it", () => {
+  const html = renderHarnessInspectorHtml(buildHarnessInspectorReport({
+    repoRoot: "/workspace/repo",
+    featureTree: parseFeatureTreeMarkdown(FEATURE_TREE),
+    sessions: [fixtureSession()],
+    correlation: fixtureCorrelation(),
+    filters: { platform: "codex" },
+  }));
+  const styles = readFileSync(new URL("workbench.css", INSPECTOR_UI_ROOT), "utf8");
+
+  // The axis is real time when the host observed it, and says so when it is not.
+  assert.match(html, /Sequence axis \(no observed timing\)/u);
+  assert.match(html, /Time axis/u);
+  assert.match(html, /chart-gap/u);
+  assert.match(html, /longest idle/u);
+  assert.match(html, /Reset zoom/u);
+  assert.match(html, /data-chart-bin/u);
+
+  // Emphasis is additive: nothing de-emphasises the surrounding trace.
+  assert.doesNotMatch(html, /selection-unrelated/u);
+  assert.doesNotMatch(styles, /selection-unrelated/u);
+  assert.doesNotMatch(styles, /filter:saturate/u);
+
+  // The Drawer must paint above Session View, in both layouts.
+  const drawerLayers = [...styles.matchAll(/\.evidence-drawer \{[^}]*z-index:(\d+)/gu)].map((match) => Number(match[1]));
+  const sessionLayer = Number(styles.match(/\.session-view \{[^}]*z-index:(\d+)/u)[1]);
+  assert.ok(drawerLayers.length >= 2);
+  assert.ok(drawerLayers.every((layer) => layer > sessionLayer));
+
+  // Commits keep their own track instead of being attributed to a Turn.
+  assert.match(html, /function placeCommits/u);
+  assert.match(html, /Commits outside the observed turn windows/u);
+  assert.match(html, /no Turn is claimed to have produced them/u);
+
+  // Long traces stay navigable: runs collapse, rows carry a clock, no nested
+  // scroll box, scroll-spy drives Jump to, and bulk expand exists.
+  assert.match(html, /function toolRuns/u);
+  assert.match(html, /session-tool-time/u);
+  assert.doesNotMatch(styles, /\.session-call-list \{[^}]*max-height/u);
+  assert.match(html, /IntersectionObserver/u);
+  assert.match(html, /data-expand-tools="open"/u);
+  assert.match(html, /data-reveal-calls/u);
+
+  // Session View is a navigable state and related objects stay grouped.
+  assert.match(html, /url\.searchParams\.set\('view','session'\)/u);
+  assert.match(html, /addEventListener\('popstate'/u);
+  assert.match(html, /history\.pushState/u);
+  assert.match(html, /function relatedGroups/u);
+  assert.match(html, /evidence-related-group/u);
+
+  // Expanding the trace no longer collapses the delivery lane.
+  assert.doesNotMatch(html, /classList\.toggle\('delivery-collapsed',details\.open\)/u);
+  assert.match(html, /token usage unavailable/u);
 });
 
 test("Harness Inspector help is workspace-independent and sanitizes bad argv (AC-2, AC-8)", () => {

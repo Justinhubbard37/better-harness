@@ -21,6 +21,7 @@ export function buildToolCallTrace(events = [], options = {}) {
       toolName: privacySafeToolName(event?.toolName ?? event?.functionCallName),
       status: isFailure(event) ? FAILURE_STATUS : OBSERVED_STATUS,
       ...(options.includeTransientInvocationKey ? { transientInvocationKey: lifecycleInvocationKey(event) } : {}),
+      ...observedStartFact(event),
       ...durationFact(event),
     }));
   const laneNames = boundedLaneNames(canonicalCalls, laneLimit);
@@ -35,6 +36,7 @@ export function buildToolCallTrace(events = [], options = {}) {
     status: call.status,
     durationStatus: call.durationStatus,
     ...(call.transientInvocationKey ? { transientInvocationKey: call.transientInvocationKey } : {}),
+    ...(Number.isFinite(call.startedAt) ? { startedAt: call.startedAt } : {}),
     ...(call.durationStatus === OBSERVED_STATUS ? {
       durationMs: call.durationMs,
       timingSource: call.timingSource,
@@ -53,6 +55,19 @@ export function buildToolCallTrace(events = [], options = {}) {
 function lifecycleInvocationKey(event) {
   const value = event?.toolInvocationId ?? event?.requestId ?? event?.callId ?? null;
   return value ? String(value) : null;
+}
+
+// A wall-clock start lets the Inspector place a call on a real time axis
+// instead of a call ordinal. Deduplicated lifecycles are canonically the result
+// event, so the paired request stamp wins over the merged event's own timestamp;
+// otherwise the call's single observation is the best start evidence. Absent or
+// unparsable stamps stay absent so the renderer falls back to sequence order
+// rather than inventing a time.
+function observedStartFact(event) {
+  const paired = Number(event?.startedAt);
+  if (Number.isFinite(paired)) return { startedAt: paired };
+  const observed = Date.parse(String(event?.timestamp ?? ""));
+  return Number.isFinite(observed) ? { startedAt: observed } : {};
 }
 
 function durationFact(event) {

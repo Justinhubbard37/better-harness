@@ -167,6 +167,7 @@ export function normalizeToolActivity(traceCalls = [], requestFacts = []) {
       ...(detail ? { detail, detailKind: "redacted-input-summary" } : {}),
       status: call?.status === "failed" ? "failed" : "observed",
       durationStatus: call?.durationStatus === "observed" ? "observed" : "unobserved",
+      ...(Number.isFinite(call?.startedAt) ? { startedAt: Math.round(call.startedAt) } : {}),
       ...(call?.durationStatus === "observed" && Number.isFinite(call.durationMs) ? { durationMs: Math.round(call.durationMs) } : {}),
       ...(filePath ? { filePath } : {}),
       ...(filePaths.length > 0 ? { filePaths } : {}),

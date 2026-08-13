@@ -132,6 +132,7 @@ function projectToolActivity(activity) {
     const filePaths = [...new Set((call?.filePaths ?? [call?.filePath]).map(safeRelativeFile).filter(Boolean))];
     const filePath = filePaths[0] ?? null;
     const observedDuration = call?.durationStatus === "observed" && Number.isFinite(call?.durationMs) && call.durationMs >= 0;
+    const startedAt = Number.isFinite(call?.startedAt) ? Math.round(call.startedAt) : null;
     const toolName = safeText(call?.toolName, 64, "Unknown tool");
     const operation = TOOL_OPERATIONS.has(call?.operation) ? call.operation : "use-tool";
     const fallbackLabel = /read/iu.test(toolName) ? "Read files"
@@ -149,6 +150,7 @@ function projectToolActivity(activity) {
       family,
       status: call?.status === "failed" ? "failed" : "observed",
       durationStatus: observedDuration ? "observed" : "unobserved",
+      ...(startedAt === null ? {} : { startedAt }),
       ...(observedDuration ? { durationMs: Math.round(call.durationMs) } : {}),
       ...(detail ? { detail, detailKind: call?.detailKind === "redacted-input-summary" ? "redacted-input-summary" : "normalized-summary" } : {}),
       ...(filePath ? { filePath } : {}),
@@ -184,8 +186,32 @@ function projectToolActivity(activity) {
     failedCalls: calls.filter((call) => call.status === "failed").length,
     familyCounts,
     segments,
+    timeline: activityTimeline(calls),
     files: [...files.values()].sort((left, right) => left.path.localeCompare(right.path)),
     calls,
+  };
+}
+
+// The Inspector plots calls on wall-clock time when the host retained enough
+// distinct stamps to define a span. Anything less stays on sequence order so a
+// chart never implies timing evidence the transcript did not observe.
+function activityTimeline(calls) {
+  const stamps = calls.map((call) => call.startedAt).filter((value) => Number.isFinite(value));
+  const ends = calls
+    .map((call) => (Number.isFinite(call.startedAt) && Number.isFinite(call.durationMs)
+      ? call.startedAt + call.durationMs
+      : call.startedAt))
+    .filter((value) => Number.isFinite(value));
+  const startMs = stamps.length > 0 ? Math.min(...stamps) : null;
+  const endMs = ends.length > 0 ? Math.max(...ends) : null;
+  const distinct = new Set(stamps).size;
+  return {
+    basis: distinct >= 2 && endMs > startMs ? "observed-time" : "call-sequence",
+    startMs,
+    endMs,
+    spanMs: startMs === null || endMs === null ? null : Math.max(0, endMs - startMs),
+    timedCallCount: stamps.length,
+    distinctStampCount: distinct,
   };
 }
 
@@ -267,22 +293,66 @@ function projectDialogue(dialogue, toolActivity) {
   };
 }
 
+// Retained prompts are capped and de-duplicated upstream, so their array
+// position is not a Turn number. Resolving each prompt to the Turn it actually
+// came from keeps prompt cards, cross-highlighting, and Session View jumps
+// pointing at the same dialogue event.
+function bindPromptsToTurns(prompts, turns) {
+  const claimed = new Set();
+  const key = (value) => String(value ?? "").replace(/\s+/gu, " ").trim().slice(0, 24);
+  const resolve = (prompt, index) => {
+    const byStamp = turns.find((turn) => turn.prompt.timestamp
+      && turn.prompt.timestamp === prompt.timestamp
+      && !claimed.has(turn.index));
+    if (byStamp) return byStamp.index;
+    const promptKey = key(prompt.text);
+    const byText = promptKey
+      ? turns.find((turn) => !claimed.has(turn.index) && key(turn.prompt.text) === promptKey)
+      : null;
+    if (byText) return byText.index;
+    const ordinal = turns[index];
+    return ordinal && !claimed.has(ordinal.index) ? ordinal.index : null;
+  };
+  return prompts.map((prompt, index) => {
+    const turnIndex = resolve(prompt, index);
+    if (turnIndex !== null) claimed.add(turnIndex);
+    return { ...prompt, turnIndex };
+  });
+}
+
+// One turn vocabulary for every surface. `turnCount` is the number of dialogue
+// Turns a reviewer can actually open; the other counts explain why fewer prompt
+// cards are shown, so no two views can quote different totals.
+function turnCoverage(session, prompts, dialogue) {
+  const turnCount = dialogue.turns.length > 0
+    ? dialogue.turns.length
+    : Number(session.userTurnCount) || prompts.length;
+  return {
+    basis: dialogue.turns.length > 0 ? "dialogue-turns" : "normalized-user-turns",
+    turnCount,
+    shownPromptCount: prompts.length,
+    normalizedUserTurnCount: Number(session.userTurnCount) || prompts.length,
+    observationCount: Number(session.promptObservationCount) || Number(session.promptCount) || prompts.length,
+    truncated: prompts.length < turnCount,
+  };
+}
+
 function projectSession(session) {
   const sessionId = safeLocator(session.sessionId);
   if (!sessionId) return null;
   const platform = safeText(session.platform, 40, "unknown");
   const locator = safeLocator(`${platform}/${sessionId}`) ?? sessionId;
-  const prompts = (session.prompts ?? []).map((prompt, index) => ({
-    id: `${sessionId}:prompt:${index + 1}`,
-    text: safeText(prompt.text, 500, "Prompt unavailable after privacy filtering"),
-    timestamp: prompt.timestamp ?? null,
-    day: isoDay(prompt.timestamp ?? session.firstSeen),
-  }));
   const toolTrace = projectToolTrace(session.toolTrace);
   const toolActivity = projectToolActivity(session.toolActivity ?? {
     calls: toolTrace.calls.map((call) => ({ ...call, family: "other" })),
   });
   const dialogue = projectDialogue(session.dialogue, toolActivity);
+  const prompts = bindPromptsToTurns((session.prompts ?? []).map((prompt, index) => ({
+    id: `${sessionId}:prompt:${index + 1}`,
+    text: safeText(prompt.text, 500, "Prompt unavailable after privacy filtering"),
+    timestamp: prompt.timestamp ?? null,
+    day: isoDay(prompt.timestamp ?? session.firstSeen),
+  })), dialogue.turns);
   return {
     sessionId,
     locator,
@@ -297,6 +367,7 @@ function projectSession(session) {
     promptObservationCount: Number(session.promptObservationCount) || Number(session.promptCount) || prompts.length,
     userTurnCount: Number(session.userTurnCount) || prompts.length,
     retainedUserTurnCount: Number(session.retainedUserTurnCount) || prompts.length,
+    turnCoverage: turnCoverage(session, prompts, dialogue),
     toolCallCount: Number(session.toolCallCount) || 0,
     assistantMessageCount: Number(session.assistantMessageCount) || 0,
     fileEditCount: Number(session.fileEditCount) || 0,
