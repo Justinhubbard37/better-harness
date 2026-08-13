@@ -3,6 +3,51 @@
 This file records notable public changes to Better Harness. Entries describe
 observable behavior and compatibility, not every internal refactor.
 
+## 0.6.0 - 2026-08-13
+
+### Added
+
+- Harness Inspector is now available from the published CLI through
+  `better-harness harness-inspector` and the `better-harness inspector`
+  shortcut. `inspector render` creates a self-contained, read-only HTML
+  workbench that relates Feature Tree stages, Stories, prompts, sessions,
+  tool calls, files, and commits across the supported session providers. Its
+  synchronized Evidence Drawer explains why evidence is linked, states known
+  limitations, and distinguishes commits created during a session from files
+  merely present in those commits.
+
+- `better-harness commit-session-link` correlates bounded Git history with
+  coding-agent sessions and renders commit-oriented provenance evidence.
+  Long-session reports can now retain privacy-safe tool activity and file
+  evidence for trace inspection instead of reducing execution to aggregate
+  counts.
+
+- A new Harness Component Snapshot contract and direct CLI captures, compares,
+  and resolves non-authorizing rollback references for bounded project-owned
+  Harness component state. Standard report analysis can also surface
+  evidence-bound native Learning Capture candidates without requiring adapters
+  to assign pattern labels.
+
+### Changed
+
+- The repository test suite now runs on Vitest with human-readable failures in
+  the main GitHub Actions log, source annotations, a Job Summary, and JUnit
+  output. Existing Node assertions remain intact, while Windows, macOS, Linux,
+  Node 22.20.0, and Node 24.x remain release gates.
+
+- Test ownership is organized by capability, and contributor commands now use
+  the same Vitest discovery contract locally and in CI.
+
+### Fixed
+
+- Claude session discovery resolves underscore-based transcript directories,
+  component snapshot failures retain bounded diagnostics, and review-trigger
+  stop-hook results use a structured cross-platform output contract.
+
+- CI test module paths remain valid on Windows drive-letter workspaces, and
+  failure output identifies the owning test instead of reporting only a failed
+  capability group.
+
 ## 0.5.0 - 2026-08-04
 
 ### Added
