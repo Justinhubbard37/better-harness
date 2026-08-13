@@ -17,4 +17,5 @@ export {
   HARNESS_INSPECTOR_DEMO_GENERATED_AT,
   renderHarnessInspectorDemoHtml,
 } from "./demo-report.mjs";
-export { main } from "./cli.mjs";
+export { openRenderedReport, reportFileUrl } from "./open-report.mjs";
+export { main, parseRenderOptions } from "./cli.mjs";

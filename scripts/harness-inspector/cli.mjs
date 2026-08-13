@@ -17,6 +17,7 @@ import {
 } from "../commit-session-link/index.mjs";
 import { SUPPORTED_SESSION_PLATFORMS } from "../session-analysis/index.mjs";
 import { emptyFeatureTree, FeatureTreeParseError, parseFeatureTreeMarkdown } from "./feature-tree.mjs";
+import { openRenderedReport } from "./open-report.mjs";
 import { renderHarnessInspectorHtml } from "./render-html.mjs";
 import { buildHarnessInspectorReport } from "./report-model.mjs";
 
@@ -26,7 +27,7 @@ Render a read-only feature/story/prompt/session/commit provenance report with
 Feature Tree and Date scope pickers.
 
 Usage:
-  node scripts/harness-inspector/cli.mjs render [--workspace <dir>] [--platform <hosts>] [--feature-tree <file>] [--since <date>] [--until <date>] [--stage <name>] [--commits <n>] [--max-sessions <n>] [--out <file>]
+  node scripts/harness-inspector/cli.mjs render [--workspace <dir>] [--platform <hosts>] [--feature-tree <file>] [--since <date>] [--until <date>] [--stage <name>] [--commits <n>] [--max-sessions <n>] [--out <file>] [--open]
 
 Options:
   --workspace <dir>      Repository to inspect (default: current directory)
@@ -38,6 +39,7 @@ Options:
   --commits <n>          Bound scanned commits (default: ${DEFAULT_COMMIT_LIMIT})
   --max-sessions <n>     Bound hydrated sessions (default: ${DEFAULT_MAX_SESSIONS})
   --out <file>           Output HTML path
+  --open                 Open the written report in the default browser
   -h, --help             Print help without reading the workspace
 
 The report is self-contained and does not write Git metadata or native session state.
@@ -53,7 +55,13 @@ const ALLOWED_OPTIONS = new Set([
   "--commits",
   "--max-sessions",
   "--out",
+  "--open",
 ]);
+
+// Boolean flags take no value, so a following token stays a flag position and an
+// explicit "--open true" fails as an unrecognized option instead of silently
+// swallowing the next argument.
+const BOOLEAN_OPTIONS = new Set(["--open"]);
 
 class UsageError extends Error {
   constructor(message, safeFlag = null) {
@@ -62,14 +70,18 @@ class UsageError extends Error {
   }
 }
 
-function parseOptions(argv) {
+export function parseRenderOptions(argv) {
   const options = {};
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (!ALLOWED_OPTIONS.has(flag)) throw new UsageError("unrecognized option");
+    if (Object.hasOwn(options, flag)) throw new UsageError("duplicate option", flag);
+    if (BOOLEAN_OPTIONS.has(flag)) {
+      options[flag] = true;
+      continue;
+    }
     const value = argv[index + 1];
     if (value === undefined || value.startsWith("--")) throw new UsageError("missing option value", flag);
-    if (Object.hasOwn(options, flag)) throw new UsageError("duplicate option", flag);
     options[flag] = value;
     index += 1;
   }
@@ -125,7 +137,7 @@ function parsePlatforms(value) {
   return requested;
 }
 
-async function runRender(options) {
+async function runRender(options, { open = openRenderedReport } = {}) {
   const workspace = path.resolve(options["--workspace"] ?? process.cwd());
   const requestedPlatform = options["--platform"] ?? "all";
   const platforms = parsePlatforms(requestedPlatform);
@@ -192,8 +204,10 @@ async function runRender(options) {
   );
   await mkdir(path.dirname(outputPath), { recursive: true });
   await writeFile(outputPath, html, "utf8");
+  const opened = options["--open"] === true ? open(outputPath) : null;
   process.stdout.write(`${JSON.stringify({
     outputPath,
+    ...(opened === null ? {} : { opened }),
     featureNodes: report.featureTree.nodes.length,
     stories: report.stories.length,
     days: report.days.length,
@@ -204,7 +218,7 @@ async function runRender(options) {
   }, null, 2)}\n`);
 }
 
-export async function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2), runtime = {}) {
   if (argv.length === 0 || argv.includes("--help") || argv.includes("-h")) {
     process.stdout.write(HELP);
     return 0;
@@ -217,7 +231,7 @@ export async function main(argv = process.argv.slice(2)) {
     return 64;
   }
   try {
-    await runRender(parseOptions(rest));
+    await runRender(parseRenderOptions(rest), runtime);
     return 0;
   } catch (error) {
     if (error instanceof UsageError) {

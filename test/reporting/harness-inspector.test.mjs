@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "vitest";
@@ -9,12 +11,30 @@ import {
   buildHarnessInspectorReport,
   featureTreeDescendantIds,
   FeatureTreeParseError,
+  main,
+  openRenderedReport,
   parseFeatureTreeMarkdown,
+  parseRenderOptions,
   renderHarnessInspectorHtml,
 } from "../../scripts/harness-inspector/index.mjs";
 import { summarizeSessionEvents } from "../../scripts/commit-session-link/index.mjs";
 
 const CLI_PATH = fileURLToPath(new URL("../../scripts/harness-inspector/cli.mjs", import.meta.url));
+
+// One commit is enough Git history for a render, and an isolated workspace keeps
+// the run away from this repository's own sessions and commits.
+async function seededWorkspace(prefix) {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), prefix));
+  const git = (...args) => spawnSync("git", args, { cwd: workspace, encoding: "utf8" });
+  git("init", "--initial-branch=main");
+  git("config", "user.email", "inspector@example.com");
+  git("config", "user.name", "Inspector Test");
+  await writeFile(path.join(workspace, "README.md"), "# fixture\n", "utf8");
+  git("add", "README.md");
+  git("commit", "-m", "chore: seed fixture");
+  return workspace;
+}
+
 const FEATURE_TREE = `# Feature: Harness Inspector {#harness-inspector}
 - status: active
 - evidence: candidate
@@ -693,4 +713,121 @@ test("Harness Inspector help is workspace-independent and sanitizes bad argv (AC
   const invalid = spawnSync(process.execPath, [CLI_PATH, "render", "--unknown", privateValue], { encoding: "utf8" });
   assert.equal(invalid.status, 64);
   assert.equal(invalid.stderr.includes(privateValue), false);
+});
+
+test("--open is parsed as a valueless flag without consuming the next argument", () => {
+  assert.deepEqual(parseRenderOptions(["--open"]), { "--open": true });
+  assert.deepEqual(parseRenderOptions(["--open", "--out", "report.html"]), {
+    "--open": true,
+    "--out": "report.html",
+  });
+  assert.deepEqual(parseRenderOptions(["--out", "report.html", "--open"]), {
+    "--out": "report.html",
+    "--open": true,
+  });
+
+  // A value handed to a boolean flag stays a stray token rather than a silently
+  // accepted argument, and value options still require their value.
+  assert.throws(() => parseRenderOptions(["--open", "true"]), (error) => error.exitCode === 64);
+  assert.throws(() => parseRenderOptions(["--open", "--open"]), /duplicate option: --open/u);
+  assert.throws(() => parseRenderOptions(["--out"]), /missing option value: --out/u);
+});
+
+test("opening a report launches an absolute file URL and reports launch failure", () => {
+  const launched = [];
+  const opened = openRenderedReport(path.join("out", "inspector.html"), {
+    open: (url) => {
+      launched.push(url);
+      return true;
+    },
+  });
+
+  assert.equal(opened, true);
+  assert.equal(launched.length, 1);
+  assert.equal(launched[0].startsWith("file:///"), true);
+  assert.equal(fileURLToPath(launched[0]), path.resolve("out", "inspector.html"));
+  assert.equal(openRenderedReport("inspector.html", { open: () => false }), false);
+});
+
+test("render writes the report before opening it and reports the launch in its summary", async () => {
+  const workspace = await seededWorkspace("better-harness-inspector-open-");
+  const outputPath = path.join(workspace, "inspector.html");
+  const openedPaths = [];
+  const written = [];
+  const stdoutWrite = process.stdout.write;
+  process.stdout.write = (chunk) => {
+    written.push(String(chunk));
+    return true;
+  };
+  let exitCode;
+  try {
+    exitCode = await main(["render", "--workspace", workspace, "--out", outputPath, "--open"], {
+      open: (target) => {
+        // The file must already exist when the viewer is launched.
+        openedPaths.push({ target, exists: existsSync(target) });
+        return true;
+      },
+    });
+  } finally {
+    process.stdout.write = stdoutWrite;
+    await rm(workspace, { recursive: true, force: true });
+  }
+
+  assert.equal(exitCode, 0);
+  assert.deepEqual(openedPaths, [{ target: outputPath, exists: true }]);
+  const summary = JSON.parse(written.join(""));
+  assert.equal(summary.outputPath, outputPath);
+  assert.equal(summary.opened, true);
+});
+
+test("render leaves the browser alone when --open is absent", async () => {
+  const workspace = await seededWorkspace("better-harness-inspector-no-open-");
+  const outputPath = path.join(workspace, "inspector.html");
+  let openCalls = 0;
+  const written = [];
+  const stdoutWrite = process.stdout.write;
+  process.stdout.write = (chunk) => {
+    written.push(String(chunk));
+    return true;
+  };
+  let exitCode;
+  try {
+    exitCode = await main(["render", "--workspace", workspace, "--out", outputPath], {
+      open: () => {
+        openCalls += 1;
+        return true;
+      },
+    });
+  } finally {
+    process.stdout.write = stdoutWrite;
+    await rm(workspace, { recursive: true, force: true });
+  }
+
+  assert.equal(exitCode, 0);
+  assert.equal(openCalls, 0);
+  assert.equal(Object.hasOwn(JSON.parse(written.join("")), "opened"), false);
+});
+
+test("a report that could not be opened still succeeds and says so", async () => {
+  const workspace = await seededWorkspace("better-harness-inspector-open-failure-");
+  const outputPath = path.join(workspace, "inspector.html");
+  const written = [];
+  const stdoutWrite = process.stdout.write;
+  process.stdout.write = (chunk) => {
+    written.push(String(chunk));
+    return true;
+  };
+  let exitCode;
+  try {
+    exitCode = await main(["render", "--workspace", workspace, "--out", outputPath, "--open"], {
+      open: () => false,
+    });
+  } finally {
+    process.stdout.write = stdoutWrite;
+  }
+
+  assert.equal(exitCode, 0);
+  assert.equal(existsSync(outputPath), true);
+  assert.equal(JSON.parse(written.join("")).opened, false);
+  await rm(workspace, { recursive: true, force: true });
 });

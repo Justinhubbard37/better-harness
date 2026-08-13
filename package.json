@@ -75,6 +75,8 @@
   "scripts": {
     "bundle:zip": "node scripts/npm-package/create-bundle.mjs",
     "check": "npm test && npm run pack:verify",
+    "inspector": "node scripts/harness-inspector/cli.mjs render",
+    "inspector:open": "node scripts/harness-inspector/cli.mjs render --open",
     "pack:verify": "node scripts/npm-package/verify-pack.mjs",
     "publish:dry-run": "npm publish --dry-run --access public --registry https://registry.npmjs.org",
     "prepublishOnly": "npm run check",
