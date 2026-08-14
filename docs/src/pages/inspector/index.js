@@ -9,6 +9,7 @@ import styles from "./inspector.module.css";
 export default function InspectorPage() {
   const demoUrl = useBaseUrl("/demo/harness-inspector/");
   const installationUrl = useBaseUrl("/docs/installation");
+  const architectureUrl = useBaseUrl("/docs/concepts/harness-inspector");
 
   return (
     <Layout
@@ -295,6 +296,12 @@ export default function InspectorPage() {
                 </dd>
               </div>
             </dl>
+            <Link className={styles.installLink} to={architectureUrl}>
+              <Translate id="inspector.evidence.architecture">
+                Read the architecture, evidence model, and boundaries
+              </Translate>
+              <span aria-hidden="true">→</span>
+            </Link>
           </section>
 
           <aside className={styles.localProject} aria-labelledby="inspector-local-title">

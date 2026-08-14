@@ -104,6 +104,9 @@
   "inspector.evidence.contextual": {
     "message": "附近的历史有助于解释交付过程，但不会声称存在直接关联。"
   },
+  "inspector.evidence.architecture": {
+    "message": "阅读架构、证据模型与能力边界"
+  },
   "inspector.local.eyebrow": {
     "message": "使用你自己的证据"
   },
