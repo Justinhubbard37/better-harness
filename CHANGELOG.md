@@ -3,6 +3,34 @@
 This file records notable public changes to Better Harness. Entries describe
 observable behavior and compatibility, not every internal refactor.
 
+## 0.6.2 - 2026-08-14
+
+### Added
+
+- Harness Inspector now documents its local evidence pipeline, relationship
+  strengths, privacy boundaries, and CLI workflow in a bilingual concept guide
+  with a source-backed architecture diagram.
+
+- The Inspector renderer accepts `--open` so a generated self-contained report
+  can be opened in the default browser after it is written.
+
+### Changed
+
+- Session View uses denser activity and commit presentation, compresses long
+  idle windows, and keeps expanded activity focused while preserving access to
+  the full retained trace.
+
+- Inspector chrome now uses one workspace identity, clearer breadcrumbs, and
+  the visible `Capability` label consistently across navigation and docs.
+
+- Qoder CLI installation guidance now distinguishes the Desktop-bundled path
+  from standalone marketplace and Git installation.
+
+### Fixed
+
+- The Inspector sticky header is isolated from trace content so scrolling and
+  focused expansion do not create overlap.
+
 ## 0.6.1 - 2026-08-13
 
 ### Added
