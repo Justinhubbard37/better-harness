@@ -134,7 +134,7 @@ export default function InspectorPage() {
               </h3>
               <p>
                 <Translate id="inspector.features.intent.body">
-                  Navigate the Delivery Tree from capability and Story intent
+                  Navigate the capability tree from capability and Story intent
                   to the sessions, files, and commits associated with it.
                 </Translate>
               </p>
@@ -191,7 +191,7 @@ export default function InspectorPage() {
                   </h3>
                   <p>
                     <Translate id="inspector.how.scope.body">
-                      Use Delivery Tree for product intent or Date for a
+                      Use Capability for product intent or Date for a
                       time-based view of sessions and commits.
                     </Translate>
                   </p>

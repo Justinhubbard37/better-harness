@@ -1508,7 +1508,7 @@
     if (automatic) app.dataset.drawerCollapsedPicker = 'true';
     else delete app.dataset.drawerCollapsedPicker;
     toggle?.setAttribute('aria-expanded',String(!collapsed));
-    toggle?.setAttribute('aria-label',collapsed ? 'Expand Delivery Tree' : 'Collapse Delivery Tree');
+    toggle?.setAttribute('aria-label',collapsed ? 'Expand capability tree' : 'Collapse capability tree');
   }
 
   function renderEvidenceDrawer() {

@@ -42,7 +42,7 @@
     "message": "从意图到交付"
   },
   "inspector.features.intent.body": {
-    "message": "沿 Delivery Tree 从能力和 Story 意图，查看与之关联的会话、文件与提交。"
+    "message": "沿能力树从能力和 Story 意图，查看与之关联的会话、文件与提交。"
   },
   "inspector.features.session.title": {
     "message": "把会话放回上下文"
@@ -66,7 +66,7 @@
     "message": "选择范围"
   },
   "inspector.how.scope.body": {
-    "message": "按产品意图查看时使用 Delivery Tree；按时间查看会话与提交时使用 Date。"
+    "message": "按产品意图查看时使用 Capability；按时间查看会话与提交时使用 Date。"
   },
   "inspector.how.lanes.title": {
     "message": "阅读三条信息轨"

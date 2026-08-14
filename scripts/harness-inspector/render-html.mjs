@@ -64,7 +64,7 @@ function featurePicker(tree) {
     return `<li class="tree-item ${node.type}" role="treeitem" data-tree-item data-tree-node-id="${escapeHtml(node.id)}"${hasChildren ? ' aria-expanded="true"' : ""}><div class="tree-line">${toggle}<button class="tree-row ${node.type}" type="button" data-feature-id="${escapeHtml(node.id)}"${selection}><span class="tree-check ${status}" role="img" aria-label="${statusLabel}"><span aria-hidden="true">${status === "complete" ? "✓" : ""}</span></span><span class="tree-copy"><strong>${escapeHtml(node.title)}</strong><small>${escapeHtml(meta)}</small></span>${badge}</button></div>${group}</li>`;
   };
   const roots = tree.roots.map((id) => byId.get(id)).filter(Boolean);
-  return `<ul class="capability-tree" role="tree" aria-label="Delivery capability tree">${roots.map(renderNode).join("")}</ul>`;
+  return `<ul class="capability-tree" role="tree" aria-label="Capability tree">${roots.map(renderNode).join("")}</ul>`;
 }
 
 function datePicker(days) {
@@ -86,7 +86,7 @@ function platformBadge(report) {
 }
 
 export function renderHarnessInspectorHtml(report, {
-  contextLabel = "real local evidence",
+  contextLabel = null,
   robots = null,
   sample = false,
 } = {}) {
@@ -97,13 +97,17 @@ export function renderHarnessInspectorHtml(report, {
   const hasFeatureEvidence = report.stories.some((story) => story.sessionLinks.length > 0 || story.commitHashes.length > 0);
   const initialMode = report.featureTree.nodes.length > 0 && hasFeatureEvidence ? "feature" : "date";
   const workspaceName = escapeHtml(report.workspace.name);
+  // A local render needs no tagline: the workspace name alone is the context.
+  // A label is reserved for reports whose provenance is not the reader's own
+  // repository, such as the published sample.
+  const workspaceContext = contextLabel ? `${workspaceName} · ${escapeHtml(contextLabel)}` : workspaceName;
   return fillHtmlTemplate({
     PAGE_TITLE: `Harness Inspector · ${workspaceName}`,
     ROBOTS_META: robots ? `<meta name="robots" content="${robots}">` : "",
     STYLES,
     BODY_ATTRIBUTES: sample ? ' data-report-context="sample"' : "",
     WORKSPACE_NAME: workspaceName,
-    CONTEXT_LABEL: escapeHtml(contextLabel),
+    WORKSPACE_CONTEXT: workspaceContext,
     FEATURE_TAB_CLASS: initialMode === "feature" ? "active" : "",
     FEATURE_TAB_SELECTED: initialMode === "feature" ? "true" : "false",
     DATE_TAB_CLASS: initialMode === "date" ? "active" : "",

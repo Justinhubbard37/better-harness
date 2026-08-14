@@ -432,6 +432,55 @@ test("Inspector serializes one self-contained executable report document (AC-2, 
   assert.doesNotThrow(() => new Function(clientScript));
 });
 
+// Chrome copy is asserted through the elements that own it: the sidebar owns
+// workspace identity, the breadcrumb owns the selected scope, and the tablist
+// names what a reader browses by.
+function chromeText(html, pattern) {
+  const markup = html.match(pattern)?.[0] ?? "";
+  return [...markup.matchAll(/<(?:span|strong|small|button)\b[^>]*>([^<]*)</gu)]
+    .map((match) => match[1].trim())
+    .filter(Boolean);
+}
+
+test("workspace identity lives in the sidebar and the breadcrumb starts at the selected scope", () => {
+  const report = buildHarnessInspectorReport({
+    repoRoot: "/workspace/atlas-checkout",
+    featureTree: parseFeatureTreeMarkdown(FEATURE_TREE),
+    sessions: [fixtureSession()],
+    correlation: fixtureCorrelation(),
+    filters: { platform: "codex" },
+  });
+  const html = renderHarnessInspectorHtml(report);
+
+  // The sidebar names the tool once and the workspace once, with no tagline.
+  assert.deepEqual(chromeText(html, /<div class="brand-copy">.*?<\/div>/su), [
+    "Harness Inspector",
+    "atlas-checkout",
+  ]);
+  // The breadcrumb no longer repeats the workspace name.
+  assert.deepEqual(chromeText(html, /<nav class="workspace-breadcrumb".*?<\/nav>/su), [
+    "Harness Inspector",
+    "Delivery Workbench",
+  ]);
+  assert.deepEqual(chromeText(html, /<div class="mode-tabs".*?<\/div>/su), ["Capability", "Date"]);
+});
+
+test("a context label is only appended for reports that are not the reader's workspace", () => {
+  const report = buildHarnessInspectorReport({
+    repoRoot: "/workspace/atlas-checkout",
+    featureTree: parseFeatureTreeMarkdown(FEATURE_TREE),
+    sessions: [fixtureSession()],
+    correlation: fixtureCorrelation(),
+    filters: { platform: "codex" },
+  });
+  const labelled = renderHarnessInspectorHtml(report, { contextLabel: "English sample data" });
+
+  assert.deepEqual(chromeText(labelled, /<div class="brand-copy">.*?<\/div>/su), [
+    "Harness Inspector",
+    "atlas-checkout · English sample data",
+  ]);
+});
+
 test("Inspector template assembly does not reinterpret token-like session evidence", () => {
   const report = buildHarnessInspectorReport({
     repoRoot: "/workspace/repo",

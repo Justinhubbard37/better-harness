@@ -16,9 +16,8 @@
   .app { min-height:100vh; display:grid; grid-template-columns:270px minmax(0,1fr); margin-right:var(--drawer-inset); }
   .app.picker-collapsed { grid-template-columns:46px minmax(0,1fr); }
   .scope-picker { position:sticky; top:0; height:100vh; min-width:0; border-right:1px solid var(--line); background:#fafbfc; display:flex; flex-direction:column; z-index:2; }
-  .brand { min-height:78px; position:relative; padding:17px 42px 14px 18px; border-bottom:1px solid var(--line); }
-  .brand small { display:block; color:var(--lime); font-size:10px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
-  .brand strong { display:block; margin-top:4px; font-size:18px; letter-spacing:-.025em; }
+  .brand { min-height:66px; position:relative; padding:16px 42px 14px 18px; border-bottom:1px solid var(--line); }
+  .brand strong { display:block; font-size:18px; letter-spacing:-.025em; }
   .brand span { color:var(--muted); font-size:11px; }
   .picker-toggle { position:absolute; top:14px; right:9px; border:1px solid #d8dee6; border-radius:6px; padding:4px 6px; color:#556274; background:#fff; cursor:pointer; font-size:8px; font-weight:700; }
   .picker-toggle .expand-label { display:none; }
