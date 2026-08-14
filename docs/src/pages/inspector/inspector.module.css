@@ -51,6 +51,37 @@
   line-height: 1.55;
 }
 
+.quickstart {
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 18px;
+  padding: 10px 13px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--ifm-color-primary) 42%, var(--ifm-color-emphasis-300));
+  border-radius: 10px;
+  background: var(--ifm-background-surface-color, var(--ifm-background-color));
+  box-shadow: var(--bh-shadow-sm);
+}
+
+.quickstart span {
+  color: var(--ifm-color-primary);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.quickstart code {
+  padding: 0;
+  color: var(--ifm-color-emphasis-900);
+  background: transparent;
+  font-size: 0.83rem;
+  overflow-wrap: anywhere;
+}
+
 .actions {
   display: grid;
   justify-items: end;
@@ -435,6 +466,12 @@
 }
 
 @media (max-width: 520px) {
+  .quickstart {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
   .featureCard,
   .evidenceGrid > div,
   .localProject {

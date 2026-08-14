@@ -58,7 +58,16 @@ Feature Tree 的选择范围与证据置信度彼此独立。一个 Story 可以
 
 ## 生成私有 Inspector
 
-完成 [Better Harness 安装](../installation)后，在仓库中运行高级命令：
+在需要检查的仓库中运行最短命令。`npx` 会下载或复用当前包，渲染当前工作区，
+并打开已经写入的报告：
+
+```bash
+npx @qoder-ai/better-harness inspector
+```
+
+默认会打开当前工作区，并包含最近 30 个 UTC 日内的活动，最多采集 200 个 commit
+和 100 个完整 session。Date 只列出存在已观察证据的日期，不会虚构“零活动”日期。
+完成 [Better Harness 安装](../installation)后，或者需要显式限定范围时，仍然可以使用完整形式：
 
 ```bash
 better-harness harness-inspector render --workspace . --open

@@ -707,6 +707,22 @@ test("better-harness CLI describes command aliases as their canonical command", 
   assert.deepEqual(payload.data.command.aliases, [{ name: "customize", hidden: true }]);
 });
 
+test("inspector alias delegates its zero-argument quickstart to the Inspector owner", () => {
+  const result = runMainWithResult(["inspector"], {
+    status: 0,
+    signal: null,
+    stdout: null,
+    stderr: null,
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.calls.length, 1);
+  assert.equal(path.basename(result.calls[0].childArgs[0]), "cli.mjs");
+  assert.equal(path.basename(path.dirname(result.calls[0].childArgs[0])), "harness-inspector");
+  assert.deepEqual(result.calls[0].childArgs.slice(1), []);
+  assert.equal(result.calls[0].options.cwd, process.cwd());
+});
+
 test("better-harness CLI routes every terminal help path and representative owners stay side-effect-free", async () => {
   const isolatedRoot = await mkdtemp(path.join(os.tmpdir(), "better-harness-leaf-help-"));
   try {

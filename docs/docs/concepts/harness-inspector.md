@@ -66,8 +66,19 @@ useful navigation scope while its link to a session is still only a candidate.
 
 ## Generate a private Inspector
 
-After [installing Better Harness](../installation), run the advanced command
-inside a repository:
+Run the shortest path inside the repository you want to inspect. `npx` downloads
+or reuses the current package, renders the current workspace, and opens the
+written report:
+
+```bash
+npx @qoder-ai/better-harness inspector
+```
+
+By default this opens the current workspace and includes activity from the
+latest 30 UTC days, bounded to 200 commits and 100 hydrated sessions. Date lists
+days with observed evidence rather than inventing empty-day activity. After
+[installing Better Harness](../installation), or when you need explicit bounds,
+the expanded form remains available:
 
 ```bash
 better-harness harness-inspector render --workspace . --open

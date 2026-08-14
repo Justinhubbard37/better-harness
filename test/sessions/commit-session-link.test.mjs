@@ -173,6 +173,14 @@ test("collectCommitFacts parses numstat, subject, and session trailers (AC-1, AC
   const single = collectCommitFacts({ workspace: root, commit: "HEAD" });
   assert.equal(single.commits.length, 1);
   assert.equal(single.commits[0].hash, latest.hash);
+
+  const windowed = collectCommitFacts({
+    workspace: root,
+    limit: 10,
+    since: "2026-08-02T00:00:00.000Z",
+    until: "2026-08-02T23:59:59.999Z",
+  });
+  assert.deepEqual(windowed.commits.map((commit) => commit.subject), ["fix: bump app value"]);
 });
 
 test("collectCommitFacts rejects unknown commits", async (t) => {

@@ -142,6 +142,52 @@ test("Qoder transcript tool_use and tool_result items retain paired observed lat
   assert.doesNotMatch(JSON.stringify(trace), /private|workspace/u);
 });
 
+test("Qoder assistant content becomes dialogue text without transport JSON", () => {
+  const analyzer = new QoderSessionAnalyzer();
+  const sourceRef = {
+    kind: "execution-transcript",
+    path: "/private/session.jsonl",
+    line: 1,
+    planningScope: "workspace",
+    sessionId: "private-session",
+  };
+  const mixed = analyzer.normalizeEvents({
+    type: "assistant",
+    timestamp: "2026-08-10T10:00:00.000Z",
+    message: {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "Inspect the command owner first." },
+        { type: "tool_use", id: "call-1", name: "Read", input: { file_path: "/private/package.json" } },
+        { type: "text", text: "I found the public entry point." },
+      ],
+    },
+  }, sourceRef, { includeContent: true, includeCommandText: true });
+
+  assert.equal(mixed[0].content, "Inspect the command owner first.\nI found the public entry point.");
+  assert.equal(mixed[0].content.includes("\"role\""), false);
+  assert.equal(mixed[0].content.includes("tool_use"), false);
+  assert.equal(mixed[1].lifecyclePhase, "request");
+  assert.equal(mixed[1].toolName, "Read");
+
+  const toolOnly = analyzer.normalizeEvents({
+    type: "assistant",
+    timestamp: "2026-08-10T10:01:00.000Z",
+    message: {
+      role: "assistant",
+      content: [{ type: "tool_use", id: "call-2", name: "Bash", input: { command: "private command" } }],
+    },
+  }, { ...sourceRef, line: 2 }, { includeContent: true, includeCommandText: true });
+  assert.equal(Object.hasOwn(toolOnly[0], "content"), false);
+  assert.equal(toolOnly[1].toolName, "Bash");
+
+  const unknown = analyzer.normalizeEvent({
+    type: "assistant",
+    message: { role: "assistant", content: [{ type: "future_transport_item", payload: { private: true } }] },
+  }, { ...sourceRef, line: 3 }, { includeContent: true });
+  assert.equal(Object.hasOwn(unknown, "content"), false);
+});
+
 test("Codex function_call and function_call_output retain paired observed latency", async () => {
   const { CodexSessionAnalyzer } = await import("../../scripts/session-analysis/platforms/codex.mjs");
   const analyzer = new CodexSessionAnalyzer();

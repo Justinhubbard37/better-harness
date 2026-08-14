@@ -5,6 +5,9 @@
   "inspector.hero.lead": {
     "message": "从产品意图追踪到 Agent 活动、会话、文件与提交，同时让证据强度及其限制始终可见。"
   },
+  "inspector.hero.quickstart": {
+    "message": "在你的仓库中运行"
+  },
   "inspector.boundaries.label": {
     "message": "Demo 边界"
   },
@@ -114,7 +117,7 @@
     "message": "生成私有的自包含 Inspector"
   },
   "inspector.local.body": {
-    "message": "安装 Better Harness 后，在仓库中运行高级 Inspector 命令。采集留在本地，生成的报告保持只读。"
+    "message": "在仓库中运行一条命令。Inspector 会打开当前工作区最近 30 个 UTC 日的活动；采集留在本地，报告保持只读。"
   },
   "inspector.local.installation": {
     "message": "查看安装方式"

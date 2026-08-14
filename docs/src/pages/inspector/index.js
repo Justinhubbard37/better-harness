@@ -33,6 +33,14 @@ export default function InspectorPage() {
                 visible.
               </Translate>
             </p>
+            <div className={styles.quickstart}>
+              <span>
+                <Translate id="inspector.hero.quickstart">
+                  Run in your repository
+                </Translate>
+              </span>
+              <code>npx @qoder-ai/better-harness inspector</code>
+            </div>
           </div>
           <div className={styles.actions}>
             <ul
@@ -316,9 +324,9 @@ export default function InspectorPage() {
               </h2>
               <p>
                 <Translate id="inspector.local.body">
-                  After installing Better Harness, run the advanced Inspector
-                  command inside a repository. Collection stays local and the
-                  generated report is read-only.
+                  Run one command inside a repository. Inspector opens the
+                  current workspace with the latest 30 UTC days of activity;
+                  collection stays local and the report remains read-only.
                 </Translate>
               </p>
               <Link className={styles.installLink} to={installationUrl}>
@@ -329,7 +337,7 @@ export default function InspectorPage() {
               </Link>
             </div>
             <div className={styles.commandPanel}>
-              <code>better-harness harness-inspector render --workspace .</code>
+              <code>npx @qoder-ai/better-harness inspector</code>
               <p>
                 <Translate id="inspector.local.output">
                   Default output: .qoder/better-harness-runs/harness-inspector/inspector.html

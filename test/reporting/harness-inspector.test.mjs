@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync, realpathSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "vitest";
@@ -756,6 +756,8 @@ test("Harness Inspector help is workspace-independent and sanitizes bad argv (AC
   assert.equal(help.status, 0, help.stderr);
   assert.match(help.stdout, /Harness Inspector v1/u);
   assert.match(help.stdout, /Feature Tree and Date scope pickers/u);
+  assert.match(help.stdout, /inspector\s+Render and open the current workspace with activity/u);
+  assert.match(help.stdout, /latest 30 UTC days.*200 commits/u);
   assert.equal(help.stderr, "");
 
   const privateValue = path.join(os.tmpdir(), "private-feature-tree");
@@ -827,6 +829,52 @@ test("render writes the report before opening it and reports the launch in its s
   const summary = JSON.parse(written.join(""));
   assert.equal(summary.outputPath, outputPath);
   assert.equal(summary.opened, true);
+});
+
+test("zero arguments render the current workspace and open the written report", async () => {
+  const workspace = await seededWorkspace("better-harness-inspector-default-");
+  const canonicalWorkspace = realpathSync(workspace);
+  const openedPaths = [];
+  const written = [];
+  const stdoutWrite = process.stdout.write;
+  process.stdout.write = (chunk) => {
+    written.push(String(chunk));
+    return true;
+  };
+  let exitCode;
+  let summary;
+  let embeddedReport;
+  try {
+    exitCode = await main([], {
+      cwd: workspace,
+      now: new Date("2026-08-14T10:00:00.000Z"),
+      open: (target) => {
+        openedPaths.push({ target, exists: existsSync(target) });
+        return true;
+      },
+    });
+    summary = JSON.parse(written.join(""));
+    const html = await readFile(summary.outputPath, "utf8");
+    embeddedReport = JSON.parse(scriptBody(
+      html,
+      "<script type=\"application/json\" id=\"inspector-data\">",
+    ));
+  } finally {
+    process.stdout.write = stdoutWrite;
+    await rm(workspace, { recursive: true, force: true });
+  }
+
+  assert.equal(exitCode, 0);
+  assert.equal(
+    summary.outputPath,
+    path.join(canonicalWorkspace, ".qoder", "better-harness-runs", "harness-inspector", "inspector.html"),
+  );
+  assert.deepEqual(openedPaths, [{ target: summary.outputPath, exists: true }]);
+  assert.equal(summary.opened, true);
+  assert.equal(embeddedReport.filters.since, "2026-07-16T00:00:00.000Z");
+  assert.equal(embeddedReport.filters.until, "2026-08-14T23:59:59.999Z");
+  assert.equal(embeddedReport.filters.commitLimit, 200);
+  assert.equal(embeddedReport.filters.sessionLimit, 100);
 });
 
 test("render leaves the browser alone when --open is absent", async () => {

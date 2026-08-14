@@ -27,7 +27,13 @@ Render a read-only feature/story/prompt/session/commit provenance report with
 Feature Tree and Date scope pickers.
 
 Usage:
+  npx @qoder-ai/better-harness inspector
   node scripts/harness-inspector/cli.mjs render [--workspace <dir>] [--platform <hosts>] [--feature-tree <file>] [--since <date>] [--until <date>] [--stage <name>] [--commits <n>] [--max-sessions <n>] [--out <file>] [--open]
+
+Default:
+  inspector             Render and open the current workspace with activity
+                        from the latest 30 UTC days (up to 200 commits and
+                        100 hydrated sessions)
 
 Options:
   --workspace <dir>      Repository to inspect (default: current directory)
@@ -62,6 +68,30 @@ const ALLOWED_OPTIONS = new Set([
 // explicit "--open true" fails as an unrecognized option instead of silently
 // swallowing the next argument.
 const BOOLEAN_OPTIONS = new Set(["--open"]);
+const DEFAULT_WINDOW_DAYS = 30;
+const DEFAULT_WINDOW_COMMIT_LIMIT = 200;
+const DEFAULT_WINDOW_SESSION_LIMIT = 100;
+
+function utcDayLabel(value) {
+  return value.toISOString().slice(0, 10);
+}
+
+function defaultInspectorArgs(now = new Date()) {
+  const end = new Date(now);
+  if (Number.isNaN(end.getTime())) throw new TypeError("default Inspector clock must be a valid date");
+  end.setUTCHours(0, 0, 0, 0);
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - (DEFAULT_WINDOW_DAYS - 1));
+  return [
+    "render",
+    "--workspace", ".",
+    "--open",
+    "--since", utcDayLabel(start),
+    "--until", utcDayLabel(end),
+    "--commits", String(DEFAULT_WINDOW_COMMIT_LIMIT),
+    "--max-sessions", String(DEFAULT_WINDOW_SESSION_LIMIT),
+  ];
+}
 
 class UsageError extends Error {
   constructor(message, safeFlag = null) {
@@ -137,8 +167,8 @@ function parsePlatforms(value) {
   return requested;
 }
 
-async function runRender(options, { open = openRenderedReport } = {}) {
-  const workspace = path.resolve(options["--workspace"] ?? process.cwd());
+async function runRender(options, { open = openRenderedReport, cwd = process.cwd() } = {}) {
+  const workspace = path.resolve(cwd, options["--workspace"] ?? ".");
   const requestedPlatform = options["--platform"] ?? "all";
   const platforms = parsePlatforms(requestedPlatform);
   const since = normalizedBound(options["--since"]);
@@ -146,7 +176,7 @@ async function runRender(options, { open = openRenderedReport } = {}) {
   if (since && until && new Date(since) > new Date(until)) throw new UsageError("--since must not be after --until");
   const commitLimit = boundedCommitLimit(options["--commits"]);
   const sessionLimit = boundedMaxSessions(options["--max-sessions"]);
-  const collected = collectCommitFacts({ workspace, limit: commitLimit });
+  const collected = collectCommitFacts({ workspace, limit: commitLimit, since, until });
   const commits = collected.commits.filter((commit) => withinBounds(commit.committedAt ?? commit.authoredAt, since, until));
   const { sessions: summaries, providers } = await collectMultiPlatformSessionSummaries({
     workspace,
@@ -219,13 +249,18 @@ async function runRender(options, { open = openRenderedReport } = {}) {
 }
 
 export async function main(argv = process.argv.slice(2), runtime = {}) {
-  if (argv.length === 0 || argv.includes("--help") || argv.includes("-h")) {
+  const effectiveArgv = argv.length === 0
+    ? defaultInspectorArgs(runtime.now ?? new Date())
+    : argv;
+  if (effectiveArgv.includes("--help") || effectiveArgv.includes("-h")) {
     process.stdout.write(HELP);
     return 0;
   }
   // A leading option flag implies render, so "inspector --out report.html"
   // works without the explicit subcommand.
-  const [command, ...rest] = argv[0].startsWith("--") ? ["render", ...argv] : argv;
+  const [command, ...rest] = effectiveArgv[0].startsWith("--")
+    ? ["render", ...effectiveArgv]
+    : effectiveArgv;
   if (command !== "render") {
     process.stderr.write("Unknown command; expected render\n");
     return 64;

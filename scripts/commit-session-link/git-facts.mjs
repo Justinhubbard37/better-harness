@@ -107,12 +107,20 @@ export function parseSessionLinkTrailers(body) {
   return links;
 }
 
-export function collectCommitFacts({ workspace, commit = null, limit = DEFAULT_COMMIT_LIMIT } = {}) {
+export function collectCommitFacts({
+  workspace,
+  commit = null,
+  limit = DEFAULT_COMMIT_LIMIT,
+  since = null,
+  until = null,
+} = {}) {
   const repoRoot = resolveRepoRoot(workspace);
   const args = ["log", `--format=${LOG_FORMAT}`, "--no-patch", "--no-color"];
   if (commit) {
     args.push("--max-count=1", commit);
   } else {
+    if (since) args.push(`--since=${since}`);
+    if (until) args.push(`--until=${until}`);
     args.push(`--max-count=${boundedCommitLimit(limit)}`);
   }
   const commits = parseLogRecords(runGit(repoRoot, args));
