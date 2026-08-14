@@ -3,6 +3,28 @@
 This file records notable public changes to Better Harness. Entries describe
 observable behavior and compatibility, not every internal refactor.
 
+## 0.6.3 - 2026-08-14
+
+### Added
+
+- `npx @qoder-ai/better-harness inspector` now renders the current workspace,
+  opens the generated report, and uses a bounded 30-day UTC evidence window by
+  default. The public Inspector page and bilingual guide lead with the same
+  short command.
+
+### Changed
+
+- The zero-argument Inspector quickstart scans up to 200 commits and hydrates
+  up to 100 sessions, while explicit `render` invocations preserve their
+  existing bounds and open only when `--open` is provided.
+
+### Fixed
+
+- Qoder assistant messages with structured `thinking`, `text`, and `tool_use`
+  content are normalized before Session Detail renders them, preventing raw
+  transport JSON from appearing as intermediate responses while preserving
+  tool calls in the structured activity trace.
+
 ## 0.6.2 - 2026-08-14
 
 ### Added
