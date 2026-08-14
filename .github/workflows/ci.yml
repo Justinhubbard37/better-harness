@@ -38,6 +38,12 @@ jobs:
       - run: npm ci
       - name: Run Vitest
         run: npm run test:ci
+      - name: Verify Harness DSL generated sources
+        run: npm run harness:generated
+      - name: Build Harness DSL package
+        run: npm run harness:build
+      - name: Test Harness DSL package
+        run: npm run harness:test
       - name: Upload JUnit test results
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
