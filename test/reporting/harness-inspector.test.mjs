@@ -21,6 +21,16 @@ import { summarizeSessionEvents } from "../../scripts/commit-session-link/index.
 
 const CLI_PATH = fileURLToPath(new URL("../../scripts/harness-inspector/cli.mjs", import.meta.url));
 
+// `realpathSync.native` expands Windows 8.3 short names (RUNNER~1) that the
+// JS implementation keeps, and still resolves symlinks such as macOS /var.
+function canonicalPath(target) {
+  try {
+    return realpathSync.native(target);
+  } catch {
+    return path.resolve(target);
+  }
+}
+
 // One commit is enough Git history for a render, and an isolated workspace keeps
 // the run away from this repository's own sessions and commits.
 async function seededWorkspace(prefix) {
@@ -833,7 +843,10 @@ test("render writes the report before opening it and reports the launch in its s
 
 test("zero arguments render the current workspace and open the written report", async () => {
   const workspace = await seededWorkspace("better-harness-inspector-default-");
-  const canonicalWorkspace = realpathSync(workspace);
+  // The CLI derives the default output path from `git rev-parse --show-toplevel`,
+  // which reports the long Windows path, so the expectation must expand 8.3 short
+  // names in the temp dir as well as macOS /var -> /private/var symlinks.
+  const canonicalWorkspace = canonicalPath(workspace);
   const openedPaths = [];
   const written = [];
   const stdoutWrite = process.stdout.write;
