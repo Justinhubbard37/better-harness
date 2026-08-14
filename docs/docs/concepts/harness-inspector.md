@@ -41,7 +41,7 @@ Use it to answer three bounded questions:
 
 ## Reading the workbench
 
-- **Delivery Tree** scopes the report by reviewed Feature and Story intent.
+- **Capability** scopes the report by reviewed Feature and Story intent.
 - **Date** keeps sessions and commits visible even when product mapping is
   absent or incomplete.
 - **User prompts / Agent activity / Commits and files** are simultaneous lanes;
@@ -108,7 +108,7 @@ artifact needs to reference a node.
 
 The intended progression is **Inspect → Compare → Eval → Decision**.
 
-- **Compare** should be a top-level workspace mode, not a third Delivery Tree or
+- **Compare** should be a top-level workspace mode, not a third Capability or
   Date scope. Its first job is to assess whether two sessions are comparable.
 - The first credible slice is Story-scoped observational trajectory comparison:
   align provider-neutral actions, show neutral deltas and confounders, and make

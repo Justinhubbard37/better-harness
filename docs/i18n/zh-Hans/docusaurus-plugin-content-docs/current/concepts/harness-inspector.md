@@ -36,7 +36,7 @@ Coding Agent 会话、归一化工具活动、Git 提交与仓库路径放在同
 
 ## 阅读工作台
 
-- **Delivery Tree** 按经过评审的 Feature 与 Story 意图限定报告范围。
+- **Capability** 按经过评审的 Feature 与 Story 意图限定报告范围。
 - **Date** 在产品映射缺失或不完整时，仍然保留可见的会话与提交。
 - **User prompts / Agent activity / Commits and files** 是并列的三条信息轨；
   一条信息轨不会静默证明另一条信息轨中的作者身份。
@@ -97,7 +97,7 @@ Cursor、Qwen Code、GitHub Copilot、Pi、Kimi Code、WorkBuddy 和 Grok 中发
 
 预期演进链路是 **Inspect → Compare → Eval → Decision**。
 
-- **Compare** 应当是顶层工作区模式，而不是 Delivery Tree 或 Date 之外的第三种
+- **Compare** 应当是顶层工作区模式，而不是 Capability 或 Date 之外的第三种
   Scope。它的第一项能力是判断两条会话是否可比。
 - 第一阶段应是以 Story 为主要发现入口的观察性轨迹比较：对齐跨 Provider 的归一化
   动作，中性展示 Delta 与混杂因素，并把 `insufficient evidence` 作为正常结果。
