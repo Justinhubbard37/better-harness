@@ -76,6 +76,18 @@ const html = await highlightHarness(source); // Shiki, lang: "harness"
 See [`examples/standard-coding.harness`](examples/standard-coding.harness) for
 the full surface syntax.
 
+## AI authoring skill
+
+The package includes
+[`skills/generate-harness-dsl/SKILL.md`](skills/generate-harness-dsl/SKILL.md),
+which teaches compatible coding agents to generate complete v0.1 documents and
+validate every composition with the same compiler and resolver exported by this
+package. Its validator is also available directly after the package is built:
+
+```sh
+node skills/generate-harness-dsl/scripts/validate.mjs workflow.harness
+```
+
 ## Executor honesty rules
 
 v0.1 executors materialize components as prompt guidance, so effective strength
