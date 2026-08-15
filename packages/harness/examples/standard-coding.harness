@@ -1,6 +1,6 @@
 // Example assembly: one coding loop with author/verifier roles, capability
 // requirements with the degradation ladder, adapter bindings onto host-native
-// assets, and deployment targets for the Pi and Qoder runtimes.
+// assets, and a deployment target whose adapter exposes the required tools.
 
 skill impact-analysis {
   description "Before editing, map the blast radius of the change and list affected modules."
@@ -50,14 +50,9 @@ harness standard-coding {
 // Adapter layer: how each runtime realizes the capabilities, in the host's
 // own namespace. The core DSL has no generic plugin; `pi.extension` and
 // `qoder.system-instruction` are host-native assets behind the adapter.
-binding impact-analysis for [pi, qoder] {
+binding impact-analysis for qoder {
   mechanism prompt-preamble
   strength advisory
-}
-
-binding verification-before-complete for pi {
-  mechanism pi.extension
-  strength enforced
 }
 
 binding verification-before-complete for qoder {
@@ -66,7 +61,4 @@ binding verification-before-complete for qoder {
   notes "Qoder CLI print mode cannot intercept completion; the policy is prompt-injected."
 }
 
-// Same assembly, different runtime: deployment is a target choice, not a
-// harness rewrite.
-target pi uses adapter.pi
 target qoder uses adapter.qoder

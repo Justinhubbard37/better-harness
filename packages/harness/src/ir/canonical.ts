@@ -8,8 +8,8 @@ export function canonicalJson(value: unknown): string {
   return JSON.stringify(sortValue(value));
 }
 
-export function sha256Hex(text: string): string {
-  return createHash("sha256").update(text, "utf8").digest("hex");
+export function sha256Hex(content: string | Uint8Array): string {
+  return createHash("sha256").update(content).digest("hex");
 }
 
 export function contentHash(value: unknown): string {

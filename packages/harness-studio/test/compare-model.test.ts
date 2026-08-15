@@ -31,9 +31,21 @@ describe("parseVerdict", () => {
       ...FIXTURE_VERDICT,
       trials: [
         { ...FIXTURE_VERDICT.trials[0], grade: {} },
-        FIXTURE_VERDICT.trials[1],
+        ...FIXTURE_VERDICT.trials.slice(1),
       ],
     })).toThrow(/trials\[0\]\.grade\.kind/);
+  });
+
+  it("rejects a summary the trial rows do not support", () => {
+    // The rows are the evidence; a hand-edited aggregate or pair count is not.
+    expect(() => parseVerdict({
+      ...FIXTURE_VERDICT,
+      baseline: { ...FIXTURE_VERDICT.baseline, meanScore: 90 },
+    })).toThrow(/baseline.meanScore is 90, but the trial rows compute 42/);
+    expect(() => parseVerdict({
+      ...FIXTURE_VERDICT,
+      matchedPairs: { ...FIXTURE_VERDICT.matchedPairs, pairs: 4, candidateWins: 4 },
+    })).toThrow(/matchedPairs.pairs is 4, but the trial rows compute 2/);
   });
 });
 
@@ -47,27 +59,29 @@ describe("summarizeVerdict", () => {
         variant: "baseline",
         label: "H0 baseline",
         passedTrials: 0,
-        completedTrials: 1,
+        completedTrials: 2,
         passRate: 0,
         meanScore: 42,
         infrastructureErrors: 0,
         totalCostUsd: 0.011,
+        costPerCompletedTrialUsd: 0.0055,
         totalCredits: 1.5,
       },
       {
         variant: "candidate",
         label: "H1 candidate",
-        passedTrials: 1,
-        completedTrials: 1,
+        passedTrials: 2,
+        completedTrials: 2,
         passRate: 1,
         meanScore: 90,
         infrastructureErrors: 0,
         totalCostUsd: 0.014,
+        costPerCompletedTrialUsd: 0.007,
         totalCredits: 1.8,
       },
     ]);
-    expect(summary.trials).toHaveLength(2);
-    expect(summary.trials[1]).toEqual({
+    expect(summary.trials).toHaveLength(4);
+    expect(summary.trials[2]).toEqual({
       variant: "candidate",
       trial: 1,
       harnessId: "readme-grounded",
@@ -75,6 +89,20 @@ describe("summarizeVerdict", () => {
       classification: "passed",
       durationMs: 74500,
       changedFiles: ["README.md"],
+    });
+  });
+
+  it("carries the paired evidence and its threshold so a status stays checkable", () => {
+    const summary = summarizeVerdict(FIXTURE_VERDICT);
+
+    expect(summary.treatmentAxis).toBe("harness");
+    expect(summary.evidence).toEqual({
+      pairs: 2,
+      candidateWins: 2,
+      baselineWins: 0,
+      ties: 0,
+      meanScoreDelta: 48,
+      minimumMatchedPairs: 2,
     });
   });
 });

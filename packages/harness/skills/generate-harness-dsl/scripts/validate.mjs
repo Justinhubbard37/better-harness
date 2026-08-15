@@ -32,7 +32,7 @@ async function main() {
 
   const inputPath = resolve(input);
   const text = await readFile(inputPath, "utf8");
-  const { compileHarness, resolveHarness } = await loadHarnessApi();
+  const { compileHarness, describeBuiltInAdapter, resolveHarness } = await loadHarnessApi();
   const source = `harness://input/${encodeURIComponent(basename(inputPath))}`;
   const compiled = await compileHarness([{ uri: source, text }]);
 
@@ -59,7 +59,9 @@ async function main() {
       ? compiled.bundle.runtimes.map((runtime) => runtime.id)
       : [undefined];
   const reports = harnessIds.flatMap((harnessId) => runtimeIds.map((runtimeId) => {
-    const { revision, report } = resolveHarness(compiled.bundle, harnessId, runtimeId);
+    const { revision, report } = resolveHarness(compiled.bundle, harnessId, runtimeId, {
+      adapter: describeBuiltInAdapter,
+    });
     return {
       harnessId,
       runtime: report.runtime,

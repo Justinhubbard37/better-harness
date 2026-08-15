@@ -1,4 +1,5 @@
 import type { HarnessIrBundle, HarnessRevision } from "../ir/index.js";
+import type { AdapterRealizationDescriptor } from "../resolver/adapter-descriptor.js";
 import { HarnessRunEmitter, type HarnessRunEventListener } from "./events.js";
 import {
   HarnessHostMismatchError,
@@ -31,6 +32,24 @@ export class HarnessCapabilityUnsupportedError extends Error {
   }
 }
 
+/**
+ * Thrown when a second turn is started while one is still in flight. The
+ * session contract has always said turns are sequential; this makes the claim
+ * enforceable instead of a comment a caller can violate silently.
+ */
+export class HarnessConcurrentTurnError extends Error {
+  constructor(
+    readonly adapterId: string,
+    readonly revisionId: string,
+  ) {
+    super(
+      `Adapter '${adapterId}' session for '${revisionId}' already has a turn in flight; ` +
+        "prompt turns are sequential.",
+    );
+    this.name = "HarnessConcurrentTurnError";
+  }
+}
+
 export interface HarnessAdapterStartOptions {
   /** Resolved revision this session executes; fixed for the session lifetime. */
   revision: HarnessRevision;
@@ -41,6 +60,8 @@ export interface HarnessAdapterStartOptions {
    * the host runtime falls back to its own default (the process cwd).
    */
   workDir?: string;
+  /** Root used to create source locks. Required when the revision contains locks. */
+  sourceRoot?: string;
   /** Session-level default listener for per-turn run events. */
   onRunEvent?: HarnessRunEventListener;
 }
@@ -67,6 +88,11 @@ export interface HarnessAdapterTurnOptions {
 export interface HarnessAdapterSession {
   readonly adapterId: string;
   readonly revisionId: string;
+  /**
+   * Host session id once the runtime reports one, so a caller can resume the
+   * same conversation later instead of replaying a fresh context.
+   */
+  readonly sessionId?: string;
   /** Run one prompt turn to completion. Turns are sequential, not concurrent. */
   doPromptTurn(options: HarnessAdapterTurnOptions): Promise<HarnessRunResult>;
   /** Gracefully end the session. No further methods may be called after it. */
@@ -79,6 +105,10 @@ export interface HarnessAdapterSession {
  * Versioned contract for one host runtime adapter. `doStart` binds a resolved
  * revision to a live host session; the batch surface ({@link runOnce} and the
  * `HarnessExecutor` classes built on it) is a one-turn convenience on top.
+ *
+ * `describe()` is the adapter's own statement of what it can realize. The
+ * resolver consumes it so a harness is measured against runtime facts instead
+ * of author-declared optimism.
  */
 export interface HarnessAdapterV1 {
   readonly specificationVersion: typeof HARNESS_ADAPTER_SPECIFICATION_VERSION;
@@ -86,6 +116,7 @@ export interface HarnessAdapterV1 {
   readonly adapterId: string;
   /** Host runtime id checked against `revision.target.runtime`. */
   readonly host: string;
+  describe(): AdapterRealizationDescriptor;
   doStart(options: HarnessAdapterStartOptions): Promise<HarnessAdapterSession>;
 }
 
@@ -102,8 +133,8 @@ export interface RunOnceOptions {
  * - Any other start failure (missing SDK, auth) emits the legacy
  *   `run-started` / `run-error` / `run-finished` sequence before rethrowing.
  * - A turn failure destroys the session best-effort and rethrows.
- * - An adapter that cannot stop gracefully degrades to `doDestroy` and the
- *   result carries an extra warning instead of the run failing.
+ * - A failed stop always destroys the session best-effort; an adapter that
+ *   cannot stop gracefully degrades to a result warning instead of failing.
  */
 export async function runOnce(
   adapter: HarnessAdapterV1,
@@ -118,6 +149,7 @@ export async function runOnce(
       revision,
       bundle,
       workDir: task.cwd,
+      sourceRoot: task.sourceRoot,
       onRunEvent: options.onRunEvent,
     });
   } catch (error) {
@@ -139,10 +171,12 @@ export async function runOnce(
   try {
     await session.doStop();
   } catch (error) {
+    // Any failed stop leaves a live host session behind, so tear it down before
+    // reporting: a graceful-stop gap degrades to a warning, anything else fails.
+    await destroyQuietly(session);
     if (!(error instanceof HarnessCapabilityUnsupportedError)) {
       throw error;
     }
-    await destroyQuietly(session);
     return {
       ...result,
       warnings: [

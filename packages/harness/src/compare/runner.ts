@@ -14,14 +14,27 @@ import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { compileHarness } from "../compiler/compile.js";
 import type { HarnessExecutor, HarnessRunResult } from "../exec/executor.js";
-import { QoderSdkExecutor } from "../exec/qoder-sdk.js";
+import { QoderSdkAdapter, QoderSdkExecutor } from "../exec/qoder-sdk.js";
 import { canonicalJson, sha256Hex } from "../ir/canonical.js";
 import type { HarnessIrBundle, HarnessRevision } from "../ir/index.js";
 import { resolveHarness } from "../resolver/resolve.js";
+import {
+  aggregateVariant,
+  decideVerdict,
+  normalizeDecisionPolicy,
+  summarizeMatchedPairs,
+  type CompareDecisionPolicy,
+  type CompareTrialResult,
+  type CompareVariant,
+  type HarnessCompareVerdict,
+  type TrialClassification,
+  type VariantAggregate,
+} from "./aggregate.js";
 import { gradeReadmePackage, type ReadmeGrade } from "./grader.js";
 import {
   loadHarnessCompareManifest,
   resolveHarnessCompareRuntime,
+  treatmentAxisFor,
   type HarnessCompareManifest,
   type LoadedHarnessCompareManifest,
   type ResolvedHarnessCompareRuntime,
@@ -32,8 +45,25 @@ import {
 } from "./permissions.js";
 import { runCommand } from "./process.js";
 
-export type CompareVariant = "baseline" | "candidate";
-export type TrialClassification = "passed" | "failed" | "infrastructure_error";
+export type {
+  CompareDecisionPolicy,
+  CompareStatus,
+  CompareTreatmentAxis,
+  CompareTrialResult,
+  CompareVariant,
+  HarnessCompareVerdict,
+  MatchedPairSummary,
+  TrialClassification,
+  VariantAggregate,
+} from "./aggregate.js";
+export {
+  DEFAULT_COMPARE_DECISION_POLICY,
+  MINIMUM_MATCHED_PAIRS_FLOOR,
+  aggregateVariant,
+  decideVerdict,
+  normalizeDecisionPolicy,
+  summarizeMatchedPairs,
+} from "./aggregate.js";
 
 export interface CompareExecutorContext {
   runtime: ResolvedHarnessCompareRuntime;
@@ -53,50 +83,13 @@ export interface FileEvidence {
   sha256: string;
 }
 
-export interface CompareTrialResult {
-  variant: CompareVariant;
-  harnessId: string;
-  runtimeProfile: string;
-  trial: number;
-  classification: TrialClassification;
-  changedFiles: string[];
-  grade: ReadmeGrade;
-  executorExitCode: number;
-  executorError: string;
-  revisionId: string;
-  durationMs: number;
-  artifactDirectory: string;
-  metrics?: HarnessRunResult["metrics"];
-}
-
-export interface VariantAggregate {
-  trials: number;
-  completedTrials: number;
-  infrastructureErrors: number;
-  passedTrials: number;
-  passRate: number;
-  meanScore: number;
-  totalCostUsd: number;
-  totalCredits: number;
-}
-
-export interface HarnessCompareVerdict {
-  schemaVersion: "harness-compare-result.v1";
-  status: "accept" | "need_more_work" | "reject" | "infrastructure_error";
-  reason: string;
-  manifestHash: string;
-  fixtureHash: string;
-  harnessHash: string;
-  baseline: VariantAggregate;
-  candidate: VariantAggregate;
-  trials: CompareTrialResult[];
-}
-
 export async function runHarnessComparison(options: {
   manifestPath: string;
   outputDirectory: string;
   trialCount?: number;
   executorFactory?: CompareExecutorFactory;
+  /** Raises the evidence bar; the two-matched-pair floor always applies. */
+  decisionPolicy?: Partial<CompareDecisionPolicy>;
 }): Promise<HarnessCompareVerdict> {
   const loaded = await loadHarnessCompareManifest(options.manifestPath);
   const trialCount = options.trialCount ?? loaded.value.trials.count;
@@ -157,17 +150,22 @@ export async function runHarnessComparison(options: {
     throw new Error("Source fixture changed during comparison; refusing to produce a verdict.");
   }
   results.sort((a, b) => compareVariant(a.variant, b.variant) || a.trial - b.trial);
-  const baseline = aggregate(results.filter((result) => result.variant === "baseline"));
-  const candidate = aggregate(results.filter((result) => result.variant === "candidate"));
-  const decision = decideVerdict(baseline, candidate);
+  const baseline = aggregateVariant(results.filter((result) => result.variant === "baseline"));
+  const candidate = aggregateVariant(results.filter((result) => result.variant === "candidate"));
+  const matchedPairs = summarizeMatchedPairs(results);
+  const policy = normalizeDecisionPolicy(options.decisionPolicy);
+  const decision = decideVerdict({ baseline, candidate, matchedPairs, policy });
   const verdict: HarnessCompareVerdict = {
     schemaVersion: "harness-compare-result.v1",
     ...decision,
+    treatmentAxis: treatmentAxisFor(loaded.value),
+    policy,
     manifestHash,
     fixtureHash,
     harnessHash,
     baseline,
     candidate,
+    matchedPairs,
     trials: results,
   };
   await writeJson(join(outputDirectory, "verdict.json"), verdict);
@@ -190,7 +188,10 @@ async function compileAndResolveVariants(
   const revisions = {} as Record<CompareVariant, HarnessRevision>;
   for (const variant of ["baseline", "candidate"] as const) {
     const harnessId = loaded.value.variants[variant];
-    const resolved = resolveHarness(compiled.bundle, harnessId, loaded.value.runtime.host);
+    const runtime = resolveHarnessCompareRuntime(loaded.value, variant);
+    const resolved = resolveHarness(compiled.bundle, harnessId, loaded.value.runtime.host, {
+      adapter: comparisonAdapterDescriptor(runtime),
+    });
     if (!resolved.revision) {
       throw new Error(`Cannot resolve ${variant} harness '${harnessId}': ${resolved.report.errors.join("; ")}`);
     }
@@ -202,6 +203,21 @@ async function compileAndResolveVariants(
     revisions[variant] = resolved.revision;
   }
   return { bundle: compiled.bundle, revisions };
+}
+
+function comparisonAdapterDescriptor(runtime: ResolvedHarnessCompareRuntime) {
+  return new QoderSdkAdapter({
+    profile: runtime.profile,
+    tools: runtime.tools,
+    allowedTools: runtime.allowedTools,
+    disallowedTools: runtime.disallowedTools,
+    permissionMode: runtime.permissionMode,
+    canUseTool: async () => ({ behavior: "allow" }),
+    maxTurns: runtime.maxTurns,
+    persistSession: false,
+    ...(runtime.model ? { model: runtime.model } : {}),
+    enableFileCheckpointing: runtime.enableFileCheckpointing,
+  }).describe();
 }
 
 async function runTrial(options: {
@@ -543,42 +559,6 @@ function classifyTrial(
   return execution.exitCode === 0 && grade.passed ? "passed" : "failed";
 }
 
-function aggregate(results: CompareTrialResult[]): VariantAggregate {
-  const completed = results.filter((result) => result.classification !== "infrastructure_error");
-  const passed = completed.filter((result) => result.classification === "passed");
-  return {
-    trials: results.length,
-    completedTrials: completed.length,
-    infrastructureErrors: results.length - completed.length,
-    passedTrials: passed.length,
-    passRate: completed.length === 0 ? 0 : passed.length / completed.length,
-    meanScore: completed.length === 0
-      ? 0
-      : Math.round((completed.reduce((sum, result) => sum + result.grade.score, 0) / completed.length) * 100) / 100,
-    totalCostUsd: Math.round(results.reduce((sum, result) => sum + (result.metrics?.costUsd ?? 0), 0) * 1_000_000) / 1_000_000,
-    totalCredits: Math.round(results.reduce((sum, result) => sum + (result.metrics?.credits ?? 0), 0) * 1_000_000) / 1_000_000,
-  };
-}
-
-function decideVerdict(
-  baseline: VariantAggregate,
-  candidate: VariantAggregate,
-): Pick<HarnessCompareVerdict, "status" | "reason"> {
-  if (baseline.completedTrials === 0 || candidate.completedTrials === 0) {
-    return { status: "infrastructure_error", reason: "At least one variant has no completed trial." };
-  }
-  if (candidate.passRate < baseline.passRate || candidate.meanScore + 5 < baseline.meanScore) {
-    return { status: "reject", reason: "Candidate regressed pass rate or deterministic score." };
-  }
-  const costWithinLimit =
-    (baseline.totalCostUsd === 0 || candidate.totalCostUsd <= baseline.totalCostUsd * 1.25) &&
-    (baseline.totalCredits === 0 || candidate.totalCredits <= baseline.totalCredits * 1.25);
-  if ((candidate.passRate > baseline.passRate || candidate.meanScore >= baseline.meanScore + 5) && costWithinLimit) {
-    return { status: "accept", reason: "Candidate improved deterministic outcomes without exceeding the 1.25x cost guardrail." };
-  }
-  return { status: "need_more_work", reason: "No regression, but the candidate did not clear the improvement threshold." };
-}
-
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, controller: AbortController): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   let timedOut = false;
@@ -628,11 +608,15 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 
 function renderVerdictHtml(verdict: HarnessCompareVerdict): string {
   const row = (name: string, aggregate: VariantAggregate): string =>
-    `<tr><th>${name}</th><td>${aggregate.passedTrials}/${aggregate.completedTrials}</td><td>${aggregate.meanScore}</td><td>${aggregate.infrastructureErrors}</td><td>$${aggregate.totalCostUsd.toFixed(4)}</td><td>${aggregate.totalCredits.toFixed(3)}</td></tr>`;
+    `<tr><th>${name}</th><td>${aggregate.passedTrials}/${aggregate.completedTrials}</td><td>${aggregate.meanScore}</td><td>${aggregate.infrastructureErrors}</td><td>$${aggregate.totalCostUsd.toFixed(4)}</td><td>$${aggregate.costPerCompletedTrialUsd.toFixed(4)}</td><td>${aggregate.totalCredits.toFixed(3)}</td></tr>`;
+  const pairs = verdict.matchedPairs;
   return `<!doctype html>\n<html lang="en"><meta charset="utf-8"><title>Harness compare verdict</title>` +
     `<style>body{font:16px system-ui;max-width:900px;margin:3rem auto;padding:0 1rem}table{border-collapse:collapse}th,td{border:1px solid #bbb;padding:.5rem;text-align:left}.status{font-size:1.4rem}</style>` +
     `<body><h1>Harness compare verdict</h1><p class="status"><strong>${escapeHtml(verdict.status)}</strong>: ${escapeHtml(verdict.reason)}</p>` +
-    `<table><thead><tr><th>Variant</th><th>Passed</th><th>Mean score</th><th>Infra errors</th><th>Cost</th><th>Credits</th></tr></thead><tbody>` +
+    `<p>Treatment axis <code>${escapeHtml(verdict.treatmentAxis)}</code>; matched pairs ${pairs.pairs} ` +
+    `(candidate ${pairs.candidateWins}, baseline ${pairs.baselineWins}, ties ${pairs.ties}, ` +
+    `mean score delta ${pairs.meanScoreDelta}); minimum required ${verdict.policy.minimumMatchedPairs}.</p>` +
+    `<table><thead><tr><th>Variant</th><th>Passed</th><th>Mean score</th><th>Infra errors</th><th>Cost</th><th>Cost / completed</th><th>Credits</th></tr></thead><tbody>` +
     row("H0 baseline", verdict.baseline) + row("H1 candidate", verdict.candidate) +
     `</tbody></table><p>Manifest <code>${verdict.manifestHash}</code></p></body></html>\n`;
 }

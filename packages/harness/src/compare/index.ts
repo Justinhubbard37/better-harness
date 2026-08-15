@@ -1,7 +1,20 @@
 export {
+  DEFAULT_COMPARE_DECISION_POLICY,
+  MINIMUM_MATCHED_PAIRS_FLOOR,
+  aggregateVariant,
+  decideVerdict,
+  normalizeDecisionPolicy,
+  summarizeMatchedPairs,
+  type CompareDecisionPolicy,
+  type CompareStatus,
+  type CompareTreatmentAxis,
+  type MatchedPairSummary,
+} from "./aggregate.js";
+export {
   HarnessCompareManifestSchema,
   loadHarnessCompareManifest,
   resolveHarnessCompareRuntime,
+  treatmentAxisFor,
   type HarnessCompareVariant,
   type HarnessCompareManifest,
   type LoadedHarnessCompareManifest,

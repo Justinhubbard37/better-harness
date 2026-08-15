@@ -103,7 +103,7 @@ sections below document the resolved IR those forms lower into.
 | `HarnessSpecIr` | The assembly: workflow reference, agent roles with capability requirements, settings |
 | `TargetIr` | Deployment statement selecting a runtime (adapter synthesized when omitted) |
 | `CapabilityBindingIr` | Adapter mapping: capability × runtime × mechanism × declared strength |
-| `HarnessRevision` | Immutable resolution fact: hashes, runtime execution, per-(agent, capability) strengths, permissions |
+| `HarnessRevision` | Frozen execution closure: content hashes, adapter contract/version, runtime execution, per-(agent, capability) strengths, requested permissions, source locks |
 | `ResolutionReport` | Requested, declared, and materialized strength for every requirement |
 
 All IR documents carry `irVersion` and a `kind` discriminator and are defined
@@ -115,6 +115,7 @@ as TypeBox schemas in
 ```ts
 import {
   compileHarness,
+  describeBuiltInAdapter,
   resolveHarness,
   QoderSdkExecutor,
   highlightHarness,
@@ -125,10 +126,14 @@ if (!compiled.bundle) {
   throw new Error(compiled.diagnostics.map((item) => item.message).join("\n"));
 }
 
+// Resolve against the realization facts of the adapter that will run the
+// revision. Without them a harness is measured against prompt-only facts, so
+// anything a prompt cannot deliver (a tool, an MCP server) fails closed.
 const { revision, report } = resolveHarness(
   compiled.bundle,
   "standard-coding",
   "qoder",
+  { adapter: describeBuiltInAdapter },
 );
 
 if (!revision) {
@@ -295,19 +300,43 @@ node skills/generate-harness-dsl/scripts/validate.mjs workflow.harness
 
 ## Executor honesty rules
 
-v0.2 executors materialize capabilities as prompt guidance, so effective
-strength is capped at `advisory`. A binding can declare a future `wired` or
-`enforced` host-native mechanism (`qoder.plugin`, `pi.extension`), but
-resolution compares the requirement's minimum and preferred strength against
-the advisory materialization. Below-minimum assemblies fail before execution;
-allowed degradation is visible in the report and run warnings.
+Materialization is decided by the adapter, not by the author's optimism, and the
+capability kinds are not realized along the same dimension:
 
-Executors reject revisions targeting another runtime. `materializePiPackage()`
-emits an installable Pi package only for advisory skill capabilities and
-stamps every generated skill with revision provenance.
+| Kind | Realized when the adapter… | v0.2 shipped adapters |
+| --- | --- | --- |
+| `skill` | *delivers* the guidance | prompt preamble at `advisory` |
+| `tool` | *exposes* a callable host tool | Qoder maps standard tool ids onto host tools (`workspace.read` → `Read`) at `wired`; Pi exposes none |
+| `mcp` | *connects* and discovers its tools | none — `connect mcp` fails resolution |
+| `workflow` | *orchestrates* the control flow | declarative only; a `program` controller fails resolution |
+
+A `require tool` that no adapter exposes fails resolution instead of degrading
+into a prompt line, because prompt text is not a callable tool. A declared
+`binding` still bounds the outcome — `strength unsupported` keeps a capability
+off a runtime — but it cannot raise what the adapter actually does.
+
+Every run carries a `HarnessMaterializationReceipt` on
+`HarnessRunResult.materialization`: per capability the realized dimension,
+state (`materialized | degraded | unsupported`) and mechanism, the workflow
+state, requested versus enforced permissions, and consumed versus ignored
+settings. A multi-agent harness on a single-session adapter is recorded as an
+explicit degradation with a run warning, not as satisfied orchestration.
+
+Before any host SDK loads, an executor validates that the revision is the one it
+claims to be: host, adapter package/version/descriptor match, the revision still
+hashes to its own `revisionId`, the supplied bundle is the bundle it was resolved
+from, and every source-backed skill has a `sourceLock` that still matches the
+explicit `sourceRoot` supplied for execution. The source root is separate from
+the task `cwd`, so changing the agent's working directory cannot retarget a lock.
+`materializePiPackage()` runs the same preflight and emits an
+installable Pi package only for delivered skill capabilities and stamps every
+generated skill with revision provenance.
 
 The Qoder executor uses `@qoder-ai/qoder-agent-sdk` and defaults to
-`qodercliAuth()` for local development. Automated environments should inject a
+`qodercliAuth()` for local development. A session is one `query()` whose prompt is
+a live stream of user messages, so turn 2 reaches the context turn 1 created;
+`persistSession` controls only whether the host transcript survives the query and
+can be resumed by id. Automated environments should inject a
 PAT or service-account auth factory without placing credentials in source or
 logs. The Qoder SDK install script materializes its worker runtime; environments
 that disable dependency scripts must approve that postinstall (or run
@@ -316,9 +345,9 @@ SDK (`@earendil-works/pi-coding-agent`, supported `^0.84.2`) is an optional peer
 dependency; its executor loads it lazily and reports install guidance when
 missing.
 
-Native plugins, extensions, and MCP connections are declaration-only in v0.2.
-Until a native materialization receipt exists, they do not upgrade effective
-strength beyond `advisory`.
+Native plugins and extensions remain declaration-only in v0.2: no shipped
+adapter installs them, so they do not raise effective strength above the
+adapter's own facts.
 
 ## Development
 

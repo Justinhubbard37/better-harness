@@ -1,9 +1,19 @@
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { HarnessIrBundle, HarnessRevision } from "../ir/index.js";
+import type {
+  HarnessIrBundle,
+  HarnessMaterializationReceipt,
+  HarnessRevision,
+} from "../ir/index.js";
+import {
+  describeAdapter,
+  type AdapterRealizationDescriptor,
+} from "../resolver/adapter-descriptor.js";
+import { verifyRevisionSourceLocks } from "../resolver/source-lock.js";
 import {
   HARNESS_ADAPTER_SPECIFICATION_VERSION,
   HarnessCapabilityUnsupportedError,
+  HarnessConcurrentTurnError,
   runOnce,
   type HarnessAdapterSession,
   type HarnessAdapterStartOptions,
@@ -11,15 +21,18 @@ import {
   type HarnessAdapterV1,
 } from "./adapter.js";
 import { HarnessRunEmitter, type HarnessRunEventListener } from "./events.js";
+import { prepareMaterialization } from "./materialization.js";
 import {
   assertRevisionHost,
   buildRunPreamble,
+  preflightRevision,
   type HarnessExecutor,
   type HarnessRunResult,
   type HarnessRunTask,
 } from "./executor.js";
 
 const PI_SDK_MODULE = "@earendil-works/pi-coding-agent";
+const PI_ADAPTER_IMPLEMENTATION_VERSION = "0.1.0";
 
 /**
  * Structural view of the Pi SDK surface this executor relies on
@@ -95,8 +108,34 @@ export class PiSdkAdapter implements HarnessAdapterV1 {
     this.onRunEvent = options.onRunEvent;
   }
 
+  /**
+   * Pi sessions are created with `noTools: "all"`, so this adapter exposes no
+   * callable tool and opens no MCP connection. Saying so is what lets the
+   * resolver fail a `require tool` closed instead of turning it into a prompt.
+   */
+  describe(): AdapterRealizationDescriptor {
+    return describeAdapter({
+      adapterId: this.adapterId,
+      specificationVersion: HARNESS_ADAPTER_SPECIFICATION_VERSION,
+      implementationVersion: PI_ADAPTER_IMPLEMENTATION_VERSION,
+      skillDelivery: { mechanism: "prompt-preamble", strength: "advisory" },
+      toolExposure: {},
+      mcpSupport: null,
+      workflowModes: ["declarative"],
+      agentIsolation: "single-session",
+      consumedSettings: [],
+      enforcedPermissionDomains: [],
+    });
+  }
+
   async doStart(start: HarnessAdapterStartOptions): Promise<HarnessAdapterSession> {
-    assertRevisionHost(start.revision, this.host);
+    const descriptor = this.describe();
+    preflightRevision(start.revision, start.bundle, this.host, descriptor);
+    await verifyRevisionSourceLocks(
+      start.revision,
+      start.sourceRoot === undefined ? undefined : { root: start.sourceRoot },
+    );
+    const receipt = prepareMaterialization(start.revision, start.bundle, descriptor);
     const sdk = await this.loadSdk();
     const modelRuntime = await sdk.ModelRuntime.create();
     await this.configureModelRuntime?.(modelRuntime);
@@ -108,9 +147,10 @@ export class PiSdkAdapter implements HarnessAdapterV1 {
       ...(model !== undefined ? { model } : {}),
       noTools: "all",
     });
-    const { preamble, warnings } = buildRunPreamble(start.revision, start.bundle);
+    const { preamble, warnings } = buildRunPreamble(start.revision, start.bundle, receipt);
     const adapter = this;
     let turnCount = 0;
+    let inFlight = false;
     let ended = false;
     const end = (): void => {
       if (!ended) {
@@ -125,6 +165,9 @@ export class PiSdkAdapter implements HarnessAdapterV1 {
         if (ended) {
           throw new Error(`Pi adapter session for '${start.revision.revisionId}' has ended.`);
         }
+        if (inFlight) {
+          throw new HarnessConcurrentTurnError(adapter.adapterId, start.revision.revisionId);
+        }
         assertRevisionHost(start.revision, adapter.host);
         if (turn.abortSignal !== undefined) {
           throw new HarnessCapabilityUnsupportedError(
@@ -135,7 +178,12 @@ export class PiSdkAdapter implements HarnessAdapterV1 {
         }
         const firstTurn = turnCount === 0;
         turnCount += 1;
-        return adapter.runTurn({ session, start, turn, preamble, warnings, firstTurn });
+        inFlight = true;
+        try {
+          return await adapter.runTurn({ session, start, turn, preamble, warnings, firstTurn, receipt });
+        } finally {
+          inFlight = false;
+        }
       },
       async doStop(): Promise<void> {
         end();
@@ -153,8 +201,9 @@ export class PiSdkAdapter implements HarnessAdapterV1 {
     preamble: string;
     warnings: string[];
     firstTurn: boolean;
+    receipt: HarnessMaterializationReceipt;
   }): Promise<HarnessRunResult> {
-    const { session, start, turn, preamble, warnings, firstTurn } = context;
+    const { session, start, turn, preamble, warnings, firstTurn, receipt } = context;
     const revision = start.revision;
     const emitter = new HarnessRunEmitter(turn.onRunEvent ?? start.onRunEvent ?? this.onRunEvent);
     emitter.start({ revisionId: revision.revisionId, host: this.host });
@@ -204,6 +253,7 @@ export class PiSdkAdapter implements HarnessAdapterV1 {
       output: streamedOutput,
       errorOutput,
       warnings: [...warnings],
+      materialization: receipt,
     };
   }
 }
@@ -222,6 +272,11 @@ export class PiSdkExecutor implements HarnessExecutor {
     this.onRunEvent = options.onRunEvent;
   }
 
+  /** The realization facts a caller passes to `resolveHarness` for this host. */
+  describe(): AdapterRealizationDescriptor {
+    return this.adapter.describe();
+  }
+
   async execute(
     revision: HarnessRevision,
     bundle: HarnessIrBundle,
@@ -231,6 +286,11 @@ export class PiSdkExecutor implements HarnessExecutor {
       ...(this.onRunEvent !== undefined ? { onRunEvent: this.onRunEvent } : {}),
     });
   }
+}
+
+export interface MaterializePiPackageOptions {
+  /** Root used to create revision source locks. Required when locks are present. */
+  sourceRoot?: string;
 }
 
 async function loadPiSdk(loader?: () => Promise<PiSdkLike>): Promise<PiSdkLike> {
@@ -264,8 +324,13 @@ export async function materializePiPackage(
   revision: HarnessRevision,
   bundle: HarnessIrBundle,
   directory: string,
+  options: MaterializePiPackageOptions = {},
 ): Promise<string[]> {
-  assertRevisionHost(revision, "pi");
+  preflightRevision(revision, bundle, "pi", new PiSdkAdapter().describe());
+  await verifyRevisionSourceLocks(
+    revision,
+    options.sourceRoot === undefined ? undefined : { root: options.sourceRoot },
+  );
   const written: string[] = [];
   const manifest = {
     name: `harness-revision-${revision.revisionId.slice(3, 15)}`,

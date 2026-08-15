@@ -286,7 +286,12 @@ export const RealizationSchema = Type.Object(
     declaredStrength: StrengthSchema,
     declaredMechanism: Type.Union([QualifiedIdentifier, Type.Null()]),
     realized: StrengthSchema,
-    materializedMechanism: Type.Union([QualifiedIdentifier, Type.Null()]),
+    /**
+     * How the adapter realized it: a DSL-shaped mechanism name for guidance, or
+     * a host-owned handle such as `host-tool:Write` for a real exposure. Adapter
+     * mechanisms are not DSL identifiers, so this is a free-form string.
+     */
+    materializedMechanism: Type.Union([Type.String(), Type.Null()]),
     action: Type.Union([
       Type.Literal("satisfied"),
       Type.Literal("degraded"),
@@ -298,6 +303,24 @@ export const RealizationSchema = Type.Object(
 );
 export type Realization = Static<typeof RealizationSchema>;
 
+/**
+ * Content lock for one capability's on-disk source. Path strings alone cannot
+ * make a revision immutable: `./skills/impact-analysis` keeps its name while
+ * its `SKILL.md` changes underneath. A lock digests the real bytes so drift is
+ * detectable before a run starts.
+ */
+export const SourceLockSchema = Type.Object(
+  {
+    capabilityId: QualifiedIdentifier,
+    uri: Type.String(),
+    digest: Type.String(),
+    /** Files covered by the digest; a single file locks as 1. */
+    files: Type.Integer({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type SourceLock = Static<typeof SourceLockSchema>;
+
 export const HarnessRevisionSchema = Type.Object(
   {
     irVersion: IrVersion,
@@ -308,7 +331,14 @@ export const HarnessRevisionSchema = Type.Object(
       { additionalProperties: false },
     ),
     target: Type.Object(
-      { runtime: Identifier, adapter: Type.String(), execution: ExecutionIrSchema },
+      {
+        runtime: Identifier,
+        adapter: Type.String(),
+        adapterSpecificationVersion: Type.String(),
+        adapterImplementationVersion: Type.String(),
+        adapterDescriptorHash: Type.String(),
+        execution: ExecutionIrSchema,
+      },
       { additionalProperties: false },
     ),
     workflow: Type.Object(
@@ -337,8 +367,15 @@ export const HarnessRevisionSchema = Type.Object(
       ),
     ),
     realization: Type.Array(RealizationSchema),
-    permissions: Type.Array(PermissionGrantSchema),
+    /**
+     * Permissions the capabilities asked for. Naming them `requested` keeps the
+     * artifact honest: no shipped adapter enforces them on the host runtime yet,
+     * and the materialization receipt records what was actually enforced.
+     */
+    requestedPermissions: Type.Array(PermissionGrantSchema),
     settings: Type.Array(ConfigEntrySchema),
+    /** Empty unless the caller locked capability sources at resolve time. */
+    sourceLocks: Type.Array(SourceLockSchema),
   },
   { additionalProperties: false },
 );
@@ -353,10 +390,89 @@ export const ResolutionReportSchema = Type.Object(
     status: Type.Union([Type.Literal("resolved"), Type.Literal("failed")]),
     realizations: Type.Array(RealizationSchema),
     errors: Type.Array(Type.String()),
+    /** Resolved, but weaker than the DSL reads: multi-agent flows on a single-session adapter. */
+    warnings: Type.Array(Type.String()),
   },
   { additionalProperties: false },
 );
 export type ResolutionReport = Static<typeof ResolutionReportSchema>;
+
+/**
+ * What one adapter actually wired for one revision.
+ *
+ * The resolver states desired strength; this receipt states observed runtime
+ * facts, in the dimension each capability kind is realized along: a skill is
+ * `delivered`, a tool is `exposed`, an MCP server is `connected`, a workflow is
+ * `orchestrated`. A single `unsupported < advisory < wired < enforced` ladder
+ * cannot express those differences on its own.
+ */
+export const MaterializationStateSchema = Type.Union([
+  Type.Literal("materialized"),
+  Type.Literal("degraded"),
+  Type.Literal("unsupported"),
+]);
+export type MaterializationState = Static<typeof MaterializationStateSchema>;
+
+export const RealizationDimensionSchema = Type.Union([
+  Type.Literal("delivered"),
+  Type.Literal("exposed"),
+  Type.Literal("connected"),
+  Type.Literal("orchestrated"),
+]);
+export type RealizationDimension = Static<typeof RealizationDimensionSchema>;
+
+export const CapabilityMaterializationSchema = Type.Object(
+  {
+    capabilityId: QualifiedIdentifier,
+    capabilityKind: CapabilityKindSchema,
+    dimension: RealizationDimensionSchema,
+    requestedMinimum: StrengthSchema,
+    realized: StrengthSchema,
+    state: MaterializationStateSchema,
+    mechanism: Type.Union([Type.String(), Type.Null()]),
+    detail: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+export type CapabilityMaterialization = Static<typeof CapabilityMaterializationSchema>;
+
+export const HarnessMaterializationReceiptSchema = Type.Object(
+  {
+    irVersion: IrVersion,
+    kind: Type.Literal("materialization-receipt"),
+    revisionId: Type.String({ pattern: "^hr_[0-9a-f]{32}$" }),
+    adapter: Type.Object(
+      { id: Type.String(), specificationVersion: Type.String() },
+      { additionalProperties: false },
+    ),
+    capabilities: Type.Array(CapabilityMaterializationSchema),
+    workflow: Type.Object(
+      {
+        id: Identifier,
+        dimension: RealizationDimensionSchema,
+        requestedMode: Type.String(),
+        realizedMode: Type.Union([Type.String(), Type.Null()]),
+        state: MaterializationStateSchema,
+        detail: Type.Optional(Type.String()),
+      },
+      { additionalProperties: false },
+    ),
+    permissions: Type.Object(
+      {
+        requested: Type.Array(PermissionGrantSchema),
+        enforced: Type.Array(PermissionGrantSchema),
+      },
+      { additionalProperties: false },
+    ),
+    settings: Type.Object(
+      { consumed: Type.Array(Type.String()), ignored: Type.Array(Type.String()) },
+      { additionalProperties: false },
+    ),
+    warnings: Type.Array(Type.String()),
+  },
+  { additionalProperties: false },
+);
+export type HarnessMaterializationReceipt = Static<typeof HarnessMaterializationReceiptSchema>;
 
 /** Look up one capability across the bundle's skill/tool/mcp arrays. */
 export function findCapability(

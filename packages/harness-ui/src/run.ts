@@ -1,8 +1,10 @@
 import {
   compileHarness,
+  describeBuiltInAdapter,
   PiSdkExecutor,
   QoderSdkExecutor,
   resolveHarness,
+  type AdapterRealizationDescriptor,
   type HarnessExecutor,
   type HarnessRunEventListener,
   type HarnessRunResult,
@@ -35,6 +37,12 @@ export interface HarnessAguiRunOptions {
   runId: string;
   onEvent: (event: AguiEvent) => void;
   executorFactory?: HarnessUiExecutorFactory;
+  /**
+   * Realization facts for the runtime that resolves. Defaults to the adapters
+   * this package ships; an injected executor that reaches a different host must
+   * describe that host instead of inheriting Qoder's or Pi's abilities.
+   */
+  adapterDescriptor?: (runtimeId: string) => AdapterRealizationDescriptor | undefined;
 }
 
 export interface HarnessAguiRunSummary {
@@ -87,7 +95,12 @@ export async function runHarnessAgui(options: HarnessAguiRunOptions): Promise<Ha
   if (harnessId === undefined) {
     return fail("The source declares no harness.");
   }
-  const { revision, report } = resolveHarness(compiled.bundle, harnessId, options.runtimeId);
+  // Resolve against the facts of the adapter that will actually run the
+  // revision, so a requirement this host cannot back fails here instead of
+  // becoming a prompt line at run time.
+  const { revision, report } = resolveHarness(compiled.bundle, harnessId, options.runtimeId, {
+    adapter: options.adapterDescriptor ?? describeBuiltInAdapter,
+  });
   if (!revision) {
     return fail(report.errors.join("\n") || "Resolution failed.");
   }

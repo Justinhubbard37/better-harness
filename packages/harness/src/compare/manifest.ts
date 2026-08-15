@@ -3,6 +3,7 @@ import { isAbsolute, resolve, sep } from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { QoderRuntimeProfile } from "../exec/qoder-sdk.js";
+import type { CompareTreatmentAxis } from "./aggregate.js";
 
 const RelativePathSchema = Type.String({ minLength: 1, maxLength: 512 });
 const IdentifierSchema = Type.String({ pattern: "^[_a-zA-Z][\\w-]*$" });
@@ -130,16 +131,30 @@ export function resolveHarnessCompareRuntime(
   };
 }
 
+/**
+ * The single variable this manifest moves.
+ *
+ * A comparison that changed harness *and* runtime profile cannot attribute an
+ * outcome difference to either, so exactly one axis may differ.
+ */
+export function treatmentAxisFor(manifest: HarnessCompareManifest): CompareTreatmentAxis {
+  return manifest.variants.baseline === manifest.variants.candidate ? "runtime-profile" : "harness";
+}
+
 function validateManifestPolicy(manifest: HarnessCompareManifest): void {
-  if (
-    manifest.variants.baseline === manifest.variants.candidate &&
-    (
-      manifest.runtimeProfiles === undefined ||
-      manifest.runtimeProfiles.baseline === manifest.runtimeProfiles.candidate
-    )
-  ) {
+  const harnessDiffers = manifest.variants.baseline !== manifest.variants.candidate;
+  const profileDiffers =
+    manifest.runtimeProfiles !== undefined &&
+    manifest.runtimeProfiles.baseline !== manifest.runtimeProfiles.candidate;
+  if (!harnessDiffers && !profileDiffers) {
     throw new Error(
       "Invalid harness-compare.v1 manifest: baseline and candidate must differ by harness or runtime profile.",
+    );
+  }
+  if (harnessDiffers && profileDiffers) {
+    throw new Error(
+      "Invalid harness-compare.v1 manifest: baseline and candidate must differ on exactly one " +
+        "treatment axis; moving both harness and runtime profile confounds the comparison.",
     );
   }
   validateRuntimePolicy(manifest.runtime, "runtime");

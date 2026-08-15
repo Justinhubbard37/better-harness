@@ -126,9 +126,17 @@ describe("README coding comparison", () => {
       schemaVersion: "harness-compare-result.v1",
       status: "accept",
       reason: "invalid fixture",
+      treatmentAxis: "harness",
+      policy: {
+        minimumMatchedPairs: 5,
+        maxInfrastructureErrorRatio: 0.2,
+        maxCostRatio: 1.25,
+        minimumMeanScoreGain: 5,
+      },
       manifestHash: "manifest",
       fixtureHash: "fixture",
       harnessHash: "harness",
+      matchedPairs: { pairs: 0, candidateWins: 0, baselineWins: 0, ties: 0, meanScoreDelta: 0 },
       baseline: {
         trials: 1,
         completedTrials: 1,
@@ -142,6 +150,29 @@ describe("README coding comparison", () => {
       candidate: {},
       trials: [],
     })).toThrow(/baseline.totalCostUsd/);
+  });
+
+  it("rejects a persisted verdict whose decision policy sits below the evidence floor", () => {
+    expect(() => parseHarnessCompareVerdict({
+      schemaVersion: "harness-compare-result.v1",
+      status: "accept",
+      reason: "one lucky pair",
+      treatmentAxis: "harness",
+      // A verdict may demand more evidence than the default, never less.
+      policy: {
+        minimumMatchedPairs: 1,
+        maxInfrastructureErrorRatio: 0.2,
+        maxCostRatio: 1.25,
+        minimumMeanScoreGain: 5,
+      },
+      manifestHash: "manifest",
+      fixtureHash: "fixture",
+      harnessHash: "harness",
+      matchedPairs: { pairs: 1, candidateWins: 1, baselineWins: 0, ties: 0, meanScoreDelta: 100 },
+      baseline: {},
+      candidate: {},
+      trials: [],
+    })).toThrow(/policy.minimumMatchedPairs/);
   });
 
   it("rejects generated examples that request host capabilities", async () => {
@@ -192,7 +223,7 @@ describe("README coding comparison", () => {
     expect(grade.checks.find((item) => item.id === "scope")).toMatchObject({ passed: false });
   });
 
-  it("creates and grades real README files in isolated variant trials", async () => {
+  it("reports insufficient_evidence when a single matched pair is all the evidence there is", async () => {
     const directory = await makeTemporaryDirectory();
     const output = join(directory, "evidence");
     const fixtureReadme = new URL("../examples/readme-compare/fixture/README.md", import.meta.url);
@@ -226,9 +257,17 @@ describe("README coding comparison", () => {
     const quickStart = candidateTrial?.grade.checks.find((item) => item.id === "quick-start");
     expect(quickStart?.command?.stderr).toBe("");
     expect(quickStart).toMatchObject({ passed: true });
-    expect(verdict.status).toBe("accept");
+    // The candidate won the only pair that ran. One pair is a smoke test, so the
+    // verdict withholds promotion instead of calling a coin flip an improvement.
+    expect(verdict.status).toBe("insufficient_evidence");
+    expect(verdict.reason).toMatch(/matched pair/);
+    expect(verdict.matchedPairs).toMatchObject({ pairs: 1, candidateWins: 1, baselineWins: 0 });
+    expect(verdict.treatmentAxis).toBe("harness");
     expect(verdict.baseline).toMatchObject({ passedTrials: 0, meanScore: 0 });
     expect(verdict.candidate).toMatchObject({ passedTrials: 1, meanScore: 100 });
+    // Cost is reported per completed trial, because totals across unequal
+    // completion counts are not comparable.
+    expect(verdict.candidate.costPerCompletedTrialUsd).toBe(0.001);
     expect(candidateTrial).toMatchObject({
       classification: "passed",
       changedFiles: ["README.md"],
@@ -242,6 +281,58 @@ describe("README coding comparison", () => {
     expect(parseHarnessCompareVerdict(persistedVerdict)).toEqual(verdict);
     expect(await readFile(join(output, "verdict.html"), "utf8")).toContain("Harness compare verdict");
     await expect(readFile(fixtureReadme, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+    // The trial rows are the evidence: an edited summary no longer parses.
+    const forged = structuredClone(persistedVerdict) as { baseline: { meanScore: number } };
+    forged.baseline.meanScore = 100;
+    expect(() => parseHarnessCompareVerdict(forged)).toThrow(/baseline.meanScore is 100/);
+
+    const promoted = structuredClone(persistedVerdict) as {
+      status: string;
+      reason: string;
+      policy: { minimumMatchedPairs: number };
+    };
+    promoted.policy.minimumMatchedPairs = 5;
+    promoted.status = "accept";
+    promoted.reason = "forged promotion";
+    expect(() => parseHarnessCompareVerdict(promoted)).toThrow(
+      /status is 'accept'.*compute 'insufficient_evidence'/,
+    );
+  });
+
+  it("accepts a candidate that wins the matched pairs its policy requires", async () => {
+    const directory = await makeTemporaryDirectory();
+    const output = join(directory, "evidence");
+
+    const verdict = await runHarnessComparison({
+      manifestPath: EXPERIMENT_PATH,
+      outputDirectory: output,
+      trialCount: 2,
+      decisionPolicy: { minimumMatchedPairs: 2 },
+      executorFactory: ({ trialRoot }): HarnessExecutor => ({
+        host: "qoder",
+        execute: async (revision) => {
+          if (revision.harness.id === "readme-grounded") {
+            await writeFile(join(trialRoot, "README.md"), VALID_README, "utf8");
+          }
+          return {
+            host: "qoder",
+            revisionId: revision.revisionId,
+            exitCode: 0,
+            output: "completed",
+            errorOutput: "",
+            warnings: [],
+            trace: [{ type: "result", subtype: "success", file_path: join(trialRoot, "README.md") }],
+            metrics: { durationMs: 10, turns: 1, costUsd: 0.001 },
+          };
+        },
+      }),
+    });
+
+    expect(verdict.status).toBe("accept");
+    expect(verdict.matchedPairs).toMatchObject({ pairs: 2, candidateWins: 2, baselineWins: 0 });
+    expect(verdict.policy.minimumMatchedPairs).toBe(2);
+    expect(parseHarnessCompareVerdict(JSON.parse(await readFile(join(output, "verdict.json"), "utf8")))).toEqual(verdict);
   });
 
   it("reports harness setup breakage as an infrastructure error instead of a coding outcome", async () => {

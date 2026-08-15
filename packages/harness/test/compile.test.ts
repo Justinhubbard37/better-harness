@@ -3,6 +3,7 @@ import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 import { compileHarness } from "../src/compiler/compile.js";
 import { HarnessIrBundleSchema, IR_VERSION } from "../src/ir/index.js";
+import { describeAdapter } from "../src/resolver/adapter-descriptor.js";
 import { resolveHarness } from "../src/resolver/resolve.js";
 
 const EXAMPLE_URL = new URL("../examples/standard-coding.harness", import.meta.url);
@@ -59,21 +60,47 @@ describe("compileHarness", () => {
       { key: "runtime.checkpoints", value: { type: "boolean", value: true } },
       { key: "runtime.network-enabled", value: { type: "boolean", value: false } },
     ]);
-    const resolved = resolveHarness(result.bundle!, "full-surface", "pi");
+    // Resolution needs an adapter that really provides the tools and MCP servers
+    // this fixture requires; the conformance check is about lowering, not about
+    // pretending a prompt line connects an MCP server.
+    const capableAdapter = describeAdapter({
+      adapterId: "@harness/adapter-pi",
+      toolExposure: {
+        "workspace.read": "read_file",
+        "workspace.write": "write_file",
+        "process.exec": "shell",
+      },
+      mcpSupport: { mechanism: "mcp-client", strength: "wired" },
+    });
+    const resolved = resolveHarness(result.bundle!, "full-surface", "pi", {
+      adapter: capableAdapter,
+      sourceLocks: [{
+        capabilityId: "repository-grounding",
+        uri: "./skills/repository-grounding",
+        digest: `sha256:${"0".repeat(64)}`,
+        files: 1,
+      }],
+    });
     expect(resolved.report.status).toBe("resolved");
     expect(resolved.report.realizations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           agentId: "author",
           capabilityId: "repository-grounding",
+          realized: "advisory",
           action: "satisfied",
         }),
         expect.objectContaining({
           agentId: "verifier",
           capabilityId: "process.exec",
-          action: "degraded",
+          realized: "wired",
+          materializedMechanism: "host-tool:shell",
+          action: "satisfied",
         }),
       ]),
+    );
+    expect(resolveHarness(result.bundle!, "full-surface", "pi").report.errors.join("\n")).toContain(
+      "exposes no host tool",
     );
   });
 
@@ -101,10 +128,7 @@ describe("compileHarness", () => {
       { key: "shell.timeout", value: { type: "duration", value: "60s", ms: 60_000 } },
       { key: "tool-call-budget", value: { type: "int", value: 80 } },
     ]);
-    expect(bundle.targets).toEqual([
-      { runtime: "pi", adapter: "pi" },
-      { runtime: "qoder", adapter: "qoder" },
-    ]);
+    expect(bundle.targets).toEqual([{ runtime: "qoder", adapter: "qoder" }]);
   });
 
   it("keeps generic plugin and composition out of the authored surface", async () => {

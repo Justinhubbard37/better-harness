@@ -10,10 +10,11 @@ import {
 import {
   applyQoderSdkMessage,
   createQoderSdkMessageMappingState,
+  QoderSdkAdapter,
   QoderSdkExecutor,
   type QoderSdkLike,
 } from "../src/exec/qoder-sdk.js";
-import { PiSdkExecutor, type PiSdkLike } from "../src/exec/pi-sdk.js";
+import { PiSdkAdapter, PiSdkExecutor, type PiSdkLike } from "../src/exec/pi-sdk.js";
 
 const SOURCE = `
   skill require-tests {
@@ -34,7 +35,8 @@ const SOURCE = `
 
 async function resolveFor(runtimeId: string): Promise<{ bundle: HarnessIrBundle; revision: HarnessRevision }> {
   const { bundle } = await compileHarness(SOURCE);
-  const { revision } = resolveHarness(bundle!, "assembly", runtimeId);
+  const adapter = runtimeId === "qoder" ? new QoderSdkAdapter() : new PiSdkAdapter();
+  const { revision } = resolveHarness(bundle!, "assembly", runtimeId, { adapter: adapter.describe() });
   return { bundle: bundle!, revision: revision! };
 }
 

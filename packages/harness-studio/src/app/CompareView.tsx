@@ -53,6 +53,12 @@ export function CompareView(): React.JSX.Element {
       <p className="status-line">
         <strong className={`verdict-${summary.status}`}>{summary.status}</strong>: {summary.reason}
       </p>
+      <p className="muted">
+        Treatment axis {summary.treatmentAxis} · {summary.evidence.pairs} matched pair
+        {summary.evidence.pairs === 1 ? "" : "s"} (min {summary.evidence.minimumMatchedPairs}) ·
+        candidate {summary.evidence.candidateWins} / baseline {summary.evidence.baselineWins} /
+        tied {summary.evidence.ties} · mean score delta {summary.evidence.meanScoreDelta}
+      </p>
       <div className="table-scroll" role="region" aria-label="Variant comparison" tabIndex={0}>
         <table>
           <thead>
@@ -63,6 +69,7 @@ export function CompareView(): React.JSX.Element {
               <th>Mean score</th>
               <th>Infra errors</th>
               <th>Cost (USD)</th>
+              <th>Cost / trial</th>
               <th>Credits</th>
             </tr>
           </thead>
@@ -75,6 +82,7 @@ export function CompareView(): React.JSX.Element {
                 <td>{row.meanScore}</td>
                 <td>{row.infrastructureErrors}</td>
                 <td>{row.totalCostUsd.toFixed(4)}</td>
+                <td>{row.costPerCompletedTrialUsd.toFixed(4)}</td>
                 <td>{row.totalCredits.toFixed(3)}</td>
               </tr>
             ))}

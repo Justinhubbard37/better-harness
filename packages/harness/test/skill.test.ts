@@ -36,14 +36,13 @@ describe("generate-harness-dsl validator", () => {
     expect(output.valid).toBe(true);
     expect(output.diagnostics).toEqual([]);
     expect(output.harnesses).toEqual([
-      expect.objectContaining({ harnessId: "standard-coding", runtime: "pi", status: "resolved" }),
       expect.objectContaining({ harnessId: "standard-coding", runtime: "qoder", status: "resolved" }),
     ]);
     expect(output.harnesses[0].realizations).toContainEqual(
       expect.objectContaining({
         agentId: "verifier",
         capabilityId: "verification-before-complete",
-        declaredStrength: "enforced",
+        declaredStrength: "advisory",
         realized: "advisory",
         action: "degraded",
       }),
@@ -81,7 +80,6 @@ describe("generate-harness-dsl validator", () => {
         status: "failed",
         errors: ["Harness 'missing-harness' is not defined in the bundle."],
       }),
-      expect.objectContaining({ harnessId: "missing-harness", status: "failed" }),
     ]);
   });
 

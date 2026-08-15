@@ -207,8 +207,13 @@ binding repository-analysis for [pi, qoder] { strength advisory }
 ```
 
 A binding strength states the strongest adapter capability being modeled. It
-does not prove that the current executor materialized that capability. In
-v0.2, a supported binding resolves through `prompt-preamble` at `advisory`; an
+does not prove that the current executor materialized that capability, and it
+cannot raise what the adapter really does. Materialization is per capability
+kind: a skill is *delivered* as guidance (`prompt-preamble` at `advisory`), a
+tool must be *exposed* as a callable host tool, an MCP server must be
+*connected*. A capability the target adapter cannot back fails resolution — in
+v0.2 that means `connect mcp` never resolves, and `require tool` resolves only
+on an adapter that exposes a matching host tool (Qoder does, Pi does not). An
 `unsupported` binding realizes as `unsupported` and fails any requirement.
 
 ## Semantic checklist
@@ -224,7 +229,8 @@ v0.2, a supported binding resolves through `prompt-preamble` at `advisory`; an
   `programmatic.<language>` execution, or keep the workflow declarative.
 - Bind capabilities for a runtime only to declare a stronger host-native
   mechanism or an explicit `unsupported`; the advisory floor needs no binding.
-- Set minimum and degradation policy against v0.2's actual advisory ceiling.
+- Set minimum and degradation policy against what the target adapter really
+  realizes per kind, not against the strength a binding declares.
 - Keep secrets out of source and descriptions; reference MCP endpoints via
   `env.VARIABLE`.
 - Run `scripts/validate.mjs` and inspect every realization, not only the exit

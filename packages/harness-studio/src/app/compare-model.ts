@@ -10,6 +10,8 @@ export interface CompareRow {
   meanScore: number;
   infrastructureErrors: number;
   totalCostUsd: number;
+  /** The only cost figure comparable across variants with unequal completions. */
+  costPerCompletedTrialUsd: number;
   totalCredits: number;
 }
 
@@ -27,6 +29,20 @@ export interface CompareSummary {
   status: HarnessCompareVerdict["status"];
   reason: string;
   manifestHash: string;
+  /** The single variable the comparison moved. */
+  treatmentAxis: HarnessCompareVerdict["treatmentAxis"];
+  /**
+   * Paired evidence and the thresholds it was judged against, so a reader can
+   * see why a status was withheld instead of trusting the word.
+   */
+  evidence: {
+    pairs: number;
+    candidateWins: number;
+    baselineWins: number;
+    ties: number;
+    meanScoreDelta: number;
+    minimumMatchedPairs: number;
+  };
   rows: CompareRow[];
   trials: CompareTrialRow[];
 }
@@ -59,12 +75,22 @@ export function summarizeVerdict(verdict: HarnessCompareVerdict): CompareSummary
     meanScore: aggregate.meanScore,
     infrastructureErrors: aggregate.infrastructureErrors,
     totalCostUsd: aggregate.totalCostUsd,
+    costPerCompletedTrialUsd: aggregate.costPerCompletedTrialUsd,
     totalCredits: aggregate.totalCredits,
   });
   return {
     status: verdict.status,
     reason: verdict.reason,
     manifestHash: verdict.manifestHash,
+    treatmentAxis: verdict.treatmentAxis,
+    evidence: {
+      pairs: verdict.matchedPairs.pairs,
+      candidateWins: verdict.matchedPairs.candidateWins,
+      baselineWins: verdict.matchedPairs.baselineWins,
+      ties: verdict.matchedPairs.ties,
+      meanScoreDelta: verdict.matchedPairs.meanScoreDelta,
+      minimumMatchedPairs: verdict.policy.minimumMatchedPairs,
+    },
     rows: [
       row("baseline", "H0 baseline", verdict.baseline),
       row("candidate", "H1 candidate", verdict.candidate),

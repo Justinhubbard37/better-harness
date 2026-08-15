@@ -4,16 +4,25 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { compileHarness } from "../src/compiler/compile.js";
 import type { HarnessIrBundle, HarnessRevision } from "../src/ir/index.js";
+import type { AdapterRealizationDescriptor } from "../src/resolver/adapter-descriptor.js";
 import { resolveHarness } from "../src/resolver/resolve.js";
-import { PiSdkExecutor, materializePiPackage, type PiSdkLike } from "../src/exec/pi-sdk.js";
-import { QoderSdkExecutor, type QoderSdkLike } from "../src/exec/qoder-sdk.js";
+import { PiSdkAdapter, PiSdkExecutor, materializePiPackage, type PiSdkLike } from "../src/exec/pi-sdk.js";
+import {
+  QoderSdkAdapter,
+  QoderSdkExecutor,
+  type QoderSdkLike,
+  type QoderSdkMessage,
+} from "../src/exec/qoder-sdk.js";
 
 const SOURCE = `
   skill impact-analysis {
     description "Impact analysis: map the blast radius before editing."
   }
-  tool verification-before-complete {
+  skill verification-before-complete {
     description "Do not complete without verification evidence."
+  }
+  tool workspace.read {
+    description "Read files inside the workspace."
   }
   workflow solo-loop {
     stop when coder.done
@@ -22,11 +31,18 @@ const SOURCE = `
     workflow solo-loop
     agent coder {
       use skill impact-analysis
-      require tool verification-before-complete {
+      use skill verification-before-complete {
         preferred enforced
         minimum advisory
         on-degrade report
       }
+    }
+  }
+  harness tooled {
+    workflow solo-loop
+    agent coder {
+      use skill impact-analysis
+      require tool workspace.read
     }
   }
   binding impact-analysis for [qoder, pi] {
@@ -45,33 +61,95 @@ const SOURCE = `
   target pi
 `;
 
-async function resolveFor(runtimeId: string): Promise<{ bundle: HarnessIrBundle; revision: HarnessRevision }> {
+function descriptorFor(runtimeId: string): AdapterRealizationDescriptor {
+  return runtimeId === "qoder" ? new QoderSdkAdapter().describe() : new PiSdkAdapter().describe();
+}
+
+async function resolveFor(
+  runtimeId: string,
+  harnessId = "assembly",
+  adapter = descriptorFor(runtimeId),
+): Promise<{ bundle: HarnessIrBundle; revision: HarnessRevision }> {
   const { bundle } = await compileHarness(SOURCE);
-  const { revision } = resolveHarness(bundle!, "assembly", runtimeId);
+  const { revision, report } = resolveHarness(bundle!, harnessId, runtimeId, { adapter });
+  expect(report.errors).toEqual([]);
   return { bundle: bundle!, revision: revision! };
+}
+
+interface FakeQoderSession {
+  /** One entry per `query()` call: a new entry means a new host context. */
+  queries: Parameters<QoderSdkLike["query"]>[0][];
+  /** Text of every user message the host received, across all queries. */
+  prompts: string[];
+  interrupts: number;
+  closes: number;
+}
+
+function newFakeSession(): FakeQoderSession {
+  return { queries: [], prompts: [], interrupts: 0, closes: 0 };
+}
+
+/**
+ * A test double shaped like the official Query lifecycle: one `query()` per
+ * session, a streamed async iterable of user messages, and `interrupt`/`close`
+ * control. `reply` decides what the host answers for one user message.
+ */
+function fakeQoderSdk(
+  state: FakeQoderSession,
+  reply: (text: string, turn: number, state: FakeQoderSession) => QoderSdkMessage[] = defaultReply,
+  auth: unknown = {},
+  /** Model a host that terminates the query stream after answering one message. */
+  endsAfterFirstReply = false,
+): QoderSdkLike {
+  return {
+    qodercliAuth: () => auth,
+    query: (params) => {
+      state.queries.push(params);
+      const messages = (async function* (): AsyncGenerator<QoderSdkMessage> {
+        if (typeof params.prompt === "string") {
+          state.prompts.push(params.prompt);
+          yield* reply(params.prompt, state.prompts.length, state);
+          return;
+        }
+        for await (const message of params.prompt) {
+          const text = message.message.content;
+          state.prompts.push(text);
+          yield* reply(text, state.prompts.length, state);
+          if (endsAfterFirstReply) {
+            return;
+          }
+        }
+      })();
+      return {
+        [Symbol.asyncIterator]: () => messages,
+        interrupt: async () => {
+          state.interrupts += 1;
+          return undefined;
+        },
+        close: async () => {
+          state.closes += 1;
+        },
+      };
+    },
+  };
+}
+
+function defaultReply(_text: string, turn: number): QoderSdkMessage[] {
+  return [
+    { type: "assistant", message: { content: [{ type: "text", text: `turn-${turn}` }] } },
+    { type: "result", subtype: "success", session_id: "session-1" },
+  ];
 }
 
 describe("QoderSdkExecutor", () => {
   it("streams one Qoder SDK query with explicit auth, cwd, and tool authorization", async () => {
-    const { bundle, revision } = await resolveFor("qoder");
-    const queries: Parameters<QoderSdkLike["query"]>[0][] = [];
+    const state = newFakeSession();
     const auth = { kind: "test-auth" };
-    const sdk: QoderSdkLike = {
-      qodercliAuth: () => auth,
-      query: async function* (params) {
-        queries.push(params);
-        yield {
-          type: "assistant",
-          message: { content: [{ type: "text", text: "done" }] },
-        };
-        yield { type: "result", subtype: "success" };
-      },
-    };
     const abortController = new AbortController();
     const canUseTool = async () => ({ behavior: "allow" as const });
     const streamedTrace: unknown[] = [];
     const executor = new QoderSdkExecutor({
-      loadSdk: async () => sdk,
+      loadSdk: async () => fakeQoderSdk(state, defaultReply, auth),
       allowedTools: ["Read"],
       tools: ["Read", "Bash"],
       disallowedTools: ["WebFetch"],
@@ -83,11 +161,12 @@ describe("QoderSdkExecutor", () => {
       onTraceEvent: (event) => streamedTrace.push(event),
       maxTurns: 12,
     });
+    const { bundle, revision } = await resolveFor("qoder", "assembly", executor.describe());
 
     const result = await executor.execute(revision, bundle, { prompt: "Fix the bug", cwd: "/tmp" });
 
-    expect(queries).toHaveLength(1);
-    expect(queries[0].options).toEqual({
+    expect(state.queries).toHaveLength(1);
+    expect(state.queries[0].options).toEqual({
       auth,
       cwd: "/tmp",
       allowedTools: ["Read"],
@@ -102,14 +181,16 @@ describe("QoderSdkExecutor", () => {
       includePartialMessages: true,
       abortController,
     });
-    const prompt = queries[0].prompt;
-    expect(prompt.endsWith("Fix the bug")).toBe(true);
-    expect(prompt).toContain(revision.revisionId);
-    expect(prompt).toContain("Impact analysis: map the blast radius before editing.");
+    // Multi-turn queries take an async iterable of user messages, not a string.
+    expect(typeof state.queries[0].prompt).not.toBe("string");
+    expect(state.prompts).toHaveLength(1);
+    expect(state.prompts[0].endsWith("Fix the bug")).toBe(true);
+    expect(state.prompts[0]).toContain(revision.revisionId);
+    expect(state.prompts[0]).toContain("Impact analysis: map the blast radius before editing.");
     expect(result).toMatchObject({
       host: "qoder",
       exitCode: 0,
-      output: "done",
+      output: "turn-1",
       runtimeReceipt: {
         executor: "@qoder-ai/qoder-agent-sdk",
         tools: ["Read", "Bash"],
@@ -124,36 +205,78 @@ describe("QoderSdkExecutor", () => {
       },
     });
     expect(streamedTrace).toEqual(result.trace);
+    expect(state.closes).toBe(1);
+  });
+
+  it("exposes the host tools a revision's tool capabilities require", async () => {
+    const executor = new QoderSdkExecutor({ loadSdk: async () => fakeQoderSdk(newFakeSession()) });
+    const { bundle, revision } = await resolveFor("qoder", "tooled", executor.describe());
+    const state = newFakeSession();
+    const wired = new QoderSdkExecutor({ loadSdk: async () => fakeQoderSdk(state) });
+
+    const result = await wired.execute(revision, bundle, { prompt: "Read the README" });
+
+    expect(state.queries[0].options.tools).toContain("Read");
+    expect(result.runtimeReceipt?.tools).toEqual(["Read"]);
+    expect(result.materialization?.capabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          capabilityId: "workspace.read",
+          dimension: "exposed",
+          state: "materialized",
+          realized: "wired",
+          mechanism: "host-tool:Read",
+        }),
+      ]),
+    );
+  });
+
+  it("refuses a revision whose tool exposure this adapter cannot reproduce", async () => {
+    const exposing = new QoderSdkAdapter();
+    const { bundle, revision } = await resolveFor("qoder", "tooled", exposing.describe());
+    let loaded = false;
+    // Read is denied here, so the recorded `host-tool:Read` realization is a claim
+    // this configuration cannot back.
+    const narrowed = new QoderSdkExecutor({
+      disallowedTools: ["Read"],
+      loadSdk: async () => {
+        loaded = true;
+        throw new Error("must not load");
+      },
+    });
+
+    await expect(narrowed.execute(revision, bundle, { prompt: "Read the README" })).rejects.toThrow(
+      /locked adapter contract/,
+    );
+    expect(loaded).toBe(false);
   });
 
   it("retains usage evidence while redacting credential-shaped trace fields", async () => {
     const { bundle, revision } = await resolveFor("qoder");
-    const sdk: QoderSdkLike = {
-      qodercliAuth: () => ({}),
-      query: async function* () {
-        yield {
-          type: "system",
-          subtype: "init",
-          access_token: "must-not-leak",
-          nested: { serviceAccountKey: "also-must-not-leak" },
-        };
-        yield {
-          type: "result",
-          subtype: "success",
-          duration_ms: 120,
-          duration_api_ms: 90,
-          num_turns: 2,
-          total_cost_usd: 0.01,
-          total_credits: 1.25,
-          usage: { input_tokens: 10, output_tokens: 5 },
-          modelUsage: { model: { inputTokens: 10 } },
-          permission_denials: [],
-          session_id: "session-1",
-          stop_reason: "end_turn",
-          terminal_reason: "completed",
-        };
+    const state = newFakeSession();
+    const sdk = fakeQoderSdk(state, () => [
+      {
+        type: "system",
+        subtype: "init",
+        access_token: "must-not-leak",
+        nested: { serviceAccountKey: "also-must-not-leak" },
       },
-    };
+      {
+        type: "result",
+        subtype: "success",
+        duration_ms: 120,
+        duration_api_ms: 90,
+        num_turns: 2,
+        total_cost_usd: 0.01,
+        total_credits: 1.25,
+        usage: { input_tokens: 10, output_tokens: 5 },
+        modelUsage: { model: { inputTokens: 10 } },
+        permission_denials: [],
+        session_id: "session-1",
+        stop_reason: "end_turn",
+        terminal_reason: "completed",
+      },
+    ]);
 
     const result = await new QoderSdkExecutor({ loadSdk: async () => sdk }).execute(
       revision,
@@ -184,19 +307,11 @@ describe("QoderSdkExecutor", () => {
   });
 
   it("materializes the frozen qoder-minimal-v1 SDK surface and receipt", async () => {
-    const { bundle, revision } = await resolveFor("qoder");
-    const queries: Parameters<QoderSdkLike["query"]>[0][] = [];
+    const state = newFakeSession();
     const canUseTool = async () => ({ behavior: "allow" as const });
-    const sdk: QoderSdkLike = {
-      qodercliAuth: () => ({ kind: "test-auth" }),
-      query: async function* (params) {
-        queries.push(params);
-        yield { type: "result", subtype: "success" };
-      },
-    };
     const executor = new QoderSdkExecutor({
       profile: "qoder-minimal-v1",
-      loadSdk: async () => sdk,
+      loadSdk: async () => fakeQoderSdk(state, () => [{ type: "result", subtype: "success" }]),
       tools: ["Bash", "Edit", "Read", "Write"],
       allowedTools: [],
       disallowedTools: ["WebFetch", "WebSearch", "Task"],
@@ -204,11 +319,12 @@ describe("QoderSdkExecutor", () => {
       canUseTool,
       maxTurns: 8,
     });
+    const { bundle, revision } = await resolveFor("qoder", "assembly", executor.describe());
 
     const result = await executor.execute(revision, bundle, { prompt: "Create README.md", cwd: "/tmp" });
 
-    expect(queries).toHaveLength(1);
-    expect(queries[0].options).toMatchObject({
+    expect(state.queries).toHaveLength(1);
+    expect(state.queries[0].options).toMatchObject({
       tools: ["Read", "Write", "Edit", "Bash"],
       allowedTools: [],
       disallowedTools: ["WebFetch", "WebSearch", "Agent", "Task"],
@@ -222,8 +338,10 @@ describe("QoderSdkExecutor", () => {
       strictMcpConfig: true,
       systemPrompt: expect.stringContaining("focused coding agent"),
     });
-    expect(queries[0].options.systemPrompt).toEqual(expect.stringContaining('working directory is "/tmp"'));
-    expect(queries[0].options.systemPrompt).toEqual(expect.stringContaining("Use relative paths such as package.json"));
+    expect(state.queries[0].options.systemPrompt).toEqual(expect.stringContaining('working directory is "/tmp"'));
+    expect(state.queries[0].options.systemPrompt).toEqual(
+      expect.stringContaining("Use relative paths such as package.json"),
+    );
     expect(result.runtimeReceipt).toEqual(expect.objectContaining({
       runtimeProfile: "qoder-minimal-v1",
       tools: ["Read", "Write", "Edit", "Bash"],
@@ -271,14 +389,8 @@ describe("QoderSdkExecutor", () => {
 
   it("reports declared native strength as an advisory degradation", async () => {
     const { bundle, revision } = await resolveFor("qoder");
-    const sdk: QoderSdkLike = {
-      qodercliAuth: () => ({}),
-      query: async function* () {
-        yield { type: "result", subtype: "success" };
-      },
-    };
     const executor = new QoderSdkExecutor({
-      loadSdk: async () => sdk,
+      loadSdk: async () => fakeQoderSdk(newFakeSession(), () => [{ type: "result", subtype: "success" }]),
     });
 
     const result = await executor.execute(revision, bundle, { prompt: "Fix the bug" });
@@ -286,6 +398,15 @@ describe("QoderSdkExecutor", () => {
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain("verification-before-complete");
     expect(result.warnings[0]).toContain("stop-hook");
+    expect(result.materialization?.capabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          capabilityId: "verification-before-complete",
+          dimension: "delivered",
+          state: "degraded",
+        }),
+      ]),
+    );
   });
 
   it("rejects a revision targeting another host before loading the Qoder SDK", async () => {
@@ -306,18 +427,15 @@ describe("QoderSdkExecutor", () => {
 
   it("reports an SDK query failure without leaking non-error messages", async () => {
     const { bundle, revision } = await resolveFor("qoder");
-    const sdk: QoderSdkLike = {
-      qodercliAuth: () => ({}),
-      query: async function* () {
-        yield { type: "assistant", message: { content: [{ type: "text", text: "partial" }] } };
-        yield {
-          type: "result",
-          subtype: "error_during_execution",
-          is_error: true,
-          errors: ["auth failed"],
-        };
+    const sdk = fakeQoderSdk(newFakeSession(), () => [
+      { type: "assistant", message: { content: [{ type: "text", text: "partial" }] } },
+      {
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["auth failed"],
       },
-    };
+    ]);
 
     const result = await new QoderSdkExecutor({ loadSdk: async () => sdk }).execute(
       revision,
@@ -330,12 +448,12 @@ describe("QoderSdkExecutor", () => {
 
   it("fails closed when the Qoder SDK stream ends without a result message", async () => {
     const { bundle, revision } = await resolveFor("qoder");
-    const sdk: QoderSdkLike = {
-      qodercliAuth: () => ({}),
-      query: async function* () {
-        yield { type: "assistant", message: { content: [{ type: "text", text: "partial" }] } };
-      },
-    };
+    const sdk = fakeQoderSdk(
+      newFakeSession(),
+      () => [{ type: "assistant", message: { content: [{ type: "text", text: "partial" }] } }],
+      {},
+      true,
+    );
 
     const result = await new QoderSdkExecutor({ loadSdk: async () => sdk }).execute(
       revision,
@@ -416,6 +534,10 @@ describe("PiSdkExecutor", () => {
     expect(prompts[0].endsWith("Fix the bug")).toBe(true);
     expect(prompts[0]).toContain(revision.revisionId);
     expect(result).toMatchObject({ host: "pi", exitCode: 0, output: "pi-response" });
+    expect(result.materialization?.adapter).toEqual({
+      id: "@harness/adapter-pi",
+      specificationVersion: "harness-adapter-v1",
+    });
   });
 
   it("surfaces a model failure encoded in the final Pi assistant message", async () => {
@@ -539,11 +661,11 @@ describe("materializePiPackage", () => {
     expect(skill).toContain("name: impact-analysis");
     expect(skill).toContain('description: "Impact analysis: map the blast radius before editing."');
     expect(skill).toContain(revision.revisionId);
-    // Tool capabilities remain prompt guidance and must not be mislabeled as Pi skills.
-    expect(written.some((path) => path.includes("verification-before-complete"))).toBe(false);
-    await expect(
-      access(join(directory, "skills", "verification-before-complete", "SKILL.md")),
-    ).rejects.toThrow();
+    // Only skill capabilities become Pi skills; nothing else in the revision does.
+    expect(written.filter((path) => path.endsWith("SKILL.md"))).toHaveLength(
+      revision.resolved.capabilities.filter((capability) => capability.kind === "skill").length,
+    );
+    await expect(access(join(directory, "skills", "workspace.read", "SKILL.md"))).rejects.toThrow();
   });
 
   it("rejects materialization for a revision targeting another host", async () => {
@@ -553,6 +675,22 @@ describe("materializePiPackage", () => {
     await expect(materializePiPackage(revision, bundle, directory)).rejects.toThrow(
       /targets runtime 'qoder'.*executor host is 'pi'/,
     );
+  });
+
+  it("refuses to materialize another bundle under a locked revision id", async () => {
+    const { bundle, revision } = await resolveFor("pi");
+    const compiled = await compileHarness(
+      SOURCE.replace(
+        "Impact analysis: map the blast radius before editing.",
+        "Swapped bundle content must never be materialized.",
+      ),
+    );
+    directory = await mkdtemp(join(tmpdir(), "harness-pi-"));
+
+    await expect(materializePiPackage(revision, compiled.bundle!, directory)).rejects.toThrow(
+      /does not match the supplied IR bundle/,
+    );
+    expect(await access(join(directory, "package.json")).then(() => true, () => false)).toBe(false);
   });
 
   it("fails closed instead of mixing a revision with pre-existing files", async () => {

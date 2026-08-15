@@ -1,15 +1,32 @@
-import type { HarnessCompareVerdict, VariantAggregate } from "./runner.js";
+import {
+  aggregateVariant,
+  decideVerdict,
+  normalizeDecisionPolicy,
+  summarizeMatchedPairs,
+  type CompareTrialResult,
+  type HarnessCompareVerdict,
+  type MatchedPairSummary,
+  type VariantAggregate,
+} from "./aggregate.js";
 
-/** Validate persisted comparison evidence before a consumer trusts its nested values. */
+/**
+ * Validate persisted comparison evidence before a consumer trusts its values.
+ *
+ * Shape checks alone let a hand-edited `verdict.json` present a legal schema with
+ * invented aggregates, so every derived number is recomputed from the trial rows:
+ * the rows are the evidence, the aggregates are only a summary of them.
+ */
 export function parseHarnessCompareVerdict(value: unknown): HarnessCompareVerdict {
   const verdict = requireRecord(value, "verdict.json");
   requireLiteral(verdict.schemaVersion, "harness-compare-result.v1", "schemaVersion");
   requireOneOf(
     verdict.status,
-    ["accept", "need_more_work", "reject", "infrastructure_error"] as const,
+    ["accept", "need_more_work", "reject", "insufficient_evidence", "infrastructure_error"] as const,
     "status",
   );
   requireString(verdict.reason, "reason");
+  requireOneOf(verdict.treatmentAxis, ["harness", "runtime-profile"] as const, "treatmentAxis");
+  const policy = validateDecisionPolicy(verdict.policy, "policy");
   requireString(verdict.manifestHash, "manifestHash");
   requireString(verdict.fixtureHash, "fixtureHash");
   requireString(verdict.harnessHash, "harnessHash");
@@ -18,16 +35,97 @@ export function parseHarnessCompareVerdict(value: unknown): HarnessCompareVerdic
   const trials = requireArray(verdict.trials, "trials");
   trials.forEach((trial, index) => validateCompareTrial(trial, `trials[${index}]`));
 
-  const baselineTrials = trials.filter(
-    (trial) => requireRecord(trial, "trial").variant === "baseline",
-  ).length;
-  const candidateTrials = trials.length - baselineTrials;
-  if (baselineTrials !== baseline.trials || candidateTrials !== candidate.trials) {
+  const rows = trials as CompareTrialResult[];
+  const baselineRows = rows.filter((trial) => trial.variant === "baseline");
+  const candidateRows = rows.filter((trial) => trial.variant === "candidate");
+  if (baselineRows.length !== baseline.trials || candidateRows.length !== candidate.trials) {
     invalidVerdict(
       "trials must contain exactly the baseline.trials and candidate.trials entries declared by the aggregates",
     );
   }
+  assertRecomputedAggregate(baseline, aggregateVariant(baselineRows), "baseline");
+  assertRecomputedAggregate(candidate, aggregateVariant(candidateRows), "candidate");
+  const persistedPairs = validateMatchedPairs(verdict.matchedPairs, "matchedPairs");
+  const recomputedPairs = summarizeMatchedPairs(rows);
+  assertRecomputedPairs(persistedPairs, recomputedPairs);
+  const decision = decideVerdict({
+    baseline,
+    candidate,
+    matchedPairs: recomputedPairs,
+    policy,
+  });
+  if (verdict.status !== decision.status) {
+    invalidVerdict(
+      `status is '${String(verdict.status)}', but the trial rows and policy compute '${decision.status}'`,
+    );
+  }
+  if (verdict.reason !== decision.reason) {
+    invalidVerdict("reason does not match the decision derived from the trial rows and policy");
+  }
   return value as HarnessCompareVerdict;
+}
+
+/** Every aggregate field is derived, so a mismatch means the summary was edited. */
+function assertRecomputedAggregate(
+  persisted: VariantAggregate,
+  recomputed: VariantAggregate,
+  path: string,
+): void {
+  for (const field of [
+    "trials",
+    "completedTrials",
+    "infrastructureErrors",
+    "passedTrials",
+    "passRate",
+    "meanScore",
+    "totalCostUsd",
+    "totalCredits",
+    "costPerAttemptedTrialUsd",
+    "costPerCompletedTrialUsd",
+    "costPerPassedTrialUsd",
+  ] as const) {
+    if (Math.abs(persisted[field] - recomputed[field]) > 1e-9) {
+      invalidVerdict(
+        `${path}.${field} is ${persisted[field]}, but the trial rows compute ${recomputed[field]}`,
+      );
+    }
+  }
+}
+
+function assertRecomputedPairs(persisted: MatchedPairSummary, recomputed: MatchedPairSummary): void {
+  for (const field of ["pairs", "candidateWins", "baselineWins", "ties", "meanScoreDelta"] as const) {
+    if (Math.abs(persisted[field] - recomputed[field]) > 1e-9) {
+      invalidVerdict(
+        `matchedPairs.${field} is ${persisted[field]}, but the trial rows compute ${recomputed[field]}`,
+      );
+    }
+  }
+}
+
+function validateDecisionPolicy(value: unknown, path: string): HarnessCompareVerdict["policy"] {
+  const policy = requireRecord(value, path);
+  const minimumMatchedPairs = requireInteger(policy.minimumMatchedPairs, `${path}.minimumMatchedPairs`, 2);
+  requireFiniteNumber(policy.maxInfrastructureErrorRatio, `${path}.maxInfrastructureErrorRatio`, 0, 0.5);
+  requireFiniteNumber(policy.maxCostRatio, `${path}.maxCostRatio`, 1);
+  requireFiniteNumber(policy.minimumMeanScoreGain, `${path}.minimumMeanScoreGain`, 0);
+  const normalized = normalizeDecisionPolicy(policy as never);
+  if (normalized.minimumMatchedPairs !== minimumMatchedPairs) {
+    invalidVerdict(`${path}.minimumMatchedPairs is below the enforced floor`);
+  }
+  return value as HarnessCompareVerdict["policy"];
+}
+
+function validateMatchedPairs(value: unknown, path: string): MatchedPairSummary {
+  const pairs = requireRecord(value, path);
+  const total = requireInteger(pairs.pairs, `${path}.pairs`, 0);
+  const candidateWins = requireInteger(pairs.candidateWins, `${path}.candidateWins`, 0);
+  const baselineWins = requireInteger(pairs.baselineWins, `${path}.baselineWins`, 0);
+  const ties = requireInteger(pairs.ties, `${path}.ties`, 0);
+  requireFiniteNumber(pairs.meanScoreDelta, `${path}.meanScoreDelta`, -100, 100);
+  if (candidateWins + baselineWins + ties !== total) {
+    invalidVerdict(`${path}.candidateWins + baselineWins + ties must equal ${path}.pairs`);
+  }
+  return value as MatchedPairSummary;
 }
 
 function validateVariantAggregate(value: unknown, path: string): VariantAggregate {
@@ -44,6 +142,13 @@ function validateVariantAggregate(value: unknown, path: string): VariantAggregat
   requireFiniteNumber(aggregate.meanScore, `${path}.meanScore`, 0, 100);
   requireFiniteNumber(aggregate.totalCostUsd, `${path}.totalCostUsd`, 0);
   requireFiniteNumber(aggregate.totalCredits, `${path}.totalCredits`, 0);
+  for (const field of [
+    "costPerAttemptedTrialUsd",
+    "costPerCompletedTrialUsd",
+    "costPerPassedTrialUsd",
+  ] as const) {
+    requireFiniteNumber(aggregate[field], `${path}.${field}`, 0);
+  }
   if (completedTrials + infrastructureErrors !== trials) {
     invalidVerdict(`${path}.completedTrials + ${path}.infrastructureErrors must equal ${path}.trials`);
   }

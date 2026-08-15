@@ -3,6 +3,7 @@ import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 import { compileHarness } from "../src/compiler/compile.js";
 import { HarnessIrBundleSchema, type HarnessIrBundle } from "../src/ir/index.js";
+import { describeAdapter } from "../src/resolver/adapter-descriptor.js";
 import { resolveHarness } from "../src/resolver/resolve.js";
 
 const MINIMAL_URL = new URL("../examples/minimal.harness", import.meta.url);
@@ -25,7 +26,7 @@ describe("progressive-disclosure sugar", () => {
     ]);
     // The bare `target qoder` synthesizes a tool-calling runtime with the
     // conventional adapter package.
-    expect(revision!.target).toEqual({
+    expect(revision!.target).toMatchObject({
       runtime: "qoder",
       adapter: "@harness/adapter-qoder",
       execution: { style: "tool-calling" },
@@ -73,7 +74,14 @@ describe("progressive-disclosure sugar", () => {
       expect.objectContaining({ id: "process.exec", implicit: true, permissions: [] }),
       expect.objectContaining({ id: "workspace.read", implicit: true, permissions: [] }),
     ]);
-    expect(resolveHarness(bundle, "run").report.status).toBe("resolved");
+    // An implicit contract still needs a real host tool behind it, so resolution
+    // only succeeds against an adapter that exposes one.
+    const exposing = describeAdapter({
+      adapterId: "@harness/adapter-pi",
+      toolExposure: { "workspace.read": "read_file", "process.exec": "shell" },
+    });
+    expect(resolveHarness(bundle, "run", undefined, { adapter: exposing }).report.status).toBe("resolved");
+    expect(resolveHarness(bundle, "run").report.status).toBe("failed");
   });
 
   it("expands a for [a, b] binding into one binding per runtime", async () => {
@@ -128,7 +136,7 @@ describe("progressive-disclosure sugar", () => {
       target prime
     `);
     const { revision } = resolveHarness(bundle, "run");
-    expect(revision!.target).toEqual({
+    expect(revision!.target).toMatchObject({
       runtime: "prime",
       adapter: "@harness/adapter-prime",
       execution: { style: "programmatic", language: "python", options: [{ key: "repl", value: "persistent" }] },

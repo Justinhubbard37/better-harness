@@ -1,6 +1,7 @@
 export {
   HARNESS_ADAPTER_SPECIFICATION_VERSION,
   HarnessCapabilityUnsupportedError,
+  HarnessConcurrentTurnError,
   runOnce,
   type HarnessAdapterSession,
   type HarnessAdapterStartOptions,
@@ -8,6 +9,11 @@ export {
   type HarnessAdapterV1,
   type RunOnceOptions,
 } from "./adapter.js";
+export { describeBuiltInAdapter } from "./built-in.js";
+export {
+  exposedHostTools,
+  prepareMaterialization,
+} from "./materialization.js";
 export {
   HarnessRunEmitter,
   MAX_RETAINED_TOOL_RESULT_BYTES,
@@ -20,6 +26,7 @@ export {
   buildRunPreamble,
   buildRunPrompt,
   assertRevisionHost,
+  preflightRevision,
   HarnessHostMismatchError,
   type HarnessExecutor,
   type HarnessRunResult,
@@ -29,17 +36,21 @@ export {
   type RunPreamble,
 } from "./executor.js";
 export {
+  QODER_TOOL_EXPOSURE,
   QoderSdkAdapter,
   QoderSdkExecutor,
   applyQoderSdkMessage,
   createQoderSdkMessageMappingState,
   type QoderAuthFactory,
+  type QoderQueryLike,
   type QoderSdkContentBlock,
   type QoderSdkExecutorOptions,
   type QoderSdkLike,
   type QoderSdkMessage,
   type QoderSdkMessageMappingState,
+  type QoderSdkQueryOptions,
   type QoderSdkStreamEvent,
+  type QoderSdkUserMessage,
   type QoderPermissionMode,
   type QoderRuntimeProfile,
   type QoderToolPermissionCallback,
@@ -50,6 +61,7 @@ export {
   PiSdkAdapter,
   PiSdkExecutor,
   materializePiPackage,
+  type MaterializePiPackageOptions,
   type PiSdkExecutorOptions,
   type PiSdkLike,
   type PiModelRuntimeLike,

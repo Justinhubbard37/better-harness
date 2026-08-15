@@ -1,8 +1,22 @@
-import { findCapability, type CapabilityIr, type HarnessIrBundle, type HarnessRevision, type WorkflowIr } from "../ir/index.js";
+import {
+  findCapability,
+  type CapabilityIr,
+  type HarnessIrBundle,
+  type HarnessMaterializationReceipt,
+  type HarnessRevision,
+  type WorkflowIr,
+} from "../ir/index.js";
+import {
+  assertRevisionAdapter,
+  validateRevisionAgainstBundle,
+} from "../ir/revision.js";
+import type { AdapterRealizationDescriptor } from "../resolver/adapter-descriptor.js";
 
 export interface HarnessRunTask {
   prompt: string;
   cwd?: string;
+  /** Root used to create revision source locks; intentionally independent from cwd. */
+  sourceRoot?: string;
 }
 
 export interface HarnessRunResult {
@@ -17,6 +31,8 @@ export interface HarnessRunResult {
   trace?: unknown[];
   /** Non-secret options the executor actually passed to the host runtime. */
   runtimeReceipt?: HarnessRuntimeReceipt;
+  /** What the adapter wired for this revision: per-capability observed facts. */
+  materialization?: HarnessMaterializationReceipt;
   /** Host-reported consumption and termination evidence. */
   metrics?: HarnessRunMetrics;
 }
@@ -82,8 +98,34 @@ export function assertRevisionHost(revision: HarnessRevision, executorHost: stri
   }
 }
 
-/** One prompt line per advisory capability, in the voice of the agent role. */
-function capabilityGuidance(capability: CapabilityIr | undefined, capabilityId: string): string {
+/**
+ * Everything an adapter must verify before it loads a host SDK.
+ *
+ * Host and adapter identity come first because they are the cheapest rejections
+ * and must not depend on an installed SDK. Bundle validation comes next: the
+ * revision's content hashes are only a guarantee if somebody recomputes them
+ * against the bundle the run will actually read.
+ */
+export function preflightRevision(
+  revision: HarnessRevision,
+  bundle: HarnessIrBundle,
+  executorHost: string,
+  descriptor: AdapterRealizationDescriptor,
+): void {
+  assertRevisionHost(revision, executorHost);
+  assertRevisionAdapter(revision, descriptor);
+  validateRevisionAgainstBundle(revision, bundle);
+}
+
+/** One prompt line per capability, in the voice of the agent role. */
+function capabilityGuidance(
+  capability: CapabilityIr | undefined,
+  capabilityId: string,
+  mechanism: string | null,
+): string {
+  const hostTool = mechanism?.startsWith("host-tool:") === true
+    ? mechanism.slice("host-tool:".length)
+    : undefined;
   if (capability === undefined) {
     return `Apply the '${capabilityId}' capability.`;
   }
@@ -94,7 +136,10 @@ function capabilityGuidance(capability: CapabilityIr | undefined, capabilityId: 
         `Apply the '${capability.id}' skill from '${capability.source ?? "its source"}'.`
       );
     case "tool":
-      return capability.description ?? `Use the '${capability.id}' tool when applicable.`;
+      return hostTool === undefined
+        ? capability.description ?? `Use the '${capability.id}' tool when applicable.`
+        : `Capability '${capability.id}' is the host tool '${hostTool}'` +
+          (capability.description ? `: ${capability.description}` : ".");
     case "mcp":
       return `Connect to the '${capability.id}' MCP server over ${capability.transport}.`;
   }
@@ -114,31 +159,36 @@ function workflowGuidance(workflow: WorkflowIr | undefined): string | undefined 
 }
 
 /**
- * Build the advisory portion of a run from a resolved revision.
+ * Build the prompt-facing portion of a run from a resolved revision.
  *
- * v0.2 executors materialize effective `advisory` realizations as prompt text:
- * the workflow graph plus each agent role's capabilities. The resolver has
- * already capped stronger declared bindings to this effective strength and
- * applied the harness's degradation policy.
+ * Guidance is not the same as materialization: a skill line genuinely delivers
+ * the skill, while a tool line only names a host tool the adapter separately
+ * exposed. Warnings come from the materialization receipt when the adapter
+ * produced one, so the run result reports observed facts rather than a
+ * re-derivation of the resolver's intent.
  */
-export function buildRunPreamble(revision: HarnessRevision, bundle: HarnessIrBundle): RunPreamble {
+export function buildRunPreamble(
+  revision: HarnessRevision,
+  bundle: HarnessIrBundle,
+  receipt?: HarnessMaterializationReceipt,
+): RunPreamble {
   const lines: string[] = [];
-  const warnings: string[] = [];
+  const warnings: string[] = [...(receipt?.warnings ?? [])];
   for (const realization of revision.realization) {
     if (realization.action === "failed") {
       continue;
     }
-    if (realization.action === "degraded" && realization.reason) {
+    if (receipt === undefined && realization.action === "degraded" && realization.reason) {
       warnings.push(
         `Realization '${realization.capabilityId}' for agent '${realization.agentId}' ` +
           `is degraded: ${realization.reason}.`,
       );
     }
-    if (realization.realized === "advisory") {
+    if (realization.realized !== "unsupported") {
       const capability = findCapability(bundle, realization.capabilityId);
       lines.push(
         `- [${realization.agentId}/${realization.capabilityId}] ` +
-          capabilityGuidance(capability, realization.capabilityId),
+          capabilityGuidance(capability, realization.capabilityId, realization.materializedMechanism),
       );
     }
   }
@@ -161,8 +211,9 @@ export function buildRunPrompt(
   revision: HarnessRevision,
   bundle: HarnessIrBundle,
   task: HarnessRunTask,
+  receipt?: HarnessMaterializationReceipt,
 ): { prompt: string; warnings: string[] } {
-  const { preamble, warnings } = buildRunPreamble(revision, bundle);
+  const { preamble, warnings } = buildRunPreamble(revision, bundle, receipt);
   return {
     prompt: preamble.length > 0 ? `${preamble}\n\n${task.prompt}` : task.prompt,
     warnings,
