@@ -1,0 +1,26 @@
+// Bundle the React app with the repo-conventional esbuild-wasm toolchain.
+import { copyFile, mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { build } from "esbuild-wasm";
+
+const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const appDir = join(packageRoot, "dist", "app");
+
+await mkdir(join(appDir, "assets"), { recursive: true });
+await build({
+  entryPoints: [join(packageRoot, "src", "app", "main.tsx")],
+  outfile: join(appDir, "assets", "app.js"),
+  bundle: true,
+  format: "esm",
+  platform: "browser",
+  target: "es2022",
+  jsx: "automatic",
+  minify: true,
+  sourcemap: true,
+  define: { "process.env.NODE_ENV": '"production"' },
+  logLevel: "warning",
+});
+await copyFile(join(packageRoot, "src", "app", "index.html"), join(appDir, "index.html"));
+process.stdout.write(`Built studio app into ${appDir}\n`);
+process.exit(0);

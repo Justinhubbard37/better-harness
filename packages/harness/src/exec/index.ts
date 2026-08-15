@@ -1,4 +1,12 @@
 export {
+  HarnessRunEmitter,
+  MAX_RETAINED_TOOL_RESULT_BYTES,
+  type HarnessRunEvent,
+  type HarnessRunEventListener,
+  type HarnessRunPhase,
+  type HarnessToolResultOptions,
+} from "./events.js";
+export {
   buildRunPreamble,
   buildRunPrompt,
   assertRevisionHost,
@@ -12,10 +20,15 @@ export {
 } from "./executor.js";
 export {
   QoderSdkExecutor,
+  applyQoderSdkMessage,
+  createQoderSdkMessageMappingState,
   type QoderAuthFactory,
+  type QoderSdkContentBlock,
   type QoderSdkExecutorOptions,
   type QoderSdkLike,
   type QoderSdkMessage,
+  type QoderSdkMessageMappingState,
+  type QoderSdkStreamEvent,
   type QoderPermissionMode,
   type QoderRuntimeProfile,
   type QoderToolPermissionCallback,

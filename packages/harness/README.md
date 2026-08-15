@@ -149,6 +149,17 @@ const html = await highlightHarness(source); // Shiki, lang: "harness"
 See [`examples/standard-coding.harness`](examples/standard-coding.harness) for
 the full surface syntax.
 
+### Streaming run events
+
+Executors accept an `onRunEvent` listener and emit host-neutral
+`HarnessRunEvent` values while a run is in flight, guarded by
+`HarnessRunEmitter`: exactly one `run-started` first and one `run-finished`
+last, text framed as `message-started` / `text-delta` / `message-finished`,
+paired `tool-call-started` / `tool-call-finished`, and `run-error` only on
+failure. Payloads pass the same redaction as the trace. The companion
+`@qoder-ai/harness-ui` package maps this lifecycle onto the AG-UI protocol
+over SSE, and `@qoder-ai/harness-studio` renders it in a local React UI.
+
 [`examples/full-surface.harness`](examples/full-surface.harness) is the compiler
 conformance fixture: it deliberately exercises every v0.2 capability kind,
 transport, execution style, permission, strength, degradation policy, and
@@ -291,6 +302,10 @@ npm run harness:generated  # regenerate and reject stale Langium output
 npm run harness:build
 npm run harness:test
 ```
+
+Publication is repository-owned: select `harness` in the protected GitHub
+Actions `Publish npm` workflow. Local commands only build, test, pack, or
+dry-run; do not publish this workspace from a developer machine.
 
 The package supports the repository's Node range (`>=22.20.0 <25`). See the
 [v0.2 resource-model spec](https://github.com/QoderAI/better-harness/blob/main/docs/specs/2026-08-15-harness-dsl-v0.2-resource-model.md)

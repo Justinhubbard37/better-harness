@@ -1,6 +1,7 @@
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { HarnessIrBundle, HarnessRevision } from "../ir/index.js";
+import { HarnessRunEmitter, type HarnessRunEventListener } from "./events.js";
 import {
   assertRevisionHost,
   buildRunPrompt,
@@ -56,6 +57,8 @@ export interface PiSdkExecutorOptions {
   configureModelRuntime?: (runtime: PiModelRuntimeLike) => Promise<void> | void;
   /** Optional explicit model selection after runtime configuration. */
   selectModel?: (runtime: PiModelRuntimeLike) => Promise<unknown> | unknown;
+  /** Receives lifecycle-ordered neutral run events while the run is in flight. */
+  onRunEvent?: HarnessRunEventListener;
 }
 
 /**
@@ -67,11 +70,13 @@ export class PiSdkExecutor implements HarnessExecutor {
   private readonly loadSdk: () => Promise<PiSdkLike>;
   private readonly configureModelRuntime?: PiSdkExecutorOptions["configureModelRuntime"];
   private readonly selectModel?: PiSdkExecutorOptions["selectModel"];
+  private readonly onRunEvent?: HarnessRunEventListener;
 
   constructor(options: PiSdkExecutorOptions = {}) {
     this.loadSdk = () => loadPiSdk(options.loadSdk);
     this.configureModelRuntime = options.configureModelRuntime;
     this.selectModel = options.selectModel;
+    this.onRunEvent = options.onRunEvent;
   }
 
   async execute(
@@ -80,7 +85,29 @@ export class PiSdkExecutor implements HarnessExecutor {
     task: HarnessRunTask,
   ): Promise<HarnessRunResult> {
     assertRevisionHost(revision, this.host);
+    const emitter = new HarnessRunEmitter(this.onRunEvent);
     const { prompt, warnings } = buildRunPrompt(revision, bundle, task);
+    emitter.start({ revisionId: revision.revisionId, host: this.host });
+    for (const warning of warnings) {
+      emitter.warning(warning);
+    }
+    try {
+      return await this.run({ revision, task, prompt, warnings, emitter });
+    } catch (error) {
+      emitter.error(error instanceof Error ? error.message : String(error));
+      emitter.finish(1);
+      throw error;
+    }
+  }
+
+  private async run(context: {
+    revision: HarnessRevision;
+    task: HarnessRunTask;
+    prompt: string;
+    warnings: string[];
+    emitter: HarnessRunEmitter;
+  }): Promise<HarnessRunResult> {
+    const { revision, task, prompt, warnings, emitter } = context;
     const sdk = await this.loadSdk();
     const modelRuntime = await sdk.ModelRuntime.create();
     await this.configureModelRuntime?.(modelRuntime);
@@ -101,6 +128,7 @@ export class PiSdkExecutor implements HarnessExecutor {
         typeof event.assistantMessageEvent.delta === "string"
       ) {
         streamedOutput += event.assistantMessageEvent.delta;
+        emitter.text(event.assistantMessageEvent.delta);
       }
       if (
         event.type === "message_end" &&
@@ -117,6 +145,10 @@ export class PiSdkExecutor implements HarnessExecutor {
       unsubscribe?.();
       session.dispose?.();
     }
+    if (errorOutput) {
+      emitter.error(errorOutput);
+    }
+    emitter.finish(errorOutput ? 1 : 0);
     return {
       host: this.host,
       revisionId: revision.revisionId,

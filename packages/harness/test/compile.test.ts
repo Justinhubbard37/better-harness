@@ -373,6 +373,14 @@ describe("compileHarness", () => {
     );
   });
 
+  it("returns diagnostics instead of throwing for a truncated harness declaration", async () => {
+    const result = await compileHarness("harness broken {");
+
+    expect(result.bundle).toBeUndefined();
+    expect(result.diagnostics.length).toBeGreaterThan(0);
+    expect(result.diagnostics.every((item) => item.severity === "error")).toBe(true);
+  });
+
   it("rejects MCP declarations whose transport and endpoint disagree", async () => {
     const result = await compileHarness(`
       mcp local { transport stdio }

@@ -1,4 +1,5 @@
 import type { HarnessIrBundle, HarnessRevision } from "../ir/index.js";
+import { HarnessRunEmitter, type HarnessRunEventListener } from "./events.js";
 import {
   assertRevisionHost,
   buildRunPrompt,
@@ -20,10 +21,27 @@ type QoderSystemPrompt = string | {
   append?: string;
 };
 
-export interface QoderSdkTextBlock {
+export interface QoderSdkContentBlock {
   type: string;
   text?: string;
+  /** `tool_use` block fields. */
+  id?: string;
+  name?: string;
+  input?: unknown;
+  /** `tool_result` block fields. */
+  tool_use_id?: string;
+  content?: unknown;
+  is_error?: boolean;
 }
+
+export interface QoderSdkStreamEvent {
+  type: string;
+  delta?: unknown;
+  [key: string]: unknown;
+}
+
+/** @deprecated Renamed to {@link QoderSdkContentBlock}. */
+export type QoderSdkTextBlock = QoderSdkContentBlock;
 
 export interface QoderSdkMessage {
   [key: string]: unknown;
@@ -33,7 +51,10 @@ export interface QoderSdkMessage {
   error?: string;
   errors?: string[];
   result?: unknown;
-  message?: { content?: QoderSdkTextBlock[] };
+  message?: { role?: string; content?: QoderSdkContentBlock[] | string };
+  event?: QoderSdkStreamEvent;
+  parent_tool_use_id?: string | null;
+  uuid?: string;
   duration_ms?: number;
   duration_api_ms?: number;
   num_turns?: number;
@@ -89,6 +110,7 @@ export interface QoderSdkLike {
       mcpServers?: Record<string, unknown>;
       strictMcpConfig?: boolean;
       systemPrompt?: QoderSystemPrompt;
+      includePartialMessages?: boolean;
     };
   }): AsyncIterable<QoderSdkMessage>;
   qodercliAuth(): unknown;
@@ -117,6 +139,8 @@ export interface QoderSdkExecutorOptions {
   abortController?: AbortController;
   /** Receives each redacted SDK event as it arrives, including before a timeout. */
   onTraceEvent?: (event: unknown) => void;
+  /** Receives lifecycle-ordered neutral run events while the run is in flight. */
+  onRunEvent?: HarnessRunEventListener;
   /** A frozen executor-owned runtime contract. Defaults to the SDK-compatible v1 behavior. */
   profile?: QoderRuntimeProfile;
 }
@@ -137,6 +161,7 @@ export class QoderSdkExecutor implements HarnessExecutor {
   private readonly enableFileCheckpointing: boolean;
   private readonly abortController?: AbortController;
   private readonly onTraceEvent?: (event: unknown) => void;
+  private readonly onRunEvent?: HarnessRunEventListener;
   private readonly profile: QoderRuntimeProfile;
   private readonly settingSources?: QoderSettingSource[];
   private readonly skills?: string[] | "all";
@@ -168,6 +193,7 @@ export class QoderSdkExecutor implements HarnessExecutor {
     this.enableFileCheckpointing = options.enableFileCheckpointing ?? false;
     this.abortController = options.abortController;
     this.onTraceEvent = options.onTraceEvent;
+    this.onRunEvent = options.onRunEvent;
     if (this.profile === "qoder-minimal-v1") {
       this.settingSources = [];
       this.skills = [];
@@ -184,7 +210,29 @@ export class QoderSdkExecutor implements HarnessExecutor {
     task: HarnessRunTask,
   ): Promise<HarnessRunResult> {
     assertRevisionHost(revision, this.host);
+    const emitter = new HarnessRunEmitter(this.onRunEvent);
     const { prompt, warnings } = buildRunPrompt(revision, bundle, task);
+    emitter.start({ revisionId: revision.revisionId, host: this.host });
+    for (const warning of warnings) {
+      emitter.warning(warning);
+    }
+    try {
+      return await this.run({ revision, task, prompt, warnings, emitter });
+    } catch (error) {
+      emitter.error(error instanceof Error ? error.message : String(error));
+      emitter.finish(1);
+      throw error;
+    }
+  }
+
+  private async run(context: {
+    revision: HarnessRevision;
+    task: HarnessRunTask;
+    prompt: string;
+    warnings: string[];
+    emitter: HarnessRunEmitter;
+  }): Promise<HarnessRunResult> {
+    const { revision, task, prompt, warnings, emitter } = context;
     const sdk = await this.loadSdk();
     const systemPrompt = this.profile === "qoder-minimal-v1"
       ? buildQoderMinimalSystemPrompt(task.cwd)
@@ -198,6 +246,7 @@ export class QoderSdkExecutor implements HarnessExecutor {
       persistSession: this.persistSession,
       maxTurns: this.maxTurns,
       enableFileCheckpointing: this.enableFileCheckpointing,
+      includePartialMessages: true,
       ...(this.permissionMode !== undefined ? { permissionMode: this.permissionMode } : {}),
       ...(this.canUseTool !== undefined ? { canUseTool: this.canUseTool } : {}),
       ...(this.model !== undefined ? { model: this.model } : {}),
@@ -220,12 +269,14 @@ export class QoderSdkExecutor implements HarnessExecutor {
     let metrics: HarnessRunResult["metrics"];
     let exitCode = 0;
     let sawResult = false;
+    const eventMappingState = createQoderSdkMessageMappingState();
     for await (const message of stream) {
       const traceEvent = redactTraceValue(message);
       trace.push(traceEvent);
       this.onTraceEvent?.(traceEvent);
+      applyQoderSdkMessage(emitter, traceEvent as QoderSdkMessage, eventMappingState);
       if (message.type === "assistant") {
-        for (const block of message.message?.content ?? []) {
+        for (const block of contentBlocks(message)) {
           if (block.type === "text" && typeof block.text === "string") {
             output.push(block.text);
           }
@@ -260,12 +311,17 @@ export class QoderSdkExecutor implements HarnessExecutor {
       exitCode = 1;
       errors.push("Qoder SDK query ended without a result message.");
     }
+    const errorOutput = errors.filter(Boolean).join("\n");
+    if (errorOutput.length > 0) {
+      emitter.error(errorOutput);
+    }
+    emitter.finish(exitCode, metrics);
     return {
       host: this.host,
       revisionId: revision.revisionId,
       exitCode,
       output: output.join(""),
-      errorOutput: errors.filter(Boolean).join("\n"),
+      errorOutput,
       warnings,
       trace,
       runtimeReceipt: {
@@ -279,6 +335,7 @@ export class QoderSdkExecutor implements HarnessExecutor {
         persistSession: this.persistSession,
         ...(this.model !== undefined ? { model: this.model } : {}),
         fileCheckpointing: this.enableFileCheckpointing,
+        partialMessages: true,
         permissionCallback: this.canUseTool ? "configured" : "none",
         systemPromptSource: systemPrompt === undefined ? "runtime-default" : "executor-profile",
         settingSources: this.settingSources === undefined ? "runtime-default" : [...this.settingSources],
@@ -326,6 +383,103 @@ function assertMinimalProfileOptions(options: QoderSdkExecutorOptions): void {
 
 function sameToolSet(actual: string[], expected: readonly string[]): boolean {
   return actual.length === expected.length && expected.every((tool) => actual.includes(tool));
+}
+
+/**
+ * Map one redacted SDK message onto the neutral run-event emitter.
+ *
+ * Only assistant content blocks produce activity events; lifecycle events
+ * (`run-started`, `run-error`, `run-finished`) stay owned by the executor so
+ * the emitter's invariants hold for every run.
+ */
+export interface QoderSdkMessageMappingState {
+  /** Parent streams whose text has already been emitted from partial events. */
+  partialTextParents: Set<string>;
+}
+
+export function createQoderSdkMessageMappingState(): QoderSdkMessageMappingState {
+  return { partialTextParents: new Set<string>() };
+}
+
+const implicitMappingStates = new WeakMap<HarnessRunEmitter, QoderSdkMessageMappingState>();
+
+export function applyQoderSdkMessage(
+  emitter: HarnessRunEmitter,
+  message: QoderSdkMessage,
+  state = implicitStateFor(emitter),
+): void {
+  const parentKey = message.parent_tool_use_id ?? "root";
+  if (message.type === "stream_event") {
+    const delta = asRecord(message.event?.delta);
+    if (
+      message.event?.type === "content_block_delta" &&
+      delta?.type === "text_delta" &&
+      typeof delta.text === "string"
+    ) {
+      emitter.text(delta.text);
+      state.partialTextParents.add(parentKey);
+    }
+    return;
+  }
+  if (message.type === "user") {
+    for (const block of contentBlocks(message)) {
+      if (block.type === "tool_result" && typeof block.tool_use_id === "string") {
+        emitter.toolResult(
+          block.tool_use_id,
+          stringifyToolResult(block.content),
+          {
+            ...(typeof message.uuid === "string" ? { messageId: message.uuid } : {}),
+            ...(block.is_error === true ? { isError: true } : {}),
+          },
+        );
+      }
+    }
+    return;
+  }
+  if (message.type !== "assistant") {
+    return;
+  }
+  const emittedPartialText = state.partialTextParents.delete(parentKey);
+  for (const block of contentBlocks(message)) {
+    if (block.type === "text" && typeof block.text === "string" && !emittedPartialText) {
+      emitter.text(block.text);
+    } else if (block.type === "tool_use" && typeof block.name === "string") {
+      emitter.toolCall(block.name, {
+        ...(typeof block.id === "string" ? { toolUseId: block.id } : {}),
+        ...(block.input !== undefined ? { input: block.input } : {}),
+      });
+    }
+  }
+}
+
+function contentBlocks(message: QoderSdkMessage): QoderSdkContentBlock[] {
+  return Array.isArray(message.message?.content) ? message.message.content : [];
+}
+
+function stringifyToolResult(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (content === undefined) return "";
+  try {
+    return JSON.stringify(content);
+  } catch {
+    return String(content);
+  }
+}
+
+function implicitStateFor(emitter: HarnessRunEmitter): QoderSdkMessageMappingState {
+  const existing = implicitMappingStates.get(emitter);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const created = createQoderSdkMessageMappingState();
+  implicitMappingStates.set(emitter, created);
+  return created;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 function unique(values: readonly string[]): string[] {

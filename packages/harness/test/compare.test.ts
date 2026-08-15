@@ -9,6 +9,7 @@ import { loadHarnessCompareManifest, resolveHarnessCompareRuntime } from "../src
 import { createBoundedQoderPermissionCallback, type ToolPermissionDecision } from "../src/compare/permissions.js";
 import { npmInvocation, runCommand } from "../src/compare/process.js";
 import { runHarnessComparison } from "../src/compare/runner.js";
+import { parseHarnessCompareVerdict } from "../src/compare/verdict.js";
 
 const EXPERIMENT_URL = new URL("../examples/readme-compare/experiment.json", import.meta.url);
 const MINIMAL_EXPERIMENT_URL = new URL(
@@ -120,6 +121,29 @@ describe("validation command execution", () => {
 });
 
 describe("README coding comparison", () => {
+  it("rejects malformed persisted verdict values at the compare owner boundary", () => {
+    expect(() => parseHarnessCompareVerdict({
+      schemaVersion: "harness-compare-result.v1",
+      status: "accept",
+      reason: "invalid fixture",
+      manifestHash: "manifest",
+      fixtureHash: "fixture",
+      harnessHash: "harness",
+      baseline: {
+        trials: 1,
+        completedTrials: 1,
+        infrastructureErrors: 0,
+        passedTrials: 1,
+        passRate: 1,
+        meanScore: 100,
+        totalCostUsd: "0.01",
+        totalCredits: 0,
+      },
+      candidate: {},
+      trials: [],
+    })).toThrow(/baseline.totalCostUsd/);
+  });
+
   it("rejects generated examples that request host capabilities", async () => {
     const directory = await makeTemporaryDirectory();
     await cp(FIXTURE_URL, directory, { recursive: true, force: true });
@@ -214,7 +238,8 @@ describe("README coding comparison", () => {
     expect(await readFile(join(output, "H1/trial-001/patch.diff"), "utf8")).toContain("+# Retry Kit");
     expect(await readFile(join(output, "H1/trial-001/trace.jsonl"), "utf8")).toContain("<trial-root>/README.md");
     expect(JSON.parse(await readFile(join(output, "H1/trial-001/validation.json"), "utf8"))).toMatchObject({ passed: true });
-    expect(JSON.parse(await readFile(join(output, "verdict.json"), "utf8"))).toMatchObject({ status: "accept" });
+    const persistedVerdict = JSON.parse(await readFile(join(output, "verdict.json"), "utf8")) as unknown;
+    expect(parseHarnessCompareVerdict(persistedVerdict)).toEqual(verdict);
     expect(await readFile(join(output, "verdict.html"), "utf8")).toContain("Harness compare verdict");
     await expect(readFile(fixtureReadme, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });

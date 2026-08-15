@@ -36,6 +36,10 @@
       "types": "./dist/compare/index.d.ts",
       "import": "./dist/compare/index.js"
     },
+    "./compare/verdict": {
+      "types": "./dist/compare/verdict.d.ts",
+      "import": "./dist/compare/verdict.js"
+    },
     "./highlight": {
       "types": "./dist/highlight/shiki.d.ts",
       "import": "./dist/highlight/shiki.js"

@@ -99,6 +99,7 @@ describe("QoderSdkExecutor", () => {
       maxTurns: 12,
       model: "test-model",
       enableFileCheckpointing: true,
+      includePartialMessages: true,
       abortController,
     });
     const prompt = queries[0].prompt;
@@ -118,6 +119,7 @@ describe("QoderSdkExecutor", () => {
         maxTurns: 12,
         model: "test-model",
         fileCheckpointing: true,
+        partialMessages: true,
         permissionCallback: "configured",
       },
     });

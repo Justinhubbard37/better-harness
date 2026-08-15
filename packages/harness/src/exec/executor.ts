@@ -32,6 +32,7 @@ export interface HarnessRuntimeReceipt {
   persistSession?: boolean;
   model?: string;
   fileCheckpointing?: boolean;
+  partialMessages?: boolean;
   permissionCallback: "configured" | "none";
   systemPromptSource?: "runtime-default" | "executor-profile";
   settingSources?: string[] | "runtime-default";

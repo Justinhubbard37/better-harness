@@ -1,0 +1,68 @@
+{
+  "schemaVersion": "harness-compare-result.v1",
+  "status": "accept",
+  "reason": "Candidate outperforms baseline.",
+  "manifestHash": "sha256:manifest",
+  "fixtureHash": "sha256:fixture",
+  "harnessHash": "sha256:harness",
+  "baseline": {
+    "trials": 1,
+    "completedTrials": 1,
+    "infrastructureErrors": 0,
+    "passedTrials": 0,
+    "passRate": 0,
+    "meanScore": 42,
+    "totalCostUsd": 0.011,
+    "totalCredits": 1.5
+  },
+  "candidate": {
+    "trials": 1,
+    "completedTrials": 1,
+    "infrastructureErrors": 0,
+    "passedTrials": 1,
+    "passRate": 1,
+    "meanScore": 90,
+    "totalCostUsd": 0.014,
+    "totalCredits": 1.8
+  },
+  "trials": [
+    {
+      "variant": "baseline",
+      "harnessId": "readme-baseline",
+      "runtimeProfile": "qoder-default-v1",
+      "trial": 1,
+      "classification": "failed",
+      "changedFiles": ["README.md"],
+      "grade": {
+        "kind": "readme-package-v1",
+        "score": 42,
+        "passed": false,
+        "checks": []
+      },
+      "executorExitCode": 0,
+      "executorError": "",
+      "revisionId": "hr_baseline",
+      "durationMs": 61000,
+      "artifactDirectory": "baseline/trial-1"
+    },
+    {
+      "variant": "candidate",
+      "harnessId": "readme-grounded",
+      "runtimeProfile": "qoder-default-v1",
+      "trial": 1,
+      "classification": "passed",
+      "changedFiles": ["README.md"],
+      "grade": {
+        "kind": "readme-package-v1",
+        "score": 90,
+        "passed": true,
+        "checks": []
+      },
+      "executorExitCode": 0,
+      "executorError": "",
+      "revisionId": "hr_candidate",
+      "durationMs": 74500,
+      "artifactDirectory": "candidate/trial-1"
+    }
+  ]
+}

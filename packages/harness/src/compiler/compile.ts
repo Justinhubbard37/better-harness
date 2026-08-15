@@ -318,7 +318,9 @@ function collectBundleDiagnostics(
       if (!isHarnessDeclaration(element)) {
         continue;
       }
-      const workflow = element.workflow.ref;
+      // A malformed document can leave the workflow cross-reference entirely
+      // unset; parsing already reported the syntax error.
+      const workflow = element.workflow?.ref;
       if (workflow === undefined) {
         continue; // Linking already reported the missing workflow.
       }

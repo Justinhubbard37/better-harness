@@ -8,6 +8,7 @@ export {
   type ResolvedHarnessCompareRuntime,
 } from "./manifest.js";
 export { gradeReadmePackage, type GraderCheck, type ReadmeGrade } from "./grader.js";
+export { parseHarnessCompareVerdict } from "./verdict.js";
 export {
   createBoundedQoderPermissionCallback,
   type ToolPermissionDecision,
