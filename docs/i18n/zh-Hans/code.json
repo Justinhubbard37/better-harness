@@ -341,6 +341,24 @@
   "homepage.meta.description": {
     "message": "开源 Agent Work Loop 洞察，把编码智能体的项目与会话证据转化为有优先级、可验证的改进。"
   },
+  "homepage.inspector.title": {
+    "message": "从意图到提交，追踪交付全过程"
+  },
+  "homepage.inspector.intro": {
+    "message": "Harness Inspector 在一个只读工作区中，把产品意图与智能体活动、会话、文件和提交串联起来，同时保持证据强度与局限清晰可见。"
+  },
+  "homepage.inspector.alt": {
+    "message": "Harness Inspector 会话视图：提示词、工具调用与提交的同步时间线，配套证据抽屉解释每条关联"
+  },
+  "homepage.inspector.caption": {
+    "message": "该交互式示例使用虚构的英文数据，不会读取你的工作区、Git 历史或 Coding Agent 会话。"
+  },
+  "homepage.inspector.openSample": {
+    "message": "打开交互式示例"
+  },
+  "homepage.inspector.architecture": {
+    "message": "阅读架构说明"
+  },
   "theme.ErrorPageContent.title": {
     "message": "页面已崩溃。",
     "description": "The title of the fallback page when the page crashed"

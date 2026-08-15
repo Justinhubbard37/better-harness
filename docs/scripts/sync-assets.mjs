@@ -38,6 +38,16 @@ export function syncAssets({ repoRoot, siteRoot }) {
       from: join(repoRoot, "assets", "install", "codex-add-marketplace.jpg"),
       to: join(siteRoot, "static", "img", "codex-add-marketplace.jpg"),
     },
+    {
+      from: join(
+        repoRoot,
+        "docs",
+        "assets",
+        "harness-inspector",
+        "session-view.png",
+      ),
+      to: join(generatedDemoRoot, "harness-inspector", "session-view.png"),
+    },
   ];
 
   for (const { from, to } of copies) {
