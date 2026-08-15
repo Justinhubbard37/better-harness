@@ -79,7 +79,22 @@ describe("QoderSdkExecutor", () => {
         yield { type: "result", subtype: "success" };
       },
     };
-    const executor = new QoderSdkExecutor({ loadSdk: async () => sdk, allowedTools: ["Read"] });
+    const abortController = new AbortController();
+    const canUseTool = async () => ({ behavior: "allow" as const });
+    const streamedTrace: unknown[] = [];
+    const executor = new QoderSdkExecutor({
+      loadSdk: async () => sdk,
+      allowedTools: ["Read"],
+      tools: ["Read", "Bash"],
+      disallowedTools: ["WebFetch"],
+      permissionMode: "default",
+      canUseTool,
+      model: "test-model",
+      enableFileCheckpointing: true,
+      abortController,
+      onTraceEvent: (event) => streamedTrace.push(event),
+      maxTurns: 12,
+    });
 
     const result = await executor.execute(revision, bundle, { prompt: "Fix the bug", cwd: "/tmp" });
 
@@ -88,15 +103,94 @@ describe("QoderSdkExecutor", () => {
       auth,
       cwd: "/tmp",
       allowedTools: ["Read"],
-      tools: [],
+      tools: ["Read", "Bash"],
+      disallowedTools: ["WebFetch"],
+      permissionMode: "default",
+      canUseTool,
       persistSession: false,
-      maxTurns: 1,
+      maxTurns: 12,
+      model: "test-model",
+      enableFileCheckpointing: true,
+      abortController,
     });
     const prompt = queries[0].prompt;
     expect(prompt.endsWith("Fix the bug")).toBe(true);
     expect(prompt).toContain(revision.revisionId);
     expect(prompt).toContain("Impact analysis: map the blast radius before editing.");
-    expect(result).toMatchObject({ host: "qoder", exitCode: 0, output: "done" });
+    expect(result).toMatchObject({
+      host: "qoder",
+      exitCode: 0,
+      output: "done",
+      runtimeReceipt: {
+        executor: "@qoder-ai/qoder-agent-sdk",
+        tools: ["Read", "Bash"],
+        allowedTools: ["Read"],
+        disallowedTools: ["WebFetch"],
+        permissionMode: "default",
+        maxTurns: 12,
+        model: "test-model",
+        fileCheckpointing: true,
+        permissionCallback: "configured",
+      },
+    });
+    expect(streamedTrace).toEqual(result.trace);
+  });
+
+  it("retains usage evidence while redacting credential-shaped trace fields", async () => {
+    const { bundle, revision } = await resolveFor("on-qoder");
+    const sdk: QoderSdkLike = {
+      qodercliAuth: () => ({}),
+      query: async function* () {
+        yield {
+          type: "system",
+          subtype: "init",
+          access_token: "must-not-leak",
+          nested: { serviceAccountKey: "also-must-not-leak" },
+        };
+        yield {
+          type: "result",
+          subtype: "success",
+          duration_ms: 120,
+          duration_api_ms: 90,
+          num_turns: 2,
+          total_cost_usd: 0.01,
+          total_credits: 1.25,
+          usage: { input_tokens: 10, output_tokens: 5 },
+          modelUsage: { model: { inputTokens: 10 } },
+          permission_denials: [],
+          session_id: "session-1",
+          stop_reason: "end_turn",
+          terminal_reason: "completed",
+        };
+      },
+    };
+
+    const result = await new QoderSdkExecutor({ loadSdk: async () => sdk }).execute(
+      revision,
+      bundle,
+      { prompt: "Inspect" },
+    );
+
+    expect(result.trace).toContainEqual(
+      expect.objectContaining({ access_token: "[REDACTED]" }),
+    );
+    expect(JSON.stringify(result.trace)).not.toContain("must-not-leak");
+    expect(result.trace).toContainEqual(
+      expect.objectContaining({ nested: { serviceAccountKey: "[REDACTED]" } }),
+    );
+    expect(result.metrics).toEqual({
+      durationMs: 120,
+      durationApiMs: 90,
+      turns: 2,
+      costUsd: 0.01,
+      credits: 1.25,
+      usage: { input_tokens: 10, output_tokens: 5 },
+      modelUsage: { model: { inputTokens: 10 } },
+      permissionDenials: [],
+      sessionId: "session-1",
+      stopReason: "end_turn",
+      terminalReason: "completed",
+    });
   });
 
   it("reports declared native strength as an advisory degradation", async () => {

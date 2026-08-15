@@ -5,7 +5,9 @@ export {
   HarnessHostMismatchError,
   type HarnessExecutor,
   type HarnessRunResult,
+  type HarnessRunMetrics,
   type HarnessRunTask,
+  type HarnessRuntimeReceipt,
   type RunPreamble,
 } from "./executor.js";
 export {
@@ -14,6 +16,10 @@ export {
   type QoderSdkExecutorOptions,
   type QoderSdkLike,
   type QoderSdkMessage,
+  type QoderPermissionMode,
+  type QoderToolPermissionCallback,
+  type QoderToolPermissionResult,
+  redactTraceValue,
 } from "./qoder-sdk.js";
 export {
   PiSdkExecutor,

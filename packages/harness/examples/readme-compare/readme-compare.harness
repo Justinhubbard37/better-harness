@@ -1,0 +1,65 @@
+component coding-loop {
+  kind workflow
+  description "Inspect the repository, make the requested scoped change, run relevant validation, and report concrete evidence."
+  input { task repository }
+  output { patch validation }
+  permissions { workspace read workspace write process allow network deny }
+}
+
+component repository-grounding {
+  kind skill
+  description "Before writing documentation, derive claims from package metadata, public source, executable examples, and current tests; treat archived documentation as stale evidence."
+  input { package-metadata public-source tests examples }
+  output { fact-map }
+  permissions { workspace read network deny }
+}
+
+component readme-only-scope {
+  kind policy
+  description "Change only README.md. Do not invent commands, module formats, badges, URLs, defaults, or capabilities that current repository evidence does not support."
+  input { fact-map }
+  output { scoped-readme }
+  permissions { workspace write network deny }
+}
+
+component executable-readme-verification {
+  kind workflow
+  description "Run the package tests and execute the README quick-start example before completing; repair documentation until both pass."
+  input { scoped-readme }
+  output { verification }
+  permissions { process allow workspace read network deny }
+}
+
+binding coding-loop for qoder { mechanism prompt-preamble strength advisory }
+binding repository-grounding for qoder { mechanism prompt-preamble strength advisory }
+binding readme-only-scope for qoder { mechanism prompt-preamble strength advisory }
+binding executable-readme-verification for qoder { mechanism prompt-preamble strength advisory }
+
+plugin coding-core {
+  version "1.0.0"
+  provides [ component.coding-loop ]
+}
+
+plugin grounded-readme {
+  version "1.0.0"
+  provides [
+    component.repository-grounding,
+    component.readme-only-scope,
+    component.executable-readme-verification
+  ]
+}
+
+composition readme-baseline {
+  target qoder
+  include [ plugin.coding-core@1 ]
+  require coding-loop { minimum advisory }
+}
+
+composition readme-grounded {
+  target qoder
+  include [ plugin.coding-core@1, plugin.grounded-readme@1 ]
+  require coding-loop { minimum advisory }
+  require repository-grounding { minimum advisory }
+  require readme-only-scope { minimum advisory }
+  require executable-readme-verification { minimum advisory }
+}

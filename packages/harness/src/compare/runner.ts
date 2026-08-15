@@ -1,0 +1,582 @@
+import { createHash } from "node:crypto";
+import {
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  readlink,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { compileHarness } from "../compiler/compile.js";
+import type { HarnessExecutor, HarnessRunResult } from "../exec/executor.js";
+import { QoderSdkExecutor } from "../exec/qoder-sdk.js";
+import { canonicalJson, sha256Hex } from "../ir/canonical.js";
+import type { HarnessIrBundle, HarnessRevision } from "../ir/index.js";
+import { resolveComposition } from "../resolver/resolve.js";
+import { gradeReadmePackage, type ReadmeGrade } from "./grader.js";
+import {
+  loadHarnessCompareManifest,
+  type HarnessCompareManifest,
+  type LoadedHarnessCompareManifest,
+} from "./manifest.js";
+import {
+  createBoundedQoderPermissionCallback,
+  type ToolPermissionDecision,
+} from "./permissions.js";
+import { runCommand } from "./process.js";
+
+export type CompareVariant = "baseline" | "candidate";
+export type TrialClassification = "passed" | "failed" | "infrastructure_error";
+
+export interface CompareExecutorContext {
+  runtime: HarnessCompareManifest["runtime"];
+  trialRoot: string;
+  abortController: AbortController;
+  permissionDecisions: ToolPermissionDecision[];
+  expectedFiles: string[];
+  traceEvents: unknown[];
+}
+
+export type CompareExecutorFactory = (context: CompareExecutorContext) => HarnessExecutor;
+
+export interface FileEvidence {
+  path: string;
+  kind: "file" | "symlink";
+  bytes: number;
+  sha256: string;
+}
+
+export interface CompareTrialResult {
+  variant: CompareVariant;
+  compositionId: string;
+  trial: number;
+  classification: TrialClassification;
+  changedFiles: string[];
+  grade: ReadmeGrade;
+  executorExitCode: number;
+  executorError: string;
+  revisionId: string;
+  durationMs: number;
+  artifactDirectory: string;
+  metrics?: HarnessRunResult["metrics"];
+}
+
+export interface VariantAggregate {
+  trials: number;
+  completedTrials: number;
+  infrastructureErrors: number;
+  passedTrials: number;
+  passRate: number;
+  meanScore: number;
+  totalCostUsd: number;
+  totalCredits: number;
+}
+
+export interface HarnessCompareVerdict {
+  schemaVersion: "harness-compare-result.v1";
+  status: "accept" | "need_more_work" | "reject" | "infrastructure_error";
+  reason: string;
+  manifestHash: string;
+  fixtureHash: string;
+  harnessHash: string;
+  baseline: VariantAggregate;
+  candidate: VariantAggregate;
+  trials: CompareTrialResult[];
+}
+
+export async function runHarnessComparison(options: {
+  manifestPath: string;
+  outputDirectory: string;
+  trialCount?: number;
+  executorFactory?: CompareExecutorFactory;
+}): Promise<HarnessCompareVerdict> {
+  const loaded = await loadHarnessCompareManifest(options.manifestPath);
+  const trialCount = options.trialCount ?? loaded.value.trials.count;
+  if (!Number.isInteger(trialCount) || trialCount < 1 || trialCount > loaded.value.trials.count) {
+    throw new Error(`trialCount must be between 1 and the frozen manifest count (${loaded.value.trials.count}).`);
+  }
+  const outputDirectory = resolve(options.outputDirectory);
+  assertOutputSeparated(outputDirectory, loaded.resolved.fixture);
+  await prepareEmptyOutput(outputDirectory);
+  const harnessSource = await readFile(loaded.resolved.harness, "utf8");
+  const prompt = await readFile(loaded.resolved.prompt, "utf8");
+  const { bundle, revisions } = await compileAndResolveVariants(loaded, harnessSource);
+  const fixtureBefore = await snapshotDirectory(loaded.resolved.fixture);
+  if (fixtureBefore.some((item) => item.kind === "symlink")) {
+    throw new Error("Frozen compare fixtures may not contain symbolic links.");
+  }
+  const fixtureHash = sha256Hex(canonicalJson(fixtureBefore));
+  const effectiveManifest = {
+    ...loaded.value,
+    trials: { ...loaded.value.trials, count: trialCount },
+  };
+  const manifestHash = sha256Hex(canonicalJson(effectiveManifest));
+  const harnessHash = sha256Hex(harnessSource);
+  const jobs = randomizedJobs(trialCount, loaded.value.trials.seed);
+  await writeJson(join(outputDirectory, "manifest.json"), {
+    ...effectiveManifest,
+    evidence: { manifestHash, harnessHash, fixtureHash, executionOrder: jobs },
+  });
+  await writeJson(join(outputDirectory, "frozen-task.json"), {
+    schemaVersion: "harness-frozen-task.v1",
+    prompt,
+    promptHash: sha256Hex(prompt),
+    fixtureHash,
+    fixtureFiles: fixtureBefore,
+    expectedFiles: loaded.value.task.expectedFiles,
+    graderContractHash: sha256Hex(await readFile(loaded.resolved.graderContract, "utf8")),
+  });
+
+  const results: CompareTrialResult[] = [];
+  for (const job of jobs) {
+    const compositionId = loaded.value.variants[job.variant];
+    const result = await runTrial({
+      loaded,
+      outputDirectory,
+      prompt,
+      bundle,
+      revision: revisions[job.variant],
+      compositionId,
+      variant: job.variant,
+      trial: job.trial,
+      executorFactory: options.executorFactory ?? defaultExecutorFactory,
+    });
+    results.push(result);
+  }
+
+  const fixtureAfter = await snapshotDirectory(loaded.resolved.fixture);
+  if (canonicalJson(fixtureAfter) !== canonicalJson(fixtureBefore)) {
+    throw new Error("Source fixture changed during comparison; refusing to produce a verdict.");
+  }
+  results.sort((a, b) => compareVariant(a.variant, b.variant) || a.trial - b.trial);
+  const baseline = aggregate(results.filter((result) => result.variant === "baseline"));
+  const candidate = aggregate(results.filter((result) => result.variant === "candidate"));
+  const decision = decideVerdict(baseline, candidate);
+  const verdict: HarnessCompareVerdict = {
+    schemaVersion: "harness-compare-result.v1",
+    ...decision,
+    manifestHash,
+    fixtureHash,
+    harnessHash,
+    baseline,
+    candidate,
+    trials: results,
+  };
+  await writeJson(join(outputDirectory, "verdict.json"), verdict);
+  await writeFile(join(outputDirectory, "verdict.html"), renderVerdictHtml(verdict), "utf8");
+  return verdict;
+}
+
+async function compileAndResolveVariants(
+  loaded: LoadedHarnessCompareManifest,
+  harnessSource: string,
+): Promise<{
+  bundle: HarnessIrBundle;
+  revisions: Record<CompareVariant, HarnessRevision>;
+}> {
+  const compiled = await compileHarness([{ uri: pathToMemoryUri(loaded.resolved.harness), text: harnessSource }]);
+  if (!compiled.bundle) {
+    const diagnostics = compiled.diagnostics.map((item) => `${item.source}:${item.line ?? 1}: ${item.message}`).join("\n");
+    throw new Error(`Harness compilation failed:\n${diagnostics}`);
+  }
+  const revisions = {} as Record<CompareVariant, HarnessRevision>;
+  for (const variant of ["baseline", "candidate"] as const) {
+    const compositionId = loaded.value.variants[variant];
+    const resolved = resolveComposition(compiled.bundle, compositionId);
+    if (!resolved.revision) {
+      throw new Error(`Cannot resolve ${variant} composition '${compositionId}': ${resolved.report.errors.join("; ")}`);
+    }
+    if (resolved.revision.target.host !== loaded.value.runtime.host) {
+      throw new Error(
+        `${variant} composition targets '${resolved.revision.target.host}', expected '${loaded.value.runtime.host}'.`,
+      );
+    }
+    revisions[variant] = resolved.revision;
+  }
+  return { bundle: compiled.bundle, revisions };
+}
+
+async function runTrial(options: {
+  loaded: LoadedHarnessCompareManifest;
+  outputDirectory: string;
+  prompt: string;
+  bundle: HarnessIrBundle;
+  revision: HarnessRevision;
+  compositionId: string;
+  variant: CompareVariant;
+  trial: number;
+  executorFactory: CompareExecutorFactory;
+}): Promise<CompareTrialResult> {
+  const variantDirectory = options.variant === "baseline" ? "H0" : "H1";
+  const artifactDirectory = join(
+    options.outputDirectory,
+    variantDirectory,
+    `trial-${String(options.trial).padStart(3, "0")}`,
+  );
+  await mkdir(artifactDirectory, { recursive: true });
+  const temporaryParent = await mkdtemp(join(tmpdir(), "harness-compare-"));
+  const trialRoot = join(temporaryParent, "repo");
+  const permissionDecisions: ToolPermissionDecision[] = [];
+  const traceEvents: unknown[] = [];
+  const started = Date.now();
+  let execution: HarnessRunResult = {
+    host: "qoder",
+    revisionId: options.revision.revisionId,
+    exitCode: 1,
+    output: "",
+    errorOutput: "Executor did not start.",
+    warnings: [],
+  };
+  let infrastructureError: string | undefined;
+  try {
+    await cp(options.loaded.resolved.fixture, trialRoot, { recursive: true, errorOnExist: true, force: false });
+    const before = await snapshotDirectory(trialRoot);
+    await initializeGitRepository(trialRoot, temporaryParent);
+    const abortController = new AbortController();
+    const executor = options.executorFactory({
+      runtime: options.loaded.value.runtime,
+      trialRoot,
+      abortController,
+      permissionDecisions,
+      expectedFiles: options.loaded.value.task.expectedFiles,
+      traceEvents,
+    });
+    try {
+      execution = await withTimeout(
+        executor.execute(options.revision, options.bundle, { prompt: options.prompt, cwd: trialRoot }),
+        options.loaded.value.runtime.timeoutMs,
+        abortController,
+      );
+    } catch (error) {
+      infrastructureError = errorMessage(error);
+      execution = {
+        host: "qoder",
+        revisionId: options.revision.revisionId,
+        exitCode: 1,
+        output: "",
+        errorOutput: infrastructureError,
+        warnings: [],
+      };
+    }
+    const after = await snapshotDirectory(trialRoot);
+    const changedFiles = diffSnapshots(before, after);
+    const patch = await capturePatch(trialRoot);
+    await writeFile(join(artifactDirectory, "prompt.txt"), options.prompt, "utf8");
+    await writeFile(join(artifactDirectory, "response.txt"), execution.output, "utf8");
+    await writeFile(join(artifactDirectory, "stderr.txt"), redactRoot(execution.errorOutput, trialRoot), "utf8");
+    await writeFile(join(artifactDirectory, "patch.diff"), redactRoot(patch, trialRoot), "utf8");
+    await writeTrace(
+      join(artifactDirectory, "trace.jsonl"),
+      execution.trace && execution.trace.length > 0 ? execution.trace : traceEvents,
+      trialRoot,
+    );
+    await writeJson(join(artifactDirectory, "permission-decisions.json"), permissionDecisions);
+    const grade = await gradeReadmePackage({
+      trialRoot,
+      contractPath: options.loaded.resolved.graderContract,
+      changedFiles,
+      expectedFiles: options.loaded.value.task.expectedFiles,
+    });
+    await writeJson(join(artifactDirectory, "validation.json"), grade);
+    const classification = classifyTrial(execution, grade, infrastructureError);
+    const result: CompareTrialResult = {
+      variant: options.variant,
+      compositionId: options.compositionId,
+      trial: options.trial,
+      classification,
+      changedFiles,
+      grade,
+      executorExitCode: execution.exitCode,
+      executorError: redactRoot(execution.errorOutput, trialRoot),
+      revisionId: options.revision.revisionId,
+      durationMs: Date.now() - started,
+      artifactDirectory: `${variantDirectory}/trial-${String(options.trial).padStart(3, "0")}`,
+      ...(execution.metrics ? { metrics: execution.metrics } : {}),
+    };
+    await writeJson(join(artifactDirectory, "runtime-receipt.json"), execution.runtimeReceipt ?? {
+      executor: "injected-test-executor",
+      permissionCallback: "none",
+    });
+    await writeJson(join(artifactDirectory, "metrics.json"), result);
+    return result;
+  } finally {
+    await rm(temporaryParent, { recursive: true, force: true });
+  }
+}
+
+function defaultExecutorFactory(context: CompareExecutorContext): HarnessExecutor {
+  return new QoderSdkExecutor({
+    tools: context.runtime.tools,
+    allowedTools: context.runtime.allowedTools,
+    disallowedTools: context.runtime.disallowedTools,
+    permissionMode: context.runtime.permissionMode,
+    canUseTool: createBoundedQoderPermissionCallback(
+      context.trialRoot,
+      context.permissionDecisions,
+      context.expectedFiles,
+    ),
+    maxTurns: context.runtime.maxTurns,
+    persistSession: false,
+    ...(context.runtime.model ? { model: context.runtime.model } : {}),
+    enableFileCheckpointing: context.runtime.enableFileCheckpointing,
+    abortController: context.abortController,
+    onTraceEvent: (event) => context.traceEvents.push(event),
+  });
+}
+
+async function prepareEmptyOutput(path: string): Promise<void> {
+  try {
+    const entries = await readdir(path);
+    if (entries.length > 0) throw new Error(`Output directory is not empty: ${path}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  await mkdir(path, { recursive: true });
+}
+
+function assertOutputSeparated(outputDirectory: string, fixtureDirectory: string): void {
+  const outputFromFixture = relative(fixtureDirectory, outputDirectory);
+  const fixtureFromOutput = relative(outputDirectory, fixtureDirectory);
+  const isOwned = (value: string): boolean => value === "" || (!value.startsWith("..") && !isAbsolute(value));
+  if (isOwned(outputFromFixture) || isOwned(fixtureFromOutput)) {
+    throw new Error("Output directory and frozen fixture must not contain one another.");
+  }
+}
+
+async function initializeGitRepository(root: string, temporaryParent: string): Promise<void> {
+  const hooks = join(temporaryParent, "empty-hooks");
+  await mkdir(hooks);
+  const commands: string[][] = [
+    ["init", "--quiet"],
+    ["-c", "core.autocrlf=false", "add", "--all"],
+    [
+      "-c", `core.hooksPath=${hooks}`,
+      "-c", "user.name=Harness Compare",
+      "-c", "user.email=harness-compare@example.invalid",
+      "commit", "--quiet", "--no-gpg-sign", "-m", "frozen fixture",
+    ],
+  ];
+  for (const args of commands) {
+    const result = await runCommand("git", args, { cwd: root, timeoutMs: 30_000 });
+    if (result.exitCode !== 0) {
+      throw new Error(`Cannot initialize isolated Git fixture: ${result.stderr || result.stdout}`);
+    }
+  }
+}
+
+async function capturePatch(root: string): Promise<string> {
+  const untracked = await runCommand("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
+    cwd: root,
+    timeoutMs: 30_000,
+  });
+  if (untracked.exitCode !== 0) throw new Error(`Cannot inspect untracked trial files: ${untracked.stderr}`);
+  for (const path of untracked.stdout.split("\0").filter(Boolean).sort()) {
+    const intent = await runCommand("git", ["add", "--intent-to-add", "--", path], {
+      cwd: root,
+      timeoutMs: 30_000,
+    });
+    if (intent.exitCode !== 0) throw new Error(`Cannot mark untracked file '${path}' for diff: ${intent.stderr}`);
+  }
+  const result = await runCommand("git", ["diff", "--binary", "--no-ext-diff", "--", "."], {
+    cwd: root,
+    timeoutMs: 30_000,
+  });
+  if (result.exitCode !== 0) throw new Error(`Cannot capture trial patch: ${result.stderr}`);
+  return result.stdout;
+}
+
+async function snapshotDirectory(root: string): Promise<FileEvidence[]> {
+  const evidence: FileEvidence[] = [];
+  await visit(root, "");
+  return evidence.sort((a, b) => a.path.localeCompare(b.path));
+
+  async function visit(directory: string, relativeDirectory: string): Promise<void> {
+    const entries = await readdir(directory, { withFileTypes: true });
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (relativeDirectory === "" && entry.name === ".git") continue;
+      const relativePath = portable(join(relativeDirectory, entry.name));
+      const absolutePath = join(directory, entry.name);
+      const metadata = await lstat(absolutePath);
+      if (metadata.isDirectory()) {
+        await visit(absolutePath, relativePath);
+      } else if (metadata.isSymbolicLink()) {
+        const target = await readlink(absolutePath);
+        evidence.push({ path: relativePath, kind: "symlink", bytes: Buffer.byteLength(target), sha256: sha256Hex(target) });
+      } else if (metadata.isFile()) {
+        if (metadata.size > 5_000_000) {
+          evidence.push({ path: relativePath, kind: "file", bytes: metadata.size, sha256: "oversize" });
+        } else {
+          const bytes = await readFile(absolutePath);
+          evidence.push({ path: relativePath, kind: "file", bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") });
+        }
+      }
+    }
+  }
+}
+
+function diffSnapshots(before: FileEvidence[], after: FileEvidence[]): string[] {
+  const beforeByPath = new Map(before.map((item) => [item.path, item]));
+  const afterByPath = new Map(after.map((item) => [item.path, item]));
+  return [...new Set([...beforeByPath.keys(), ...afterByPath.keys()])]
+    .filter((path) => canonicalJson(beforeByPath.get(path)) !== canonicalJson(afterByPath.get(path)))
+    .sort();
+}
+
+function randomizedJobs(count: number, seed: number): Array<{ variant: CompareVariant; trial: number }> {
+  const jobs: Array<{ variant: CompareVariant; trial: number }> = [];
+  for (let trial = 1; trial <= count; trial += 1) {
+    jobs.push({ variant: "baseline", trial }, { variant: "candidate", trial });
+  }
+  const random = mulberry32(seed);
+  for (let index = jobs.length - 1; index > 0; index -= 1) {
+    const other = Math.floor(random() * (index + 1));
+    [jobs[index], jobs[other]] = [jobs[other], jobs[index]];
+  }
+  return jobs;
+}
+
+function mulberry32(seed: number): () => number {
+  let value = seed >>> 0;
+  return () => {
+    value += 0x6d2b79f5;
+    let result = value;
+    result = Math.imul(result ^ (result >>> 15), result | 1);
+    result ^= result + Math.imul(result ^ (result >>> 7), result | 61);
+    return ((result ^ (result >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}
+
+function classifyTrial(
+  execution: HarnessRunResult,
+  grade: ReadmeGrade,
+  thrownError?: string,
+): TrialClassification {
+  if (thrownError || (execution.exitCode !== 0 && /auth|credential|worker|runtime|spawn|ECONN|ENOTFOUND|timed out/i.test(execution.errorOutput))) {
+    return "infrastructure_error";
+  }
+  return execution.exitCode === 0 && grade.passed ? "passed" : "failed";
+}
+
+function aggregate(results: CompareTrialResult[]): VariantAggregate {
+  const completed = results.filter((result) => result.classification !== "infrastructure_error");
+  const passed = completed.filter((result) => result.classification === "passed");
+  return {
+    trials: results.length,
+    completedTrials: completed.length,
+    infrastructureErrors: results.length - completed.length,
+    passedTrials: passed.length,
+    passRate: completed.length === 0 ? 0 : passed.length / completed.length,
+    meanScore: completed.length === 0
+      ? 0
+      : Math.round((completed.reduce((sum, result) => sum + result.grade.score, 0) / completed.length) * 100) / 100,
+    totalCostUsd: Math.round(results.reduce((sum, result) => sum + (result.metrics?.costUsd ?? 0), 0) * 1_000_000) / 1_000_000,
+    totalCredits: Math.round(results.reduce((sum, result) => sum + (result.metrics?.credits ?? 0), 0) * 1_000_000) / 1_000_000,
+  };
+}
+
+function decideVerdict(
+  baseline: VariantAggregate,
+  candidate: VariantAggregate,
+): Pick<HarnessCompareVerdict, "status" | "reason"> {
+  if (baseline.completedTrials === 0 || candidate.completedTrials === 0) {
+    return { status: "infrastructure_error", reason: "At least one variant has no completed trial." };
+  }
+  if (candidate.passRate < baseline.passRate || candidate.meanScore + 5 < baseline.meanScore) {
+    return { status: "reject", reason: "Candidate regressed pass rate or deterministic score." };
+  }
+  const costWithinLimit =
+    (baseline.totalCostUsd === 0 || candidate.totalCostUsd <= baseline.totalCostUsd * 1.25) &&
+    (baseline.totalCredits === 0 || candidate.totalCredits <= baseline.totalCredits * 1.25);
+  if ((candidate.passRate > baseline.passRate || candidate.meanScore >= baseline.meanScore + 5) && costWithinLimit) {
+    return { status: "accept", reason: "Candidate improved deterministic outcomes without exceeding the 1.25x cost guardrail." };
+  }
+  return { status: "need_more_work", reason: "No regression, but the candidate did not clear the improvement threshold." };
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, controller: AbortController): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  let timedOut = false;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+          reject(new Error(`Qoder SDK trial timed out after ${timeoutMs}ms.`));
+        }, timeoutMs);
+      }),
+    ]);
+  } catch (error) {
+    if (timedOut) {
+      await Promise.race([
+        promise.catch(() => undefined),
+        new Promise((resolveDelay) => setTimeout(resolveDelay, 5_000)),
+      ]);
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function writeTrace(path: string, events: unknown[], trialRoot: string): Promise<void> {
+  const content = events.map((event) => JSON.stringify(redactEvidenceValue(event, trialRoot))).join("\n");
+  await writeFile(path, content ? `${content}\n` : "", "utf8");
+}
+
+function redactEvidenceValue(value: unknown, trialRoot: string): unknown {
+  if (typeof value === "string") return redactRoot(value, trialRoot);
+  if (Array.isArray(value)) return value.map((item) => redactEvidenceValue(item, trialRoot));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, redactEvidenceValue(item, trialRoot)]),
+    );
+  }
+  return value;
+}
+
+async function writeJson(path: string, value: unknown): Promise<void> {
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function renderVerdictHtml(verdict: HarnessCompareVerdict): string {
+  const row = (name: string, aggregate: VariantAggregate): string =>
+    `<tr><th>${name}</th><td>${aggregate.passedTrials}/${aggregate.completedTrials}</td><td>${aggregate.meanScore}</td><td>${aggregate.infrastructureErrors}</td><td>$${aggregate.totalCostUsd.toFixed(4)}</td><td>${aggregate.totalCredits.toFixed(3)}</td></tr>`;
+  return `<!doctype html>\n<html lang="en"><meta charset="utf-8"><title>Harness compare verdict</title>` +
+    `<style>body{font:16px system-ui;max-width:900px;margin:3rem auto;padding:0 1rem}table{border-collapse:collapse}th,td{border:1px solid #bbb;padding:.5rem;text-align:left}.status{font-size:1.4rem}</style>` +
+    `<body><h1>Harness compare verdict</h1><p class="status"><strong>${escapeHtml(verdict.status)}</strong>: ${escapeHtml(verdict.reason)}</p>` +
+    `<table><thead><tr><th>Variant</th><th>Passed</th><th>Mean score</th><th>Infra errors</th><th>Cost</th><th>Credits</th></tr></thead><tbody>` +
+    row("H0 baseline", verdict.baseline) + row("H1 candidate", verdict.candidate) +
+    `</tbody></table><p>Manifest <code>${verdict.manifestHash}</code></p></body></html>\n`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+function redactRoot(value: string, root: string): string {
+  return value.replaceAll(root, "<trial-root>");
+}
+
+function portable(value: string): string {
+  return value.replaceAll("\\", "/");
+}
+
+function compareVariant(a: CompareVariant, b: CompareVariant): number {
+  return a === b ? 0 : a === "baseline" ? -1 : 1;
+}
+
+function pathToMemoryUri(path: string): string {
+  return `memory://harness/${encodeURIComponent(basename(path))}`;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

@@ -76,6 +76,45 @@ const html = await highlightHarness(source); // Shiki, lang: "harness"
 See [`examples/standard-coding.harness`](examples/standard-coding.harness) for
 the full surface syntax.
 
+[`examples/full-surface.harness`](examples/full-surface.harness) is the compiler
+conformance fixture: it deliberately exercises every v0.1 component kind,
+permission, strength, degradation policy, and configuration value type.
+
+## Compare real coding outcomes
+
+The DSL describes an assembled agent harness; it does not make a successful SDK
+response equivalent to a successful coding task. The companion
+`harness-compare.v1` manifest freezes the task repository, two composition ids,
+runtime policy, trial count, and deterministic grader. Each variant/trial runs
+in a separate temporary Git repository and retains the resulting patch,
+redacted SDK trace, runtime receipt, permission decisions, validation details,
+metrics, and aggregate verdict.
+
+The included benchmark asks both compositions to create a repository-grounded
+`README.md` and validates the changed-file scope, Markdown structure, local
+links, package exports, documented behavior, executable ESM Quick Start, stale
+or invented claims, and the package's existing tests:
+
+```sh
+npm run harness:build
+node packages/harness/dist/compare/cli.js run packages/harness/examples/readme-compare/experiment.json --out ./harness-readme-compare-evidence --trials 1
+```
+
+The command uses the official Qoder Agent SDK and the locally signed-in
+`qodercli` identity. `--trials` may reduce the frozen maximum for a development
+smoke; use all five trials before treating the result as comparative evidence.
+The README task is one benchmark, not proof of general coding performance.
+
+Coding trials expose only `Read`, `Glob`, `Grep`, `Edit`, `Write`, and `Bash`.
+No tool is auto-approved: a permission callback confines file operations to the
+isolated trial, restricts writes to the manifest's expected files, and permits
+only a small validation-command allowlist. Web tools,
+network commands, command chaining, repository escapes, and unknown tools fail
+closed. Credentials are supplied by the SDK authentication adapter and are not
+written to manifests, receipts, traces, or fixtures. Generated Quick Start code
+is screened for host capabilities, receives a secret-free environment, and runs
+in a separate Node permission-model process with read-only fixture access.
+
 ## AI authoring skill
 
 The package includes

@@ -13,6 +13,39 @@ export interface HarnessRunResult {
   errorOutput: string;
   /** Realizations the executor could not materialize on this host. */
   warnings: string[];
+  /** Redacted protocol events retained as run evidence when the host exposes them. */
+  trace?: unknown[];
+  /** Non-secret options the executor actually passed to the host runtime. */
+  runtimeReceipt?: HarnessRuntimeReceipt;
+  /** Host-reported consumption and termination evidence. */
+  metrics?: HarnessRunMetrics;
+}
+
+export interface HarnessRuntimeReceipt {
+  executor: string;
+  tools: string[];
+  allowedTools: string[];
+  disallowedTools: string[];
+  permissionMode?: string;
+  maxTurns?: number;
+  persistSession?: boolean;
+  model?: string;
+  fileCheckpointing?: boolean;
+  permissionCallback: "configured" | "none";
+}
+
+export interface HarnessRunMetrics {
+  durationMs?: number;
+  durationApiMs?: number;
+  turns?: number;
+  costUsd?: number;
+  credits?: number;
+  usage?: Record<string, unknown>;
+  modelUsage?: Record<string, unknown>;
+  permissionDenials?: unknown[];
+  sessionId?: string;
+  stopReason?: string;
+  terminalReason?: string;
 }
 
 export interface HarnessExecutor {

@@ -16,6 +16,9 @@
   "homepage": "https://github.com/QoderAI/better-harness/tree/main/packages/harness#readme",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "harness-compare": "./dist/compare/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -28,6 +31,10 @@
     "./exec": {
       "types": "./dist/exec/index.d.ts",
       "import": "./dist/exec/index.js"
+    },
+    "./compare": {
+      "types": "./dist/compare/index.d.ts",
+      "import": "./dist/compare/index.js"
     },
     "./highlight": {
       "types": "./dist/highlight/shiki.d.ts",

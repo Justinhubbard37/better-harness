@@ -3,10 +3,53 @@ import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 import { compileHarness } from "../src/compiler/compile.js";
 import { HarnessIrBundleSchema, IR_VERSION } from "../src/ir/index.js";
+import { resolveComposition } from "../src/resolver/resolve.js";
 
 const EXAMPLE_URL = new URL("../examples/standard-coding.harness", import.meta.url);
+const FULL_SURFACE_URL = new URL("../examples/full-surface.harness", import.meta.url);
 
 describe("compileHarness", () => {
+  it("compiles every authored v0.1 syntax branch into typed IR", async () => {
+    const source = await readFile(FULL_SURFACE_URL, "utf8");
+    const result = await compileHarness(source);
+
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
+    expect(Value.Check(HarnessIrBundleSchema, result.bundle)).toBe(true);
+    expect(result.bundle!.components.map((component) => component.componentKind)).toEqual([
+      "skill", "tool", "program", "workflow", "hook", "policy", "observer", "ui",
+    ]);
+    expect(new Set(result.bundle!.bindings.map((binding) => binding.strength))).toEqual(
+      new Set(["unsupported", "advisory", "wired", "enforced"]),
+    );
+    expect(result.bundle!.components.flatMap((component) => component.permissions)).toEqual(
+      expect.arrayContaining([
+        { domain: "workspace", access: "read" },
+        { domain: "workspace", access: "write" },
+        { domain: "process", access: "allow" },
+        { domain: "process", access: "deny" },
+        { domain: "network", access: "allow" },
+        { domain: "network", access: "deny" },
+        { domain: "model", access: "allow" },
+        { domain: "model", access: "deny" },
+      ]),
+    );
+    expect(result.bundle!.compositions[0].settings).toEqual([
+      { key: "runtime.max-turns", value: { type: "int", value: 24 } },
+      { key: "runtime.timeout", value: { type: "duration", value: "10m", ms: 600_000 } },
+      { key: "runtime.label", value: { type: "string", value: "full-surface" } },
+      { key: "runtime.checkpoints", value: { type: "boolean", value: true } },
+      { key: "runtime.network-enabled", value: { type: "boolean", value: false } },
+    ]);
+    const resolved = resolveComposition(result.bundle!, "full-surface-qoder");
+    expect(resolved.report.status).toBe("resolved");
+    expect(resolved.report.realizations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ componentId: "repository-skill", action: "satisfied" }),
+        expect.objectContaining({ componentId: "test-program", action: "degraded" }),
+      ]),
+    );
+  });
+
   it("lowers the example document into a schema-valid IR bundle", async () => {
     const source = await readFile(EXAMPLE_URL, "utf8");
     const result = await compileHarness(source);

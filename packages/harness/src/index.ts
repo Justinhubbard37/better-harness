@@ -10,6 +10,7 @@ export { mergePermissions, resolveComposition, type ResolveResult } from "./reso
 export { STRENGTH_ORDER, strengthIndex } from "./language/harness-validator.js";
 export { createHarnessServices, type HarnessServices } from "./language/harness-module.js";
 export * from "./exec/index.js";
+export * from "./compare/index.js";
 export {
   getHarnessHighlighter,
   harnessTextMateGrammar,

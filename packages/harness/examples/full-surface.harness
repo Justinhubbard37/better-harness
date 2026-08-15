@@ -1,0 +1,93 @@
+// Compiler conformance fixture: every v0.1 authored syntax branch appears here.
+
+component repository-skill {
+  kind skill
+  description "Read repository evidence before changing files."
+  input { repository task }
+  output { evidence }
+  permissions { workspace read workspace write }
+}
+
+component file-tool {
+  kind tool
+  permissions { process allow }
+}
+
+component test-program {
+  kind program
+  permissions { process deny }
+}
+
+component coding-workflow {
+  kind workflow
+  permissions { network allow }
+}
+
+component completion-hook {
+  kind hook
+  permissions { network deny }
+}
+
+component evidence-policy {
+  kind policy
+  permissions { model allow }
+}
+
+component trace-observer {
+  kind observer
+  permissions { model deny }
+}
+
+component result-ui {
+  kind ui
+  permissions { workspace allow }
+}
+
+binding repository-skill for qoder {
+  mechanism prompt-preamble
+  strength advisory
+  notes "Prompt guidance is the v0.1 materialization boundary."
+}
+binding file-tool for qoder { mechanism unavailable strength unsupported }
+binding test-program for qoder { mechanism sdk-tool strength wired }
+binding coding-workflow for qoder { mechanism native-workflow strength enforced }
+binding completion-hook for qoder { mechanism prompt-preamble strength advisory }
+binding evidence-policy for qoder { mechanism sdk-policy strength wired }
+binding trace-observer for qoder { mechanism unavailable strength unsupported }
+binding result-ui for qoder { mechanism native-view strength enforced }
+
+plugin full-surface {
+  version "1.2.3"
+  provides [
+    component.repository-skill,
+    component.file-tool,
+    component.test-program,
+    component.coding-workflow,
+    component.completion-hook,
+    component.evidence-policy,
+    component.trace-observer,
+    component.result-ui
+  ]
+}
+
+composition full-surface-qoder {
+  target qoder
+  include [ plugin.full-surface@^1.0.0 ]
+  require repository-skill {
+    preferred advisory
+    minimum advisory
+    on-degrade fail
+  }
+  require test-program {
+    preferred wired
+    minimum advisory
+    on-degrade report
+  }
+  configure {
+    runtime.max-turns = 24
+    runtime.timeout = 10m
+    runtime.label = "full-surface"
+    runtime.checkpoints = true
+    runtime.network-enabled = false
+  }
+}
