@@ -238,10 +238,17 @@
     const activity = session.toolActivity;
     if (!activity.totalCalls) return '<section class="lane activity-lane lane-empty"><div class="lane-title"><strong>Checkpoint activity</strong><span>0 calls</span></div><div class="empty-state">No normalized tool call was retained for this session.</div></section>';
     const actionCounts = new Map();
-    activity.calls.forEach(call => actionCounts.set(call.actionLabel,(actionCounts.get(call.actionLabel) ?? 0) + 1));
+    const actionFamily = new Map();
+    activity.calls.forEach(call => {
+      actionCounts.set(call.actionLabel,(actionCounts.get(call.actionLabel) ?? 0) + 1);
+      if (!actionFamily.has(call.actionLabel)) actionFamily.set(call.actionLabel,call.family);
+    });
     const rankedActions = [...actionCounts.entries()].sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0,6);
     const max = Math.max(...rankedActions.map(([,count]) => count),1);
-    const bars = rankedActions.map(([actionLabel,count]) => '<div class="family-row"><span title="' + escape(actionLabel) + '">' + escape(actionLabel) + '</span><div class="family-track"><div class="family-fill" style="width:' + Math.max(2,(count/max)*100) + '%"></div></div><strong>' + count + '</strong></div>').join("");
+    const bars = rankedActions.map(([actionLabel,count]) => {
+      const tone = familyColor(actionFamily.get(actionLabel));
+      return '<div class="family-row"><span title="' + escape(actionLabel) + '"><i class="family-dot" style="background:' + tone + '"></i>' + escape(actionLabel) + '</span><div class="family-track"><div class="family-fill" style="width:' + Math.max(2,(count/max)*100) + '%;background:' + tone + '"></div></div><strong>' + count + '</strong></div>';
+    }).join("");
     const span = activity.timeline?.spanMs;
     const spanCopy = Number.isFinite(span) && span > 0 ? ' · ' + formatSpan(span) + ' span' : '';
     const directCommits = commitsFor(item).filter(commit => isDirectCommitLink(session.commitLinks.find(link => link.hash === commit.hash)));
@@ -713,13 +720,24 @@
     return runs;
   }
 
+  // Surfaces whether a call's "detail" line is the model's own rewritten
+  // summary or a summary with redacted arguments, so neither reads as the
+  // tool's literal command/output.
+  function detailKindBadge(call) {
+    if (!call.detail) return '';
+    return call.detailKind === 'redacted-input-summary'
+      ? '<span class="detail-kind redacted" title="Original arguments were removed by privacy filtering; this line is a rewritten summary, not the raw command or output.">redacted</span>'
+      : '<span class="detail-kind summary" title="A normalized summary generated from the observed call, not verbatim tool output.">summary</span>';
+  }
+
   function toolRowMarkup(session, call) {
     const stamp = formatStamp(call.startedAt);
+    const dot = '<i class="family-dot" style="background:' + familyColor(call.family) + '" aria-hidden="true"></i>';
     return '<button type="button" class="session-tool-row" data-session-tool-row data-tool="' + escape(call.toolName) + '" id="session-call-' + escape(call.id) + '" ' + selectionAttrs({ type:'tool-call', sessionId:session.sessionId, callId:call.id }) + '>'
       + '<span class="session-tool-id">' + escape(call.id) + '</span>'
-      + '<span class="session-tool-copy"><strong>' + escape(call.actionLabel) + '</strong><code title="' + escape(call.toolName) + '">' + escape(call.toolName) + '</code>' + (call.status === 'failed' ? '<em class="session-tool-failed">failed</em>' : '') + '</span>'
+      + '<span class="session-tool-copy">' + dot + '<strong>' + escape(call.actionLabel) + '</strong><code title="' + escape(call.toolName) + '">' + escape(call.toolName) + '</code>' + (call.status === 'failed' ? '<em class="session-tool-failed">failed</em>' : '') + '</span>'
       + '<span class="session-tool-time"><code>' + escape(stamp ?? '—') + '</code><small>' + escape(call.durationStatus === 'observed' ? formatLatency(call.durationMs) : '—') + '</small></span>'
-      + (call.detail ? '<code class="session-tool-detail">' + escape(call.detail) + '</code>' : '')
+      + (call.detail ? '<span class="session-tool-detail-row"><code class="session-tool-detail">' + escape(call.detail) + '</code>' + detailKindBadge(call) + '</span>' : '')
       + (call.filePaths?.length ? '<code class="session-tool-file">' + escape(call.filePaths.join(' · ')) + '</code>' : '')
       + '</button>';
   }
@@ -731,9 +749,9 @@
       const last = run.calls.at(-1);
       const total = run.calls.reduce((sum,call) => sum + (call.durationStatus === 'observed' ? call.durationMs : 0),0);
       return '<details class="session-tool-run" data-tool="' + escape(first.toolName) + '" data-call-count="' + run.calls.length + '" id="' + escape(session.sessionId + '-run-' + index) + '"><summary><span class="session-tool-id">' + escape(first.id) + '–' + escape(last.id) + '</span>'
-        + '<span class="session-tool-copy"><strong>' + escape(first.actionLabel) + ' ×' + run.calls.length + '</strong><code>' + escape(first.toolName) + '</code></span>'
+        + '<span class="session-tool-copy"><i class="family-dot" style="background:' + familyColor(first.family) + '" aria-hidden="true"></i><strong>' + escape(first.actionLabel) + ' ×' + run.calls.length + '</strong><code>' + escape(first.toolName) + '</code></span>'
         + '<span class="session-tool-time"><code>' + escape(formatStamp(first.startedAt) ?? '—') + '</code><small>' + escape(total ? formatLatency(total) + ' total' : '—') + '</small></span>'
-        + (first.detail ? '<code class="session-tool-detail">' + escape(first.detail) + '</code>' : '')
+        + (first.detail ? '<span class="session-tool-detail-row"><code class="session-tool-detail">' + escape(first.detail) + '</code>' + detailKindBadge(first) + '</span>' : '')
         + '</summary>' + run.calls.map(call => toolRowMarkup(session,call)).join('') + '</details>';
     });
     // A show-more reveal replaces the old nested scroll box, so one long page
@@ -1381,6 +1399,9 @@
         title:call ? call.id + ' · ' + call.actionLabel : selection.callId,
         source:'NormalizedToolActivityV1',
         facts:[call?.toolName ? 'Native tool: ' + call.toolName + '.' : null,
+          call?.detail ? (call.detailKind === 'redacted-input-summary'
+            ? 'Redacted summary (original arguments removed by privacy filtering): ' + call.detail
+            : 'Normalized summary: ' + call.detail) : null,
           stamp ? 'Observed start: ' + stamp + ' UTC.' : 'Start time evidence is unavailable.',
           call?.status ? 'Observed status: ' + call.status + '.' : null,
           call?.durationStatus === 'observed' ? 'Observed duration: ' + formatLatency(call.durationMs) + '.' : 'Duration evidence is unavailable.',
