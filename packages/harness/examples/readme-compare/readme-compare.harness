@@ -8,7 +8,7 @@ component coding-loop {
 
 component repository-grounding {
   kind skill
-  description "Before writing documentation, derive claims from package metadata, public source, executable examples, and current tests; treat archived documentation as stale evidence."
+  description "Before writing documentation, derive every claim from package metadata, public source, executable examples, and current tests; treat archived documentation as stale evidence; state the real retry defaults and abort behavior precisely instead of approximating them."
   input { package-metadata public-source tests examples }
   output { fact-map }
   permissions { workspace read network deny }
@@ -16,7 +16,7 @@ component repository-grounding {
 
 component readme-only-scope {
   kind policy
-  description "Change only README.md. Do not invent commands, module formats, badges, URLs, defaults, or capabilities that current repository evidence does not support."
+  description "Change only README.md, and give it exactly the sections a consumer needs in this order: Purpose, Installation, Quick Start, API, Behavior, Verification. Installation shows the consumer command `npm install <package name from package.json>`. Do not invent commands, module formats, badges, URLs, defaults, or capabilities that current repository evidence does not support."
   input { fact-map }
   output { scoped-readme }
   permissions { workspace write network deny }
@@ -24,7 +24,7 @@ component readme-only-scope {
 
 component executable-readme-verification {
   kind workflow
-  description "Run the package tests and execute the README quick-start example before completing; repair documentation until both pass."
+  description "Write Quick Start as an executable ESM JavaScript example that imports the package by name, then run the package tests and that example before completing; repair the documentation until both pass."
   input { scoped-readme }
   output { verification }
   permissions { process allow workspace read network deny }

@@ -15,9 +15,12 @@ what the v0.1 runtime actually materializes.
    minimum and preferred strengths, degradation behavior, and configuration.
    Infer low-risk details from context; ask only when a missing choice changes
    the safety or meaning of the composition.
-2. Read [the DSL contract](references/dsl-contract.md) before authoring. Open
-   [the complete example](../../examples/standard-coding.harness) only when a
-   full syntax example is useful.
+2. Read [the DSL contract](references/dsl-contract.md) before authoring. Start
+   from the smallest form that expresses the intent — often a component plus a
+   composition with a bare `require`, as in
+   [the minimal example](../../examples/minimal.harness). Open
+   [the complete example](../../examples/standard-coding.harness) only when
+   plugins, explicit bindings, or degradation policy are actually needed.
 3. Generate one self-contained `.harness` document unless the user explicitly
    requests a fragment. Declare each referenced component and plugin in the
    same document.
@@ -29,6 +32,9 @@ what the v0.1 runtime actually materializes.
 
 ## Authoring Rules
 
+- Prefer the least syntax that expresses the intent. Add a `binding`, `plugin`,
+  or a `require` block only when the default advisory floor is insufficient;
+  reuse an assembly across hosts with `extends` rather than copying it.
 - Use descriptive, stable identifiers and exact semantic versions for plugin
   declarations. Use a compatible version range in each composition include.
 - Declare every component referenced by a binding, plugin, or requirement.

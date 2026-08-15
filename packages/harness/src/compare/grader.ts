@@ -3,7 +3,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { runCommand, type CommandResult } from "./process.js";
+import { npmInvocation, runCommand, type CommandResult } from "./process.js";
 
 const ReadmeGraderContractSchema = Type.Object(
   {
@@ -103,16 +103,23 @@ export async function gradeReadmePackage(options: {
     `Expected an installation command containing '${installNeedle}'.`,
   ));
 
-  const moduleUrl = `${pathToFileURL(resolve(options.trialRoot, "src/index.mjs")).href}?grade=${Date.now()}`;
-  const publicModule = await import(moduleUrl) as Record<string, unknown>;
-  const missingExports = contract.publicApi.filter((name) => !(name in publicModule));
+  const realTrialRoot = await realpath(options.trialRoot);
+  const publicExports = await readModuleExports(options.trialRoot, realTrialRoot);
+  const missingExports = contract.publicApi.filter((name) => !publicExports.names.includes(name));
   const undocumentedExports = contract.publicApi.filter((name) => !allCode.includes(name));
-  checks.push(check(
-    "public-api",
-    missingExports.length === 0 && undocumentedExports.length === 0,
-    15,
-    `missing exports=${JSON.stringify(missingExports)} undocumented=${JSON.stringify(undocumentedExports)}`,
-  ));
+  checks.push({
+    ...check(
+      "public-api",
+      missingExports.length === 0 && undocumentedExports.length === 0,
+      15,
+      publicExports.result.exitCode === 0
+        ? `missing exports=${JSON.stringify(missingExports)} undocumented=${JSON.stringify(undocumentedExports)}`
+        : "The package entry point could not be loaded in the restricted export probe.",
+    ),
+    ...(publicExports.result.exitCode !== 0
+      ? { command: redactCommandResult(publicExports.result, options.trialRoot, realTrialRoot) }
+      : {}),
+  });
 
   const missingTokens = contract.requiredCodeTokens.filter((token) => !allCode.includes(token));
   const missingAlternatives = contract.requiredAnyCodeTokens.filter(
@@ -134,7 +141,6 @@ export async function gradeReadmePackage(options: {
     (block) => normalizeText(block.section ?? "") === "quick start" && contract.exampleLanguages.includes(block.language),
   );
   const exampleResults: CommandResult[] = [];
-  const realTrialRoot = await realpath(options.trialRoot);
   for (let index = 0; index < quickStartBlocks.length; index += 1) {
     const temporaryExample = resolve(options.trialRoot, `.harness-readme-example-${index}.mjs`);
     try {
@@ -178,7 +184,11 @@ export async function gradeReadmePackage(options: {
     ...(exampleResults[0] ? { command: redactCommandResult(exampleResults[0], options.trialRoot, realTrialRoot) } : {}),
   });
 
-  const testResult = await runCommand("npm", ["test"], { cwd: options.trialRoot, timeoutMs: 60_000 });
+  const npmTest = npmInvocation(["test"]);
+  const testResult = await runCommand(npmTest.command, npmTest.args, {
+    cwd: options.trialRoot,
+    timeoutMs: 60_000,
+  });
   checks.push({
     ...check("package-tests", testResult.exitCode === 0 && !testResult.timedOut, 10, "Ran the fixture's existing test contract."),
     command: redactCommandResult(testResult, options.trialRoot),
@@ -193,6 +203,39 @@ export async function gradeReadmePackage(options: {
     forbidden.length === 0 ? "No frozen forbidden claim was found." : `Forbidden claims: ${forbidden.join(", ")}`,
   ));
   return summarize(checks);
+}
+
+/**
+ * Read the package's real exports from a separate permission-restricted process.
+ *
+ * The graded repository is agent-modified, so its module must never be imported
+ * into the grader itself.
+ */
+async function readModuleExports(
+  trialRoot: string,
+  realTrialRoot: string,
+): Promise<{ names: string[]; result: CommandResult }> {
+  const moduleUrl = pathToFileURL(resolve(realTrialRoot, "src/index.mjs")).href;
+  const probe =
+    `const module = await import(${JSON.stringify(moduleUrl)});\n` +
+    `process.stdout.write(JSON.stringify(Object.keys(module)));\n`;
+  const result = await runCommand(
+    process.execPath,
+    ["--permission", `--allow-fs-read=${realTrialRoot}`, "--input-type=module", "--eval", probe],
+    { cwd: trialRoot, timeoutMs: 30_000, env: safeExampleEnvironment() },
+  );
+  if (result.exitCode !== 0) {
+    return { names: [], result };
+  }
+  try {
+    const parsed = JSON.parse(result.stdout) as unknown;
+    return {
+      names: Array.isArray(parsed) ? parsed.filter((name): name is string => typeof name === "string") : [],
+      result,
+    };
+  } catch {
+    return { names: [], result };
+  }
 }
 
 async function loadContract(path: string): Promise<ReadmeGraderContract> {
@@ -287,7 +330,9 @@ function redactCommandResult(result: CommandResult, root: string, realRoot = roo
     value.replaceAll(realRoot, "<trial-root>").replaceAll(root, "<trial-root>");
   return {
     ...result,
-    command: result.command.map((value, index) => index === 0 && value === process.execPath ? "node" : replaceRoot(value)),
+    command: result.command.map((value, index) =>
+      index === 0 && value === process.execPath ? "node" : replaceRoot(value),
+    ),
     stdout: replaceRoot(result.stdout),
     stderr: replaceRoot(result.stderr),
   };

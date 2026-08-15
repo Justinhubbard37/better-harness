@@ -34,7 +34,10 @@ export const harnessTextMateGrammar: LanguageRegistration = {
             "2": { name: "entity.name.type.harness" },
           },
         },
-        { name: "keyword.control.harness", match: "\\b(for|require|include|provides)\\b" },
+        {
+          name: "keyword.control.harness",
+          match: "\\b(for|require|include|provides|extends)\\b",
+        },
       ],
     },
     sections: {

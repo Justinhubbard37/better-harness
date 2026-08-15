@@ -124,3 +124,53 @@ argument arrays for cross-platform execution and never invokes a shell string.
 - Risk: SDK messages may contain sensitive data. Persist structured protocol
   events only after recursively redacting token/key/authorization fields; never
   store injected credentials in manifests, receipts, traces, or fixtures.
+
+## Post-Review Corrections
+
+A review of the merged change found eight defects. All are fixed, and each
+behavioral fix is covered by a test in the package suite.
+
+1. Validation commands spawned `npm` without a shell, which cannot start the
+   Windows `npm.cmd` shim and aborted the whole comparison. `npmInvocation()`
+   now resolves an `npm-cli.js` entry point, and a test runs it on the host.
+2. A timed-out command killed only the direct child. Commands now run in their
+   own process group and are stopped together with their children.
+3. The shared task prompt stated the required README sections, grounding rules,
+   install command, and validation duty, so the baseline received the candidate
+   composition's content and the native AC-6 run tied at score 100. The prompt
+   now states only the goal and the runtime tool policy; the documentation
+   standard moved into the candidate composition's components. The runtime
+   profile experiment keeps its explicit prompt because both of its arms share
+   one composition.
+4. Tests derived filesystem paths from `URL.pathname`, which is not a valid path
+   on Windows. They now use `fileURLToPath()`.
+5. Trace redaction shared one cycle set across sibling values, so an object
+   referenced twice was recorded as `[Circular]`. Only the ancestor chain is
+   tracked now.
+6. The grader imported the agent-modified package entry point into its own
+   process. Exports are now read by a separate `--permission` Node process, and
+   a test proves a tampered entry point is graded without executing inside the
+   grader.
+7. Fixture copy, Git setup, patch capture, and grader breakage propagated out of
+   a trial and discarded the whole run. Such failures are now recorded as that
+   trial's `infrastructure_error` with retained evidence.
+8. `runtime.network` was validated but never used, and `metrics.json` duplicated
+   the full check list. Network denial now drives the web-tool requirement, and
+   `metrics.json` keeps the grade summary while `validation.json` keeps checks.
+
+The AC-6 native manifest, harness, and fixture hashes above belong to the
+pre-correction prompt and harness files. They remain the honest record of that
+run, but they no longer describe the current experiment: a fresh native run is
+required before any comparative claim, and the baseline is now expected to score
+lower than the candidate rather than tie.
+
+Re-verified after the corrections: `npm run harness:generated`,
+`npm run harness:build`, `npm run harness:test` (60 package tests),
+`npx vitest run test/skills-docs/doc-link-graph.test.mjs` (6 assertions), and
+root `npm test` (1,322 of 1,324; `test/plugins/host-support.test.mjs` and
+`test/reporting/report-source-review.test.mjs` hit the 120 s limit under full
+suite load and both pass in isolation). `npm run harness:generated` and
+`npm pack --dry-run` were not re-established after these corrections: a separate
+uncommitted change to the grammar, resolver, and `test/sugar.test.ts` is in
+flight in the same worktree, so the generated-source diff is dirty and one sugar
+test is red. Re-run both gates once that change is complete.

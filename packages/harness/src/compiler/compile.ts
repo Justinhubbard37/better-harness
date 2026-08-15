@@ -2,11 +2,14 @@ import { URI, type LangiumDocument } from "langium";
 import semver from "semver";
 import { createHarnessServices } from "../language/harness-module.js";
 import {
+  type CapabilityRequirement,
   type ComponentContract,
   type CompositionDeclaration,
+  type ConfigEntry,
   type ConfigValue,
   type HarnessDocument,
   type PluginDeclaration,
+  type PluginRequirement,
   type TargetBinding,
   isComponentContract,
   isCompositionDeclaration,
@@ -42,6 +45,81 @@ export interface HarnessSource {
 }
 
 const DURATION_FACTORS: Record<string, number> = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 };
+
+/** Default mechanism for a binding that omits one: prompt guidance. */
+const DEFAULT_MECHANISM = "prompt-preamble";
+/** Default strength for a binding or requirement that omits one. */
+const DEFAULT_STRENGTH: Strength = "advisory";
+
+/**
+ * Flattened, `extends`-resolved view of a composition. The child overrides the
+ * base's `target` and, per member key, its includes/requirements/settings.
+ */
+interface MergedComposition {
+  name: string;
+  target: string | undefined;
+  includes: PluginRequirement[];
+  requirements: CapabilityRequirement[];
+  settings: ConfigEntry[];
+}
+
+/** Whether following `extends` from this composition revisits a node. */
+function hasExtendsCycle(composition: CompositionDeclaration): boolean {
+  const seen = new Set<CompositionDeclaration>();
+  let current: CompositionDeclaration | undefined = composition;
+  while (current) {
+    if (seen.has(current)) {
+      return true;
+    }
+    seen.add(current);
+    current = current.base?.ref;
+  }
+  return false;
+}
+
+/**
+ * Walk the `extends` chain base-first and merge members. Later (more derived)
+ * declarations override earlier ones by key: plugin id, required component id,
+ * and configuration key. A cycle is broken defensively and reported separately
+ * by {@link collectBundleDiagnostics}.
+ */
+function mergeExtends(composition: CompositionDeclaration): MergedComposition {
+  const chain: CompositionDeclaration[] = [];
+  const seen = new Set<CompositionDeclaration>();
+  let current: CompositionDeclaration | undefined = composition;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    chain.push(current);
+    current = current.base?.ref;
+  }
+  chain.reverse();
+
+  const includes = new Map<string, PluginRequirement>();
+  const requirements = new Map<string, CapabilityRequirement>();
+  const settings = new Map<string, ConfigEntry>();
+  let target: string | undefined;
+  for (const node of chain) {
+    if (node.target !== undefined) {
+      target = node.target;
+    }
+    for (const include of node.includes) {
+      includes.set(include.plugin.$refText, include);
+    }
+    for (const requirement of node.requirements) {
+      requirements.set(requirement.component.$refText, requirement);
+    }
+    for (const setting of node.settings) {
+      settings.set(setting.key, setting);
+    }
+  }
+  return {
+    name: composition.name,
+    target,
+    includes: [...includes.values()],
+    requirements: [...requirements.values()],
+    settings: [...settings.values()],
+  };
+}
 
 /**
  * Parse one or more Harness DSL sources and lower them into the versioned
@@ -89,7 +167,7 @@ export async function compileHarness(input: string | HarnessSource[]): Promise<C
       if (isComponentContract(element)) {
         components.push(lowerComponent(element));
       } else if (isTargetBinding(element)) {
-        bindings.push(lowerBinding(element));
+        bindings.push(...lowerBinding(element));
       } else if (isCompositionDeclaration(element)) {
         compositions.push(lowerComposition(element));
       }
@@ -161,12 +239,47 @@ function collectBundleDiagnostics(documents: LangiumDocument[]): CompileDiagnost
           );
         }
       } else if (isTargetBinding(element)) {
-        recordUnique(
-          bindings,
-          `${element.component.$refText}::${element.host}`,
-          "component/host binding",
-          source,
-          element.$cstNode?.range.start.line,
+        for (const host of element.hosts) {
+          recordUnique(
+            bindings,
+            `${element.component.$refText}::${host}`,
+            "component/host binding",
+            source,
+            element.$cstNode?.range.start.line,
+          );
+        }
+      }
+    }
+  }
+
+  // `extends` is resolved after the parser links references, so cycles and
+  // missing targets are semantic errors detected here rather than by the
+  // grammar.
+  for (const document of documents) {
+    const source = document.uri.toString();
+    const root = document.parseResult.value as HarnessDocument;
+    for (const element of root.elements) {
+      if (!isCompositionDeclaration(element)) {
+        continue;
+      }
+      const line = element.$cstNode?.range.start.line;
+      if (hasExtendsCycle(element)) {
+        diagnostics.push(
+          semanticDiagnostic(
+            `Composition '${element.name}' has a circular 'extends' chain.`,
+            source,
+            line,
+          ),
+        );
+        continue;
+      }
+      if (mergeExtends(element).target === undefined) {
+        diagnostics.push(
+          semanticDiagnostic(
+            `Composition '${element.name}' has no target; declare 'target' or 'extends' a composition that does.`,
+            source,
+            line,
+          ),
         );
       }
     }
@@ -276,16 +389,16 @@ function lowerComponent(contract: ComponentContract): ComponentContractIr {
   };
 }
 
-function lowerBinding(binding: TargetBinding): TargetBindingIr {
-  return {
+function lowerBinding(binding: TargetBinding): TargetBindingIr[] {
+  return binding.hosts.map((host) => ({
     irVersion: IR_VERSION,
     kind: "target-binding",
     componentId: binding.component.$refText,
-    host: binding.host,
-    mechanism: binding.mechanism,
-    strength: binding.strength as Strength,
+    host,
+    mechanism: binding.mechanism ?? DEFAULT_MECHANISM,
+    strength: (binding.strength ?? DEFAULT_STRENGTH) as Strength,
     ...(binding.notes !== undefined ? { notes: binding.notes } : {}),
-  };
+  }));
 }
 
 function lowerPlugin(plugin: PluginDeclaration, bindings: TargetBindingIr[]): PluginManifestIr {
@@ -309,24 +422,26 @@ function lowerPlugin(plugin: PluginDeclaration, bindings: TargetBindingIr[]): Pl
 }
 
 function lowerComposition(composition: CompositionDeclaration): CompositionSpecIr {
+  const merged = mergeExtends(composition);
   return {
     irVersion: IR_VERSION,
     kind: "composition-spec",
-    id: composition.name,
-    target: composition.target,
-    includes: composition.includes.map((include) => ({
+    id: merged.name,
+    // A missing target is rejected by collectBundleDiagnostics before lowering.
+    target: merged.target ?? "",
+    includes: merged.includes.map((include) => ({
       pluginId: include.plugin.$refText,
       range: include.range.replace(/^@/, ""),
     })),
-    requirements: composition.requirements.map((requirement) => ({
+    requirements: merged.requirements.map((requirement) => ({
       componentId: requirement.component.$refText,
       ...(requirement.preferred !== undefined
         ? { preferred: requirement.preferred as Strength }
         : {}),
-      minimum: requirement.minimum as Strength,
+      minimum: (requirement.minimum ?? DEFAULT_STRENGTH) as Strength,
       onDegrade: requirement.onDegrade ?? "report",
     })),
-    settings: composition.settings.map((entry) => ({
+    settings: merged.settings.map((entry) => ({
       key: entry.key,
       value: lowerConfigValue(entry.value),
     })),

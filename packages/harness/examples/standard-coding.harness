@@ -72,22 +72,8 @@ composition standard-coding {
   }
 }
 
-composition standard-coding-qoder {
+// Same assembly, different host. `extends` inherits the includes,
+// requirements, and configuration above; only the target changes.
+composition standard-coding-qoder extends standard-coding {
   target qoder
-
-  include [
-    plugin.repository-understanding@^1,
-    plugin.change-verification@^2
-  ]
-
-  require verification-before-complete {
-    preferred enforced
-    minimum advisory
-    on-degrade report
-  }
-
-  configure {
-    shell.timeout = 60s
-    tool-call-budget = 80
-  }
 }

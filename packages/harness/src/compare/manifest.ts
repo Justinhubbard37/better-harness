@@ -11,6 +11,9 @@ const QoderRuntimeProfileSchema = Type.Union([
   Type.Literal("qoder-minimal-v1"),
 ]);
 
+/** Host tools that reach the network and must be unavailable under a denied network. */
+const NETWORK_TOOLS = ["WebFetch", "WebSearch"];
+
 export const HarnessCompareManifestSchema = Type.Object(
   {
     schemaVersion: Type.Literal("harness-compare.v1"),
@@ -171,9 +174,13 @@ function validateRuntimePolicy(runtime: HarnessCompareManifest["runtime"], label
   if (runtime.allowedTools.length > 0) {
     throw new Error("Invalid harness-compare.v1 manifest: allowedTools must be empty; every tool use requires the bounded permission callback.");
   }
-  for (const tool of ["WebFetch", "WebSearch"]) {
-    if (!runtime.disallowedTools.includes(tool)) {
-      throw new Error(`Invalid harness-compare.v1 manifest: disallowedTools must include '${tool}'.`);
+  if (runtime.network === "deny") {
+    for (const tool of NETWORK_TOOLS) {
+      if (!runtime.disallowedTools.includes(tool)) {
+        throw new Error(
+          `Invalid harness-compare.v1 manifest: network 'deny' requires disallowedTools to include '${tool}'.`,
+        );
+      }
     }
   }
   const unavailableRequiredTools = requiredTools.filter((tool) => runtime.disallowedTools.includes(tool));

@@ -1,4 +1,6 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 export interface CommandResult {
   command: string[];
@@ -10,6 +12,21 @@ export interface CommandResult {
 }
 
 const MAX_CAPTURE_BYTES = 1_000_000;
+const KILL_ESCALATION_MS = 2_000;
+
+/**
+ * Resolve `npm` without a shell so validation commands also run on Windows,
+ * where the `npm` entry point is a `.cmd` shim that `spawn` cannot execute.
+ */
+export function npmInvocation(args: string[]): { command: string; args: string[] } {
+  const candidates = [
+    process.env.npm_execpath,
+    join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js"),
+    join(dirname(process.execPath), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"),
+  ];
+  const cli = candidates.find((candidate) => candidate && candidate.endsWith(".js") && existsSync(candidate));
+  return cli ? { command: process.execPath, args: [cli, ...args] } : { command: "npm", args };
+}
 
 export async function runCommand(
   command: string,
@@ -23,6 +40,8 @@ export async function runCommand(
       env: options.env ?? process.env,
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
+      // A process group lets a timeout stop the spawned tool and everything it started.
+      detached: process.platform !== "win32",
       windowsHide: true,
     });
     let stdout = "";
@@ -38,7 +57,7 @@ export async function runCommand(
     child.once("error", reject);
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      killProcessTree(child);
     }, options.timeoutMs);
     child.once("close", (code) => {
       clearTimeout(timer);
@@ -52,4 +71,30 @@ export async function runCommand(
       });
     });
   });
+}
+
+/** Stop a timed-out tool together with the children it spawned. */
+function killProcessTree(child: ChildProcess): void {
+  const pid = child.pid;
+  if (pid === undefined) return;
+  if (process.platform === "win32") {
+    const killer = spawn("taskkill", ["/pid", String(pid), "/t", "/f"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    killer.once("error", () => child.kill("SIGKILL"));
+    return;
+  }
+  signalGroup(pid, child, "SIGTERM");
+  setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) signalGroup(pid, child, "SIGKILL");
+  }, KILL_ESCALATION_MS).unref();
+}
+
+function signalGroup(pid: number, child: ChildProcess, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    child.kill(signal);
+  }
 }

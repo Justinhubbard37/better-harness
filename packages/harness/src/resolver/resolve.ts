@@ -66,7 +66,18 @@ export function resolveComposition(bundle: HarnessIrBundle, compositionId: strin
     resolvedPlugins.push(matching[0]);
   }
 
-  const enabledComponentIds = new Set(resolvedPlugins.flatMap((plugin) => plugin.provides));
+  // Components reach a composition two ways: bundled inside an included plugin,
+  // or `require`d directly. A directly-required component needs no plugin
+  // wrapper and, absent an explicit binding, materializes as advisory prompt
+  // guidance — the v0.1 floor — so a bare `require` just works.
+  const pluginComponentIds = new Set(resolvedPlugins.flatMap((plugin) => plugin.provides));
+  const bundleComponentIds = new Set(bundle.components.map((component) => component.id));
+  const directComponentIds = new Set(
+    composition.requirements
+      .map((requirement) => requirement.componentId)
+      .filter((id) => !pluginComponentIds.has(id) && bundleComponentIds.has(id)),
+  );
+  const enabledComponentIds = new Set([...pluginComponentIds, ...directComponentIds]);
   const enabledComponents = bundle.components.filter((component) =>
     enabledComponentIds.has(component.id),
   );
@@ -88,10 +99,11 @@ export function resolveComposition(bundle: HarnessIrBundle, compositionId: strin
       );
       continue;
     }
-    const binding = bundle.bindings.find(
-      (candidate) =>
-        candidate.componentId === requirement.componentId && candidate.host === composition.target,
-    );
+    const binding =
+      bundle.bindings.find(
+        (candidate) =>
+          candidate.componentId === requirement.componentId && candidate.host === composition.target,
+      ) ?? defaultBindingFor(requirement.componentId, composition.target, directComponentIds);
     const materialization = materializeV01(binding);
     const realized = materialization.strength;
     const minimumIndex = strengthIndex(requirement.minimum);
@@ -261,6 +273,30 @@ function degradeReason(binding: TargetBindingIr | undefined, host: string): stri
     `host '${host}' declares '${binding.strength}' via '${binding.mechanism}', ` +
     "but the v0.1 executor materializes prompt guidance at 'advisory' strength";
   return binding.notes ? `${detail}: ${binding.notes}` : detail;
+}
+
+/**
+ * A directly-`require`d component without an explicit binding is treated as an
+ * advisory prompt-guidance binding: the same floor a written binding would
+ * declare, so authoring the binding is optional rather than required. Plugin
+ * components keep their explicit-binding-or-`unsupported` semantics.
+ */
+function defaultBindingFor(
+  componentId: string,
+  host: string,
+  directComponentIds: Set<string>,
+): TargetBindingIr | undefined {
+  if (!directComponentIds.has(componentId)) {
+    return undefined;
+  }
+  return {
+    irVersion: IR_VERSION,
+    kind: "target-binding",
+    componentId,
+    host,
+    mechanism: "prompt-preamble",
+    strength: "advisory",
+  };
 }
 
 interface V01Materialization {

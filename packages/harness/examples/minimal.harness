@@ -1,0 +1,14 @@
+// The smallest useful harness. One policy, applied as advisory prompt
+// guidance — no plugin, binding, or strength boilerplate. A bare `require`
+// asks for the component at the v0.1 floor; the omitted binding is exactly
+// what a hand-written `binding … { strength advisory }` would declare.
+
+component require-tests {
+  kind policy
+  description "Do not report the task complete until tests or a diff review prove it."
+}
+
+composition my-agent {
+  target qoder
+  require require-tests
+}

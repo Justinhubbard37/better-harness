@@ -43,15 +43,17 @@ export class HarnessValidator {
       if (!isTargetBinding(element)) {
         continue;
       }
-      const key = `${element.component.$refText}::${element.host}`;
-      if (seen.has(key)) {
-        accept(
-          "error",
-          `Duplicate binding for component '${element.component.$refText}' on host '${element.host}'.`,
-          { node: element, property: "host" },
-        );
+      for (const host of element.hosts) {
+        const key = `${element.component.$refText}::${host}`;
+        if (seen.has(key)) {
+          accept(
+            "error",
+            `Duplicate binding for component '${element.component.$refText}' on host '${host}'.`,
+            { node: element, property: "hosts" },
+          );
+        }
+        seen.add(key);
       }
-      seen.add(key);
     }
   }
 }

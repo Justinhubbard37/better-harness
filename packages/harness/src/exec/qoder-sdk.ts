@@ -346,23 +346,32 @@ function buildQoderMinimalSystemPrompt(cwd?: string): string {
 
 const SECRET_FIELD = /(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|service[_-]?account[_-]?key|secret|credential)/i;
 
-/** Recursively remove credential-shaped fields before persisting SDK events. */
-export function redactTraceValue(value: unknown, seen = new WeakSet<object>()): unknown {
+/**
+ * Recursively remove credential-shaped fields before persisting SDK events.
+ *
+ * Only the current ancestor chain is tracked, so a value referenced twice in
+ * sibling positions is still recorded instead of being reported as a cycle.
+ */
+export function redactTraceValue(value: unknown, ancestors = new WeakSet<object>()): unknown {
   if (value === null || typeof value !== "object") {
     return value;
   }
-  if (seen.has(value)) {
+  if (ancestors.has(value)) {
     return "[Circular]";
   }
-  seen.add(value);
-  if (Array.isArray(value)) {
-    return value.map((item) => redactTraceValue(item, seen));
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return value.map((item) => redactTraceValue(item, ancestors));
+    }
+    const redacted: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      redacted[key] = SECRET_FIELD.test(key) ? "[REDACTED]" : redactTraceValue(item, ancestors);
+    }
+    return redacted;
+  } finally {
+    ancestors.delete(value);
   }
-  const redacted: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) {
-    redacted[key] = SECRET_FIELD.test(key) ? "[REDACTED]" : redactTraceValue(item, seen);
-  }
-  return redacted;
 }
 
 async function loadQoderSdk(loader?: () => Promise<QoderSdkLike>): Promise<QoderSdkLike> {

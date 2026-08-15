@@ -7,6 +7,40 @@ language across agent runtimes — v0.1 answers one bounded question:
 > What did the composition request, what strength did its binding declare, and
 > what did the selected v0.1 executor actually materialize?
 
+## The five-line harness
+
+You do not need the full assembly model to start. The smallest useful document
+is one capability plus a composition that requires it — no plugin, binding, or
+strength boilerplate ([`examples/minimal.harness`](examples/minimal.harness)):
+
+```harness
+component require-tests {
+  kind policy
+  description "Do not report the task complete until tests or a diff review prove it."
+}
+
+composition my-agent {
+  target qoder
+  require require-tests
+}
+```
+
+A bare `require` materializes the component as advisory prompt guidance — the
+v0.1 floor — so this resolves and runs as-is. The rest of the language is
+*progressive disclosure*: reach for it only when you need more.
+
+| When you need… | Add… |
+| --- | --- |
+| A stronger declared mechanism, or an explicit `unsupported` | a `binding` (its `mechanism`/`strength` default to advisory prompt guidance) |
+| The same binding on several hosts | `binding x for [pi, qoder] { … }` |
+| A distribution boundary / versioned bundle | a `plugin` with `include [ plugin.x@^1 ]` |
+| A stricter floor or fatal degradation | a `require x { minimum … on-degrade fail }` block |
+| The same assembly on another host | `composition y extends x { target … }` |
+
+Authors who want the whole surface at once should read
+[`examples/standard-coding.harness`](examples/standard-coding.harness); the
+sections below document the resolved IR those forms lower into.
+
 ## Pipeline
 
 ```text
@@ -105,6 +139,16 @@ The command uses the official Qoder Agent SDK and the locally signed-in
 smoke; use all five trials before treating the result as comparative evidence.
 The README task is one benchmark, not proof of general coding performance.
 
+The shared task prompt states only the goal and the runtime tool policy. What a
+good README contains — required sections, grounding rules, the consumer install
+command, the executable Quick Start — lives in the candidate composition's
+components, which the executor materializes as harness guidance. Keeping that
+expectation out of the prompt is what makes the measured difference attributable
+to the composition, so the baseline is expected to score lower. The runtime
+profile experiment below is the opposite case: its two arms share one
+composition, so its prompt states the task in full and only the runtime profile
+varies.
+
 To isolate runtime-tool effects from harness-policy effects, the companion
 profile experiment holds the grounded composition and task constant. Its
 baseline uses the manifest's six bounded coding tools; its candidate uses the
@@ -133,7 +177,10 @@ network commands, command chaining, repository escapes, and unknown tools fail
 closed. Credentials are supplied by the SDK authentication adapter and are not
 written to manifests, receipts, traces, or fixtures. Generated Quick Start code
 is screened for host capabilities, receives a secret-free environment, and runs
-in a separate Node permission-model process with read-only fixture access.
+in a separate Node permission-model process with read-only fixture access. The
+graded package's own entry point is read the same way, so agent-modified code
+never loads inside the grader. Validation commands run without a shell, and a
+timed-out command is stopped together with the processes it started.
 
 ## AI authoring skill
 

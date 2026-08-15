@@ -1,11 +1,13 @@
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { HarnessExecutor } from "../src/exec/executor.js";
 import { gradeReadmePackage } from "../src/compare/grader.js";
 import { loadHarnessCompareManifest, resolveHarnessCompareRuntime } from "../src/compare/manifest.js";
 import { createBoundedQoderPermissionCallback, type ToolPermissionDecision } from "../src/compare/permissions.js";
+import { npmInvocation, runCommand } from "../src/compare/process.js";
 import { runHarnessComparison } from "../src/compare/runner.js";
 
 const EXPERIMENT_URL = new URL("../examples/readme-compare/experiment.json", import.meta.url);
@@ -13,6 +15,10 @@ const MINIMAL_EXPERIMENT_URL = new URL(
   "../examples/readme-compare/minimal-profile-experiment.json",
   import.meta.url,
 );
+const EXPERIMENT_PATH = fileURLToPath(EXPERIMENT_URL);
+const MINIMAL_EXPERIMENT_PATH = fileURLToPath(MINIMAL_EXPERIMENT_URL);
+const CONTRACT_PATH = fileURLToPath(new URL("../examples/readme-compare/grader-contract.json", import.meta.url));
+const FIXTURE_URL = new URL("../examples/readme-compare/fixture", import.meta.url);
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
@@ -21,7 +27,7 @@ afterEach(async () => {
 
 describe("harness compare manifest", () => {
   it("loads the frozen README experiment with owned relative paths", async () => {
-    const loaded = await loadHarnessCompareManifest(EXPERIMENT_URL.pathname);
+    const loaded = await loadHarnessCompareManifest(EXPERIMENT_PATH);
 
     expect(loaded.value).toMatchObject({
       schemaVersion: "harness-compare.v1",
@@ -44,7 +50,7 @@ describe("harness compare manifest", () => {
   });
 
   it("accepts an isolated same-composition comparison when runtime profiles differ", async () => {
-    const loaded = await loadHarnessCompareManifest(MINIMAL_EXPERIMENT_URL.pathname);
+    const loaded = await loadHarnessCompareManifest(MINIMAL_EXPERIMENT_PATH);
 
     expect(loaded.value.variants).toEqual({
       baseline: "readme-grounded",
@@ -58,6 +64,19 @@ describe("harness compare manifest", () => {
       profile: "qoder-minimal-v1",
       tools: ["Read", "Write", "Edit", "Bash"],
     });
+  });
+
+  it("rejects a denied network that leaves a web tool reachable", async () => {
+    const directory = await makeTemporaryDirectory();
+    const manifest = JSON.parse(await readFile(EXPERIMENT_URL, "utf8")) as {
+      runtime: { network: string; disallowedTools: string[] };
+    };
+    expect(manifest.runtime.network).toBe("deny");
+    manifest.runtime.disallowedTools = manifest.runtime.disallowedTools.filter((tool) => tool !== "WebFetch");
+    const path = join(directory, "experiment.json");
+    await writeFile(path, JSON.stringify(manifest), "utf8");
+
+    await expect(loadHarnessCompareManifest(path)).rejects.toThrow(/network 'deny' requires disallowedTools/);
   });
 });
 
@@ -85,11 +104,25 @@ describe("bounded Qoder permissions", () => {
   });
 });
 
+describe("validation command execution", () => {
+  it("runs npm without a shell on this host", async () => {
+    const directory = await makeTemporaryDirectory();
+    const invocation = npmInvocation(["--version"]);
+
+    const result = await runCommand(invocation.command, invocation.args, {
+      cwd: directory,
+      timeoutMs: 60_000,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+  });
+});
+
 describe("README coding comparison", () => {
   it("rejects generated examples that request host capabilities", async () => {
     const directory = await makeTemporaryDirectory();
-    const fixture = new URL("../examples/readme-compare/fixture", import.meta.url);
-    await cp(fixture, directory, { recursive: true, force: true });
+    await cp(FIXTURE_URL, directory, { recursive: true, force: true });
     await writeFile(
       join(directory, "README.md"),
       VALID_README.replace("console.log(value);", "console.log(process.env);"),
@@ -98,7 +131,7 @@ describe("README coding comparison", () => {
 
     const grade = await gradeReadmePackage({
       trialRoot: directory,
-      contractPath: new URL("../examples/readme-compare/grader-contract.json", import.meta.url).pathname,
+      contractPath: CONTRACT_PATH,
       changedFiles: ["README.md"],
       expectedFiles: ["README.md"],
     });
@@ -109,6 +142,32 @@ describe("README coding comparison", () => {
     });
   });
 
+  it("grades a tampered package entry point without loading it into the grader", async () => {
+    const directory = await makeTemporaryDirectory();
+    await cp(FIXTURE_URL, directory, { recursive: true, force: true });
+    await writeFile(join(directory, "README.md"), VALID_README, "utf8");
+    await writeFile(
+      join(directory, "src/index.mjs"),
+      "globalThis.harnessGraderTampered = true;\nthrow new Error('tampered entry point');\n",
+      "utf8",
+    );
+
+    const grade = await gradeReadmePackage({
+      trialRoot: directory,
+      contractPath: CONTRACT_PATH,
+      changedFiles: ["README.md", "src/index.mjs"],
+      expectedFiles: ["README.md"],
+    });
+
+    expect("harnessGraderTampered" in globalThis).toBe(false);
+    expect(grade.passed).toBe(false);
+    expect(grade.checks.find((item) => item.id === "public-api")).toMatchObject({
+      passed: false,
+      command: { stderr: expect.stringContaining("tampered entry point") },
+    });
+    expect(grade.checks.find((item) => item.id === "scope")).toMatchObject({ passed: false });
+  });
+
   it("creates and grades real README files in isolated variant trials", async () => {
     const directory = await makeTemporaryDirectory();
     const output = join(directory, "evidence");
@@ -116,7 +175,7 @@ describe("README coding comparison", () => {
     await expect(readFile(fixtureReadme, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 
     const verdict = await runHarnessComparison({
-      manifestPath: EXPERIMENT_URL.pathname,
+      manifestPath: EXPERIMENT_PATH,
       outputDirectory: output,
       trialCount: 1,
       executorFactory: ({ trialRoot }): HarnessExecutor => ({
@@ -160,13 +219,40 @@ describe("README coding comparison", () => {
     await expect(readFile(fixtureReadme, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("reports harness setup breakage as an infrastructure error instead of a coding outcome", async () => {
+    const directory = await makeTemporaryDirectory();
+    const output = join(directory, "evidence");
+
+    const verdict = await runHarnessComparison({
+      manifestPath: EXPERIMENT_PATH,
+      outputDirectory: output,
+      trialCount: 1,
+      executorFactory: (): HarnessExecutor => {
+        throw new Error("SDK worker could not start");
+      },
+    });
+
+    expect(verdict.status).toBe("infrastructure_error");
+    expect(verdict.trials).toHaveLength(2);
+    expect(verdict.trials.every((trial) => trial.classification === "infrastructure_error")).toBe(true);
+    expect(verdict.baseline).toMatchObject({ trials: 1, completedTrials: 0, infrastructureErrors: 1, passRate: 0 });
+    expect(verdict.trials[0].grade.checks[0]).toMatchObject({
+      id: "infrastructure",
+      detail: expect.stringContaining("SDK worker could not start"),
+    });
+    expect(JSON.parse(await readFile(join(output, "H0/trial-001/metrics.json"), "utf8"))).toMatchObject({
+      classification: "infrastructure_error",
+      grade: { passed: false, score: 0 },
+    });
+  });
+
   it("routes each variant through its resolved Qoder runtime profile", async () => {
     const directory = await makeTemporaryDirectory();
     const output = join(directory, "evidence");
     const observed: Array<{ profile: string; tools: string[] }> = [];
 
     const verdict = await runHarnessComparison({
-      manifestPath: MINIMAL_EXPERIMENT_URL.pathname,
+      manifestPath: MINIMAL_EXPERIMENT_PATH,
       outputDirectory: output,
       trialCount: 1,
       executorFactory: (context): HarnessExecutor => {

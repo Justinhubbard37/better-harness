@@ -34,12 +34,17 @@ PermissionDomain returns string:
 PermissionAccess returns string:
     'read' | 'write' | 'allow' | 'deny';
 
-// How a component is realized on one concrete host, and how strong
-// the realized guarantee is.
+// How a component is realized on one or more concrete hosts, and how
+// strong the realized guarantee is. `for [a, b]` declares the same
+// mechanism/strength on several hosts at once. `mechanism` and `strength`
+// are optional: an omitted binding is prompt guidance at `advisory`, the
+// v0.1 materialization floor, so authors only spell out a binding to
+// declare a stronger future mechanism or an explicit `unsupported`.
 TargetBinding:
-    'binding' component=[ComponentContract:ID] 'for' host=ID '{'
-        'mechanism' mechanism=ID
-        'strength' strength=Strength
+    'binding' component=[ComponentContract:ID] 'for'
+        ( hosts+=ID | '[' hosts+=ID (',' hosts+=ID)* ']' ) '{'
+        ('mechanism' mechanism=ID)?
+        ('strength' strength=Strength)?
         ('notes' notes=STRING)?
     '}';
 
@@ -59,10 +64,16 @@ ComponentRef:
 
 // Desired assembly for one run target. Resolving a composition against
 // a registry produces an immutable revision plus a resolution report.
+//
+// `extends` inherits the base composition's target, includes, requirements,
+// and configuration; the child overrides `target` and appends its own
+// members. `include` is optional: a composition may `require` components
+// directly, without wrapping them in a plugin, in which case they
+// materialize as advisory prompt guidance.
 CompositionDeclaration:
-    'composition' name=ID '{'
-        'target' target=ID
-        'include' '[' includes+=PluginRequirement (',' includes+=PluginRequirement)* ']'
+    'composition' name=ID ('extends' base=[CompositionDeclaration:ID])? '{'
+        ('target' target=ID)?
+        ('include' '[' includes+=PluginRequirement (',' includes+=PluginRequirement)* ']')?
         (requirements+=CapabilityRequirement)*
         ('configure' '{' (settings+=ConfigEntry)* '}')?
     '}';
@@ -70,12 +81,16 @@ CompositionDeclaration:
 PluginRequirement:
     'plugin' '.' plugin=[PluginDeclaration:ID] range=VERSION_RANGE;
 
+// A bare `require component` is the common case: it asks for the component
+// at the `advisory` floor with `on-degrade report`. The optional block
+// raises the floor (`minimum`), states a `preferred` ceiling, or makes
+// degradation fatal (`on-degrade fail`).
 CapabilityRequirement:
-    'require' component=[ComponentContract:ID] '{'
+    'require' component=[ComponentContract:ID] ('{'
         ('preferred' preferred=Strength)?
-        'minimum' minimum=Strength
+        ('minimum' minimum=Strength)?
         ('on-degrade' onDegrade=DegradePolicy)?
-    '}';
+    '}')?;
 
 DegradePolicy returns string:
     'fail' | 'report';

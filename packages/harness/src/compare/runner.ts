@@ -22,6 +22,7 @@ import { gradeReadmePackage, type ReadmeGrade } from "./grader.js";
 import {
   loadHarnessCompareManifest,
   resolveHarnessCompareRuntime,
+  type HarnessCompareManifest,
   type LoadedHarnessCompareManifest,
   type ResolvedHarnessCompareRuntime,
 } from "./manifest.js";
@@ -237,80 +238,154 @@ async function runTrial(options: {
   };
   let infrastructureError: string | undefined;
   try {
-    await cp(options.loaded.resolved.fixture, trialRoot, { recursive: true, errorOnExist: true, force: false });
-    const before = await snapshotDirectory(trialRoot);
-    await initializeGitRepository(trialRoot, temporaryParent);
-    const abortController = new AbortController();
-    const executor = options.executorFactory({
-      runtime,
-      trialRoot,
-      abortController,
-      permissionDecisions,
-      expectedFiles: options.loaded.value.task.expectedFiles,
-      traceEvents,
-    });
     try {
-      execution = await withTimeout(
-        executor.execute(options.revision, options.bundle, { prompt: options.prompt, cwd: trialRoot }),
-        runtime.timeoutMs,
+      await cp(options.loaded.resolved.fixture, trialRoot, { recursive: true, errorOnExist: true, force: false });
+      const before = await snapshotDirectory(trialRoot);
+      await initializeGitRepository(trialRoot, temporaryParent);
+      const abortController = new AbortController();
+      const executor = options.executorFactory({
+        runtime,
+        trialRoot,
         abortController,
+        permissionDecisions,
+        expectedFiles: options.loaded.value.task.expectedFiles,
+        traceEvents,
+      });
+      try {
+        execution = await withTimeout(
+          executor.execute(options.revision, options.bundle, { prompt: options.prompt, cwd: trialRoot }),
+          runtime.timeoutMs,
+          abortController,
+        );
+      } catch (error) {
+        infrastructureError = errorMessage(error);
+        execution = {
+          host: "qoder",
+          revisionId: options.revision.revisionId,
+          exitCode: 1,
+          output: "",
+          errorOutput: infrastructureError,
+          warnings: [],
+        };
+      }
+      const after = await snapshotDirectory(trialRoot);
+      const changedFiles = diffSnapshots(before, after);
+      const patch = await capturePatch(trialRoot);
+      await writeFile(join(artifactDirectory, "prompt.txt"), options.prompt, "utf8");
+      await writeFile(join(artifactDirectory, "response.txt"), execution.output, "utf8");
+      await writeFile(join(artifactDirectory, "stderr.txt"), redactRoot(execution.errorOutput, trialRoot), "utf8");
+      await writeFile(join(artifactDirectory, "patch.diff"), redactRoot(patch, trialRoot), "utf8");
+      await writeTrace(
+        join(artifactDirectory, "trace.jsonl"),
+        execution.trace && execution.trace.length > 0 ? execution.trace : traceEvents,
+        trialRoot,
       );
-    } catch (error) {
-      infrastructureError = errorMessage(error);
-      execution = {
-        host: "qoder",
+      await writeJson(join(artifactDirectory, "permission-decisions.json"), permissionDecisions);
+      const grade = await gradeReadmePackage({
+        trialRoot,
+        contractPath: options.loaded.resolved.graderContract,
+        changedFiles,
+        expectedFiles: options.loaded.value.task.expectedFiles,
+      });
+      await writeJson(join(artifactDirectory, "validation.json"), grade);
+      const classification = classifyTrial(execution, grade, infrastructureError);
+      const result: CompareTrialResult = {
+        variant: options.variant,
+        compositionId: options.compositionId,
+        runtimeProfile: runtime.profile,
+        trial: options.trial,
+        classification,
+        changedFiles,
+        grade,
+        executorExitCode: execution.exitCode,
+        executorError: redactRoot(execution.errorOutput, trialRoot),
         revisionId: options.revision.revisionId,
-        exitCode: 1,
-        output: "",
-        errorOutput: infrastructureError,
-        warnings: [],
+        durationMs: Date.now() - started,
+        artifactDirectory: trialArtifactPath(variantDirectory, options.trial),
+        ...(execution.metrics ? { metrics: execution.metrics } : {}),
       };
+      await writeJson(join(artifactDirectory, "runtime-receipt.json"), execution.runtimeReceipt ?? {
+        executor: "injected-test-executor",
+        permissionCallback: "none",
+      });
+      await writeJson(join(artifactDirectory, "metrics.json"), trialSummary(result));
+      return result;
+    } catch (error) {
+      // Harness, Git, filesystem, and grader breakage is an infrastructure failure
+      // for this trial, not a coding outcome, and must not discard the other trials.
+      return await recordInfrastructureFailure({
+        artifactDirectory,
+        variantDirectory,
+        compositionId: options.compositionId,
+        runtimeProfile: runtime.profile,
+        variant: options.variant,
+        trial: options.trial,
+        revisionId: options.revision.revisionId,
+        durationMs: Date.now() - started,
+        detail: redactRoot(errorMessage(error), trialRoot),
+        permissionDecisions,
+      });
     }
-    const after = await snapshotDirectory(trialRoot);
-    const changedFiles = diffSnapshots(before, after);
-    const patch = await capturePatch(trialRoot);
-    await writeFile(join(artifactDirectory, "prompt.txt"), options.prompt, "utf8");
-    await writeFile(join(artifactDirectory, "response.txt"), execution.output, "utf8");
-    await writeFile(join(artifactDirectory, "stderr.txt"), redactRoot(execution.errorOutput, trialRoot), "utf8");
-    await writeFile(join(artifactDirectory, "patch.diff"), redactRoot(patch, trialRoot), "utf8");
-    await writeTrace(
-      join(artifactDirectory, "trace.jsonl"),
-      execution.trace && execution.trace.length > 0 ? execution.trace : traceEvents,
-      trialRoot,
-    );
-    await writeJson(join(artifactDirectory, "permission-decisions.json"), permissionDecisions);
-    const grade = await gradeReadmePackage({
-      trialRoot,
-      contractPath: options.loaded.resolved.graderContract,
-      changedFiles,
-      expectedFiles: options.loaded.value.task.expectedFiles,
-    });
-    await writeJson(join(artifactDirectory, "validation.json"), grade);
-    const classification = classifyTrial(execution, grade, infrastructureError);
-    const result: CompareTrialResult = {
-      variant: options.variant,
-      compositionId: options.compositionId,
-      runtimeProfile: runtime.profile,
-      trial: options.trial,
-      classification,
-      changedFiles,
-      grade,
-      executorExitCode: execution.exitCode,
-      executorError: redactRoot(execution.errorOutput, trialRoot),
-      revisionId: options.revision.revisionId,
-      durationMs: Date.now() - started,
-      artifactDirectory: `${variantDirectory}/trial-${String(options.trial).padStart(3, "0")}`,
-      ...(execution.metrics ? { metrics: execution.metrics } : {}),
-    };
-    await writeJson(join(artifactDirectory, "runtime-receipt.json"), execution.runtimeReceipt ?? {
-      executor: "injected-test-executor",
-      permissionCallback: "none",
-    });
-    await writeJson(join(artifactDirectory, "metrics.json"), result);
-    return result;
   } finally {
     await rm(temporaryParent, { recursive: true, force: true });
   }
+}
+
+async function recordInfrastructureFailure(options: {
+  artifactDirectory: string;
+  variantDirectory: string;
+  compositionId: string;
+  runtimeProfile: string;
+  variant: CompareVariant;
+  trial: number;
+  revisionId: string;
+  durationMs: number;
+  detail: string;
+  permissionDecisions: ToolPermissionDecision[];
+}): Promise<CompareTrialResult> {
+  const result: CompareTrialResult = {
+    variant: options.variant,
+    compositionId: options.compositionId,
+    runtimeProfile: options.runtimeProfile,
+    trial: options.trial,
+    classification: "infrastructure_error",
+    changedFiles: [],
+    grade: {
+      kind: "readme-package-v1",
+      passed: false,
+      score: 0,
+      checks: [{
+        id: "infrastructure",
+        passed: false,
+        hard: true,
+        weight: 100,
+        detail: options.detail,
+      }],
+    },
+    executorExitCode: 1,
+    executorError: options.detail,
+    revisionId: options.revisionId,
+    durationMs: options.durationMs,
+    artifactDirectory: trialArtifactPath(options.variantDirectory, options.trial),
+  };
+  await writeFile(join(options.artifactDirectory, "stderr.txt"), `${options.detail}\n`, "utf8").catch(() => undefined);
+  await writeJson(join(options.artifactDirectory, "validation.json"), result.grade).catch(() => undefined);
+  await writeJson(join(options.artifactDirectory, "permission-decisions.json"), options.permissionDecisions)
+    .catch(() => undefined);
+  await writeJson(join(options.artifactDirectory, "metrics.json"), trialSummary(result)).catch(() => undefined);
+  return result;
+}
+
+function trialArtifactPath(variantDirectory: string, trial: number): string {
+  return `${variantDirectory}/trial-${String(trial).padStart(3, "0")}`;
+}
+
+/** Keep per-trial metrics readable; the full check list stays in validation.json. */
+function trialSummary(result: CompareTrialResult): Record<string, unknown> {
+  return {
+    ...result,
+    grade: { kind: result.grade.kind, passed: result.grade.passed, score: result.grade.score },
+  };
 }
 
 function defaultExecutorFactory(context: CompareExecutorContext): HarnessExecutor {

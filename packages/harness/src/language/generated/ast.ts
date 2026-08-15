@@ -34,6 +34,7 @@ export type HarnessKeywordNames =
     | "deny"
     | "description"
     | "enforced"
+    | "extends"
     | "fail"
     | "false"
     | "for"
@@ -95,7 +96,7 @@ export interface CapabilityRequirement extends langium.AstNode {
     readonly $container: CompositionDeclaration;
     readonly $type: 'CapabilityRequirement';
     component: langium.Reference<ComponentContract>;
-    minimum: Strength;
+    minimum?: Strength;
     onDegrade?: DegradePolicy;
     preferred?: Strength;
 }
@@ -161,15 +162,17 @@ export function isComponentRef(item: unknown): item is ComponentRef {
 export interface CompositionDeclaration extends langium.AstNode {
     readonly $container: HarnessDocument;
     readonly $type: 'CompositionDeclaration';
+    base?: langium.Reference<CompositionDeclaration>;
     includes: Array<PluginRequirement>;
     name: string;
     requirements: Array<CapabilityRequirement>;
     settings: Array<ConfigEntry>;
-    target: string;
+    target?: string;
 }
 
 export const CompositionDeclaration = {
     $type: 'CompositionDeclaration',
+    base: 'base',
     includes: 'includes',
     name: 'name',
     requirements: 'requirements',
@@ -364,16 +367,16 @@ export interface TargetBinding extends langium.AstNode {
     readonly $container: HarnessDocument;
     readonly $type: 'TargetBinding';
     component: langium.Reference<ComponentContract>;
-    host: string;
-    mechanism: string;
+    hosts: Array<string>;
+    mechanism?: string;
     notes?: string;
-    strength: Strength;
+    strength?: Strength;
 }
 
 export const TargetBinding = {
     $type: 'TargetBinding',
     component: 'component',
-    host: 'host',
+    hosts: 'hosts',
     mechanism: 'mechanism',
     notes: 'notes',
     strength: 'strength'
@@ -423,7 +426,8 @@ export class HarnessAstReflection extends langium.AbstractAstReflection {
                     referenceType: ComponentContract.$type
                 },
                 minimum: {
-                    name: CapabilityRequirement.minimum
+                    name: CapabilityRequirement.minimum,
+                    optional: true
                 },
                 onDegrade: {
                     name: CapabilityRequirement.onDegrade,
@@ -480,9 +484,15 @@ export class HarnessAstReflection extends langium.AbstractAstReflection {
         CompositionDeclaration: {
             name: CompositionDeclaration.$type,
             properties: {
+                base: {
+                    name: CompositionDeclaration.base,
+                    referenceType: CompositionDeclaration.$type,
+                    optional: true
+                },
                 includes: {
                     name: CompositionDeclaration.includes,
-                    defaultValue: []
+                    defaultValue: [],
+                    optional: true
                 },
                 name: {
                     name: CompositionDeclaration.name
@@ -498,7 +508,8 @@ export class HarnessAstReflection extends langium.AbstractAstReflection {
                     optional: true
                 },
                 target: {
-                    name: CompositionDeclaration.target
+                    name: CompositionDeclaration.target,
+                    optional: true
                 }
             },
             superTypes: [Declaration.$type]
@@ -613,18 +624,21 @@ export class HarnessAstReflection extends langium.AbstractAstReflection {
                     name: TargetBinding.component,
                     referenceType: ComponentContract.$type
                 },
-                host: {
-                    name: TargetBinding.host
+                hosts: {
+                    name: TargetBinding.hosts,
+                    defaultValue: []
                 },
                 mechanism: {
-                    name: TargetBinding.mechanism
+                    name: TargetBinding.mechanism,
+                    optional: true
                 },
                 notes: {
                     name: TargetBinding.notes,
                     optional: true
                 },
                 strength: {
-                    name: TargetBinding.strength
+                    name: TargetBinding.strength,
+                    optional: true
                 }
             },
             superTypes: [Declaration.$type]
