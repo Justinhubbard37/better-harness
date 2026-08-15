@@ -9,7 +9,7 @@ export {
   type HarnessAdapterV1,
   type RunOnceOptions,
 } from "./adapter.js";
-export { describeBuiltInAdapter } from "./built-in.js";
+export { describeBuiltInAdapter } from "../resolver/adapter-registry.js";
 export {
   exposedHostTools,
   prepareMaterialization,

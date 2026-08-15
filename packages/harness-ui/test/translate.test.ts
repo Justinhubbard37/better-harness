@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { HarnessRunEvent } from "@qoder-ai/harness";
+import type { HarnessRunEvent } from "@qoder-ai/harness/exec";
 import { createAguiTranslator } from "../src/translate.js";
 import { decodeSseStream, encodeSseEvent } from "../src/sse.js";
 import {

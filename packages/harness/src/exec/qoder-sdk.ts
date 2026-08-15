@@ -7,6 +7,7 @@ import {
   describeAdapter,
   type AdapterRealizationDescriptor,
 } from "../resolver/adapter-descriptor.js";
+import { QODER_ADAPTER_DESCRIPTOR } from "../resolver/adapter-registry.js";
 import { verifyRevisionSourceLocks } from "../resolver/source-lock.js";
 import {
   HARNESS_ADAPTER_SPECIFICATION_VERSION,
@@ -37,14 +38,7 @@ const QODER_ADAPTER_IMPLEMENTATION_VERSION = "0.1.0";
  * a harness author declares `require tool workspace.write`, and the adapter is
  * the component that knows the host calls that tool `Write` and can expose it.
  */
-export const QODER_TOOL_EXPOSURE: Readonly<Record<string, string>> = Object.freeze({
-  "workspace.read": "Read",
-  "workspace.glob": "Glob",
-  "workspace.search": "Grep",
-  "workspace.edit": "Edit",
-  "workspace.write": "Write",
-  "process.exec": "Bash",
-});
+export const QODER_TOOL_EXPOSURE = QODER_ADAPTER_DESCRIPTOR.toolExposure;
 
 export type QoderRuntimeProfile = "qoder-default-v1" | "qoder-minimal-v1";
 
@@ -296,7 +290,7 @@ export class QoderSdkAdapter implements HarnessAdapterV1 {
 
   /** The realization facts this adapter can back with real host behaviour. */
   describe(): AdapterRealizationDescriptor {
-    return describeAdapter({
+    const descriptor = describeAdapter({
       adapterId: this.adapterId,
       specificationVersion: HARNESS_ADAPTER_SPECIFICATION_VERSION,
       implementationVersion: QODER_ADAPTER_IMPLEMENTATION_VERSION,
@@ -306,14 +300,19 @@ export class QoderSdkAdapter implements HarnessAdapterV1 {
       // claims neither. The receipt reports both as unrealized instead.
       mcpSupport: null,
       workflowModes: ["declarative"],
+      programmaticLanguages: [],
       agentIsolation: "single-session",
       consumedSettings: [],
       enforcedPermissionDomains: [],
     });
+    return JSON.stringify(descriptor) === JSON.stringify(QODER_ADAPTER_DESCRIPTOR)
+      ? QODER_ADAPTER_DESCRIPTOR
+      : descriptor;
   }
 
   async doStart(start: HarnessAdapterStartOptions): Promise<HarnessAdapterSession> {
     const descriptor = this.describe();
+    assertRegistryDescriptorCompatible(QODER_ADAPTER_DESCRIPTOR, descriptor);
     preflightRevision(start.revision, start.bundle, this.host, descriptor);
     await verifyRevisionSourceLocks(
       start.revision,
@@ -410,6 +409,24 @@ export class QoderSdkAdapter implements HarnessAdapterV1 {
 
   get sharedAbortController(): AbortController | undefined {
     return this.abortController;
+  }
+}
+
+function assertRegistryDescriptorCompatible(
+  registered: AdapterRealizationDescriptor,
+  live: AdapterRealizationDescriptor,
+): void {
+  const registeredFacts = { ...registered, toolExposure: undefined };
+  const liveFacts = { ...live, toolExposure: undefined };
+  if (JSON.stringify(registeredFacts) !== JSON.stringify(liveFacts)) {
+    throw new Error(`Adapter descriptor drift for '${live.adapterId}'; update the pure-data registry.`);
+  }
+  for (const [capability, hostTool] of Object.entries(live.toolExposure)) {
+    if (registered.toolExposure[capability] !== hostTool) {
+      throw new Error(
+        `Adapter descriptor drift for '${live.adapterId}' capability '${capability}'; update the pure-data registry.`,
+      );
+    }
   }
 }
 

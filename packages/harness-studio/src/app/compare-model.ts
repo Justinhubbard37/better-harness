@@ -1,5 +1,5 @@
 import { parseHarnessCompareVerdict } from "@qoder-ai/harness/compare/verdict";
-import type { HarnessCompareVerdict, VariantAggregate } from "@qoder-ai/harness";
+import type { HarnessCompareVerdict, VariantAggregate } from "@qoder-ai/harness/compare";
 
 export interface CompareRow {
   variant: "baseline" | "candidate";

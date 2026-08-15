@@ -84,7 +84,7 @@ describe("resolveHarness", () => {
           agentId: "verifier",
           capabilityId: "verification-before-complete",
           declaredStrength: "advisory",
-          declaredMechanism: "qoder.system-instruction",
+          declaredMechanism: "prompt-preamble",
           realized: "advisory",
           materializedMechanism: "prompt-preamble",
           action: "degraded",
@@ -182,10 +182,6 @@ describe("resolveHarness", () => {
     skill gate {
       description "Verify before completing."
     }
-    binding gate for codex {
-      mechanism system-instruction
-      strength advisory
-    }
     workflow solo { stop when coder.done }
     harness run-on-codex {
       workflow solo
@@ -227,7 +223,7 @@ describe("resolveHarness", () => {
       requestedPreferred: "enforced",
       declaredStrength: "advisory",
       realized: "advisory",
-      declaredMechanism: "system-instruction",
+      declaredMechanism: "prompt-preamble",
       materializedMechanism: "prompt-preamble",
       action: "degraded",
     });
@@ -237,7 +233,6 @@ describe("resolveHarness", () => {
   it("always fails when the realized strength is below minimum", async () => {
     const bundle = await compileSource(`
       skill gate { description "Verify before completing." }
-      binding gate for codex { mechanism system-instruction strength advisory }
       workflow solo { stop when coder.done }
       harness strict {
         workflow solo
@@ -256,10 +251,9 @@ describe("resolveHarness", () => {
     expect(report.status).toBe("failed");
   });
 
-  it("does not treat a declared enforced binding as materialized enforcement", async () => {
+  it("does not treat a requirement floor as materialized enforcement", async () => {
     const bundle = await compileSource(`
       skill gate { description "Verify before completing." }
-      binding gate for pi { mechanism pi.extension strength enforced }
       workflow solo { stop when coder.done }
       harness strict {
         workflow solo
@@ -275,8 +269,8 @@ describe("resolveHarness", () => {
     expect(revision).toBeUndefined();
     expect(report.status).toBe("failed");
     expect(report.realizations[0]).toMatchObject({
-      declaredStrength: "enforced",
-      declaredMechanism: "pi.extension",
+      declaredStrength: "advisory",
+      declaredMechanism: "prompt-preamble",
       realized: "advisory",
       materializedMechanism: "prompt-preamble",
       action: "failed",
@@ -286,7 +280,7 @@ describe("resolveHarness", () => {
   it("fails a required capability whose binding declares it unsupported", async () => {
     const bundle = await compileSource(`
       skill gate { description "Verify before completing." }
-      binding gate for qoder { mechanism unavailable strength unsupported }
+      binding gate for qoder { unsupported }
       workflow solo { stop when coder.done }
       harness run {
         workflow solo
@@ -321,7 +315,7 @@ describe("resolveHarness", () => {
     expect(revision).toBeUndefined();
     expect(report.status).toBe("failed");
     expect(report.errors[0]).toContain("programmatic (python)");
-    expect(report.errors[0]).toContain("ACP");
+    expect(report.errors[0]).toContain("descriptor");
   });
 
   it("rejects a programmatic workflow whose language differs from the runtime's", async () => {
@@ -329,7 +323,6 @@ describe("resolveHarness", () => {
       workflow scripted { program deno "./flows/loop.ts" }
       runtime prime {
         adapter "@harness/adapter-prime"
-        execution programmatic.python { repl persistent }
       }
       harness run {
         workflow scripted
@@ -342,12 +335,13 @@ describe("resolveHarness", () => {
         adapterId: "@harness/adapter-prime",
         toolExposure: { "process.exec": "shell" },
         workflowModes: ["declarative", "programmatic"],
+        programmaticLanguages: ["python"],
       }),
     });
 
     expect(revision).toBeUndefined();
     expect(report.status).toBe("failed");
-    expect(report.errors[0]).toContain("executes programmatic.python");
+    expect(report.errors[0]).toContain("does not list programmatic language 'deno'");
   });
 
   it("fails a programmatic workflow that no adapter can execute, instead of resolving into a no-op", async () => {
@@ -355,7 +349,6 @@ describe("resolveHarness", () => {
       workflow scripted { program deno "./flows/loop.ts" }
       runtime prime {
         adapter "@harness/adapter-prime"
-        execution programmatic.deno { mode code }
       }
       harness run {
         workflow scripted
@@ -374,7 +367,7 @@ describe("resolveHarness", () => {
 
     expect(revision).toBeUndefined();
     expect(report.status).toBe("failed");
-    expect(report.errors.join("\n")).toContain("cannot execute the programmatic controller './flows/loop.ts'");
+    expect(report.errors.join("\n")).toContain("does not list programmatic language 'deno'");
   });
 
   it("resolves a programmatic workflow on a runtime and adapter that can drive it", async () => {
@@ -382,7 +375,6 @@ describe("resolveHarness", () => {
       workflow scripted { program python "./flows/loop.py" }
       runtime prime {
         adapter "@harness/adapter-prime"
-        execution programmatic.python { repl persistent }
       }
       harness run {
         workflow scripted
@@ -395,15 +387,12 @@ describe("resolveHarness", () => {
         adapterId: "@harness/adapter-prime",
         toolExposure: { "process.exec": "shell" },
         workflowModes: ["declarative", "programmatic"],
+        programmaticLanguages: ["python"],
       }),
     });
 
     expect(report.status).toBe("resolved");
-    expect(revision!.target.execution).toEqual({
-      style: "programmatic",
-      language: "python",
-      options: [{ key: "repl", value: "persistent" }],
-    });
+    expect(revision!.target.execution).toEqual({ style: "tool-calling" });
     expect(revision!.workflow.mode).toBe("programmatic");
   });
 

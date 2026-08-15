@@ -38,18 +38,10 @@ export {
   type WorkflowRealizationFact,
 } from "./resolver/adapter-descriptor.js";
 export {
-  lockCapabilitySources,
-  verifyRevisionSourceLocks,
-  HarnessSourceRootRequiredError,
-  type SourceLockOptions,
-} from "./resolver/source-lock.js";
+  ADAPTER_DESCRIPTOR_REGISTRY,
+  PI_ADAPTER_DESCRIPTOR,
+  QODER_ADAPTER_DESCRIPTOR,
+  describeBuiltInAdapter,
+} from "./resolver/adapter-registry.js";
 export { STRENGTH_ORDER, strengthIndex } from "./language/harness-validator.js";
 export { createHarnessServices, type HarnessServices } from "./language/harness-module.js";
-export * from "./exec/index.js";
-export * from "./compare/index.js";
-export {
-  getHarnessHighlighter,
-  harnessTextMateGrammar,
-  highlightHarness,
-  tokenizeHarness,
-} from "./highlight/shiki.js";

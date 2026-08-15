@@ -28,6 +28,10 @@
       "types": "./dist/ir/index.d.ts",
       "import": "./dist/ir/index.js"
     },
+    "./lock": {
+      "types": "./dist/lock.d.ts",
+      "import": "./dist/lock.js"
+    },
     "./exec": {
       "types": "./dist/exec/index.d.ts",
       "import": "./dist/exec/index.js"
@@ -62,15 +66,18 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.84.2"
+    "@earendil-works/pi-coding-agent": "^0.84.2",
+    "@qoder-ai/qoder-agent-sdk": "^1.0.21"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {
       "optional": true
+    },
+    "@qoder-ai/qoder-agent-sdk": {
+      "optional": true
     }
   },
   "dependencies": {
-    "@qoder-ai/qoder-agent-sdk": "1.0.21",
     "@sinclair/typebox": "0.34.52",
     "langium": "4.3.1",
     "semver": "7.8.5",
@@ -78,8 +85,10 @@
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.84.2",
+    "@qoder-ai/qoder-agent-sdk": "1.0.21",
     "@types/node": "26.2.0",
     "@types/semver": "7.8.0",
+    "es-module-lexer": "2.3.1",
     "langium-cli": "4.3.0",
     "typescript": "7.0.2",
     "vitest": "4.1.10"

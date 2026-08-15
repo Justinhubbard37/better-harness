@@ -87,22 +87,22 @@ describe("progressive-disclosure sugar", () => {
   it("expands a for [a, b] binding into one binding per runtime", async () => {
     const bundle = await compile(`
       skill gate { description "Verify first." }
-      binding gate for [pi, qoder] { mechanism pi.extension strength enforced }
+      binding gate for [pi, qoder] { unsupported }
     `);
     expect(bundle.bindings).toEqual([
-      expect.objectContaining({ runtime: "pi", mechanism: "pi.extension", strength: "enforced" }),
-      expect.objectContaining({ runtime: "qoder", mechanism: "pi.extension", strength: "enforced" }),
+      expect.objectContaining({ runtime: "pi", strength: "unsupported" }),
+      expect.objectContaining({ runtime: "qoder", strength: "unsupported" }),
     ]);
   });
 
-  it("defaults an omitted binding mechanism and strength to advisory prompt guidance", async () => {
+  it("keeps an empty binding as a non-veto deployment overlay", async () => {
     const bundle = await compile(`
       skill gate { description "Verify first." }
       binding gate for pi {}
     `);
     expect(bundle.bindings[0]).toMatchObject({
       runtime: "pi",
-      mechanism: "prompt-preamble",
+      mechanism: "deployment-veto",
       strength: "advisory",
     });
   });
@@ -127,7 +127,6 @@ describe("progressive-disclosure sugar", () => {
       workflow solo { stop when coder.done }
       runtime prime {
         adapter "@harness/adapter-prime"
-        execution programmatic.python { repl persistent }
       }
       harness run {
         workflow solo
@@ -139,14 +138,14 @@ describe("progressive-disclosure sugar", () => {
     expect(revision!.target).toMatchObject({
       runtime: "prime",
       adapter: "@harness/adapter-prime",
-      execution: { style: "programmatic", language: "python", options: [{ key: "repl", value: "persistent" }] },
+      execution: { style: "tool-calling" },
     });
   });
 
   it("still reports duplicate runtimes within a single multi-runtime binding", async () => {
     const result = await compileHarness(`
       skill gate { description "Verify first." }
-      binding gate for [pi, pi] { strength advisory }
+      binding gate for [pi, pi] { unsupported }
     `);
     expect(result.bundle).toBeUndefined();
     expect(

@@ -4,6 +4,17 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { handleAguiRun, type HarnessUiExecutorFactory } from "@qoder-ai/harness-ui";
+import { PiSdkExecutor, QoderSdkExecutor } from "@qoder-ai/harness/exec";
+
+const builtInExecutorFactory: HarnessUiExecutorFactory = (context) => {
+  if (context.runtimeId === "qoder") {
+    return new QoderSdkExecutor({ onRunEvent: context.onRunEvent });
+  }
+  if (context.runtimeId === "pi") {
+    return new PiSdkExecutor({ onRunEvent: context.onRunEvent });
+  }
+  throw new Error(`No built-in executor for runtime '${context.runtimeId}'.`);
+};
 
 const CONTENT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -66,7 +77,7 @@ async function route(
         ...(options.harnessId !== undefined ? { harnessId: options.harnessId } : {}),
         ...(options.runtimeId !== undefined ? { runtimeId: options.runtimeId } : {}),
         ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
-        ...(options.executorFactory !== undefined ? { executorFactory: options.executorFactory } : {}),
+        executorFactory: options.executorFactory ?? builtInExecutorFactory,
       });
       return;
     }

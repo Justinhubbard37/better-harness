@@ -40,6 +40,8 @@ export interface ResolveOptions {
     | ((runtimeId: string) => AdapterRealizationDescriptor | undefined);
   /** Content locks for declared capability sources, from `lockCapabilitySources`. */
   sourceLocks?: readonly SourceLock[];
+  /** Provenance link to a HarnessComponentSnapshotV1, included in the revision hash. */
+  componentSnapshotRef?: { snapshotId: string; digest: string };
 }
 
 export interface ResolveResult {
@@ -180,6 +182,9 @@ export function resolveHarness(
     requestedPermissions: mergePermissions(enabledCapabilities),
     settings: harness.settings,
     sourceLocks,
+    ...(options.componentSnapshotRef !== undefined
+      ? { componentSnapshotRef: { ...options.componentSnapshotRef } }
+      : {}),
   };
   // Frozen at the boundary: a revision handed to an executor is a run fact, and
   // an executor that can edit it can also invalidate its own evidence.
@@ -306,8 +311,7 @@ function selectRuntime(
 }
 
 /**
- * A workflow must be deployable twice over: the runtime has to expose the right
- * calling style, and the adapter has to be able to drive the control flow. A
+ * A workflow must be deployable against adapter-owned execution facts. A
  * programmatic controller that nobody executes is a resolution failure, not a
  * silent no-op.
  */
@@ -321,17 +325,11 @@ function checkWorkflowDeployability(
 ): void {
   if (workflow.mode === "programmatic") {
     const language = workflow.program?.language ?? "unknown";
-    if (runtime.execution.style !== "programmatic") {
+    if (!descriptor.programmaticLanguages.includes(language)) {
       errors.push(
         `Workflow '${workflow.id}' is programmatic (${language}), but runtime '${runtime.id}' ` +
-          `exposes tool-calling execution. Declare a runtime with 'execution ` +
-          `programmatic.${language}', or drive the workflow externally over ACP.`,
-      );
-    } else if (runtime.execution.language !== language) {
-      errors.push(
-        `Workflow '${workflow.id}' is programmatic (${language}), but runtime '${runtime.id}' ` +
-          `executes programmatic.${runtime.execution.language}. Author the workflow in the ` +
-          `runtime's native language or restrict deployment targets.`,
+          `uses adapter '${descriptor.adapterId}', whose descriptor does not list ` +
+          `programmatic language '${language}'.`,
       );
     }
   }

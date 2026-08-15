@@ -37,4 +37,3 @@ export {
   type HarnessUiServerOptions,
   type StartedHarnessUiServer,
 } from "./server.js";
-export { parseHarnessUiArgs, runHarnessUiCli, type HarnessUiCliIo } from "./cli.js";

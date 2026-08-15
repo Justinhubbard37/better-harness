@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import type { HarnessCompareVerdict } from "@qoder-ai/harness";
+import type { HarnessCompareVerdict } from "@qoder-ai/harness/compare";
 import { CompareVerdictError, parseVerdict, summarizeVerdict } from "../src/app/compare-model.js";
 
 export const FIXTURE_VERDICT = JSON.parse(

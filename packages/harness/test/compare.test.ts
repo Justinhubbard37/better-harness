@@ -9,7 +9,9 @@ import { loadHarnessCompareManifest, resolveHarnessCompareRuntime } from "../src
 import { createBoundedQoderPermissionCallback, type ToolPermissionDecision } from "../src/compare/permissions.js";
 import { npmInvocation, runCommand } from "../src/compare/process.js";
 import { runHarnessComparison } from "../src/compare/runner.js";
+import { trustedFixtureEnvironment } from "../src/compare/sandbox.js";
 import { parseHarnessCompareVerdict } from "../src/compare/verdict.js";
+import { parseHarnessCompareVerdictDirectory } from "../src/compare/verdict-directory.js";
 
 const EXPERIMENT_URL = new URL("../examples/readme-compare/experiment.json", import.meta.url);
 const MINIMAL_EXPERIMENT_URL = new URL(
@@ -106,6 +108,17 @@ describe("bounded Qoder permissions", () => {
 });
 
 describe("validation command execution", () => {
+  it("drops credential canaries from the trusted-fixture child environment", () => {
+    const env = trustedFixtureEnvironment({
+      PATH: "/bin",
+      HOME: "/tmp/home",
+      GITHUB_TOKEN: "secret",
+      AWS_SECRET_ACCESS_KEY: "secret",
+    });
+
+    expect(env).toEqual({ PATH: "/bin", HOME: "/tmp/home" });
+  });
+
   it("runs npm without a shell on this host", async () => {
     const directory = await makeTemporaryDirectory();
     const invocation = npmInvocation(["--version"]);
@@ -113,6 +126,7 @@ describe("validation command execution", () => {
     const result = await runCommand(invocation.command, invocation.args, {
       cwd: directory,
       timeoutMs: 60_000,
+      env: process.env,
     });
 
     expect(result.exitCode).toBe(0);
@@ -136,6 +150,14 @@ describe("README coding comparison", () => {
       manifestHash: "manifest",
       fixtureHash: "fixture",
       harnessHash: "harness",
+      sandbox: {
+        policy: "trusted-fixture",
+        envPolicy: "allowlist",
+        envKeys: [],
+        networkPolicy: "unverified",
+        fsScope: "trial-root",
+        permissionFlags: [],
+      },
       matchedPairs: { pairs: 0, candidateWins: 0, baselineWins: 0, ties: 0, meanScoreDelta: 0 },
       baseline: {
         trials: 1,
@@ -272,6 +294,25 @@ describe("README coding comparison", () => {
       classification: "passed",
       changedFiles: ["README.md"],
       grade: { passed: true, score: 100 },
+      sandbox: {
+        policy: "trusted-fixture",
+        envPolicy: "allowlist",
+        networkPolicy: "unverified",
+        fsScope: "trial-root",
+      },
+    });
+    expect(await parseHarnessCompareVerdictDirectory(output)).toEqual(verdict);
+    expect(JSON.parse(await readFile(join(output, "H1/revision.json"), "utf8"))).toMatchObject({
+      revisionId: candidateTrial?.revisionId,
+    });
+    expect(JSON.parse(await readFile(join(output, "H1/resolution-report.json"), "utf8"))).toMatchObject({
+      status: "resolved",
+    });
+    expect(JSON.parse(await readFile(join(output, "H1/materialization-receipt.json"), "utf8"))).toMatchObject({
+      revisionId: candidateTrial?.revisionId,
+    });
+    expect(JSON.parse(await readFile(join(output, "H1/trial-001/sandbox-receipt.json"), "utf8"))).toMatchObject({
+      networkPolicy: "unverified",
     });
     expect(await readFile(join(output, "H1/trial-001/patch.diff"), "utf8")).toContain("README.md");
     expect(await readFile(join(output, "H1/trial-001/patch.diff"), "utf8")).toContain("+# Retry Kit");

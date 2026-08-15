@@ -123,19 +123,21 @@ export interface CapabilityBinding extends langium.AstNode {
     readonly $container: HarnessDocument;
     readonly $type: 'CapabilityBinding';
     capability: QualifiedName;
-    mechanism?: QualifiedName;
+    legacyMechanism?: QualifiedName;
+    legacyStrength?: Strength;
     notes?: string;
     runtimes: Array<string>;
-    strength?: Strength;
+    unsupported: boolean;
 }
 
 export const CapabilityBinding = {
     $type: 'CapabilityBinding',
     capability: 'capability',
-    mechanism: 'mechanism',
+    legacyMechanism: 'legacyMechanism',
+    legacyStrength: 'legacyStrength',
     notes: 'notes',
     runtimes: 'runtimes',
-    strength: 'strength'
+    unsupported: 'unsupported'
 } as const;
 
 export function isCapabilityBinding(item: unknown): item is CapabilityBinding {
@@ -718,8 +720,12 @@ export class HarnessAstReflection extends langium.AbstractAstReflection {
                 capability: {
                     name: CapabilityBinding.capability
                 },
-                mechanism: {
-                    name: CapabilityBinding.mechanism,
+                legacyMechanism: {
+                    name: CapabilityBinding.legacyMechanism,
+                    optional: true
+                },
+                legacyStrength: {
+                    name: CapabilityBinding.legacyStrength,
                     optional: true
                 },
                 notes: {
@@ -730,8 +736,9 @@ export class HarnessAstReflection extends langium.AbstractAstReflection {
                     name: CapabilityBinding.runtimes,
                     defaultValue: []
                 },
-                strength: {
-                    name: CapabilityBinding.strength,
+                unsupported: {
+                    name: CapabilityBinding.unsupported,
+                    defaultValue: false,
                     optional: true
                 }
             },

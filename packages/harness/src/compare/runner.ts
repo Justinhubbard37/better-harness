@@ -15,8 +15,9 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { compileHarness } from "../compiler/compile.js";
 import type { HarnessExecutor, HarnessRunResult } from "../exec/executor.js";
 import { QoderSdkAdapter, QoderSdkExecutor } from "../exec/qoder-sdk.js";
+import { prepareMaterialization } from "../exec/materialization.js";
 import { canonicalJson, sha256Hex } from "../ir/canonical.js";
-import type { HarnessIrBundle, HarnessRevision } from "../ir/index.js";
+import type { HarnessIrBundle, HarnessRevision, ResolutionReport } from "../ir/index.js";
 import { resolveHarness } from "../resolver/resolve.js";
 import {
   aggregateVariant,
@@ -43,7 +44,7 @@ import {
   createBoundedQoderPermissionCallback,
   type ToolPermissionDecision,
 } from "./permissions.js";
-import { runCommand } from "./process.js";
+import { createTrustedFixtureSandbox, sandboxPolicyLabel, type TrialSandbox } from "./sandbox.js";
 
 export type {
   CompareDecisionPolicy,
@@ -101,7 +102,7 @@ export async function runHarnessComparison(options: {
   await prepareEmptyOutput(outputDirectory);
   const harnessSource = await readFile(loaded.resolved.harness, "utf8");
   const prompt = await readFile(loaded.resolved.prompt, "utf8");
-  const { bundle, revisions } = await compileAndResolveVariants(loaded, harnessSource);
+  const { bundle, revisions, reports } = await compileAndResolveVariants(loaded, harnessSource);
   const fixtureBefore = await snapshotDirectory(loaded.resolved.fixture);
   if (fixtureBefore.some((item) => item.kind === "symlink")) {
     throw new Error("Frozen compare fixtures may not contain symbolic links.");
@@ -127,6 +128,20 @@ export async function runHarnessComparison(options: {
     expectedFiles: loaded.value.task.expectedFiles,
     graderContractHash: sha256Hex(await readFile(loaded.resolved.graderContract, "utf8")),
   });
+  for (const variant of ["baseline", "candidate"] as const) {
+    const variantDirectory = join(outputDirectory, variant === "baseline" ? "H0" : "H1");
+    await mkdir(variantDirectory, { recursive: true });
+    await writeJson(join(variantDirectory, "revision.json"), revisions[variant]);
+    await writeJson(join(variantDirectory, "resolution-report.json"), reports[variant]);
+    await writeJson(
+      join(variantDirectory, "materialization-receipt.json"),
+      prepareMaterialization(
+        revisions[variant],
+        bundle,
+        comparisonAdapterDescriptor(resolveHarnessCompareRuntime(loaded.value, variant)),
+      ),
+    );
+  }
 
   const results: CompareTrialResult[] = [];
   for (const job of jobs) {
@@ -163,6 +178,7 @@ export async function runHarnessComparison(options: {
     manifestHash,
     fixtureHash,
     harnessHash,
+    sandbox: results[0]?.sandbox ?? createTrustedFixtureSandbox().describe(),
     baseline,
     candidate,
     matchedPairs,
@@ -179,6 +195,7 @@ async function compileAndResolveVariants(
 ): Promise<{
   bundle: HarnessIrBundle;
   revisions: Record<CompareVariant, HarnessRevision>;
+  reports: Record<CompareVariant, ResolutionReport>;
 }> {
   const compiled = await compileHarness([{ uri: pathToMemoryUri(loaded.resolved.harness), text: harnessSource }]);
   if (!compiled.bundle) {
@@ -186,6 +203,7 @@ async function compileAndResolveVariants(
     throw new Error(`Harness compilation failed:\n${diagnostics}`);
   }
   const revisions = {} as Record<CompareVariant, HarnessRevision>;
+  const reports = {} as Record<CompareVariant, ResolutionReport>;
   for (const variant of ["baseline", "candidate"] as const) {
     const harnessId = loaded.value.variants[variant];
     const runtime = resolveHarnessCompareRuntime(loaded.value, variant);
@@ -201,8 +219,9 @@ async function compileAndResolveVariants(
       );
     }
     revisions[variant] = resolved.revision;
+    reports[variant] = resolved.report;
   }
-  return { bundle: compiled.bundle, revisions };
+  return { bundle: compiled.bundle, revisions, reports };
 }
 
 function comparisonAdapterDescriptor(runtime: ResolvedHarnessCompareRuntime) {
@@ -244,6 +263,7 @@ async function runTrial(options: {
   const permissionDecisions: ToolPermissionDecision[] = [];
   const traceEvents: unknown[] = [];
   const started = Date.now();
+  const sandbox = createTrustedFixtureSandbox();
   let execution: HarnessRunResult = {
     host: "qoder",
     revisionId: options.revision.revisionId,
@@ -257,7 +277,7 @@ async function runTrial(options: {
     try {
       await cp(options.loaded.resolved.fixture, trialRoot, { recursive: true, errorOnExist: true, force: false });
       const before = await snapshotDirectory(trialRoot);
-      await initializeGitRepository(trialRoot, temporaryParent);
+      await initializeGitRepository(trialRoot, temporaryParent, sandbox);
       const abortController = new AbortController();
       const executor = options.executorFactory({
         runtime,
@@ -286,14 +306,14 @@ async function runTrial(options: {
       }
       const after = await snapshotDirectory(trialRoot);
       const changedFiles = diffSnapshots(before, after);
-      const patch = await capturePatch(trialRoot);
+      const patch = await capturePatch(trialRoot, sandbox);
       await writeFile(join(artifactDirectory, "prompt.txt"), options.prompt, "utf8");
       await writeFile(join(artifactDirectory, "response.txt"), execution.output, "utf8");
       await writeFile(join(artifactDirectory, "stderr.txt"), redactRoot(execution.errorOutput, trialRoot), "utf8");
       await writeFile(join(artifactDirectory, "patch.diff"), redactRoot(patch, trialRoot), "utf8");
       await writeTrace(
         join(artifactDirectory, "trace.jsonl"),
-        execution.trace && execution.trace.length > 0 ? execution.trace : traceEvents,
+        traceEvents.length > 0 ? traceEvents : execution.trace ?? [],
         trialRoot,
       );
       await writeJson(join(artifactDirectory, "permission-decisions.json"), permissionDecisions);
@@ -302,6 +322,7 @@ async function runTrial(options: {
         contractPath: options.loaded.resolved.graderContract,
         changedFiles,
         expectedFiles: options.loaded.value.task.expectedFiles,
+        sandbox,
       });
       await writeJson(join(artifactDirectory, "validation.json"), grade);
       const classification = classifyTrial(execution, grade, infrastructureError);
@@ -318,12 +339,14 @@ async function runTrial(options: {
         revisionId: options.revision.revisionId,
         durationMs: Date.now() - started,
         artifactDirectory: trialArtifactPath(variantDirectory, options.trial),
+        sandbox: sandbox.describe(),
         ...(execution.metrics ? { metrics: execution.metrics } : {}),
       };
       await writeJson(join(artifactDirectory, "runtime-receipt.json"), execution.runtimeReceipt ?? {
         executor: "injected-test-executor",
         permissionCallback: "none",
       });
+      await writeJson(join(artifactDirectory, "sandbox-receipt.json"), result.sandbox);
       await writeJson(join(artifactDirectory, "metrics.json"), trialSummary(result));
       return result;
     } catch (error) {
@@ -340,6 +363,7 @@ async function runTrial(options: {
         durationMs: Date.now() - started,
         detail: redactRoot(errorMessage(error), trialRoot),
         permissionDecisions,
+        sandbox,
       });
     }
   } finally {
@@ -358,6 +382,7 @@ async function recordInfrastructureFailure(options: {
   durationMs: number;
   detail: string;
   permissionDecisions: ToolPermissionDecision[];
+  sandbox: TrialSandbox;
 }): Promise<CompareTrialResult> {
   const result: CompareTrialResult = {
     variant: options.variant,
@@ -383,10 +408,13 @@ async function recordInfrastructureFailure(options: {
     revisionId: options.revisionId,
     durationMs: options.durationMs,
     artifactDirectory: trialArtifactPath(options.variantDirectory, options.trial),
+    sandbox: options.sandbox.describe(),
   };
   await writeFile(join(options.artifactDirectory, "stderr.txt"), `${options.detail}\n`, "utf8").catch(() => undefined);
   await writeJson(join(options.artifactDirectory, "validation.json"), result.grade).catch(() => undefined);
   await writeJson(join(options.artifactDirectory, "permission-decisions.json"), options.permissionDecisions)
+    .catch(() => undefined);
+  await writeJson(join(options.artifactDirectory, "sandbox-receipt.json"), result.sandbox)
     .catch(() => undefined);
   await writeJson(join(options.artifactDirectory, "metrics.json"), trialSummary(result)).catch(() => undefined);
   return result;
@@ -421,7 +449,7 @@ function defaultExecutorFactory(context: CompareExecutorContext): HarnessExecuto
     ...(context.runtime.model ? { model: context.runtime.model } : {}),
     enableFileCheckpointing: context.runtime.enableFileCheckpointing,
     abortController: context.abortController,
-    onTraceEvent: (event) => context.traceEvents.push(event),
+    onRunEvent: (event) => context.traceEvents.push(event),
   });
 }
 
@@ -444,7 +472,7 @@ function assertOutputSeparated(outputDirectory: string, fixtureDirectory: string
   }
 }
 
-async function initializeGitRepository(root: string, temporaryParent: string): Promise<void> {
+async function initializeGitRepository(root: string, temporaryParent: string, sandbox: TrialSandbox): Promise<void> {
   const hooks = join(temporaryParent, "empty-hooks");
   await mkdir(hooks);
   const commands: string[][] = [
@@ -458,27 +486,27 @@ async function initializeGitRepository(root: string, temporaryParent: string): P
     ],
   ];
   for (const args of commands) {
-    const result = await runCommand("git", args, { cwd: root, timeoutMs: 30_000 });
+    const result = await sandbox.run("git", args, { cwd: root, timeoutMs: 30_000 });
     if (result.exitCode !== 0) {
       throw new Error(`Cannot initialize isolated Git fixture: ${result.stderr || result.stdout}`);
     }
   }
 }
 
-async function capturePatch(root: string): Promise<string> {
-  const untracked = await runCommand("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
+async function capturePatch(root: string, sandbox: TrialSandbox): Promise<string> {
+  const untracked = await sandbox.run("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
     cwd: root,
     timeoutMs: 30_000,
   });
   if (untracked.exitCode !== 0) throw new Error(`Cannot inspect untracked trial files: ${untracked.stderr}`);
   for (const path of untracked.stdout.split("\0").filter(Boolean).sort()) {
-    const intent = await runCommand("git", ["add", "--intent-to-add", "--", path], {
+    const intent = await sandbox.run("git", ["add", "--intent-to-add", "--", path], {
       cwd: root,
       timeoutMs: 30_000,
     });
     if (intent.exitCode !== 0) throw new Error(`Cannot mark untracked file '${path}' for diff: ${intent.stderr}`);
   }
-  const result = await runCommand("git", ["diff", "--binary", "--no-ext-diff", "--", "."], {
+  const result = await sandbox.run("git", ["diff", "--binary", "--no-ext-diff", "--", "."], {
     cwd: root,
     timeoutMs: 30_000,
   });
@@ -613,6 +641,7 @@ function renderVerdictHtml(verdict: HarnessCompareVerdict): string {
   return `<!doctype html>\n<html lang="en"><meta charset="utf-8"><title>Harness compare verdict</title>` +
     `<style>body{font:16px system-ui;max-width:900px;margin:3rem auto;padding:0 1rem}table{border-collapse:collapse}th,td{border:1px solid #bbb;padding:.5rem;text-align:left}.status{font-size:1.4rem}</style>` +
     `<body><h1>Harness compare verdict</h1><p class="status"><strong>${escapeHtml(verdict.status)}</strong>: ${escapeHtml(verdict.reason)}</p>` +
+    `<p>Sandbox: <strong>${escapeHtml(sandboxPolicyLabel(verdict.sandbox))}</strong>.</p>` +
     `<p>Treatment axis <code>${escapeHtml(verdict.treatmentAxis)}</code>; matched pairs ${pairs.pairs} ` +
     `(candidate ${pairs.candidateWins}, baseline ${pairs.baselineWins}, ties ${pairs.ties}, ` +
     `mean score delta ${pairs.meanScoreDelta}); minimum required ${verdict.policy.minimumMatchedPairs}.</p>` +

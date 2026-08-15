@@ -1524,6 +1524,16 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
             "value": "{"
           },
           {
+            "$type": "Assignment",
+            "feature": "unsupported",
+            "operator": "?=",
+            "terminal": {
+              "$type": "Keyword",
+              "value": "unsupported"
+            },
+            "cardinality": "?"
+          },
+          {
             "$type": "Group",
             "elements": [
               {
@@ -1532,7 +1542,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
               },
               {
                 "$type": "Assignment",
-                "feature": "mechanism",
+                "feature": "legacyMechanism",
                 "operator": "=",
                 "terminal": {
                   "$type": "RuleCall",
@@ -1554,7 +1564,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
               },
               {
                 "$type": "Assignment",
-                "feature": "strength",
+                "feature": "legacyStrength",
                 "operator": "=",
                 "terminal": {
                   "$type": "RuleCall",

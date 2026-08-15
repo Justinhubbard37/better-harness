@@ -45,18 +45,6 @@ const SOURCE = `
       require tool workspace.read
     }
   }
-  binding impact-analysis for [qoder, pi] {
-    mechanism prompt-preamble
-    strength advisory
-  }
-  binding verification-before-complete for qoder {
-    mechanism qoder.stop-hook
-    strength enforced
-  }
-  binding verification-before-complete for pi {
-    mechanism pi.extension
-    strength enforced
-  }
   target qoder
   target pi
 `;
@@ -387,7 +375,7 @@ describe("QoderSdkExecutor", () => {
     expect(loaded).toBe(false);
   });
 
-  it("reports declared native strength as an advisory degradation", async () => {
+  it("reports descriptor-backed advisory delivery as a degradation", async () => {
     const { bundle, revision } = await resolveFor("qoder");
     const executor = new QoderSdkExecutor({
       loadSdk: async () => fakeQoderSdk(newFakeSession(), () => [{ type: "result", subtype: "success" }]),
@@ -397,7 +385,7 @@ describe("QoderSdkExecutor", () => {
 
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]).toContain("verification-before-complete");
-    expect(result.warnings[0]).toContain("stop-hook");
+    expect(result.warnings[0]).toContain("prompt-preamble");
     expect(result.materialization?.capabilities).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

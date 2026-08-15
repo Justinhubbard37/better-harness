@@ -1,7 +1,19 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { PiSdkExecutor, QoderSdkExecutor } from "@qoder-ai/harness/exec";
+import type { HarnessUiExecutorFactory } from "./run.js";
 import { startHarnessUiServer } from "./server.js";
+
+const builtInExecutorFactory: HarnessUiExecutorFactory = (context) => {
+  if (context.runtimeId === "qoder") {
+    return new QoderSdkExecutor({ onRunEvent: context.onRunEvent });
+  }
+  if (context.runtimeId === "pi") {
+    return new PiSdkExecutor({ onRunEvent: context.onRunEvent });
+  }
+  throw new Error(`No built-in executor for runtime '${context.runtimeId}'.`);
+};
 
 const HELP = `harness-ui — serve a .harness assembly over the AG-UI protocol
 
@@ -122,6 +134,7 @@ export async function runHarnessUiCli(argv: string[], io: HarnessUiCliIo): Promi
   const source = await readFile(parsed.file, "utf8");
   const started = await startHarnessUiServer({
     source,
+    executorFactory: builtInExecutorFactory,
     port: parsed.port,
     host: parsed.host,
     ...(parsed.harness !== undefined ? { harnessId: parsed.harness } : {}),

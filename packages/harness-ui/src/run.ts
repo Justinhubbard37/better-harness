@@ -1,14 +1,14 @@
 import {
   compileHarness,
   describeBuiltInAdapter,
-  PiSdkExecutor,
-  QoderSdkExecutor,
   resolveHarness,
   type AdapterRealizationDescriptor,
-  type HarnessExecutor,
-  type HarnessRunEventListener,
-  type HarnessRunResult,
 } from "@qoder-ai/harness";
+import type {
+  HarnessExecutor,
+  HarnessRunEventListener,
+  HarnessRunResult,
+} from "@qoder-ai/harness/exec";
 import type { AguiEvent } from "./protocol.js";
 import { createAguiTranslator } from "./translate.js";
 
@@ -36,7 +36,7 @@ export interface HarnessAguiRunOptions {
   threadId: string;
   runId: string;
   onEvent: (event: AguiEvent) => void;
-  executorFactory?: HarnessUiExecutorFactory;
+  executorFactory: HarnessUiExecutorFactory;
   /**
    * Realization facts for the runtime that resolves. Defaults to the adapters
    * this package ships; an injected executor that reaches a different host must
@@ -48,19 +48,6 @@ export interface HarnessAguiRunOptions {
 export interface HarnessAguiRunSummary {
   ok: boolean;
   result?: HarnessRunResult;
-}
-
-function defaultExecutorFactory(context: HarnessUiExecutorContext): HarnessExecutor {
-  switch (context.runtimeId) {
-    case "qoder":
-      return new QoderSdkExecutor({ onRunEvent: context.onRunEvent });
-    case "pi":
-      return new PiSdkExecutor({ onRunEvent: context.onRunEvent });
-    default:
-      throw new Error(
-        `No default v0.2 executor for runtime '${context.runtimeId}'; inject an executorFactory.`,
-      );
-  }
 }
 
 /**
@@ -111,8 +98,7 @@ export async function runHarnessAgui(options: HarnessAguiRunOptions): Promise<Ha
     host: revision.target.runtime,
   }));
   try {
-    const executorFactory = options.executorFactory ?? defaultExecutorFactory;
-    const executor = executorFactory({
+    const executor = options.executorFactory({
       runtimeId: revision.target.runtime,
       onRunEvent: (event) => deliver(translator.translate(event)),
     });

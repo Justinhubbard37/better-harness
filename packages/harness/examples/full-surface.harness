@@ -88,37 +88,18 @@ harness scripted-surface {
 
 runtime prime {
   adapter "@harness/adapter-prime"
-  execution programmatic.python {
-    repl persistent
-  }
 }
 
 runtime deepseek {
   adapter "@harness/adapter-deepseek"
-  execution programmatic.typescript {
-    mode code
-  }
 }
 
 runtime pi {
   adapter "@harness/adapter-pi"
-  execution tool-calling
 }
 
 target qoder uses adapter.qoder
 target pi
 
-// Host-native assets stay in the host's own namespace behind the adapter.
-binding repository-grounding for qoder {
-  mechanism prompt-preamble
-  strength advisory
-  notes "Prompt guidance is the v0.2 materialization boundary."
-}
-binding repository-grounding for [pi, prime] {
-  mechanism pi.skill-package
-  strength advisory
-}
-binding workspace.read for qoder { mechanism qoder.plugin strength wired }
-binding process.exec for deepseek { mechanism deepseek.plugin strength enforced }
-binding package-registry for pi { mechanism pi.extension strength wired }
-binding inline-guidance for qoder { mechanism unavailable strength unsupported }
+// Bindings are deployment vetoes. Adapter descriptors own realization facts.
+binding inline-guidance for qoder { unsupported }

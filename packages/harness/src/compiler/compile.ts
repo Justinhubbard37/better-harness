@@ -5,7 +5,6 @@ import {
   type CapabilityBinding,
   type CapabilityUse,
   type ConfigValue,
-  type ExecutionSpec,
   type HarnessDeclaration,
   type HarnessDocument,
   type McpDeclaration,
@@ -64,8 +63,6 @@ export interface HarnessSource {
 
 const DURATION_FACTORS: Record<string, number> = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 };
 
-/** Default mechanism for a capability without a binding: prompt guidance. */
-const DEFAULT_MECHANISM = "prompt-preamble";
 /** Default strength for a binding or requirement that omits one. */
 const DEFAULT_STRENGTH: Strength = "advisory";
 
@@ -258,6 +255,16 @@ function collectBundleDiagnostics(
         }
       } else if (isRuntimeDeclaration(element)) {
         recordUnique(runtimes, element.name, "runtime", source, line);
+        if (element.execution !== undefined) {
+          diagnostics.push({
+            severity: "warning",
+            message:
+              `Runtime '${element.name}' uses deprecated 'execution' syntax; execution ` +
+              "capabilities belong to the adapter descriptor and this declaration has no effect.",
+            source,
+            ...(line !== undefined ? { line: line + 1 } : {}),
+          });
+        }
         if (element.execution !== undefined && isProgrammaticExecution(element.execution)) {
           recordRepeatedValues(
             element.execution.options.map((option) => option.key),
@@ -283,6 +290,16 @@ function collectBundleDiagnostics(
           );
         }
       } else if (isCapabilityBinding(element)) {
+        if (element.legacyMechanism !== undefined || element.legacyStrength !== undefined) {
+          diagnostics.push(
+            semanticDiagnostic(
+              `Binding '${element.capability}' declares realization mechanism or strength, but ` +
+                "those facts belong to the adapter descriptor; keep only 'unsupported' as a deployment veto.",
+              source,
+              line,
+            ),
+          );
+        }
         for (const runtime of element.runtimes) {
           recordUnique(
             bindings,
@@ -581,24 +598,13 @@ function lowerWorkflow(workflow: WorkflowDeclaration): WorkflowIr {
   };
 }
 
-function lowerExecution(execution: ExecutionSpec | undefined): ExecutionIr {
-  if (execution === undefined || !isProgrammaticExecution(execution)) {
-    return { style: "tool-calling" };
-  }
-  return {
-    style: "programmatic",
-    language: execution.language,
-    options: execution.options.map((option) => ({ key: option.key, value: option.value })),
-  };
-}
-
 function lowerRuntime(runtime: RuntimeDeclaration): RuntimeIr {
   return {
     irVersion: IR_VERSION,
     kind: "runtime",
     id: runtime.name,
     adapter: runtime.adapter,
-    execution: lowerExecution(runtime.execution),
+    execution: { style: "tool-calling" },
   };
 }
 
@@ -644,8 +650,8 @@ function lowerBinding(binding: CapabilityBinding): CapabilityBindingIr[] {
     kind: "capability-binding",
     capabilityId: binding.capability,
     runtime,
-    mechanism: binding.mechanism ?? DEFAULT_MECHANISM,
-    strength: (binding.strength ?? DEFAULT_STRENGTH) as Strength,
+    mechanism: "deployment-veto",
+    strength: binding.unsupported ? "unsupported" : "advisory",
     ...(binding.notes !== undefined ? { notes: binding.notes } : {}),
   }));
 }

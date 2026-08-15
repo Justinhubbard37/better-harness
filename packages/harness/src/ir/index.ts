@@ -376,6 +376,11 @@ export const HarnessRevisionSchema = Type.Object(
     settings: Type.Array(ConfigEntrySchema),
     /** Empty unless the caller locked capability sources at resolve time. */
     sourceLocks: Type.Array(SourceLockSchema),
+    /** Optional link to the project-component inventory this revision was resolved against. */
+    componentSnapshotRef: Type.Optional(Type.Object(
+      { snapshotId: Type.String(), digest: Type.String() },
+      { additionalProperties: false },
+    )),
   },
   { additionalProperties: false },
 );

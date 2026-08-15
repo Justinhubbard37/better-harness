@@ -1,6 +1,6 @@
 import { request as httpRequest } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
-import { HarnessRunEmitter, type HarnessExecutor } from "@qoder-ai/harness";
+import { HarnessRunEmitter, type HarnessExecutor } from "@qoder-ai/harness/exec";
 import { decodeSseStream } from "../src/sse.js";
 import { parseHarnessUiArgs, runHarnessUiCli } from "../src/cli.js";
 import { startHarnessUiServer, type StartedHarnessUiServer } from "../src/server.js";

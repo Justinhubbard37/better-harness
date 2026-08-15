@@ -61,6 +61,23 @@ afterEach(async () => {
 });
 
 describe("revision execution closure", () => {
+  it("hashes the optional component snapshot cross-reference", async () => {
+    const bundle = await compileBundle(source("Map the blast radius before editing."));
+    const descriptor = new QoderSdkAdapter().describe();
+    const first = resolveHarness(bundle, "assembly", "qoder", {
+      adapter: descriptor,
+      componentSnapshotRef: { snapshotId: "snapshot-1", digest: "sha256:abc" },
+    }).revision!;
+    const second = resolveHarness(bundle, "assembly", "qoder", {
+      adapter: descriptor,
+      componentSnapshotRef: { snapshotId: "snapshot-1", digest: "sha256:def" },
+    }).revision!;
+
+    expect(first.componentSnapshotRef).toEqual({ snapshotId: "snapshot-1", digest: "sha256:abc" });
+    expect(first.revisionId).not.toBe(second.revisionId);
+    expect(() => assertRevisionIntegrity(first)).not.toThrow();
+  });
+
   it("refuses execution against a bundle the revision was not resolved from", async () => {
     const resolvedBundle = await compileBundle(source("Map the blast radius before editing."));
     const otherBundle = await compileBundle(source("Skip the analysis and start editing."));

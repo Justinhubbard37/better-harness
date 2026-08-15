@@ -21,15 +21,14 @@ The core DSL has host-neutral semantics only:
   knowledge ([Agent Skills](https://agentskills.io/specification)), atomic
   callables, and capability connections.
 - `runtime` — a concrete host (Qoder, Pi, DeepSeek Harness, Prime Agent)
-  with an adapter and an execution style (`tool-calling` or
-  `programmatic.<language>`).
+  and its adapter package.
 - `target` — deployment statement selecting a runtime.
-- `binding` — the adapter layer mapping one capability onto one runtime.
+- `binding` — an optional deployment veto marking a capability unsupported on
+  one or more runtimes.
 
-There is **no generic `plugin`** in the core DSL. Host plugin and extension
-concepts stay in the host's own namespace as binding mechanisms —
-`qoder.plugin`, `pi.extension`, `deepseek.plugin`, `prime.python-skill` —
-behind the runtime's adapter.
+There is **no generic `plugin`** in the core DSL. Host mechanisms, realization
+strength, and programmatic language support are facts owned by the pure-data
+adapter descriptor registry, not by harness authors.
 
 ## The smallest harness
 
@@ -65,10 +64,10 @@ conventional `@harness/adapter-<id>` package. The rest of the language is
 | When you need… | Add… |
 | --- | --- |
 | Multi-role control flow | `workflow` edges: `author -> verifier`, `on verifier.failed -> author`, `stop when verifier.passed` |
-| A programmatic controller | `workflow x { program deno "./flows/loop.ts" }` plus a runtime with matching `execution programmatic.<language>` |
+| A programmatic controller | `workflow x { program deno "./flows/loop.ts" }` plus an adapter descriptor that lists `deno` |
 | Atomic callables | `require tool workspace.read` (undeclared tools become implicit contracts) |
 | External capability servers | `mcp registry { transport http url env.REGISTRY_MCP }` + `connect mcp registry` |
-| A stronger declared mechanism, or an explicit `unsupported` | a `binding` with a host-namespaced mechanism (`qoder.plugin`, `pi.extension`) |
+| An explicit deployment veto | `binding x for qoder { unsupported }` |
 | The same binding on several runtimes | `binding x for [pi, qoder] { … }` |
 | A stricter floor or fatal degradation | `use skill x { minimum … on-degrade fail }` |
 | The same assembly on another runtime | another `target` — deployment is a target choice, not a harness rewrite |
@@ -99,10 +98,10 @@ sections below document the resolved IR those forms lower into.
 | --- | --- |
 | `SkillIr` / `ToolIr` / `McpIr` | The three capability kinds — host-independent contracts |
 | `WorkflowIr` | Declarative graph (edges, events, stops) or programmatic controller (`program`) |
-| `RuntimeIr` | A concrete host: adapter package plus `tool-calling` or `programmatic.<language>` execution |
+| `RuntimeIr` | A concrete host and adapter package; execution support comes from the descriptor registry |
 | `HarnessSpecIr` | The assembly: workflow reference, agent roles with capability requirements, settings |
 | `TargetIr` | Deployment statement selecting a runtime (adapter synthesized when omitted) |
-| `CapabilityBindingIr` | Adapter mapping: capability × runtime × mechanism × declared strength |
+| `CapabilityBindingIr` | Deployment overlay: capability × runtime, with `unsupported` as the only author-owned strength |
 | `HarnessRevision` | Frozen execution closure: content hashes, adapter contract/version, runtime execution, per-(agent, capability) strengths, requested permissions, source locks |
 | `ResolutionReport` | Requested, declared, and materialized strength for every requirement |
 
@@ -117,9 +116,9 @@ import {
   compileHarness,
   describeBuiltInAdapter,
   resolveHarness,
-  QoderSdkExecutor,
-  highlightHarness,
 } from "@qoder-ai/harness";
+import { QoderSdkExecutor } from "@qoder-ai/harness/exec";
+import { highlightHarness } from "@qoder-ai/harness/highlight";
 
 const compiled = await compileHarness(source);
 if (!compiled.bundle) {
@@ -175,7 +174,7 @@ turns. Each turn emits its own complete run-event sequence and resolves to
 the same `HarnessRunResult` shape as a batch execution.
 
 ```ts
-import { QoderSdkAdapter } from "@qoder-ai/harness";
+import { QoderSdkAdapter } from "@qoder-ai/harness/exec";
 
 const adapter = new QoderSdkAdapter();
 const session = await adapter.doStart({ revision, bundle, workDir: process.cwd() });
@@ -193,29 +192,25 @@ The surface is experimental until `@qoder-ai/harness-studio` adopts it.
 
 [`examples/full-surface.harness`](examples/full-surface.harness) is the compiler
 conformance fixture: it deliberately exercises every v0.2 capability kind,
-transport, execution style, permission, strength, degradation policy, and
+transport, workflow mode, permission, deployment veto, degradation policy, and
 configuration value type.
 
 ## Workflow and execution are independent dimensions
 
-How a workflow is *implemented* (declarative graph vs `program`) is
-independent of how a runtime *exposes capabilities* (tool calling vs
-programmatic calling). Declarative workflows deploy to any runtime. A
-programmatic workflow only resolves against a runtime whose execution is
-`programmatic` in the same language:
+How a workflow is implemented (declarative graph vs `program`) is independent
+of how a runtime exposes capabilities. Declarative workflows deploy to any
+runtime. A programmatic workflow only resolves when the selected adapter
+descriptor lists the same language:
 
 ```harness
 runtime prime {
   adapter "@harness/adapter-prime"
-  execution programmatic.python {
-    repl persistent
-  }
 }
 ```
 
-An arbitrary Deno workflow is never silently translated into Prime's Python;
-resolution fails with instructions to author in the runtime's native language,
-restrict deployment targets, or drive the runtime externally over
+An arbitrary Deno workflow is never silently treated as executable;
+resolution fails unless the adapter registry proves Deno support. The caller
+can select a supporting target or drive the runtime externally over
 [ACP](https://agentclientprotocol.com/get-started/introduction).
 
 ## Compare real coding outcomes
@@ -226,7 +221,11 @@ response equivalent to a successful coding task. The companion
 runtime policy, trial count, and deterministic grader. Each variant/trial runs
 in a separate temporary Git repository and retains the resulting patch,
 redacted SDK trace, runtime receipt, permission decisions, validation details,
-metrics, and aggregate verdict.
+metrics, sandbox receipt, and aggregate verdict. The trusted-fixture sandbox
+uses an environment allowlist for every subprocess. Direct Node probes retain
+permission-model filesystem bounds; package tests can spawn arbitrary scripts,
+so their receipt is honestly labeled **trusted-fixture only — network not
+denied**.
 
 The included benchmark asks both harnesses to create a repository-grounded
 `README.md` and validates the changed-file scope, Markdown structure, local
@@ -332,7 +331,7 @@ the task `cwd`, so changing the agent's working directory cannot retarget a lock
 installable Pi package only for delivered skill capabilities and stamps every
 generated skill with revision provenance.
 
-The Qoder executor uses `@qoder-ai/qoder-agent-sdk` and defaults to
+The Qoder executor uses the optional peer `@qoder-ai/qoder-agent-sdk` and defaults to
 `qodercliAuth()` for local development. A session is one `query()` whose prompt is
 a live stream of user messages, so turn 2 reaches the context turn 1 created;
 `persistSession` controls only whether the host transcript survives the query and
@@ -341,9 +340,9 @@ PAT or service-account auth factory without placing credentials in source or
 logs. The Qoder SDK install script materializes its worker runtime; environments
 that disable dependency scripts must approve that postinstall (or run
 `npm rebuild @qoder-ai/qoder-agent-sdk`) before using `QoderSdkExecutor`. The Pi
-SDK (`@earendil-works/pi-coding-agent`, supported `^0.84.2`) is an optional peer
-dependency; its executor loads it lazily and reports install guidance when
-missing.
+SDK (`@earendil-works/pi-coding-agent`, supported `^0.84.2`) is also optional.
+Both executors load their host SDK lazily and report install guidance when the
+selected peer is missing; compile and resolve users need neither host SDK.
 
 Native plugins and extensions remain declaration-only in v0.2: no shipped
 adapter installs them, so they do not raise effective strength above the

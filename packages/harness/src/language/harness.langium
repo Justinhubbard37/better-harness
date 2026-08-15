@@ -111,10 +111,9 @@ McpEndpoint:
     {infer EnvEndpoint} 'env' '.' variable=ID
   | {infer LiteralEndpoint} value=STRING;
 
-// A concrete host (Qoder, Pi, DeepSeek Harness, Prime Agent): its adapter
-// package and how it exposes capabilities to the model — classic tool
-// calling, or programmatic calling in a host language (Prime's persistent
-// IPython, DeepSeek's TypeScript plugin runtime).
+// A concrete host and the adapter package selected for deployment. Adapter
+// execution facts are registry-owned; the legacy execution clause remains
+// parseable for one deprecation window and has no lowering effect.
 RuntimeDeclaration:
     'runtime' name=ID '{'
         'adapter' adapter=STRING
@@ -135,16 +134,16 @@ ExecutionOption:
 TargetDeclaration:
     'target' runtime=ID ('uses' 'adapter' '.' adapter=ID)?;
 
-// Adapter-layer mapping of one capability onto one or more runtimes. The
-// mechanism is a dotted name so host-native assets stay in the host's own
-// namespace (`qoder.plugin`, `pi.extension`, `deepseek.plugin`,
-// `prime.python-skill`). An omitted binding is prompt guidance at
-// `advisory`, the v0.2 materialization floor.
+// A deployment veto for one capability on one or more runtimes. Realization
+// mechanism and strength are adapter facts. Their legacy clauses remain
+// parseable for one deprecation window so the compiler can reject them with an
+// actionable ownership diagnostic instead of a generic syntax error.
 CapabilityBinding:
     'binding' capability=QualifiedName 'for'
         ( runtimes+=ID | '[' runtimes+=ID (',' runtimes+=ID)* ']' ) '{'
-        ('mechanism' mechanism=QualifiedName)?
-        ('strength' strength=Strength)?
+        (unsupported?='unsupported')?
+        ('mechanism' legacyMechanism=QualifiedName)?
+        ('strength' legacyStrength=Strength)?
         ('notes' notes=STRING)?
     '}';
 

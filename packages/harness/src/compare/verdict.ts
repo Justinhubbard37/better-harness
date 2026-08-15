@@ -8,6 +8,7 @@ import {
   type MatchedPairSummary,
   type VariantAggregate,
 } from "./aggregate.js";
+import type { SandboxReceipt } from "./sandbox.js";
 
 /**
  * Validate persisted comparison evidence before a consumer trusts its values.
@@ -30,6 +31,7 @@ export function parseHarnessCompareVerdict(value: unknown): HarnessCompareVerdic
   requireString(verdict.manifestHash, "manifestHash");
   requireString(verdict.fixtureHash, "fixtureHash");
   requireString(verdict.harnessHash, "harnessHash");
+  validateSandboxReceipt(verdict.sandbox, "sandbox");
   const baseline = validateVariantAggregate(verdict.baseline, "baseline");
   const candidate = validateVariantAggregate(verdict.candidate, "candidate");
   const trials = requireArray(verdict.trials, "trials");
@@ -182,7 +184,23 @@ function validateCompareTrial(value: unknown, path: string): void {
   requireString(trial.revisionId, `${path}.revisionId`);
   requireFiniteNumber(trial.durationMs, `${path}.durationMs`, 0);
   requireString(trial.artifactDirectory, `${path}.artifactDirectory`);
+  validateSandboxReceipt(trial.sandbox, `${path}.sandbox`);
   if (trial.metrics !== undefined) validateRunMetrics(trial.metrics, `${path}.metrics`);
+}
+
+function validateSandboxReceipt(value: unknown, path: string): SandboxReceipt {
+  const receipt = requireRecord(value, path);
+  requireOneOf(receipt.policy, ["trusted-fixture", "isolated"] as const, `${path}.policy`);
+  requireOneOf(receipt.envPolicy, ["allowlist", "inherited"] as const, `${path}.envPolicy`);
+  requireArray(receipt.envKeys, `${path}.envKeys`).forEach((item, index) =>
+    requireString(item, `${path}.envKeys[${index}]`),
+  );
+  requireOneOf(receipt.networkPolicy, ["denied", "unverified"] as const, `${path}.networkPolicy`);
+  requireOneOf(receipt.fsScope, ["trial-root", "host"] as const, `${path}.fsScope`);
+  requireArray(receipt.permissionFlags, `${path}.permissionFlags`).forEach((item, index) =>
+    requireString(item, `${path}.permissionFlags[${index}]`),
+  );
+  return value as SandboxReceipt;
 }
 
 function validateReadmeGrade(value: unknown, path: string): void {

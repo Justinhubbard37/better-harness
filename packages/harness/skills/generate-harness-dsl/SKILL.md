@@ -38,21 +38,18 @@ from what the v0.2 runtime actually materializes.
   `runtime`, or a requirement block only when the default advisory floor is
   insufficient; deploy an assembly to another host with a second `target`
   rather than copying the harness.
-- Never author a generic plugin: the core DSL has none. Host-native assets
-  belong in binding mechanisms under the host's namespace, such as
-  `qoder.plugin`, `pi.extension`, `deepseek.plugin`, or `prime.python-skill`.
+- Never author adapter realization facts. Host-native mechanisms, strengths,
+  and programmatic language support belong to the adapter descriptor registry.
 - Match the requirement verb to the capability kind: `use skill`,
   `require tool`, `connect mcp`. Declare every skill and MCP entry; an
   undeclared `require tool` synthesizes an implicit atomic contract.
-- Keep workflow and execution independent: a declarative graph deploys to any
-  runtime, while a `program <language>` workflow resolves only against a
-  runtime declaring `execution programmatic.<language>`.
+- A `program <language>` workflow resolves only when the selected adapter
+  descriptor lists that language in `programmaticLanguages`.
 - Request only permissions the capability needs. Never place credentials,
   tokens, private keys, or secret values in DSL source. Reference MCP
   endpoints through `env.VARIABLE` rather than embedding URLs with secrets.
-- Treat `wired` and `enforced` as binding declarations, not observed runtime
-  guarantees. Harness v0.2 materializes supported bindings as
-  `prompt-preamble` at no more than `advisory` strength.
+- Use bindings only to veto deployment with `unsupported`; omit bindings for
+  supported capabilities and let the adapter descriptor supply the facts.
 - Use `on-degrade fail` when falling below the preferred strength must stop
   resolution. Use `report` only when the weaker materialization is acceptable
   and make that degradation visible to the user.

@@ -47,9 +47,4 @@ harness readme-grounded {
   }
 }
 
-binding coding-loop-discipline for qoder { mechanism prompt-preamble strength advisory }
-binding repository-grounding for qoder { mechanism prompt-preamble strength advisory }
-binding readme-only-scope for qoder { mechanism prompt-preamble strength advisory }
-binding executable-readme-verification for qoder { mechanism prompt-preamble strength advisory }
-
 target qoder uses adapter.qoder

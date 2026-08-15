@@ -18,7 +18,7 @@ export interface HarnessUiServerOptions {
   runtimeId?: string;
   /** Working directory handed to the executor for each run. */
   cwd?: string;
-  executorFactory?: HarnessUiExecutorFactory;
+  executorFactory: HarnessUiExecutorFactory;
   /** Exact browser origins allowed in addition to this server's own origin. */
   allowedOrigins?: readonly string[];
 }
@@ -133,7 +133,7 @@ export async function handleAguiRun(
       ...(options.harnessId !== undefined ? { harnessId: options.harnessId } : {}),
       ...(options.runtimeId !== undefined ? { runtimeId: options.runtimeId } : {}),
       ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
-      ...(options.executorFactory !== undefined ? { executorFactory: options.executorFactory } : {}),
+      executorFactory: options.executorFactory,
     });
   } catch (error) {
     // runHarnessAgui normally reports failures itself. Preserve a complete

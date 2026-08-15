@@ -1,4 +1,4 @@
-import type { HarnessRunEvent } from "@qoder-ai/harness";
+import type { HarnessRunEvent } from "@qoder-ai/harness/exec";
 import {
   HARNESS_TOOL_RESULT_META_EVENT,
   type AguiEvent,

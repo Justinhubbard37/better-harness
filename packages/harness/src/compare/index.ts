@@ -22,6 +22,14 @@ export {
 } from "./manifest.js";
 export { gradeReadmePackage, type GraderCheck, type ReadmeGrade } from "./grader.js";
 export { parseHarnessCompareVerdict } from "./verdict.js";
+export { parseHarnessCompareVerdictDirectory } from "./verdict-directory.js";
+export {
+  createTrustedFixtureSandbox,
+  sandboxPolicyLabel,
+  trustedFixtureEnvironment,
+  type SandboxReceipt,
+  type TrialSandbox,
+} from "./sandbox.js";
 export {
   createBoundedQoderPermissionCallback,
   type ToolPermissionDecision,

@@ -31,13 +31,13 @@ export function npmInvocation(args: string[]): { command: string; args: string[]
 export async function runCommand(
   command: string,
   args: string[],
-  options: { cwd: string; timeoutMs: number; env?: NodeJS.ProcessEnv },
+  options: { cwd: string; timeoutMs: number; env: NodeJS.ProcessEnv },
 ): Promise<CommandResult> {
   const started = Date.now();
   return await new Promise((resolveResult, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: options.env ?? process.env,
+      env: options.env,
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
       // A process group lets a timeout stop the spawned tool and everything it started.

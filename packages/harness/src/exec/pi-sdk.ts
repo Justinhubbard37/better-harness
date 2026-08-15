@@ -5,10 +5,8 @@ import type {
   HarnessMaterializationReceipt,
   HarnessRevision,
 } from "../ir/index.js";
-import {
-  describeAdapter,
-  type AdapterRealizationDescriptor,
-} from "../resolver/adapter-descriptor.js";
+import type { AdapterRealizationDescriptor } from "../resolver/adapter-descriptor.js";
+import { PI_ADAPTER_DESCRIPTOR } from "../resolver/adapter-registry.js";
 import { verifyRevisionSourceLocks } from "../resolver/source-lock.js";
 import {
   HARNESS_ADAPTER_SPECIFICATION_VERSION,
@@ -32,7 +30,6 @@ import {
 } from "./executor.js";
 
 const PI_SDK_MODULE = "@earendil-works/pi-coding-agent";
-const PI_ADAPTER_IMPLEMENTATION_VERSION = "0.1.0";
 
 /**
  * Structural view of the Pi SDK surface this executor relies on
@@ -114,22 +111,14 @@ export class PiSdkAdapter implements HarnessAdapterV1 {
    * resolver fail a `require tool` closed instead of turning it into a prompt.
    */
   describe(): AdapterRealizationDescriptor {
-    return describeAdapter({
-      adapterId: this.adapterId,
-      specificationVersion: HARNESS_ADAPTER_SPECIFICATION_VERSION,
-      implementationVersion: PI_ADAPTER_IMPLEMENTATION_VERSION,
-      skillDelivery: { mechanism: "prompt-preamble", strength: "advisory" },
-      toolExposure: {},
-      mcpSupport: null,
-      workflowModes: ["declarative"],
-      agentIsolation: "single-session",
-      consumedSettings: [],
-      enforcedPermissionDomains: [],
-    });
+    return PI_ADAPTER_DESCRIPTOR;
   }
 
   async doStart(start: HarnessAdapterStartOptions): Promise<HarnessAdapterSession> {
     const descriptor = this.describe();
+    if (JSON.stringify(descriptor) !== JSON.stringify(PI_ADAPTER_DESCRIPTOR)) {
+      throw new Error(`Adapter descriptor drift for '${this.adapterId}'; update the pure-data registry.`);
+    }
     preflightRevision(start.revision, start.bundle, this.host, descriptor);
     await verifyRevisionSourceLocks(
       start.revision,

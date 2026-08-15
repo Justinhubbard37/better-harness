@@ -12,6 +12,14 @@
   "manifestHash": "sha256:manifest",
   "fixtureHash": "sha256:fixture",
   "harnessHash": "sha256:harness",
+  "sandbox": {
+    "policy": "trusted-fixture",
+    "envPolicy": "allowlist",
+    "envKeys": ["HOME", "PATH"],
+    "networkPolicy": "unverified",
+    "fsScope": "trial-root",
+    "permissionFlags": ["--permission"]
+  },
   "baseline": {
     "trials": 2,
     "completedTrials": 2,
@@ -64,6 +72,10 @@
       "revisionId": "hr_baseline",
       "durationMs": 61000,
       "artifactDirectory": "baseline/trial-1",
+      "sandbox": {
+        "policy": "trusted-fixture", "envPolicy": "allowlist", "envKeys": ["HOME", "PATH"],
+        "networkPolicy": "unverified", "fsScope": "trial-root", "permissionFlags": ["--permission"]
+      },
       "metrics": { "durationMs": 61000, "turns": 3, "costUsd": 0.0055, "credits": 0.75 }
     },
     {
@@ -84,6 +96,10 @@
       "revisionId": "hr_baseline",
       "durationMs": 60250,
       "artifactDirectory": "baseline/trial-2",
+      "sandbox": {
+        "policy": "trusted-fixture", "envPolicy": "allowlist", "envKeys": ["HOME", "PATH"],
+        "networkPolicy": "unverified", "fsScope": "trial-root", "permissionFlags": ["--permission"]
+      },
       "metrics": { "durationMs": 60250, "turns": 3, "costUsd": 0.0055, "credits": 0.75 }
     },
     {
@@ -104,6 +120,10 @@
       "revisionId": "hr_candidate",
       "durationMs": 74500,
       "artifactDirectory": "candidate/trial-1",
+      "sandbox": {
+        "policy": "trusted-fixture", "envPolicy": "allowlist", "envKeys": ["HOME", "PATH"],
+        "networkPolicy": "unverified", "fsScope": "trial-root", "permissionFlags": ["--permission"]
+      },
       "metrics": { "durationMs": 74500, "turns": 4, "costUsd": 0.007, "credits": 0.9 }
     },
     {
@@ -124,6 +144,10 @@
       "revisionId": "hr_candidate",
       "durationMs": 71250,
       "artifactDirectory": "candidate/trial-2",
+      "sandbox": {
+        "policy": "trusted-fixture", "envPolicy": "allowlist", "envKeys": ["HOME", "PATH"],
+        "networkPolicy": "unverified", "fsScope": "trial-root", "permissionFlags": ["--permission"]
+      },
       "metrics": { "durationMs": 71250, "turns": 4, "costUsd": 0.007, "credits": 0.9 }
     }
   ]

@@ -3,7 +3,8 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { npmInvocation, runCommand, type CommandResult } from "./process.js";
+import { npmInvocation, type CommandResult } from "./process.js";
+import { createTrustedFixtureSandbox, type TrialSandbox } from "./sandbox.js";
 
 const ReadmeGraderContractSchema = Type.Object(
   {
@@ -51,7 +52,9 @@ export async function gradeReadmePackage(options: {
   contractPath: string;
   changedFiles: string[];
   expectedFiles: string[];
+  sandbox?: TrialSandbox;
 }): Promise<ReadmeGrade> {
+  const sandbox = options.sandbox ?? createTrustedFixtureSandbox();
   const contract = await loadContract(options.contractPath);
   const readmePath = resolve(options.trialRoot, "README.md");
   const checks: GraderCheck[] = [];
@@ -104,7 +107,7 @@ export async function gradeReadmePackage(options: {
   ));
 
   const realTrialRoot = await realpath(options.trialRoot);
-  const publicExports = await readModuleExports(options.trialRoot, realTrialRoot);
+  const publicExports = await readModuleExports(options.trialRoot, realTrialRoot, sandbox);
   const missingExports = contract.publicApi.filter((name) => !publicExports.names.includes(name));
   const undocumentedExports = contract.publicApi.filter((name) => !allCode.includes(name));
   checks.push({
@@ -157,14 +160,13 @@ export async function gradeReadmePackage(options: {
       } else {
         await writeFile(temporaryExample, quickStartBlocks[index].code, "utf8");
         const realTemporaryExample = await realpath(temporaryExample);
-        exampleResults.push(await runCommand(process.execPath, [
+        exampleResults.push(await sandbox.run(process.execPath, [
           "--permission",
           `--allow-fs-read=${realTrialRoot}`,
           realTemporaryExample,
         ], {
           cwd: options.trialRoot,
           timeoutMs: 30_000,
-          env: safeExampleEnvironment(),
         }));
       }
     } finally {
@@ -185,7 +187,7 @@ export async function gradeReadmePackage(options: {
   });
 
   const npmTest = npmInvocation(["test"]);
-  const testResult = await runCommand(npmTest.command, npmTest.args, {
+  const testResult = await sandbox.run(npmTest.command, npmTest.args, {
     cwd: options.trialRoot,
     timeoutMs: 60_000,
   });
@@ -214,15 +216,16 @@ export async function gradeReadmePackage(options: {
 async function readModuleExports(
   trialRoot: string,
   realTrialRoot: string,
+  sandbox: TrialSandbox,
 ): Promise<{ names: string[]; result: CommandResult }> {
   const moduleUrl = pathToFileURL(resolve(realTrialRoot, "src/index.mjs")).href;
   const probe =
     `const module = await import(${JSON.stringify(moduleUrl)});\n` +
     `process.stdout.write(JSON.stringify(Object.keys(module)));\n`;
-  const result = await runCommand(
+  const result = await sandbox.run(
     process.execPath,
     ["--permission", `--allow-fs-read=${realTrialRoot}`, "--input-type=module", "--eval", probe],
-    { cwd: trialRoot, timeoutMs: 30_000, env: safeExampleEnvironment() },
+    { cwd: trialRoot, timeoutMs: 30_000 },
   );
   if (result.exitCode !== 0) {
     return { names: [], result };
@@ -365,11 +368,4 @@ function validateExampleSafety(source: string, packageName: string): string | un
     return "Quick Start side-effect imports are not allowed.";
   }
   return undefined;
-}
-
-function safeExampleEnvironment(): NodeJS.ProcessEnv {
-  const keys = ["PATH", "SystemRoot", "ComSpec", "PATHEXT", "TEMP", "TMP", "TMPDIR"];
-  return Object.fromEntries(
-    keys.flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]]]),
-  );
 }

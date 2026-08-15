@@ -45,6 +45,8 @@ export interface AdapterRealizationDescriptor {
   mcpSupport: AdapterMcpSupport | null;
   /** Workflow modes the adapter can actually drive. */
   workflowModes: readonly WorkflowIr["mode"][];
+  /** Program controller languages the adapter can execute. */
+  programmaticLanguages: readonly string[];
   /**
    * `single-session` adapters cannot instantiate one host session per agent, so
    * a multi-agent workflow can only be described in prompt text.
@@ -70,6 +72,7 @@ export const PROMPT_ONLY_DESCRIPTOR: AdapterRealizationDescriptor = Object.freez
   toolExposure: Object.freeze({}),
   mcpSupport: null,
   workflowModes: Object.freeze(["declarative" as const]),
+  programmaticLanguages: Object.freeze([]),
   agentIsolation: "single-session",
   consumedSettings: Object.freeze([]),
   enforcedPermissionDomains: Object.freeze([]),

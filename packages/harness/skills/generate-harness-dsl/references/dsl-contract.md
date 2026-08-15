@@ -166,19 +166,15 @@ imply their connection grant at resolution (`stdio` → process, `http`/`sse`
 ```harness
 runtime prime {
   adapter "@harness/adapter-prime"
-  execution programmatic.python {
-    repl persistent
-  }
 }
 
 target prime
 target qoder uses adapter.qoder
 ```
 
-A runtime is a concrete host with its adapter package and capability-calling
-style: `tool-calling` (default) or `programmatic.<language>` with optional
-key/value options. A `target` deploys the document's harnesses to a runtime;
-without a runtime block it synthesizes a tool-calling runtime whose adapter is
+A runtime is a concrete host with its adapter package. Programmatic language
+support belongs to the adapter descriptor registry. A `target` deploys the
+document's harnesses to a runtime; without a runtime block it synthesizes a runtime whose adapter is
 `@harness/adapter-<id>` (using the `uses adapter.<id>` shorthand when given).
 Do not add `uses adapter` to a target whose runtime block already declares an
 adapter.
@@ -187,28 +183,21 @@ adapter.
 
 ```harness
 binding repository-analysis for qoder {
-  mechanism qoder.plugin
-  strength wired
-  notes "Realized natively once the adapter ships."
+  unsupported
 }
 ```
 
-The runtime is an identifier; the mechanism is a dotted name so host-native
-assets stay in the host's namespace. Strength is `unsupported`, `advisory`,
-`wired`, or `enforced`. Declare at most one binding per capability and
-runtime.
-
-`mechanism` and `strength` are optional and default to `prompt-preamble` at
-`advisory` — an empty `binding x for pi {}` is the advisory floor. Bind
-several runtimes with one declaration using a list:
+Bindings are veto-only: `unsupported` prevents a capability from being
+materialized on the named runtime. Mechanism, strength, and execution support
+belong to the adapter descriptor. Declare at most one binding per capability
+and runtime. Bind several runtimes with one declaration using a list:
 
 ```harness
-binding repository-analysis for [pi, qoder] { strength advisory }
+binding repository-analysis for [pi, qoder] { unsupported }
 ```
 
-A binding strength states the strongest adapter capability being modeled. It
-does not prove that the current executor materialized that capability, and it
-cannot raise what the adapter really does. Materialization is per capability
+A descriptor states what an adapter can provide; the run receipt records what
+was actually materialized. Materialization is per capability
 kind: a skill is *delivered* as guidance (`prompt-preamble` at `advisory`), a
 tool must be *exposed* as a callable host tool, an MCP server must be
 *connected*. A capability the target adapter cannot back fails resolution — in

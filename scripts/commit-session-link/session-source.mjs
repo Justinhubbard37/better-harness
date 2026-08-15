@@ -218,6 +218,7 @@ export function summarizeSessionEvents(session, events = [], {
   return {
     sessionId: session.sessionId,
     platform: platform ?? session.platform ?? null,
+    ...(session.revisionId ? { revisionId: session.revisionId } : {}),
     firstSeen: firstSeen === null ? null : new Date(firstSeen).toISOString(),
     lastSeen: lastSeen === null ? null : new Date(lastSeen).toISOString(),
     durationMs: firstSeen !== null && lastSeen !== null ? lastSeen - firstSeen : null,

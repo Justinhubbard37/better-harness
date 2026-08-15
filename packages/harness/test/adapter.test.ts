@@ -3,6 +3,7 @@ import { compileHarness } from "../src/compiler/compile.js";
 import type { HarnessIrBundle, HarnessRevision } from "../src/ir/index.js";
 import { PROMPT_ONLY_DESCRIPTOR } from "../src/resolver/adapter-descriptor.js";
 import { resolveHarness } from "../src/resolver/resolve.js";
+import { PI_ADAPTER_DESCRIPTOR, QODER_ADAPTER_DESCRIPTOR } from "../src/resolver/adapter-registry.js";
 import {
   HarnessCapabilityUnsupportedError,
   HarnessConcurrentTurnError,
@@ -32,10 +33,6 @@ const SOURCE = `
       use skill impact-analysis
     }
   }
-  binding impact-analysis for [qoder, pi] {
-    mechanism prompt-preamble
-    strength advisory
-  }
   target qoder
   target pi
 `;
@@ -57,6 +54,15 @@ interface QoderHostState {
   /** Transcripts the host kept for `resume`, keyed by session id. */
   persisted: Map<string, string[]>;
 }
+
+describe("adapter descriptor registry", () => {
+  it("matches each shipped adapter without loading a host SDK", () => {
+    expect(new QoderSdkAdapter().describe()).toEqual(QODER_ADAPTER_DESCRIPTOR);
+    expect(new PiSdkAdapter().describe()).toEqual(PI_ADAPTER_DESCRIPTOR);
+    expect(new QoderSdkAdapter().describe()).toBe(QODER_ADAPTER_DESCRIPTOR);
+    expect(new PiSdkAdapter().describe()).toBe(PI_ADAPTER_DESCRIPTOR);
+  });
+});
 
 function newHostState(): QoderHostState {
   return { queries: [], turns: [], interrupts: 0, closes: 0, persisted: new Map() };

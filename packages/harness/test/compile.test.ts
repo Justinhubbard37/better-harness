@@ -42,17 +42,14 @@ describe("compileHarness", () => {
     });
     expect(bundle.workflows[1].program).toEqual({ language: "deno", entry: "./flows/coding-loop.ts" });
     expect(bundle.runtimes.map((runtime) => runtime.execution)).toEqual([
-      { style: "programmatic", language: "python", options: [{ key: "repl", value: "persistent" }] },
-      { style: "programmatic", language: "typescript", options: [{ key: "mode", value: "code" }] },
+      { style: "tool-calling" },
+      { style: "tool-calling" },
       { style: "tool-calling" },
     ]);
     expect(bundle.targets).toEqual([{ runtime: "qoder", adapter: "qoder" }, { runtime: "pi" }]);
-    expect(new Set(bundle.bindings.map((binding) => binding.strength))).toEqual(
-      new Set(["unsupported", "advisory", "wired", "enforced"]),
-    );
-    expect(bundle.bindings.map((binding) => binding.mechanism)).toEqual(
-      expect.arrayContaining(["qoder.plugin", "deepseek.plugin", "pi.extension"]),
-    );
+    expect(bundle.bindings).toEqual([
+      expect.objectContaining({ runtime: "qoder", strength: "unsupported" }),
+    ]);
     expect(bundle.harnesses[0].settings).toEqual([
       { key: "runtime.max-turns", value: { type: "int", value: 24 } },
       { key: "runtime.timeout", value: { type: "duration", value: "10m", ms: 600_000 } },
@@ -163,22 +160,12 @@ describe("compileHarness", () => {
           use skill impact-analysis
         }
       }
-      binding impact-analysis for qoder {
-        mechanism qoder.skill-routing
-        strength advisory
-      }
       target qoder
     `;
     const result = await compileHarness([{ text: capabilities }, { text: flow }, { text: assembly }]);
 
     expect(result.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
-    expect(result.bundle!.bindings).toEqual([
-      expect.objectContaining({
-        capabilityId: "impact-analysis",
-        runtime: "qoder",
-        mechanism: "qoder.skill-routing",
-      }),
-    ]);
+    expect(result.bundle!.bindings).toEqual([]);
     expect(result.bundle!.harnesses[0].workflow).toBe("solo");
   });
 
@@ -199,6 +186,34 @@ describe("compileHarness", () => {
 
     expect(result.bundle).toBeUndefined();
     expect(result.diagnostics.some((d) => d.message.includes("below minimum"))).toBe(true);
+  });
+
+  it("rejects legacy binding realization facts with an adapter-owner diagnostic", async () => {
+    const result = await compileHarness(`
+      skill gate { description "Verify first." }
+      binding gate for qoder { mechanism qoder.plugin strength wired }
+    `);
+
+    expect(result.bundle).toBeUndefined();
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      severity: "error",
+      message: expect.stringContaining("belong to the adapter descriptor"),
+    }));
+  });
+
+  it("ignores deprecated runtime execution claims while retaining a diagnostic", async () => {
+    const result = await compileHarness(`
+      runtime prime {
+        adapter "@harness/adapter-prime"
+        execution programmatic.python { repl persistent }
+      }
+    `);
+
+    expect(result.bundle?.runtimes[0].execution).toEqual({ style: "tool-calling" });
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
+      severity: "warning",
+      message: expect.stringContaining("has no effect"),
+    }));
   });
 
   it("fails compilation when a verb does not match the declared capability kind", async () => {
@@ -255,8 +270,7 @@ describe("compileHarness", () => {
   it("fails compilation when a binding references an unknown capability", async () => {
     const result = await compileHarness(`
       binding does-not-exist for pi {
-        mechanism pi.extension
-        strength advisory
+        unsupported
       }
     `);
 
@@ -269,8 +283,8 @@ describe("compileHarness", () => {
   it("fails compilation on duplicate bindings for the same capability and runtime", async () => {
     const result = await compileHarness(`
       skill gate { description "Verify first." }
-      binding gate for pi { mechanism pi.extension strength advisory }
-      binding gate for pi { mechanism other strength enforced }
+      binding gate for pi { unsupported }
+      binding gate for pi { unsupported }
     `);
 
     expect(result.bundle).toBeUndefined();
@@ -283,12 +297,12 @@ describe("compileHarness", () => {
         uri: "memory://harness/first.harness",
         text: `
           skill gate { description "Verify first." }
-          binding gate for pi { mechanism prompt-preamble strength advisory }
+          binding gate for pi { unsupported }
         `,
       },
       {
         uri: "memory://harness/second.harness",
-        text: "binding gate for pi { mechanism pi.extension strength enforced }",
+        text: "binding gate for pi { unsupported }",
       },
     ]);
 

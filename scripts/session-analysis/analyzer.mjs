@@ -251,14 +251,18 @@ const PLATFORM_MODULES = Object.freeze({
   kimi: { specifier: "./platforms/kimi.mjs", analyzer: "KimiSessionAnalyzer" },
   workbuddy: { specifier: "./platforms/workbuddy.mjs", analyzer: "WorkbuddySessionAnalyzer" },
   grok: { specifier: "./platforms/grok.mjs", analyzer: "GrokSessionAnalyzer" },
+  "harness-run": { specifier: "./platforms/harness-run.mjs", analyzer: "HarnessRunSessionAnalyzer" },
 });
 
-export const SUPPORTED_SESSION_PLATFORMS = Object.freeze(Object.keys(PLATFORM_MODULES));
+export const SUPPORTED_SESSION_PROVIDERS = Object.freeze(Object.keys(PLATFORM_MODULES));
+export const SUPPORTED_SESSION_PLATFORMS = Object.freeze(
+  SUPPORTED_SESSION_PROVIDERS.filter((platform) => platform !== "harness-run"),
+);
 
 async function loadPlatform(platform = "qoder") {
   const entry = PLATFORM_MODULES[platform];
   if (!entry) {
-    throw new Error(`Unsupported platform: ${platform}. Supported platforms: ${SUPPORTED_SESSION_PLATFORMS.join(", ")}.`);
+    throw new Error(`Unsupported session provider: ${platform}. Supported providers: ${SUPPORTED_SESSION_PROVIDERS.join(", ")}.`);
   }
   const module = await import(entry.specifier);
   return {

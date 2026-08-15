@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { HarnessRunEmitter, type HarnessExecutor } from "@qoder-ai/harness";
+import { HarnessRunEmitter, type HarnessExecutor } from "@qoder-ai/harness/exec";
 import { decodeSseStream, type HarnessUiExecutorFactory } from "@qoder-ai/harness-ui";
 import { runHarnessStudioCli } from "../src/server/cli.js";
 import { startHarnessStudioServer, type StartedHarnessStudioServer } from "../src/server/server.js";

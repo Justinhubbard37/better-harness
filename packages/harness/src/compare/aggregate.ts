@@ -14,6 +14,7 @@
  */
 import type { HarnessRunResult } from "../exec/executor.js";
 import type { ReadmeGrade } from "./grader.js";
+import type { SandboxReceipt } from "./sandbox.js";
 
 export type CompareVariant = "baseline" | "candidate";
 export type TrialClassification = "passed" | "failed" | "infrastructure_error";
@@ -45,6 +46,7 @@ export interface CompareTrialResult {
   revisionId: string;
   durationMs: number;
   artifactDirectory: string;
+  sandbox: SandboxReceipt;
   metrics?: HarnessRunResult["metrics"];
 }
 
@@ -106,6 +108,7 @@ export interface HarnessCompareVerdict {
   manifestHash: string;
   fixtureHash: string;
   harnessHash: string;
+  sandbox: SandboxReceipt;
   baseline: VariantAggregate;
   candidate: VariantAggregate;
   matchedPairs: MatchedPairSummary;

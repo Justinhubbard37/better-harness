@@ -47,18 +47,4 @@ harness standard-coding {
   }
 }
 
-// Adapter layer: how each runtime realizes the capabilities, in the host's
-// own namespace. The core DSL has no generic plugin; `pi.extension` and
-// `qoder.system-instruction` are host-native assets behind the adapter.
-binding impact-analysis for qoder {
-  mechanism prompt-preamble
-  strength advisory
-}
-
-binding verification-before-complete for qoder {
-  mechanism qoder.system-instruction
-  strength advisory
-  notes "Qoder CLI print mode cannot intercept completion; the policy is prompt-injected."
-}
-
 target qoder uses adapter.qoder
