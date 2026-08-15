@@ -17,6 +17,7 @@ export {
   type QoderSdkLike,
   type QoderSdkMessage,
   type QoderPermissionMode,
+  type QoderRuntimeProfile,
   type QoderToolPermissionCallback,
   type QoderToolPermissionResult,
   redactTraceValue,

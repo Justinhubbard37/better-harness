@@ -4,11 +4,15 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { HarnessExecutor } from "../src/exec/executor.js";
 import { gradeReadmePackage } from "../src/compare/grader.js";
-import { loadHarnessCompareManifest } from "../src/compare/manifest.js";
+import { loadHarnessCompareManifest, resolveHarnessCompareRuntime } from "../src/compare/manifest.js";
 import { createBoundedQoderPermissionCallback, type ToolPermissionDecision } from "../src/compare/permissions.js";
 import { runHarnessComparison } from "../src/compare/runner.js";
 
 const EXPERIMENT_URL = new URL("../examples/readme-compare/experiment.json", import.meta.url);
+const MINIMAL_EXPERIMENT_URL = new URL(
+  "../examples/readme-compare/minimal-profile-experiment.json",
+  import.meta.url,
+);
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
@@ -37,6 +41,23 @@ describe("harness compare manifest", () => {
     await writeFile(path, JSON.stringify(manifest), "utf8");
 
     await expect(loadHarnessCompareManifest(path)).rejects.toThrow(/allowedTools must be empty/);
+  });
+
+  it("accepts an isolated same-composition comparison when runtime profiles differ", async () => {
+    const loaded = await loadHarnessCompareManifest(MINIMAL_EXPERIMENT_URL.pathname);
+
+    expect(loaded.value.variants).toEqual({
+      baseline: "readme-grounded",
+      candidate: "readme-grounded",
+    });
+    expect(resolveHarnessCompareRuntime(loaded.value, "baseline")).toMatchObject({
+      profile: "qoder-default-v1",
+      tools: ["Read", "Glob", "Grep", "Edit", "Write", "Bash"],
+    });
+    expect(resolveHarnessCompareRuntime(loaded.value, "candidate")).toMatchObject({
+      profile: "qoder-minimal-v1",
+      tools: ["Read", "Write", "Edit", "Bash"],
+    });
   });
 });
 
@@ -137,6 +158,60 @@ describe("README coding comparison", () => {
     expect(JSON.parse(await readFile(join(output, "verdict.json"), "utf8"))).toMatchObject({ status: "accept" });
     expect(await readFile(join(output, "verdict.html"), "utf8")).toContain("Harness compare verdict");
     await expect(readFile(fixtureReadme, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("routes each variant through its resolved Qoder runtime profile", async () => {
+    const directory = await makeTemporaryDirectory();
+    const output = join(directory, "evidence");
+    const observed: Array<{ profile: string; tools: string[] }> = [];
+
+    const verdict = await runHarnessComparison({
+      manifestPath: MINIMAL_EXPERIMENT_URL.pathname,
+      outputDirectory: output,
+      trialCount: 1,
+      executorFactory: (context): HarnessExecutor => {
+        observed.push({ profile: context.runtime.profile, tools: [...context.runtime.tools] });
+        return {
+          host: "qoder",
+          execute: async (revision) => {
+            await writeFile(join(context.trialRoot, "README.md"), VALID_README, "utf8");
+            return {
+              host: "qoder",
+              revisionId: revision.revisionId,
+              exitCode: 0,
+              output: "completed",
+              errorOutput: "",
+              warnings: [],
+              runtimeReceipt: {
+                executor: "injected-test-executor",
+                runtimeProfile: context.runtime.profile,
+                tools: [...context.runtime.tools],
+                allowedTools: [],
+                disallowedTools: [...context.runtime.disallowedTools],
+                permissionCallback: "configured",
+              },
+            };
+          },
+        };
+      },
+    });
+
+    expect(observed).toEqual(expect.arrayContaining([
+      {
+        profile: "qoder-default-v1",
+        tools: ["Read", "Glob", "Grep", "Edit", "Write", "Bash"],
+      },
+      {
+        profile: "qoder-minimal-v1",
+        tools: ["Read", "Write", "Edit", "Bash"],
+      },
+    ]));
+    expect(verdict.trials).toEqual(expect.arrayContaining([
+      expect.objectContaining({ variant: "baseline", runtimeProfile: "qoder-default-v1" }),
+      expect.objectContaining({ variant: "candidate", runtimeProfile: "qoder-minimal-v1" }),
+    ]));
+    expect(JSON.parse(await readFile(join(output, "H1/trial-001/runtime-receipt.json"), "utf8")))
+      .toMatchObject({ runtimeProfile: "qoder-minimal-v1", tools: ["Read", "Write", "Edit", "Bash"] });
   });
 });
 

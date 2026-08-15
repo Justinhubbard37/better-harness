@@ -23,6 +23,7 @@ export interface HarnessRunResult {
 
 export interface HarnessRuntimeReceipt {
   executor: string;
+  runtimeProfile?: string;
   tools: string[];
   allowedTools: string[];
   disallowedTools: string[];
@@ -32,6 +33,13 @@ export interface HarnessRuntimeReceipt {
   model?: string;
   fileCheckpointing?: boolean;
   permissionCallback: "configured" | "none";
+  systemPromptSource?: "runtime-default" | "executor-profile";
+  settingSources?: string[] | "runtime-default";
+  skills?: string[] | "all" | "runtime-default";
+  extensionCount?: number;
+  pluginCount?: number;
+  mcpServerNames?: string[];
+  strictMcpConfig?: boolean;
 }
 
 export interface HarnessRunMetrics {

@@ -9,6 +9,17 @@ import {
 
 const QODER_SDK_MODULE = "@qoder-ai/qoder-agent-sdk";
 
+export type QoderRuntimeProfile = "qoder-default-v1" | "qoder-minimal-v1";
+
+const QODER_MINIMAL_TOOLS = ["Read", "Write", "Edit", "Bash"] as const;
+const QODER_MINIMAL_DENIED_TOOLS = ["WebFetch", "WebSearch", "Agent", "Task"] as const;
+type QoderSettingSource = "user" | "project" | "local";
+type QoderSystemPrompt = string | {
+  type: "preset";
+  preset: "qodercli";
+  append?: string;
+};
+
 export interface QoderSdkTextBlock {
   type: string;
   text?: string;
@@ -71,6 +82,13 @@ export interface QoderSdkLike {
       model?: string;
       enableFileCheckpointing?: boolean;
       abortController?: AbortController;
+      settingSources?: QoderSettingSource[];
+      skills?: string[] | "all";
+      extensions?: string[];
+      plugins?: unknown[];
+      mcpServers?: Record<string, unknown>;
+      strictMcpConfig?: boolean;
+      systemPrompt?: QoderSystemPrompt;
     };
   }): AsyncIterable<QoderSdkMessage>;
   qodercliAuth(): unknown;
@@ -99,6 +117,8 @@ export interface QoderSdkExecutorOptions {
   abortController?: AbortController;
   /** Receives each redacted SDK event as it arrives, including before a timeout. */
   onTraceEvent?: (event: unknown) => void;
+  /** A frozen executor-owned runtime contract. Defaults to the SDK-compatible v1 behavior. */
+  profile?: QoderRuntimeProfile;
 }
 
 /** Execute one resolved revision through the official Qoder Agent SDK. */
@@ -117,21 +137,45 @@ export class QoderSdkExecutor implements HarnessExecutor {
   private readonly enableFileCheckpointing: boolean;
   private readonly abortController?: AbortController;
   private readonly onTraceEvent?: (event: unknown) => void;
+  private readonly profile: QoderRuntimeProfile;
+  private readonly settingSources?: QoderSettingSource[];
+  private readonly skills?: string[] | "all";
+  private readonly extensions?: string[];
+  private readonly plugins?: unknown[];
+  private readonly mcpServers?: Record<string, unknown>;
+  private readonly strictMcpConfig?: boolean;
 
   constructor(options: QoderSdkExecutorOptions = {}) {
+    this.profile = options.profile ?? "qoder-default-v1";
+    assertSupportedProfile(this.profile);
+    if (this.profile === "qoder-minimal-v1") {
+      assertMinimalProfileOptions(options);
+    }
     this.loadSdk = () => loadQoderSdk(options.loadSdk);
     this.auth = options.auth ?? ((sdk) => sdk.qodercliAuth());
-    this.allowedTools = [...(options.allowedTools ?? [])];
-    this.tools = [...(options.tools ?? [])];
-    this.disallowedTools = [...(options.disallowedTools ?? [])];
-    this.permissionMode = options.permissionMode;
+    this.allowedTools = this.profile === "qoder-minimal-v1" ? [] : [...(options.allowedTools ?? [])];
+    this.tools = this.profile === "qoder-minimal-v1"
+      ? [...QODER_MINIMAL_TOOLS]
+      : [...(options.tools ?? [])];
+    this.disallowedTools = this.profile === "qoder-minimal-v1"
+      ? unique([...QODER_MINIMAL_DENIED_TOOLS, ...(options.disallowedTools ?? [])])
+      : [...(options.disallowedTools ?? [])];
+    this.permissionMode = this.profile === "qoder-minimal-v1" ? "default" : options.permissionMode;
     this.canUseTool = options.canUseTool;
-    this.persistSession = options.persistSession ?? false;
+    this.persistSession = this.profile === "qoder-minimal-v1" ? false : (options.persistSession ?? false);
     this.maxTurns = options.maxTurns ?? 1;
     this.model = options.model;
     this.enableFileCheckpointing = options.enableFileCheckpointing ?? false;
     this.abortController = options.abortController;
     this.onTraceEvent = options.onTraceEvent;
+    if (this.profile === "qoder-minimal-v1") {
+      this.settingSources = [];
+      this.skills = [];
+      this.extensions = [];
+      this.plugins = [];
+      this.mcpServers = {};
+      this.strictMcpConfig = true;
+    }
   }
 
   async execute(
@@ -142,6 +186,9 @@ export class QoderSdkExecutor implements HarnessExecutor {
     assertRevisionHost(revision, this.host);
     const { prompt, warnings } = buildRunPrompt(revision, bundle, task);
     const sdk = await this.loadSdk();
+    const systemPrompt = this.profile === "qoder-minimal-v1"
+      ? buildQoderMinimalSystemPrompt(task.cwd)
+      : undefined;
     const sdkOptions: Parameters<QoderSdkLike["query"]>[0]["options"] = {
       auth: this.auth(sdk),
       cwd: task.cwd,
@@ -155,6 +202,13 @@ export class QoderSdkExecutor implements HarnessExecutor {
       ...(this.canUseTool !== undefined ? { canUseTool: this.canUseTool } : {}),
       ...(this.model !== undefined ? { model: this.model } : {}),
       ...(this.abortController !== undefined ? { abortController: this.abortController } : {}),
+      ...(this.settingSources !== undefined ? { settingSources: [...this.settingSources] } : {}),
+      ...(this.skills !== undefined ? { skills: Array.isArray(this.skills) ? [...this.skills] : this.skills } : {}),
+      ...(this.extensions !== undefined ? { extensions: [...this.extensions] } : {}),
+      ...(this.plugins !== undefined ? { plugins: [...this.plugins] } : {}),
+      ...(this.mcpServers !== undefined ? { mcpServers: { ...this.mcpServers } } : {}),
+      ...(this.strictMcpConfig !== undefined ? { strictMcpConfig: this.strictMcpConfig } : {}),
+      ...(systemPrompt !== undefined ? { systemPrompt } : {}),
     };
     const stream = sdk.query({
       prompt,
@@ -216,6 +270,7 @@ export class QoderSdkExecutor implements HarnessExecutor {
       trace,
       runtimeReceipt: {
         executor: "@qoder-ai/qoder-agent-sdk",
+        runtimeProfile: this.profile,
         tools: [...this.tools],
         allowedTools: [...this.allowedTools],
         disallowedTools: [...this.disallowedTools],
@@ -225,10 +280,68 @@ export class QoderSdkExecutor implements HarnessExecutor {
         ...(this.model !== undefined ? { model: this.model } : {}),
         fileCheckpointing: this.enableFileCheckpointing,
         permissionCallback: this.canUseTool ? "configured" : "none",
+        systemPromptSource: systemPrompt === undefined ? "runtime-default" : "executor-profile",
+        settingSources: this.settingSources === undefined ? "runtime-default" : [...this.settingSources],
+        skills: this.skills === undefined
+          ? "runtime-default"
+          : Array.isArray(this.skills) ? [...this.skills] : this.skills,
+        ...(this.extensions !== undefined ? { extensionCount: this.extensions.length } : {}),
+        ...(this.plugins !== undefined ? { pluginCount: this.plugins.length } : {}),
+        ...(this.mcpServers !== undefined ? { mcpServerNames: Object.keys(this.mcpServers).sort() } : {}),
+        ...(this.strictMcpConfig !== undefined ? { strictMcpConfig: this.strictMcpConfig } : {}),
       },
       ...(metrics !== undefined ? { metrics } : {}),
     };
   }
+}
+
+function assertSupportedProfile(profile: QoderRuntimeProfile): void {
+  if (profile !== "qoder-default-v1" && profile !== "qoder-minimal-v1") {
+    throw new Error(`Unsupported Qoder runtime profile '${String(profile)}'.`);
+  }
+}
+
+function assertMinimalProfileOptions(options: QoderSdkExecutorOptions): void {
+  if (options.tools !== undefined && !sameToolSet(options.tools, QODER_MINIMAL_TOOLS)) {
+    throw new Error(`qoder-minimal-v1 fixes the visible tools to: ${QODER_MINIMAL_TOOLS.join(", ")}.`);
+  }
+  if ((options.allowedTools?.length ?? 0) > 0) {
+    throw new Error("qoder-minimal-v1 does not permit auto-approved tools; use canUseTool for bounded decisions.");
+  }
+  const minimalTools = new Set<string>(QODER_MINIMAL_TOOLS);
+  const deniedRequired = options.disallowedTools?.filter((tool) => minimalTools.has(tool)) ?? [];
+  if (deniedRequired.length > 0) {
+    throw new Error(`qoder-minimal-v1 cannot disallow required tools: ${deniedRequired.join(", ")}.`);
+  }
+  if (options.permissionMode !== undefined && options.permissionMode !== "default") {
+    throw new Error("qoder-minimal-v1 fixes permissionMode to 'default'.");
+  }
+  if (options.persistSession === true) {
+    throw new Error("qoder-minimal-v1 requires an ephemeral session.");
+  }
+  if (options.canUseTool === undefined) {
+    throw new Error("qoder-minimal-v1 requires canUseTool so every tool call has a host-owned decision.");
+  }
+}
+
+function sameToolSet(actual: string[], expected: readonly string[]): boolean {
+  return actual.length === expected.length && expected.every((tool) => actual.includes(tool));
+}
+
+function unique(values: readonly string[]): string[] {
+  return [...new Set(values)];
+}
+
+function buildQoderMinimalSystemPrompt(cwd?: string): string {
+  const workingDirectory = cwd ?? process.cwd();
+  return [
+    "You are a focused coding agent operating inside the host-supplied working directory.",
+    `The working directory is ${JSON.stringify(workingDirectory)}. Use relative paths such as package.json; do not guess other absolute roots.`,
+    "Use only the Read, Write, Edit, and Bash tools exposed by the host.",
+    "Inspect repository evidence before editing, keep changes inside the requested scope, and verify the result.",
+    "Use Bash only for validation commands explicitly allowed by the task or host policy.",
+    "Do not access the network, invent repository facts, or report success without concrete validation evidence.",
+  ].join("\n");
 }
 
 const SECRET_FIELD = /(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|service[_-]?account[_-]?key|secret|credential)/i;

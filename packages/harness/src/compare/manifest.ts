@@ -2,9 +2,14 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import type { QoderRuntimeProfile } from "../exec/qoder-sdk.js";
 
 const RelativePathSchema = Type.String({ minLength: 1, maxLength: 512 });
 const IdentifierSchema = Type.String({ pattern: "^[_a-zA-Z][\\w-]*$" });
+const QoderRuntimeProfileSchema = Type.Union([
+  Type.Literal("qoder-default-v1"),
+  Type.Literal("qoder-minimal-v1"),
+]);
 
 export const HarnessCompareManifestSchema = Type.Object(
   {
@@ -14,6 +19,13 @@ export const HarnessCompareManifestSchema = Type.Object(
       { baseline: IdentifierSchema, candidate: IdentifierSchema },
       { additionalProperties: false },
     ),
+    runtimeProfiles: Type.Optional(Type.Object(
+      {
+        baseline: QoderRuntimeProfileSchema,
+        candidate: QoderRuntimeProfileSchema,
+      },
+      { additionalProperties: false },
+    )),
     task: Type.Object(
       {
         fixture: RelativePathSchema,
@@ -54,6 +66,10 @@ export const HarnessCompareManifestSchema = Type.Object(
 );
 
 export type HarnessCompareManifest = Static<typeof HarnessCompareManifestSchema>;
+export type HarnessCompareVariant = "baseline" | "candidate";
+export type ResolvedHarnessCompareRuntime = HarnessCompareManifest["runtime"] & {
+  profile: QoderRuntimeProfile;
+};
 
 export interface LoadedHarnessCompareManifest {
   path: string;
@@ -97,36 +113,35 @@ export async function loadHarnessCompareManifest(path: string): Promise<LoadedHa
   };
 }
 
+export function resolveHarnessCompareRuntime(
+  manifest: HarnessCompareManifest,
+  variant: HarnessCompareVariant,
+): ResolvedHarnessCompareRuntime {
+  const profile = manifest.runtimeProfiles?.[variant] ?? "qoder-default-v1";
+  return {
+    ...manifest.runtime,
+    profile,
+    tools: profile === "qoder-minimal-v1"
+      ? ["Read", "Write", "Edit", "Bash"]
+      : [...manifest.runtime.tools],
+  };
+}
+
 function validateManifestPolicy(manifest: HarnessCompareManifest): void {
-  if (manifest.variants.baseline === manifest.variants.candidate) {
-    throw new Error("Invalid harness-compare.v1 manifest: baseline and candidate must differ.");
-  }
-  const requiredTools = ["Read", "Edit", "Write", "Bash"];
-  const supportedTools = new Set(["Read", "Glob", "Grep", "Edit", "Write", "Bash"]);
-  const unsupportedTools = manifest.runtime.tools.filter((tool) => !supportedTools.has(tool));
-  if (unsupportedTools.length > 0) {
+  if (
+    manifest.variants.baseline === manifest.variants.candidate &&
+    (
+      manifest.runtimeProfiles === undefined ||
+      manifest.runtimeProfiles.baseline === manifest.runtimeProfiles.candidate
+    )
+  ) {
     throw new Error(
-      `Invalid harness-compare.v1 manifest: unsupported visible tools: ${unsupportedTools.join(", ")}.`,
+      "Invalid harness-compare.v1 manifest: baseline and candidate must differ by composition or runtime profile.",
     );
   }
-  for (const tool of requiredTools) {
-    if (!manifest.runtime.tools.includes(tool)) {
-      throw new Error(`Invalid harness-compare.v1 manifest: runtime.tools must include '${tool}'.`);
-    }
-  }
-  if (manifest.runtime.allowedTools.length > 0) {
-    throw new Error("Invalid harness-compare.v1 manifest: allowedTools must be empty; every tool use requires the bounded permission callback.");
-  }
-  for (const tool of ["WebFetch", "WebSearch"]) {
-    if (!manifest.runtime.disallowedTools.includes(tool)) {
-      throw new Error(`Invalid harness-compare.v1 manifest: disallowedTools must include '${tool}'.`);
-    }
-  }
-  const unavailableRequiredTools = requiredTools.filter((tool) => manifest.runtime.disallowedTools.includes(tool));
-  if (unavailableRequiredTools.length > 0) {
-    throw new Error(
-      `Invalid harness-compare.v1 manifest: required tools are also disallowed: ${unavailableRequiredTools.join(", ")}.`,
-    );
+  validateRuntimePolicy(manifest.runtime, "runtime");
+  for (const variant of ["baseline", "candidate"] as const) {
+    validateRuntimePolicy(resolveHarnessCompareRuntime(manifest, variant), `runtimeProfiles.${variant}`);
   }
   for (const path of [
     manifest.harness,
@@ -136,6 +151,36 @@ function validateManifestPolicy(manifest: HarnessCompareManifest): void {
     ...manifest.task.expectedFiles,
   ]) {
     assertPortableRelativePath(path);
+  }
+}
+
+function validateRuntimePolicy(runtime: HarnessCompareManifest["runtime"], label: string): void {
+  const requiredTools = ["Read", "Edit", "Write", "Bash"];
+  const supportedTools = new Set(["Read", "Glob", "Grep", "Edit", "Write", "Bash"]);
+  const unsupportedTools = runtime.tools.filter((tool) => !supportedTools.has(tool));
+  if (unsupportedTools.length > 0) {
+    throw new Error(
+      `Invalid harness-compare.v1 manifest: ${label} has unsupported visible tools: ${unsupportedTools.join(", ")}.`,
+    );
+  }
+  for (const tool of requiredTools) {
+    if (!runtime.tools.includes(tool)) {
+      throw new Error(`Invalid harness-compare.v1 manifest: ${label}.tools must include '${tool}'.`);
+    }
+  }
+  if (runtime.allowedTools.length > 0) {
+    throw new Error("Invalid harness-compare.v1 manifest: allowedTools must be empty; every tool use requires the bounded permission callback.");
+  }
+  for (const tool of ["WebFetch", "WebSearch"]) {
+    if (!runtime.disallowedTools.includes(tool)) {
+      throw new Error(`Invalid harness-compare.v1 manifest: disallowedTools must include '${tool}'.`);
+    }
+  }
+  const unavailableRequiredTools = requiredTools.filter((tool) => runtime.disallowedTools.includes(tool));
+  if (unavailableRequiredTools.length > 0) {
+    throw new Error(
+      `Invalid harness-compare.v1 manifest: required tools are also disallowed: ${unavailableRequiredTools.join(", ")}.`,
+    );
   }
 }
 

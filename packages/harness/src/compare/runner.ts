@@ -21,8 +21,9 @@ import { resolveComposition } from "../resolver/resolve.js";
 import { gradeReadmePackage, type ReadmeGrade } from "./grader.js";
 import {
   loadHarnessCompareManifest,
-  type HarnessCompareManifest,
+  resolveHarnessCompareRuntime,
   type LoadedHarnessCompareManifest,
+  type ResolvedHarnessCompareRuntime,
 } from "./manifest.js";
 import {
   createBoundedQoderPermissionCallback,
@@ -34,7 +35,7 @@ export type CompareVariant = "baseline" | "candidate";
 export type TrialClassification = "passed" | "failed" | "infrastructure_error";
 
 export interface CompareExecutorContext {
-  runtime: HarnessCompareManifest["runtime"];
+  runtime: ResolvedHarnessCompareRuntime;
   trialRoot: string;
   abortController: AbortController;
   permissionDecisions: ToolPermissionDecision[];
@@ -54,6 +55,7 @@ export interface FileEvidence {
 export interface CompareTrialResult {
   variant: CompareVariant;
   compositionId: string;
+  runtimeProfile: string;
   trial: number;
   classification: TrialClassification;
   changedFiles: string[];
@@ -212,6 +214,7 @@ async function runTrial(options: {
   trial: number;
   executorFactory: CompareExecutorFactory;
 }): Promise<CompareTrialResult> {
+  const runtime = resolveHarnessCompareRuntime(options.loaded.value, options.variant);
   const variantDirectory = options.variant === "baseline" ? "H0" : "H1";
   const artifactDirectory = join(
     options.outputDirectory,
@@ -239,7 +242,7 @@ async function runTrial(options: {
     await initializeGitRepository(trialRoot, temporaryParent);
     const abortController = new AbortController();
     const executor = options.executorFactory({
-      runtime: options.loaded.value.runtime,
+      runtime,
       trialRoot,
       abortController,
       permissionDecisions,
@@ -249,7 +252,7 @@ async function runTrial(options: {
     try {
       execution = await withTimeout(
         executor.execute(options.revision, options.bundle, { prompt: options.prompt, cwd: trialRoot }),
-        options.loaded.value.runtime.timeoutMs,
+        runtime.timeoutMs,
         abortController,
       );
     } catch (error) {
@@ -287,6 +290,7 @@ async function runTrial(options: {
     const result: CompareTrialResult = {
       variant: options.variant,
       compositionId: options.compositionId,
+      runtimeProfile: runtime.profile,
       trial: options.trial,
       classification,
       changedFiles,
@@ -311,6 +315,7 @@ async function runTrial(options: {
 
 function defaultExecutorFactory(context: CompareExecutorContext): HarnessExecutor {
   return new QoderSdkExecutor({
+    profile: context.runtime.profile,
     tools: context.runtime.tools,
     allowedTools: context.runtime.allowedTools,
     disallowedTools: context.runtime.disallowedTools,

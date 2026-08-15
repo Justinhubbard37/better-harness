@@ -1,8 +1,11 @@
 export {
   HarnessCompareManifestSchema,
   loadHarnessCompareManifest,
+  resolveHarnessCompareRuntime,
+  type HarnessCompareVariant,
   type HarnessCompareManifest,
   type LoadedHarnessCompareManifest,
+  type ResolvedHarnessCompareRuntime,
 } from "./manifest.js";
 export { gradeReadmePackage, type GraderCheck, type ReadmeGrade } from "./grader.js";
 export {

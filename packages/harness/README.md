@@ -105,6 +105,26 @@ The command uses the official Qoder Agent SDK and the locally signed-in
 smoke; use all five trials before treating the result as comparative evidence.
 The README task is one benchmark, not proof of general coding performance.
 
+To isolate runtime-tool effects from harness-policy effects, the companion
+profile experiment holds the grounded composition and task constant. Its
+baseline uses the manifest's six bounded coding tools; its candidate uses the
+named `qoder-minimal-v1` profile:
+
+```sh
+node packages/harness/dist/compare/cli.js run packages/harness/examples/readme-compare/minimal-profile-experiment.json --out ./harness-qoder-profile-evidence --trials 1
+```
+
+`qoder-minimal-v1` exposes exactly `Read`, `Write`, `Edit`, and `Bash`, replaces
+the runtime system prompt with a short coding contract, skips filesystem setting
+sources, passes empty SDK selections for skills/plugins/extensions, configures
+no MCP servers, enables strict MCP isolation, and keeps the session ephemeral.
+The runtime may still report installed skill metadata during initialization;
+the model-visible tool list is the stronger observation and contains only the
+four named tools. The receipt records the profile and non-secret isolation
+options without storing the prompt body.
+One trial is a runtime smoke only; use the frozen five trials, and additional
+coding tasks, before drawing comparative quality or cost conclusions.
+
 Coding trials expose only `Read`, `Glob`, `Grep`, `Edit`, `Write`, and `Bash`.
 No tool is auto-approved: a permission callback confines file operations to the
 isolated trial, restricts writes to the manifest's expected files, and permits
@@ -165,3 +185,5 @@ npm run harness:test
 The package supports the repository's Node range (`>=22.20.0 <25`). See the
 [v0.1 production-readiness spec](https://github.com/QoderAI/better-harness/blob/main/docs/specs/2026-08-14-harness-as-code-v0.1.md)
 for acceptance scenarios, non-goals, and validation evidence.
+The named minimal profile and its isolated comparison are specified in
+[`docs/specs/2026-08-15-qoder-minimal-runtime-profile.md`](../../docs/specs/2026-08-15-qoder-minimal-runtime-profile.md).

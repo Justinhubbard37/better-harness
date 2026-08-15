@@ -193,6 +193,92 @@ describe("QoderSdkExecutor", () => {
     });
   });
 
+  it("materializes the frozen qoder-minimal-v1 SDK surface and receipt", async () => {
+    const { bundle, revision } = await resolveFor("on-qoder");
+    const queries: Parameters<QoderSdkLike["query"]>[0][] = [];
+    const canUseTool = async () => ({ behavior: "allow" as const });
+    const sdk: QoderSdkLike = {
+      qodercliAuth: () => ({ kind: "test-auth" }),
+      query: async function* (params) {
+        queries.push(params);
+        yield { type: "result", subtype: "success" };
+      },
+    };
+    const executor = new QoderSdkExecutor({
+      profile: "qoder-minimal-v1",
+      loadSdk: async () => sdk,
+      tools: ["Bash", "Edit", "Read", "Write"],
+      allowedTools: [],
+      disallowedTools: ["WebFetch", "WebSearch", "Task"],
+      permissionMode: "default",
+      canUseTool,
+      maxTurns: 8,
+    });
+
+    const result = await executor.execute(revision, bundle, { prompt: "Create README.md", cwd: "/tmp" });
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0].options).toMatchObject({
+      tools: ["Read", "Write", "Edit", "Bash"],
+      allowedTools: [],
+      disallowedTools: ["WebFetch", "WebSearch", "Agent", "Task"],
+      permissionMode: "default",
+      persistSession: false,
+      settingSources: [],
+      skills: [],
+      extensions: [],
+      plugins: [],
+      mcpServers: {},
+      strictMcpConfig: true,
+      systemPrompt: expect.stringContaining("focused coding agent"),
+    });
+    expect(queries[0].options.systemPrompt).toEqual(expect.stringContaining('working directory is "/tmp"'));
+    expect(queries[0].options.systemPrompt).toEqual(expect.stringContaining("Use relative paths such as package.json"));
+    expect(result.runtimeReceipt).toEqual(expect.objectContaining({
+      runtimeProfile: "qoder-minimal-v1",
+      tools: ["Read", "Write", "Edit", "Bash"],
+      allowedTools: [],
+      systemPromptSource: "executor-profile",
+      settingSources: [],
+      skills: [],
+      extensionCount: 0,
+      pluginCount: 0,
+      mcpServerNames: [],
+      strictMcpConfig: true,
+      permissionCallback: "configured",
+    }));
+    expect(JSON.stringify(result.runtimeReceipt)).not.toContain("focused coding agent");
+  });
+
+  it("rejects options that weaken qoder-minimal-v1 before loading the SDK", async () => {
+    let loaded = false;
+    const loadSdk = async (): Promise<QoderSdkLike> => {
+      loaded = true;
+      throw new Error("must not load");
+    };
+
+    expect(() => new QoderSdkExecutor({
+      profile: "qoder-minimal-v1",
+      loadSdk,
+      allowedTools: ["Read"],
+    })).toThrow(/does not permit auto-approved tools/);
+    expect(() => new QoderSdkExecutor({
+      profile: "qoder-minimal-v1",
+      loadSdk,
+      tools: ["Read", "Glob", "Grep", "Edit", "Write", "Bash"],
+    })).toThrow(/fixes the visible tools/);
+    expect(() => new QoderSdkExecutor({
+      profile: "qoder-minimal-v1",
+      loadSdk,
+      persistSession: true,
+    })).toThrow(/requires an ephemeral session/);
+    expect(() => new QoderSdkExecutor({
+      profile: "qoder-minimal-v1",
+      loadSdk,
+    })).toThrow(/requires canUseTool/);
+    expect(loaded).toBe(false);
+  });
+
   it("reports declared native strength as an advisory degradation", async () => {
     const { bundle, revision } = await resolveFor("on-qoder");
     const sdk: QoderSdkLike = {
