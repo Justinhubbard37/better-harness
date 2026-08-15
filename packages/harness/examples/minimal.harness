@@ -1,14 +1,24 @@
-// The smallest useful harness. One policy, applied as advisory prompt
-// guidance — no plugin, binding, or strength boilerplate. A bare `require`
-// asks for the component at the v0.1 floor; the omitted binding is exactly
-// what a hand-written `binding … { strength advisory }` would declare.
+// The smallest useful harness. One agent role, one inline skill, applied as
+// advisory prompt guidance — no runtime, binding, or strength boilerplate.
+// A bare `use skill` asks for the v0.2 floor; the omitted binding is exactly
+// what a hand-written `binding … { strength advisory }` would declare, and
+// the bare `target` synthesizes a tool-calling runtime with a conventional
+// adapter package.
 
-component require-tests {
-  kind policy
+skill require-tests {
   description "Do not report the task complete until tests or a diff review prove it."
 }
 
-composition my-agent {
-  target qoder
-  require require-tests
+workflow single-pass {
+  stop when coder.done
 }
+
+harness my-agent {
+  workflow single-pass
+
+  agent coder {
+    use skill require-tests
+  }
+}
+
+target qoder

@@ -9,7 +9,6 @@ import * as langium from 'langium';
 export const HarnessTerminals = {
     DURATION: /[0-9]+(ms|s|m|h)/,
     INT: /[0-9]+/,
-    VERSION_RANGE: /@[~^]?[0-9][0-9a-zA-Z.+*-]*/,
     ID: /[_a-zA-Z][\w-]*/,
     STRING: /"[^"]*"/,
     WS: /\s+/,
@@ -21,53 +20,64 @@ export type HarnessTerminalNames = keyof typeof HarnessTerminals;
 
 export type HarnessKeywordNames =
     | ","
+    | "->"
     | "."
     | "="
     | "["
     | "]"
+    | "adapter"
     | "advisory"
+    | "agent"
     | "allow"
     | "binding"
-    | "component"
-    | "composition"
+    | "command"
     | "configure"
+    | "connect"
     | "deny"
     | "description"
     | "enforced"
-    | "extends"
+    | "env"
+    | "execution"
     | "fail"
     | "false"
     | "for"
-    | "hook"
-    | "include"
+    | "harness"
+    | "http"
     | "input"
-    | "kind"
+    | "mcp"
     | "mechanism"
     | "minimum"
     | "model"
     | "network"
     | "notes"
-    | "observer"
+    | "on"
     | "on-degrade"
     | "output"
     | "permissions"
-    | "plugin"
-    | "policy"
     | "preferred"
     | "process"
     | "program"
-    | "provides"
+    | "programmatic"
     | "read"
     | "report"
     | "require"
+    | "runtime"
     | "skill"
+    | "source"
+    | "sse"
+    | "stdio"
+    | "stop"
     | "strength"
     | "target"
     | "tool"
+    | "tool-calling"
+    | "transport"
     | "true"
-    | "ui"
     | "unsupported"
-    | "version"
+    | "url"
+    | "use"
+    | "uses"
+    | "when"
     | "wired"
     | "workflow"
     | "workspace"
@@ -76,6 +86,23 @@ export type HarnessKeywordNames =
     | "}";
 
 export type HarnessTokenNames = HarnessTerminalNames | HarnessKeywordNames;
+
+export interface AgentDeclaration extends langium.AstNode {
+    readonly $container: HarnessDeclaration;
+    readonly $type: 'AgentDeclaration';
+    name: string;
+    requirements: Array<CapabilityUse>;
+}
+
+export const AgentDeclaration = {
+    $type: 'AgentDeclaration',
+    name: 'name',
+    requirements: 'requirements'
+} as const;
+
+export function isAgentDeclaration(item: unknown): item is AgentDeclaration {
+    return reflection.isInstance(item, AgentDeclaration.$type);
+}
 
 export interface BooleanLiteral extends langium.AstNode {
     readonly $container: ConfigEntry;
@@ -92,102 +119,66 @@ export function isBooleanLiteral(item: unknown): item is BooleanLiteral {
     return reflection.isInstance(item, BooleanLiteral.$type);
 }
 
-export interface CapabilityRequirement extends langium.AstNode {
-    readonly $container: CompositionDeclaration;
-    readonly $type: 'CapabilityRequirement';
-    component: langium.Reference<ComponentContract>;
+export interface CapabilityBinding extends langium.AstNode {
+    readonly $container: HarnessDocument;
+    readonly $type: 'CapabilityBinding';
+    capability: QualifiedName;
+    mechanism?: QualifiedName;
+    notes?: string;
+    runtimes: Array<string>;
+    strength?: Strength;
+}
+
+export const CapabilityBinding = {
+    $type: 'CapabilityBinding',
+    capability: 'capability',
+    mechanism: 'mechanism',
+    notes: 'notes',
+    runtimes: 'runtimes',
+    strength: 'strength'
+} as const;
+
+export function isCapabilityBinding(item: unknown): item is CapabilityBinding {
+    return reflection.isInstance(item, CapabilityBinding.$type);
+}
+
+export type CapabilityDeclaration = McpDeclaration | SkillDeclaration | ToolDeclaration;
+
+export const CapabilityDeclaration = {
+    $type: 'CapabilityDeclaration'
+} as const;
+
+export function isCapabilityDeclaration(item: unknown): item is CapabilityDeclaration {
+    return reflection.isInstance(item, CapabilityDeclaration.$type);
+}
+
+export interface CapabilityUse extends langium.AstNode {
+    readonly $container: AgentDeclaration;
+    readonly $type: 'CapabilityUse';
+    capability: QualifiedName;
     minimum?: Strength;
     onDegrade?: DegradePolicy;
     preferred?: Strength;
+    verb: 'connect' | 'require' | 'use';
 }
 
-export const CapabilityRequirement = {
-    $type: 'CapabilityRequirement',
-    component: 'component',
+export const CapabilityUse = {
+    $type: 'CapabilityUse',
+    capability: 'capability',
     minimum: 'minimum',
     onDegrade: 'onDegrade',
-    preferred: 'preferred'
+    preferred: 'preferred',
+    verb: 'verb'
 } as const;
 
-export function isCapabilityRequirement(item: unknown): item is CapabilityRequirement {
-    return reflection.isInstance(item, CapabilityRequirement.$type);
-}
-
-export interface ComponentContract extends langium.AstNode {
-    readonly $container: HarnessDocument;
-    readonly $type: 'ComponentContract';
-    description?: string;
-    inputs: Array<string>;
-    kind: ComponentKind;
-    name: string;
-    outputs: Array<string>;
-    permissions: Array<PermissionRule>;
-}
-
-export const ComponentContract = {
-    $type: 'ComponentContract',
-    description: 'description',
-    inputs: 'inputs',
-    kind: 'kind',
-    name: 'name',
-    outputs: 'outputs',
-    permissions: 'permissions'
-} as const;
-
-export function isComponentContract(item: unknown): item is ComponentContract {
-    return reflection.isInstance(item, ComponentContract.$type);
-}
-
-export type ComponentKind = 'hook' | 'observer' | 'policy' | 'program' | 'skill' | 'tool' | 'ui' | 'workflow';
-
-export function isComponentKind(item: unknown): item is ComponentKind {
-    return item === 'skill' || item === 'tool' || item === 'program' || item === 'workflow' || item === 'hook' || item === 'policy' || item === 'observer' || item === 'ui';
-}
-
-export interface ComponentRef extends langium.AstNode {
-    readonly $container: PluginDeclaration;
-    readonly $type: 'ComponentRef';
-    component: langium.Reference<ComponentContract>;
-}
-
-export const ComponentRef = {
-    $type: 'ComponentRef',
-    component: 'component'
-} as const;
-
-export function isComponentRef(item: unknown): item is ComponentRef {
-    return reflection.isInstance(item, ComponentRef.$type);
-}
-
-export interface CompositionDeclaration extends langium.AstNode {
-    readonly $container: HarnessDocument;
-    readonly $type: 'CompositionDeclaration';
-    base?: langium.Reference<CompositionDeclaration>;
-    includes: Array<PluginRequirement>;
-    name: string;
-    requirements: Array<CapabilityRequirement>;
-    settings: Array<ConfigEntry>;
-    target?: string;
-}
-
-export const CompositionDeclaration = {
-    $type: 'CompositionDeclaration',
-    base: 'base',
-    includes: 'includes',
-    name: 'name',
-    requirements: 'requirements',
-    settings: 'settings',
-    target: 'target'
-} as const;
-
-export function isCompositionDeclaration(item: unknown): item is CompositionDeclaration {
-    return reflection.isInstance(item, CompositionDeclaration.$type);
+export function isCapabilityUse(item: unknown): item is CapabilityUse {
+    return reflection.isInstance(item, CapabilityUse.$type);
 }
 
 export interface ConfigEntry extends langium.AstNode {
-    readonly $container: CompositionDeclaration;
+    readonly $container: HarnessDeclaration;
     readonly $type: 'ConfigEntry';
-    key: DottedName;
+    key: QualifiedName;
     value: ConfigValue;
 }
 
@@ -211,7 +202,7 @@ export function isConfigValue(item: unknown): item is ConfigValue {
     return reflection.isInstance(item, ConfigValue.$type);
 }
 
-export type Declaration = ComponentContract | CompositionDeclaration | PluginDeclaration | TargetBinding;
+export type Declaration = CapabilityBinding | CapabilityDeclaration | HarnessDeclaration | RuntimeDeclaration | TargetDeclaration | WorkflowDeclaration;
 
 export const Declaration = {
     $type: 'Declaration'
@@ -227,12 +218,6 @@ export function isDegradePolicy(item: unknown): item is DegradePolicy {
     return item === 'fail' || item === 'report';
 }
 
-export type DottedName = string;
-
-export function isDottedName(item: unknown): item is DottedName {
-    return typeof item === 'string';
-}
-
 export interface DurationLiteral extends langium.AstNode {
     readonly $container: ConfigEntry;
     readonly $type: 'DurationLiteral';
@@ -246,6 +231,105 @@ export const DurationLiteral = {
 
 export function isDurationLiteral(item: unknown): item is DurationLiteral {
     return reflection.isInstance(item, DurationLiteral.$type);
+}
+
+export interface EdgeStatement extends langium.AstNode {
+    readonly $container: WorkflowDeclaration;
+    readonly $type: 'EdgeStatement';
+    from: string;
+    to: string;
+}
+
+export const EdgeStatement = {
+    $type: 'EdgeStatement',
+    from: 'from',
+    to: 'to'
+} as const;
+
+export function isEdgeStatement(item: unknown): item is EdgeStatement {
+    return reflection.isInstance(item, EdgeStatement.$type);
+}
+
+export interface EnvEndpoint extends langium.AstNode {
+    readonly $container: McpDeclaration;
+    readonly $type: 'EnvEndpoint';
+    variable: string;
+}
+
+export const EnvEndpoint = {
+    $type: 'EnvEndpoint',
+    variable: 'variable'
+} as const;
+
+export function isEnvEndpoint(item: unknown): item is EnvEndpoint {
+    return reflection.isInstance(item, EnvEndpoint.$type);
+}
+
+export interface EventStatement extends langium.AstNode {
+    readonly $container: WorkflowDeclaration;
+    readonly $type: 'EventStatement';
+    agent: string;
+    outcome: string;
+    to: string;
+}
+
+export const EventStatement = {
+    $type: 'EventStatement',
+    agent: 'agent',
+    outcome: 'outcome',
+    to: 'to'
+} as const;
+
+export function isEventStatement(item: unknown): item is EventStatement {
+    return reflection.isInstance(item, EventStatement.$type);
+}
+
+export interface ExecutionOption extends langium.AstNode {
+    readonly $container: ProgrammaticExecution;
+    readonly $type: 'ExecutionOption';
+    key: string;
+    value: string;
+}
+
+export const ExecutionOption = {
+    $type: 'ExecutionOption',
+    key: 'key',
+    value: 'value'
+} as const;
+
+export function isExecutionOption(item: unknown): item is ExecutionOption {
+    return reflection.isInstance(item, ExecutionOption.$type);
+}
+
+export type ExecutionSpec = ProgrammaticExecution | ToolCallingExecution;
+
+export const ExecutionSpec = {
+    $type: 'ExecutionSpec'
+} as const;
+
+export function isExecutionSpec(item: unknown): item is ExecutionSpec {
+    return reflection.isInstance(item, ExecutionSpec.$type);
+}
+
+export interface HarnessDeclaration extends langium.AstNode {
+    readonly $container: HarnessDocument;
+    readonly $type: 'HarnessDeclaration';
+    agents: Array<AgentDeclaration>;
+    name: string;
+    settings: Array<ConfigEntry>;
+    workflow: langium.Reference<WorkflowDeclaration>;
+}
+
+export const HarnessDeclaration = {
+    $type: 'HarnessDeclaration',
+    agents: 'agents',
+    name: 'name',
+    settings: 'settings',
+    workflow: 'workflow'
+} as const;
+
+export function isHarnessDeclaration(item: unknown): item is HarnessDeclaration {
+    return reflection.isInstance(item, HarnessDeclaration.$type);
 }
 
 export interface HarnessDocument extends langium.AstNode {
@@ -277,6 +361,58 @@ export function isIntLiteral(item: unknown): item is IntLiteral {
     return reflection.isInstance(item, IntLiteral.$type);
 }
 
+export interface LiteralEndpoint extends langium.AstNode {
+    readonly $container: McpDeclaration;
+    readonly $type: 'LiteralEndpoint';
+    value: string;
+}
+
+export const LiteralEndpoint = {
+    $type: 'LiteralEndpoint',
+    value: 'value'
+} as const;
+
+export function isLiteralEndpoint(item: unknown): item is LiteralEndpoint {
+    return reflection.isInstance(item, LiteralEndpoint.$type);
+}
+
+export interface McpDeclaration extends langium.AstNode {
+    readonly $container: HarnessDocument;
+    readonly $type: 'McpDeclaration';
+    command?: string;
+    name: string;
+    transport: Transport;
+    url?: McpEndpoint;
+}
+
+export const McpDeclaration = {
+    $type: 'McpDeclaration',
+    command: 'command',
+    name: 'name',
+    transport: 'transport',
+    url: 'url'
+} as const;
+
+export function isMcpDeclaration(item: unknown): item is McpDeclaration {
+    return reflection.isInstance(item, McpDeclaration.$type);
+}
+
+export type McpEndpoint = EnvEndpoint | LiteralEndpoint;
+
+export const McpEndpoint = {
+    $type: 'McpEndpoint'
+} as const;
+
+export function isMcpEndpoint(item: unknown): item is McpEndpoint {
+    return reflection.isInstance(item, McpEndpoint.$type);
+}
+
+export type NameSegment = 'adapter' | 'agent' | 'allow' | 'command' | 'configure' | 'deny' | 'description' | 'env' | 'execution' | 'harness' | 'http' | 'input' | 'mcp' | 'mechanism' | 'model' | 'network' | 'notes' | 'output' | 'process' | 'program' | 'read' | 'runtime' | 'skill' | 'source' | 'sse' | 'stdio' | 'strength' | 'target' | 'tool' | 'transport' | 'url' | 'workflow' | 'workspace' | 'write' | string;
+
+export function isNameSegment(item: unknown): item is NameSegment {
+    return item === 'workspace' || item === 'process' || item === 'network' || item === 'model' || item === 'read' || item === 'write' || item === 'allow' || item === 'deny' || item === 'env' || item === 'url' || item === 'command' || item === 'source' || item === 'description' || item === 'transport' || item === 'adapter' || item === 'execution' || item === 'program' || item === 'runtime' || item === 'target' || item === 'agent' || item === 'skill' || item === 'tool' || item === 'mcp' || item === 'workflow' || item === 'harness' || item === 'input' || item === 'output' || item === 'mechanism' || item === 'strength' || item === 'notes' || item === 'configure' || item === 'stdio' || item === 'http' || item === 'sse' || (typeof item === 'string' && (/[_a-zA-Z][\w-]*/.test(item)));
+}
+
 export type PermissionAccess = 'allow' | 'deny' | 'read' | 'write';
 
 export function isPermissionAccess(item: unknown): item is PermissionAccess {
@@ -290,7 +426,7 @@ export function isPermissionDomain(item: unknown): item is PermissionDomain {
 }
 
 export interface PermissionRule extends langium.AstNode {
-    readonly $container: ComponentContract;
+    readonly $container: SkillDeclaration | ToolDeclaration;
     readonly $type: 'PermissionRule';
     access: PermissionAccess;
     domain: PermissionDomain;
@@ -306,40 +442,101 @@ export function isPermissionRule(item: unknown): item is PermissionRule {
     return reflection.isInstance(item, PermissionRule.$type);
 }
 
-export interface PluginDeclaration extends langium.AstNode {
+export interface ProgramBody extends langium.AstNode {
+    readonly $container: WorkflowDeclaration;
+    readonly $type: 'ProgramBody';
+    entry: string;
+    language: string;
+}
+
+export const ProgramBody = {
+    $type: 'ProgramBody',
+    entry: 'entry',
+    language: 'language'
+} as const;
+
+export function isProgramBody(item: unknown): item is ProgramBody {
+    return reflection.isInstance(item, ProgramBody.$type);
+}
+
+export interface ProgrammaticExecution extends langium.AstNode {
+    readonly $container: RuntimeDeclaration;
+    readonly $type: 'ProgrammaticExecution';
+    language: string;
+    options: Array<ExecutionOption>;
+}
+
+export const ProgrammaticExecution = {
+    $type: 'ProgrammaticExecution',
+    language: 'language',
+    options: 'options'
+} as const;
+
+export function isProgrammaticExecution(item: unknown): item is ProgrammaticExecution {
+    return reflection.isInstance(item, ProgrammaticExecution.$type);
+}
+
+export type QualifiedName = string;
+
+export function isQualifiedName(item: unknown): item is QualifiedName {
+    return typeof item === 'string';
+}
+
+export interface RuntimeDeclaration extends langium.AstNode {
     readonly $container: HarnessDocument;
-    readonly $type: 'PluginDeclaration';
+    readonly $type: 'RuntimeDeclaration';
+    adapter: string;
+    execution?: ExecutionSpec;
     name: string;
-    provides: Array<ComponentRef>;
-    version: string;
 }
 
-export const PluginDeclaration = {
-    $type: 'PluginDeclaration',
+export const RuntimeDeclaration = {
+    $type: 'RuntimeDeclaration',
+    adapter: 'adapter',
+    execution: 'execution',
+    name: 'name'
+} as const;
+
+export function isRuntimeDeclaration(item: unknown): item is RuntimeDeclaration {
+    return reflection.isInstance(item, RuntimeDeclaration.$type);
+}
+
+export interface SkillDeclaration extends langium.AstNode {
+    readonly $container: HarnessDocument;
+    readonly $type: 'SkillDeclaration';
+    description?: string;
+    name: string;
+    permissions: Array<PermissionRule>;
+    source?: string;
+}
+
+export const SkillDeclaration = {
+    $type: 'SkillDeclaration',
+    description: 'description',
     name: 'name',
-    provides: 'provides',
-    version: 'version'
+    permissions: 'permissions',
+    source: 'source'
 } as const;
 
-export function isPluginDeclaration(item: unknown): item is PluginDeclaration {
-    return reflection.isInstance(item, PluginDeclaration.$type);
+export function isSkillDeclaration(item: unknown): item is SkillDeclaration {
+    return reflection.isInstance(item, SkillDeclaration.$type);
 }
 
-export interface PluginRequirement extends langium.AstNode {
-    readonly $container: CompositionDeclaration;
-    readonly $type: 'PluginRequirement';
-    plugin: langium.Reference<PluginDeclaration>;
-    range: string;
+export interface StopStatement extends langium.AstNode {
+    readonly $container: WorkflowDeclaration;
+    readonly $type: 'StopStatement';
+    agent: string;
+    outcome: string;
 }
 
-export const PluginRequirement = {
-    $type: 'PluginRequirement',
-    plugin: 'plugin',
-    range: 'range'
+export const StopStatement = {
+    $type: 'StopStatement',
+    agent: 'agent',
+    outcome: 'outcome'
 } as const;
 
-export function isPluginRequirement(item: unknown): item is PluginRequirement {
-    return reflection.isInstance(item, PluginRequirement.$type);
+export function isStopStatement(item: unknown): item is StopStatement {
+    return reflection.isInstance(item, StopStatement.$type);
 }
 
 export type Strength = 'advisory' | 'enforced' | 'unsupported' | 'wired';
@@ -363,50 +560,147 @@ export function isStringLiteral(item: unknown): item is StringLiteral {
     return reflection.isInstance(item, StringLiteral.$type);
 }
 
-export interface TargetBinding extends langium.AstNode {
+export interface TargetDeclaration extends langium.AstNode {
     readonly $container: HarnessDocument;
-    readonly $type: 'TargetBinding';
-    component: langium.Reference<ComponentContract>;
-    hosts: Array<string>;
-    mechanism?: string;
-    notes?: string;
-    strength?: Strength;
+    readonly $type: 'TargetDeclaration';
+    adapter?: string;
+    runtime: string;
 }
 
-export const TargetBinding = {
-    $type: 'TargetBinding',
-    component: 'component',
-    hosts: 'hosts',
-    mechanism: 'mechanism',
-    notes: 'notes',
-    strength: 'strength'
+export const TargetDeclaration = {
+    $type: 'TargetDeclaration',
+    adapter: 'adapter',
+    runtime: 'runtime'
 } as const;
 
-export function isTargetBinding(item: unknown): item is TargetBinding {
-    return reflection.isInstance(item, TargetBinding.$type);
+export function isTargetDeclaration(item: unknown): item is TargetDeclaration {
+    return reflection.isInstance(item, TargetDeclaration.$type);
+}
+
+export interface ToolCallingExecution extends langium.AstNode {
+    readonly $container: RuntimeDeclaration;
+    readonly $type: 'ToolCallingExecution';
+    style: 'tool-calling';
+}
+
+export const ToolCallingExecution = {
+    $type: 'ToolCallingExecution',
+    style: 'style'
+} as const;
+
+export function isToolCallingExecution(item: unknown): item is ToolCallingExecution {
+    return reflection.isInstance(item, ToolCallingExecution.$type);
+}
+
+export interface ToolDeclaration extends langium.AstNode {
+    readonly $container: HarnessDocument;
+    readonly $type: 'ToolDeclaration';
+    description?: string;
+    inputs: Array<string>;
+    name: QualifiedName;
+    outputs: Array<string>;
+    permissions: Array<PermissionRule>;
+}
+
+export const ToolDeclaration = {
+    $type: 'ToolDeclaration',
+    description: 'description',
+    inputs: 'inputs',
+    name: 'name',
+    outputs: 'outputs',
+    permissions: 'permissions'
+} as const;
+
+export function isToolDeclaration(item: unknown): item is ToolDeclaration {
+    return reflection.isInstance(item, ToolDeclaration.$type);
+}
+
+export type Transport = 'http' | 'sse' | 'stdio';
+
+export function isTransport(item: unknown): item is Transport {
+    return item === 'stdio' || item === 'http' || item === 'sse';
+}
+
+export interface WorkflowDeclaration extends langium.AstNode {
+    readonly $container: HarnessDocument;
+    readonly $type: 'WorkflowDeclaration';
+    name: string;
+    program?: ProgramBody;
+    statements: Array<WorkflowStatement>;
+}
+
+export const WorkflowDeclaration = {
+    $type: 'WorkflowDeclaration',
+    name: 'name',
+    program: 'program',
+    statements: 'statements'
+} as const;
+
+export function isWorkflowDeclaration(item: unknown): item is WorkflowDeclaration {
+    return reflection.isInstance(item, WorkflowDeclaration.$type);
+}
+
+export type WorkflowStatement = EdgeStatement | EventStatement | StopStatement;
+
+export const WorkflowStatement = {
+    $type: 'WorkflowStatement'
+} as const;
+
+export function isWorkflowStatement(item: unknown): item is WorkflowStatement {
+    return reflection.isInstance(item, WorkflowStatement.$type);
 }
 
 export type HarnessAstType = {
+    AgentDeclaration: AgentDeclaration
     BooleanLiteral: BooleanLiteral
-    CapabilityRequirement: CapabilityRequirement
-    ComponentContract: ComponentContract
-    ComponentRef: ComponentRef
-    CompositionDeclaration: CompositionDeclaration
+    CapabilityBinding: CapabilityBinding
+    CapabilityDeclaration: CapabilityDeclaration
+    CapabilityUse: CapabilityUse
     ConfigEntry: ConfigEntry
     ConfigValue: ConfigValue
     Declaration: Declaration
     DurationLiteral: DurationLiteral
+    EdgeStatement: EdgeStatement
+    EnvEndpoint: EnvEndpoint
+    EventStatement: EventStatement
+    ExecutionOption: ExecutionOption
+    ExecutionSpec: ExecutionSpec
+    HarnessDeclaration: HarnessDeclaration
     HarnessDocument: HarnessDocument
     IntLiteral: IntLiteral
+    LiteralEndpoint: LiteralEndpoint
+    McpDeclaration: McpDeclaration
+    McpEndpoint: McpEndpoint
     PermissionRule: PermissionRule
-    PluginDeclaration: PluginDeclaration
-    PluginRequirement: PluginRequirement
+    ProgramBody: ProgramBody
+    ProgrammaticExecution: ProgrammaticExecution
+    RuntimeDeclaration: RuntimeDeclaration
+    SkillDeclaration: SkillDeclaration
+    StopStatement: StopStatement
     StringLiteral: StringLiteral
-    TargetBinding: TargetBinding
+    TargetDeclaration: TargetDeclaration
+    ToolCallingExecution: ToolCallingExecution
+    ToolDeclaration: ToolDeclaration
+    WorkflowDeclaration: WorkflowDeclaration
+    WorkflowStatement: WorkflowStatement
 }
 
 export class HarnessAstReflection extends langium.AbstractAstReflection {
     override readonly types = {
+        AgentDeclaration: {
+            name: AgentDeclaration.$type,
+            properties: {
+                name: {
+                    name: AgentDeclaration.name
+                },
+                requirements: {
+                    name: AgentDeclaration.requirements,
+                    defaultValue: [],
+                    optional: true
+                }
+            },
+            superTypes: []
+        },
         BooleanLiteral: {
             name: BooleanLiteral.$type,
             properties: {
@@ -418,101 +712,60 @@ export class HarnessAstReflection extends langium.AbstractAstReflection {
             },
             superTypes: [ConfigValue.$type]
         },
-        CapabilityRequirement: {
-            name: CapabilityRequirement.$type,
+        CapabilityBinding: {
+            name: CapabilityBinding.$type,
             properties: {
-                component: {
-                    name: CapabilityRequirement.component,
-                    referenceType: ComponentContract.$type
+                capability: {
+                    name: CapabilityBinding.capability
+                },
+                mechanism: {
+                    name: CapabilityBinding.mechanism,
+                    optional: true
+                },
+                notes: {
+                    name: CapabilityBinding.notes,
+                    optional: true
+                },
+                runtimes: {
+                    name: CapabilityBinding.runtimes,
+                    defaultValue: []
+                },
+                strength: {
+                    name: CapabilityBinding.strength,
+                    optional: true
+                }
+            },
+            superTypes: [Declaration.$type]
+        },
+        CapabilityDeclaration: {
+            name: CapabilityDeclaration.$type,
+            properties: {
+            },
+            superTypes: [Declaration.$type]
+        },
+        CapabilityUse: {
+            name: CapabilityUse.$type,
+            properties: {
+                capability: {
+                    name: CapabilityUse.capability
                 },
                 minimum: {
-                    name: CapabilityRequirement.minimum,
+                    name: CapabilityUse.minimum,
                     optional: true
                 },
                 onDegrade: {
-                    name: CapabilityRequirement.onDegrade,
+                    name: CapabilityUse.onDegrade,
                     optional: true
                 },
                 preferred: {
-                    name: CapabilityRequirement.preferred,
+                    name: CapabilityUse.preferred,
                     optional: true
+                },
+                verb: {
+                    name: CapabilityUse.verb
                 }
             },
             superTypes: []
-        },
-        ComponentContract: {
-            name: ComponentContract.$type,
-            properties: {
-                description: {
-                    name: ComponentContract.description,
-                    optional: true
-                },
-                inputs: {
-                    name: ComponentContract.inputs,
-                    defaultValue: [],
-                    optional: true
-                },
-                kind: {
-                    name: ComponentContract.kind
-                },
-                name: {
-                    name: ComponentContract.name
-                },
-                outputs: {
-                    name: ComponentContract.outputs,
-                    defaultValue: [],
-                    optional: true
-                },
-                permissions: {
-                    name: ComponentContract.permissions,
-                    defaultValue: [],
-                    optional: true
-                }
-            },
-            superTypes: [Declaration.$type]
-        },
-        ComponentRef: {
-            name: ComponentRef.$type,
-            properties: {
-                component: {
-                    name: ComponentRef.component,
-                    referenceType: ComponentContract.$type
-                }
-            },
-            superTypes: []
-        },
-        CompositionDeclaration: {
-            name: CompositionDeclaration.$type,
-            properties: {
-                base: {
-                    name: CompositionDeclaration.base,
-                    referenceType: CompositionDeclaration.$type,
-                    optional: true
-                },
-                includes: {
-                    name: CompositionDeclaration.includes,
-                    defaultValue: [],
-                    optional: true
-                },
-                name: {
-                    name: CompositionDeclaration.name
-                },
-                requirements: {
-                    name: CompositionDeclaration.requirements,
-                    defaultValue: [],
-                    optional: true
-                },
-                settings: {
-                    name: CompositionDeclaration.settings,
-                    defaultValue: [],
-                    optional: true
-                },
-                target: {
-                    name: CompositionDeclaration.target,
-                    optional: true
-                }
-            },
-            superTypes: [Declaration.$type]
         },
         ConfigEntry: {
             name: ConfigEntry.$type,
@@ -547,6 +800,83 @@ export class HarnessAstReflection extends langium.AbstractAstReflection {
             },
             superTypes: [ConfigValue.$type]
         },
+        EdgeStatement: {
+            name: EdgeStatement.$type,
+            properties: {
+                from: {
+                    name: EdgeStatement.from
+                },
+                to: {
+                    name: EdgeStatement.to
+                }
+            },
+            superTypes: [WorkflowStatement.$type]
+        },
+        EnvEndpoint: {
+            name: EnvEndpoint.$type,
+            properties: {
+                variable: {
+                    name: EnvEndpoint.variable
+                }
+            },
+            superTypes: [McpEndpoint.$type]
+        },
+        EventStatement: {
+            name: EventStatement.$type,
+            properties: {
+                agent: {
+                    name: EventStatement.agent
+                },
+                outcome: {
+                    name: EventStatement.outcome
+                },
+                to: {
+                    name: EventStatement.to
+                }
+            },
+            superTypes: [WorkflowStatement.$type]
+        },
+        ExecutionOption: {
+            name: ExecutionOption.$type,
+            properties: {
+                key: {
+                    name: ExecutionOption.key
+                },
+                value: {
+                    name: ExecutionOption.value
+                }
+            },
+            superTypes: []
+        },
+        ExecutionSpec: {
+            name: ExecutionSpec.$type,
+            properties: {
+            },
+            superTypes: []
+        },
+        HarnessDeclaration: {
+            name: HarnessDeclaration.$type,
+            properties: {
+                agents: {
+                    name: HarnessDeclaration.agents,
+                    defaultValue: [],
+                    optional: true
+                },
+                name: {
+                    name: HarnessDeclaration.name
+                },
+                settings: {
+                    name: HarnessDeclaration.settings,
+                    defaultValue: [],
+                    optional: true
+                },
+                workflow: {
+                    name: HarnessDeclaration.workflow,
+                    referenceType: WorkflowDeclaration.$type
+                }
+            },
+            superTypes: [Declaration.$type]
+        },
         HarnessDocument: {
             name: HarnessDocument.$type,
             properties: {
@@ -567,6 +897,41 @@ export class HarnessAstReflection extends langium.AbstractAstReflection {
             },
             superTypes: [ConfigValue.$type]
         },
+        LiteralEndpoint: {
+            name: LiteralEndpoint.$type,
+            properties: {
+                value: {
+                    name: LiteralEndpoint.value
+                }
+            },
+            superTypes: [McpEndpoint.$type]
+        },
+        McpDeclaration: {
+            name: McpDeclaration.$type,
+            properties: {
+                command: {
+                    name: McpDeclaration.command,
+                    optional: true
+                },
+                name: {
+                    name: McpDeclaration.name
+                },
+                transport: {
+                    name: McpDeclaration.transport
+                },
+                url: {
+                    name: McpDeclaration.url,
+                    optional: true
+                }
+            },
+            superTypes: [CapabilityDeclaration.$type]
+        },
+        McpEndpoint: {
+            name: McpEndpoint.$type,
+            properties: {
+            },
+            superTypes: []
+        },
         PermissionRule: {
             name: PermissionRule.$type,
             properties: {
@@ -579,34 +944,81 @@ export class HarnessAstReflection extends langium.AbstractAstReflection {
             },
             superTypes: []
         },
-        PluginDeclaration: {
-            name: PluginDeclaration.$type,
+        ProgramBody: {
+            name: ProgramBody.$type,
             properties: {
+                entry: {
+                    name: ProgramBody.entry
+                },
+                language: {
+                    name: ProgramBody.language
+                }
+            },
+            superTypes: []
+        },
+        ProgrammaticExecution: {
+            name: ProgrammaticExecution.$type,
+            properties: {
+                language: {
+                    name: ProgrammaticExecution.language
+                },
+                options: {
+                    name: ProgrammaticExecution.options,
+                    defaultValue: [],
+                    optional: true
+                }
+            },
+            superTypes: [ExecutionSpec.$type]
+        },
+        RuntimeDeclaration: {
+            name: RuntimeDeclaration.$type,
+            properties: {
+                adapter: {
+                    name: RuntimeDeclaration.adapter
+                },
+                execution: {
+                    name: RuntimeDeclaration.execution,
+                    optional: true
+                },
                 name: {
-                    name: PluginDeclaration.name
-                },
-                provides: {
-                    name: PluginDeclaration.provides,
-                    defaultValue: []
-                },
-                version: {
-                    name: PluginDeclaration.version
+                    name: RuntimeDeclaration.name
                 }
             },
             superTypes: [Declaration.$type]
         },
-        PluginRequirement: {
-            name: PluginRequirement.$type,
+        SkillDeclaration: {
+            name: SkillDeclaration.$type,
             properties: {
-                plugin: {
-                    name: PluginRequirement.plugin,
-                    referenceType: PluginDeclaration.$type
+                description: {
+                    name: SkillDeclaration.description,
+                    optional: true
                 },
-                range: {
-                    name: PluginRequirement.range
+                name: {
+                    name: SkillDeclaration.name
+                },
+                permissions: {
+                    name: SkillDeclaration.permissions,
+                    defaultValue: [],
+                    optional: true
+                },
+                source: {
+                    name: SkillDeclaration.source,
+                    optional: true
                 }
             },
-            superTypes: []
+            superTypes: [CapabilityDeclaration.$type]
+        },
+        StopStatement: {
+            name: StopStatement.$type,
+            properties: {
+                agent: {
+                    name: StopStatement.agent
+                },
+                outcome: {
+                    name: StopStatement.outcome
+                }
+            },
+            superTypes: [WorkflowStatement.$type]
         },
         StringLiteral: {
             name: StringLiteral.$type,
@@ -617,31 +1029,79 @@ export class HarnessAstReflection extends langium.AbstractAstReflection {
             },
             superTypes: [ConfigValue.$type]
         },
-        TargetBinding: {
-            name: TargetBinding.$type,
+        TargetDeclaration: {
+            name: TargetDeclaration.$type,
             properties: {
-                component: {
-                    name: TargetBinding.component,
-                    referenceType: ComponentContract.$type
-                },
-                hosts: {
-                    name: TargetBinding.hosts,
-                    defaultValue: []
-                },
-                mechanism: {
-                    name: TargetBinding.mechanism,
+                adapter: {
+                    name: TargetDeclaration.adapter,
                     optional: true
                 },
-                notes: {
-                    name: TargetBinding.notes,
+                runtime: {
+                    name: TargetDeclaration.runtime
+                }
+            },
+            superTypes: [Declaration.$type]
+        },
+        ToolCallingExecution: {
+            name: ToolCallingExecution.$type,
+            properties: {
+                style: {
+                    name: ToolCallingExecution.style
+                }
+            },
+            superTypes: [ExecutionSpec.$type]
+        },
+        ToolDeclaration: {
+            name: ToolDeclaration.$type,
+            properties: {
+                description: {
+                    name: ToolDeclaration.description,
                     optional: true
                 },
-                strength: {
-                    name: TargetBinding.strength,
+                inputs: {
+                    name: ToolDeclaration.inputs,
+                    defaultValue: [],
+                    optional: true
+                },
+                name: {
+                    name: ToolDeclaration.name
+                },
+                outputs: {
+                    name: ToolDeclaration.outputs,
+                    defaultValue: [],
+                    optional: true
+                },
+                permissions: {
+                    name: ToolDeclaration.permissions,
+                    defaultValue: [],
+                    optional: true
+                }
+            },
+            superTypes: [CapabilityDeclaration.$type]
+        },
+        WorkflowDeclaration: {
+            name: WorkflowDeclaration.$type,
+            properties: {
+                name: {
+                    name: WorkflowDeclaration.name
+                },
+                program: {
+                    name: WorkflowDeclaration.program,
+                    optional: true
+                },
+                statements: {
+                    name: WorkflowDeclaration.statements,
+                    defaultValue: [],
                     optional: true
                 }
             },
             superTypes: [Declaration.$type]
+        },
+        WorkflowStatement: {
+            name: WorkflowStatement.$type,
+            properties: {
+            },
+            superTypes: []
         }
     } as const satisfies langium.AstMetaData
 }

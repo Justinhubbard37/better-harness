@@ -1,4 +1,4 @@
-import type { HarnessIrBundle, HarnessRevision } from "../ir/index.js";
+import { findCapability, type CapabilityIr, type HarnessIrBundle, type HarnessRevision, type WorkflowIr } from "../ir/index.js";
 
 export interface HarnessRunTask {
   prompt: string;
@@ -67,24 +67,58 @@ export interface RunPreamble {
 }
 
 export class HarnessHostMismatchError extends Error {
-  constructor(revisionHost: string, executorHost: string) {
-    super(`Harness revision targets host '${revisionHost}', but executor host is '${executorHost}'.`);
+  constructor(revisionRuntime: string, executorHost: string) {
+    super(
+      `Harness revision targets runtime '${revisionRuntime}', but executor host is '${executorHost}'.`,
+    );
     this.name = "HarnessHostMismatchError";
   }
 }
 
 export function assertRevisionHost(revision: HarnessRevision, executorHost: string): void {
-  if (revision.target.host !== executorHost) {
-    throw new HarnessHostMismatchError(revision.target.host, executorHost);
+  if (revision.target.runtime !== executorHost) {
+    throw new HarnessHostMismatchError(revision.target.runtime, executorHost);
   }
+}
+
+/** One prompt line per advisory capability, in the voice of the agent role. */
+function capabilityGuidance(capability: CapabilityIr | undefined, capabilityId: string): string {
+  if (capability === undefined) {
+    return `Apply the '${capabilityId}' capability.`;
+  }
+  switch (capability.kind) {
+    case "skill":
+      return (
+        capability.description ??
+        `Apply the '${capability.id}' skill from '${capability.source ?? "its source"}'.`
+      );
+    case "tool":
+      return capability.description ?? `Use the '${capability.id}' tool when applicable.`;
+    case "mcp":
+      return `Connect to the '${capability.id}' MCP server over ${capability.transport}.`;
+  }
+}
+
+/** Render a declarative workflow graph as one prompt guidance line. */
+function workflowGuidance(workflow: WorkflowIr | undefined): string | undefined {
+  if (workflow === undefined || workflow.mode !== "declarative") {
+    return undefined;
+  }
+  const parts = [
+    ...workflow.edges.map((edge) => `${edge.from} -> ${edge.to}`),
+    ...workflow.events.map((event) => `on ${event.agent}.${event.outcome} -> ${event.to}`),
+    ...workflow.stops.map((stop) => `stop when ${stop.agent}.${stop.outcome}`),
+  ];
+  return parts.length > 0 ? `Workflow '${workflow.id}': ${parts.join("; ")}.` : undefined;
 }
 
 /**
  * Build the advisory portion of a run from a resolved revision.
  *
- * v0.1 executors materialize effective `advisory` realizations as prompt text.
- * The resolver has already capped stronger declared bindings to this effective
- * strength and applied the composition's degradation policy.
+ * v0.2 executors materialize effective `advisory` realizations as prompt text:
+ * the workflow graph plus each agent role's capabilities. The resolver has
+ * already capped stronger declared bindings to this effective strength and
+ * applied the harness's degradation policy.
  */
 export function buildRunPreamble(revision: HarnessRevision, bundle: HarnessIrBundle): RunPreamble {
   const lines: string[] = [];
@@ -94,20 +128,27 @@ export function buildRunPreamble(revision: HarnessRevision, bundle: HarnessIrBun
       continue;
     }
     if (realization.action === "degraded" && realization.reason) {
-      warnings.push(`Realization '${realization.componentId}' is degraded: ${realization.reason}.`);
+      warnings.push(
+        `Realization '${realization.capabilityId}' for agent '${realization.agentId}' ` +
+          `is degraded: ${realization.reason}.`,
+      );
     }
     if (realization.realized === "advisory") {
-      const contract = bundle.components.find(
-        (component) => component.id === realization.componentId,
+      const capability = findCapability(bundle, realization.capabilityId);
+      lines.push(
+        `- [${realization.agentId}/${realization.capabilityId}] ` +
+          capabilityGuidance(capability, realization.capabilityId),
       );
-      const text = contract?.description ?? `Apply the '${realization.componentId}' capability.`;
-      lines.push(`- [${realization.componentId}] ${text}`);
     }
   }
+  const flow = workflowGuidance(
+    bundle.workflows.find((workflow) => workflow.id === revision.workflow.id),
+  );
   const preamble =
     lines.length > 0
       ? [
           `You are running under harness revision ${revision.revisionId}.`,
+          ...(flow !== undefined ? [flow] : []),
           "Follow these harness policies:",
           ...lines,
         ].join("\n")

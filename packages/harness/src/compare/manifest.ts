@@ -139,7 +139,7 @@ function validateManifestPolicy(manifest: HarnessCompareManifest): void {
     )
   ) {
     throw new Error(
-      "Invalid harness-compare.v1 manifest: baseline and candidate must differ by composition or runtime profile.",
+      "Invalid harness-compare.v1 manifest: baseline and candidate must differ by harness or runtime profile.",
     );
   }
   validateRuntimePolicy(manifest.runtime, "runtime");

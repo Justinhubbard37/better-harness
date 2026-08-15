@@ -1,9 +1,9 @@
 import type { ValidationAcceptor, ValidationChecks } from "langium";
 import {
-  type CapabilityRequirement,
+  type CapabilityUse,
   type HarnessAstType,
   type HarnessDocument,
-  isTargetBinding,
+  isCapabilityBinding,
 } from "./generated/ast.js";
 import type { HarnessServices } from "./harness-module.js";
 
@@ -17,14 +17,14 @@ export function registerValidationChecks(services: HarnessServices): void {
   const registry = services.validation.ValidationRegistry;
   const validator = services.validation.HarnessValidator;
   const checks: ValidationChecks<HarnessAstType> = {
-    CapabilityRequirement: validator.checkPreferredNotBelowMinimum,
-    HarnessDocument: validator.checkUniqueBindingPerHost,
+    CapabilityUse: validator.checkPreferredNotBelowMinimum,
+    HarnessDocument: validator.checkUniqueBindingPerRuntime,
   };
   registry.register(checks, validator);
 }
 
 export class HarnessValidator {
-  checkPreferredNotBelowMinimum(requirement: CapabilityRequirement, accept: ValidationAcceptor): void {
+  checkPreferredNotBelowMinimum(requirement: CapabilityUse, accept: ValidationAcceptor): void {
     if (requirement.preferred === undefined || requirement.minimum === undefined) {
       return;
     }
@@ -37,19 +37,19 @@ export class HarnessValidator {
     }
   }
 
-  checkUniqueBindingPerHost(document: HarnessDocument, accept: ValidationAcceptor): void {
+  checkUniqueBindingPerRuntime(document: HarnessDocument, accept: ValidationAcceptor): void {
     const seen = new Set<string>();
     for (const element of document.elements) {
-      if (!isTargetBinding(element)) {
+      if (!isCapabilityBinding(element)) {
         continue;
       }
-      for (const host of element.hosts) {
-        const key = `${element.component.$refText}::${host}`;
+      for (const runtime of element.runtimes) {
+        const key = `${element.capability}::${runtime}`;
         if (seen.has(key)) {
           accept(
             "error",
-            `Duplicate binding for component '${element.component.$refText}' on host '${host}'.`,
-            { node: element, property: "hosts" },
+            `Duplicate binding for capability '${element.capability}' on runtime '${runtime}'.`,
+            { node: element, property: "runtimes" },
           );
         }
         seen.add(key);

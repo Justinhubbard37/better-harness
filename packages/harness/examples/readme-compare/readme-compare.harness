@@ -1,65 +1,55 @@
-component coding-loop {
-  kind workflow
+// README-writing comparison: a baseline coding loop against the same loop
+// grounded in repository evidence. Both harnesses share one workflow and
+// deploy to the Qoder runtime; the compare manifest picks one harness per
+// variant.
+
+skill coding-loop-discipline {
   description "Inspect the repository, make the requested scoped change, run relevant validation, and report concrete evidence."
-  input { task repository }
-  output { patch validation }
   permissions { workspace read workspace write process allow network deny }
 }
 
-component repository-grounding {
-  kind skill
+skill repository-grounding {
   description "Before writing documentation, derive every claim from package metadata, public source, executable examples, and current tests; treat archived documentation as stale evidence; state the real retry defaults and abort behavior precisely instead of approximating them."
-  input { package-metadata public-source tests examples }
-  output { fact-map }
   permissions { workspace read network deny }
 }
 
-component readme-only-scope {
-  kind policy
+skill readme-only-scope {
   description "Change only README.md, and give it exactly the sections a consumer needs in this order: Purpose, Installation, Quick Start, API, Behavior, Verification. Installation shows the consumer command `npm install <package name from package.json>`. Do not invent commands, module formats, badges, URLs, defaults, or capabilities that current repository evidence does not support."
-  input { fact-map }
-  output { scoped-readme }
   permissions { workspace write network deny }
 }
 
-component executable-readme-verification {
-  kind workflow
+skill executable-readme-verification {
   description "Write Quick Start as an executable ESM JavaScript example that imports the package by name, then run the package tests and that example before completing; repair the documentation until both pass."
-  input { scoped-readme }
-  output { verification }
   permissions { process allow workspace read network deny }
 }
 
-binding coding-loop for qoder { mechanism prompt-preamble strength advisory }
+workflow readme-loop {
+  writer -> writer
+  stop when writer.done
+}
+
+harness readme-baseline {
+  workflow readme-loop
+
+  agent writer {
+    use skill coding-loop-discipline { minimum advisory }
+  }
+}
+
+harness readme-grounded {
+  workflow readme-loop
+
+  agent writer {
+    use skill coding-loop-discipline { minimum advisory }
+    use skill repository-grounding { minimum advisory }
+    use skill readme-only-scope { minimum advisory }
+    use skill executable-readme-verification { minimum advisory }
+  }
+}
+
+binding coding-loop-discipline for qoder { mechanism prompt-preamble strength advisory }
 binding repository-grounding for qoder { mechanism prompt-preamble strength advisory }
 binding readme-only-scope for qoder { mechanism prompt-preamble strength advisory }
 binding executable-readme-verification for qoder { mechanism prompt-preamble strength advisory }
 
-plugin coding-core {
-  version "1.0.0"
-  provides [ component.coding-loop ]
-}
-
-plugin grounded-readme {
-  version "1.0.0"
-  provides [
-    component.repository-grounding,
-    component.readme-only-scope,
-    component.executable-readme-verification
-  ]
-}
-
-composition readme-baseline {
-  target qoder
-  include [ plugin.coding-core@1 ]
-  require coding-loop { minimum advisory }
-}
-
-composition readme-grounded {
-  target qoder
-  include [ plugin.coding-core@1, plugin.grounded-readme@1 ]
-  require coding-loop { minimum advisory }
-  require repository-grounding { minimum advisory }
-  require readme-only-scope { minimum advisory }
-  require executable-readme-verification { minimum advisory }
-}
+target qoder uses adapter.qoder

@@ -6,7 +6,7 @@ export {
   type CompileResult,
   type HarnessSource,
 } from "./compiler/compile.js";
-export { mergePermissions, resolveComposition, type ResolveResult } from "./resolver/resolve.js";
+export { mergePermissions, resolveHarness, type ResolveResult } from "./resolver/resolve.js";
 export { STRENGTH_ORDER, strengthIndex } from "./language/harness-validator.js";
 export { createHarnessServices, type HarnessServices } from "./language/harness-module.js";
 export * from "./exec/index.js";

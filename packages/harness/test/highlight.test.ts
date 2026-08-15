@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import { highlightHarness, tokenizeHarness } from "../src/highlight/shiki.js";
 
 const SAMPLE = `// assemble
-composition standard-coding {
-  target pi
-  include [ plugin.change-verification@^2 ]
-  require verification-before-complete {
-    minimum wired
+harness standard-coding {
+  workflow coding-loop
+
+  agent verifier {
+    require tool process.exec {
+      minimum wired
+    }
   }
+
   configure {
     shell.timeout = 60s
   }
@@ -36,7 +39,7 @@ describe("harness syntax highlighting", () => {
   it("tokenizes keywords, constants, and comments with distinct colors", async () => {
     const tokens = await tokenizeHarness(SAMPLE);
 
-    const keyword = findToken(tokens, "composition");
+    const keyword = findToken(tokens, "harness");
     const strength = findToken(tokens, "wired");
     const name = findToken(tokens, "standard-coding");
     const comment = findToken(tokens, "// assemble");
@@ -53,10 +56,18 @@ describe("harness syntax highlighting", () => {
   });
 
   it("splits declaration keyword and declared name into separate tokens", async () => {
-    const tokens = await tokenizeHarness("composition standard-coding {\n}\n");
+    const tokens = await tokenizeHarness("harness standard-coding {\n}\n");
     const firstLine = tokens[0].map((token) => token.content.trim()).filter(Boolean);
 
-    expect(firstLine[0]).toBe("composition");
+    expect(firstLine[0]).toBe("harness");
     expect(firstLine).toContain("standard-coding");
+  });
+
+  it("tokenizes dotted tool names in declarations", async () => {
+    const tokens = await tokenizeHarness("tool workspace.read {\n}\n");
+    const firstLine = tokens[0].map((token) => token.content.trim()).filter(Boolean);
+
+    expect(firstLine[0]).toBe("tool");
+    expect(firstLine).toContain("workspace.read");
   });
 });

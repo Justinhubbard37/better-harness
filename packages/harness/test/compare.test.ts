@@ -49,7 +49,7 @@ describe("harness compare manifest", () => {
     await expect(loadHarnessCompareManifest(path)).rejects.toThrow(/allowedTools must be empty/);
   });
 
-  it("accepts an isolated same-composition comparison when runtime profiles differ", async () => {
+  it("accepts an isolated same-harness comparison when runtime profiles differ", async () => {
     const loaded = await loadHarnessCompareManifest(MINIMAL_EXPERIMENT_PATH);
 
     expect(loaded.value.variants).toEqual({
@@ -181,7 +181,7 @@ describe("README coding comparison", () => {
       executorFactory: ({ trialRoot }): HarnessExecutor => ({
         host: "qoder",
         execute: async (revision) => {
-          if (revision.composition.id === "readme-grounded") {
+          if (revision.harness.id === "readme-grounded") {
             await writeFile(join(trialRoot, "README.md"), VALID_README, "utf8");
           }
           return {

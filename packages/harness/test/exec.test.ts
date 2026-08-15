@@ -4,68 +4,56 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { compileHarness } from "../src/compiler/compile.js";
 import type { HarnessIrBundle, HarnessRevision } from "../src/ir/index.js";
-import { resolveComposition } from "../src/resolver/resolve.js";
+import { resolveHarness } from "../src/resolver/resolve.js";
 import { PiSdkExecutor, materializePiPackage, type PiSdkLike } from "../src/exec/pi-sdk.js";
 import { QoderSdkExecutor, type QoderSdkLike } from "../src/exec/qoder-sdk.js";
 
 const SOURCE = `
-  component impact-analysis {
-    kind skill
+  skill impact-analysis {
     description "Impact analysis: map the blast radius before editing."
   }
-  component verification-before-complete {
-    kind policy
+  tool verification-before-complete {
     description "Do not complete without verification evidence."
   }
-  binding impact-analysis for qoder {
-    mechanism skill-routing
+  workflow solo-loop {
+    stop when coder.done
+  }
+  harness assembly {
+    workflow solo-loop
+    agent coder {
+      use skill impact-analysis
+      require tool verification-before-complete {
+        preferred enforced
+        minimum advisory
+        on-degrade report
+      }
+    }
+  }
+  binding impact-analysis for [qoder, pi] {
+    mechanism prompt-preamble
     strength advisory
   }
   binding verification-before-complete for qoder {
-    mechanism stop-hook
+    mechanism qoder.stop-hook
     strength enforced
-  }
-  binding impact-analysis for pi {
-    mechanism skill-package
-    strength advisory
   }
   binding verification-before-complete for pi {
-    mechanism extension-event
+    mechanism pi.extension
     strength enforced
   }
-  plugin all {
-    version "1.0.0"
-    provides [ component.impact-analysis, component.verification-before-complete ]
-  }
-  composition on-qoder {
-    target qoder
-    include [ plugin.all@1 ]
-    require verification-before-complete {
-      preferred enforced
-      minimum advisory
-      on-degrade report
-    }
-  }
-  composition on-pi {
-    target pi
-    include [ plugin.all@1 ]
-    require verification-before-complete {
-      preferred enforced
-      minimum advisory
-      on-degrade report
-    }
-  }
+  target qoder
+  target pi
 `;
 
-async function resolveFor(compositionId: string): Promise<{ bundle: HarnessIrBundle; revision: HarnessRevision }> {
+async function resolveFor(runtimeId: string): Promise<{ bundle: HarnessIrBundle; revision: HarnessRevision }> {
   const { bundle } = await compileHarness(SOURCE);
-  const { revision } = resolveComposition(bundle!, compositionId);
+  const { revision } = resolveHarness(bundle!, "assembly", runtimeId);
   return { bundle: bundle!, revision: revision! };
 }
 
 describe("QoderSdkExecutor", () => {
   it("streams one Qoder SDK query with explicit auth, cwd, and tool authorization", async () => {
-    const { bundle, revision } = await resolveFor("on-qoder");
+    const { bundle, revision } = await resolveFor("qoder");
     const queries: Parameters<QoderSdkLike["query"]>[0][] = [];
     const auth = { kind: "test-auth" };
     const sdk: QoderSdkLike = {
@@ -137,7 +125,7 @@ describe("QoderSdkExecutor", () => {
   });
 
   it("retains usage evidence while redacting credential-shaped trace fields", async () => {
-    const { bundle, revision } = await resolveFor("on-qoder");
+    const { bundle, revision } = await resolveFor("qoder");
     const sdk: QoderSdkLike = {
       qodercliAuth: () => ({}),
       query: async function* () {
@@ -194,7 +182,7 @@ describe("QoderSdkExecutor", () => {
   });
 
   it("materializes the frozen qoder-minimal-v1 SDK surface and receipt", async () => {
-    const { bundle, revision } = await resolveFor("on-qoder");
+    const { bundle, revision } = await resolveFor("qoder");
     const queries: Parameters<QoderSdkLike["query"]>[0][] = [];
     const canUseTool = async () => ({ behavior: "allow" as const });
     const sdk: QoderSdkLike = {
@@ -280,7 +268,7 @@ describe("QoderSdkExecutor", () => {
   });
 
   it("reports declared native strength as an advisory degradation", async () => {
-    const { bundle, revision } = await resolveFor("on-qoder");
+    const { bundle, revision } = await resolveFor("qoder");
     const sdk: QoderSdkLike = {
       qodercliAuth: () => ({}),
       query: async function* () {
@@ -299,7 +287,7 @@ describe("QoderSdkExecutor", () => {
   });
 
   it("rejects a revision targeting another host before loading the Qoder SDK", async () => {
-    const { bundle, revision } = await resolveFor("on-pi");
+    const { bundle, revision } = await resolveFor("pi");
     let loaded = false;
     const executor = new QoderSdkExecutor({
       loadSdk: async () => {
@@ -309,13 +297,13 @@ describe("QoderSdkExecutor", () => {
     });
 
     await expect(executor.execute(revision, bundle, { prompt: "Fix the bug" })).rejects.toThrow(
-      /targets host 'pi'.*executor host is 'qoder'/,
+      /targets runtime 'pi'.*executor host is 'qoder'/,
     );
     expect(loaded).toBe(false);
   });
 
   it("reports an SDK query failure without leaking non-error messages", async () => {
-    const { bundle, revision } = await resolveFor("on-qoder");
+    const { bundle, revision } = await resolveFor("qoder");
     const sdk: QoderSdkLike = {
       qodercliAuth: () => ({}),
       query: async function* () {
@@ -339,7 +327,7 @@ describe("QoderSdkExecutor", () => {
   });
 
   it("fails closed when the Qoder SDK stream ends without a result message", async () => {
-    const { bundle, revision } = await resolveFor("on-qoder");
+    const { bundle, revision } = await resolveFor("qoder");
     const sdk: QoderSdkLike = {
       qodercliAuth: () => ({}),
       query: async function* () {
@@ -363,7 +351,7 @@ describe("QoderSdkExecutor", () => {
 
 describe("PiSdkExecutor", () => {
   it("drives the Pi SDK session with the composed prompt", async () => {
-    const { bundle, revision } = await resolveFor("on-pi");
+    const { bundle, revision } = await resolveFor("pi");
     const prompts: string[] = [];
     const workingDirectories: Array<string | undefined> = [];
     const selectedModel = { provider: "deepseek", id: "deepseek-chat" };
@@ -429,7 +417,7 @@ describe("PiSdkExecutor", () => {
   });
 
   it("surfaces a model failure encoded in the final Pi assistant message", async () => {
-    const { bundle, revision } = await resolveFor("on-pi");
+    const { bundle, revision } = await resolveFor("pi");
     let listener:
       | ((event: {
           type?: string;
@@ -480,7 +468,7 @@ describe("PiSdkExecutor", () => {
   });
 
   it("rejects a revision targeting another host before loading the Pi SDK", async () => {
-    const { bundle, revision } = await resolveFor("on-qoder");
+    const { bundle, revision } = await resolveFor("qoder");
     let loaded = false;
     const executor = new PiSdkExecutor({
       loadSdk: async () => {
@@ -490,13 +478,13 @@ describe("PiSdkExecutor", () => {
     });
 
     await expect(executor.execute(revision, bundle, { prompt: "Fix the bug" })).rejects.toThrow(
-      /targets host 'qoder'.*executor host is 'pi'/,
+      /targets runtime 'qoder'.*executor host is 'pi'/,
     );
     expect(loaded).toBe(false);
   });
 
   it("reports the missing optional peer dependency with install guidance", async () => {
-    const { bundle, revision } = await resolveFor("on-pi");
+    const { bundle, revision } = await resolveFor("pi");
     const executor = new PiSdkExecutor({
       loadSdk: async () => {
         throw new Error("simulated missing optional peer");
@@ -537,7 +525,7 @@ describe("materializePiPackage", () => {
   });
 
   it("writes an installable Pi package with skills for advisory components", async () => {
-    const { bundle, revision } = await resolveFor("on-pi");
+    const { bundle, revision } = await resolveFor("pi");
     directory = await mkdtemp(join(tmpdir(), "harness-pi-"));
 
     const written = await materializePiPackage(revision, bundle, directory);
@@ -549,7 +537,7 @@ describe("materializePiPackage", () => {
     expect(skill).toContain("name: impact-analysis");
     expect(skill).toContain('description: "Impact analysis: map the blast radius before editing."');
     expect(skill).toContain(revision.revisionId);
-    // Policies remain prompt guidance and must not be mislabeled as Pi skills.
+    // Tool capabilities remain prompt guidance and must not be mislabeled as Pi skills.
     expect(written.some((path) => path.includes("verification-before-complete"))).toBe(false);
     await expect(
       access(join(directory, "skills", "verification-before-complete", "SKILL.md")),
@@ -557,16 +545,16 @@ describe("materializePiPackage", () => {
   });
 
   it("rejects materialization for a revision targeting another host", async () => {
-    const { bundle, revision } = await resolveFor("on-qoder");
+    const { bundle, revision } = await resolveFor("qoder");
     directory = await mkdtemp(join(tmpdir(), "harness-pi-"));
 
     await expect(materializePiPackage(revision, bundle, directory)).rejects.toThrow(
-      /targets host 'qoder'.*executor host is 'pi'/,
+      /targets runtime 'qoder'.*executor host is 'pi'/,
     );
   });
 
   it("fails closed instead of mixing a revision with pre-existing files", async () => {
-    const { bundle, revision } = await resolveFor("on-pi");
+    const { bundle, revision } = await resolveFor("pi");
     directory = await mkdtemp(join(tmpdir(), "harness-pi-"));
     await writeFile(join(directory, "keep.txt"), "user-owned\n", "utf8");
 

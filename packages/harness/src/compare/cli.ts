@@ -54,9 +54,9 @@ export async function main(argv: string[]): Promise<number> {
 }
 
 function help(): string {
-  return `Harness composition comparison\n\n` +
+  return `Harness comparison\n\n` +
     `Usage:\n  harness-compare run <experiment.json> --out <directory> [--trials <n>] [--json]\n\n` +
-    `The command creates an isolated repository per composition/trial, invokes Qoder through\n` +
+    `The command creates an isolated repository per harness/trial, invokes Qoder through\n` +
     `the official SDK, grades the resulting files, and writes immutable comparison evidence.\n`;
 }
 

@@ -152,7 +152,7 @@ async function loadPiSdk(loader?: () => Promise<PiSdkLike>): Promise<PiSdkLike> 
 /**
  * Materialize a revision as an installable Pi package directory:
  * a `package.json` with the `pi.skills` contribution plus one
- * `skills/<component>/SKILL.md` per advisory skill-shaped component.
+ * `skills/<skill>/SKILL.md` per advisory skill capability.
  * Returns the relative paths that were written.
  */
 export async function materializePiPackage(
@@ -166,7 +166,7 @@ export async function materializePiPackage(
     name: `harness-revision-${revision.revisionId.slice(3, 15)}`,
     version: "0.0.0",
     private: true,
-    description: `Materialized harness revision ${revision.revisionId} for host '${revision.target.host}'.`,
+    description: `Materialized harness revision ${revision.revisionId} for runtime '${revision.target.runtime}'.`,
     pi: { skills: ["./skills"] },
   };
   await mkdir(directory, { recursive: true });
@@ -180,31 +180,44 @@ export async function materializePiPackage(
   await writeFile(join(directory, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   written.push("package.json");
 
+  // Realizations are per (agent, capability): the same skill used by several
+  // agent roles materializes once.
+  const writtenSkillIds = new Set<string>();
   for (const realization of revision.realization) {
-    if (realization.action === "failed" || realization.realized !== "advisory") {
+    if (
+      realization.action === "failed" ||
+      realization.realized !== "advisory" ||
+      realization.capabilityKind !== "skill" ||
+      writtenSkillIds.has(realization.capabilityId)
+    ) {
       continue;
     }
-    const contract = bundle.components.find((component) => component.id === realization.componentId);
-    if (!contract || contract.componentKind !== "skill") {
+    const skill = bundle.skills.find((candidate) => candidate.id === realization.capabilityId);
+    if (!skill) {
       continue;
     }
-    const skillDir = join(directory, "skills", contract.id);
+    writtenSkillIds.add(skill.id);
+    const skillDir = join(directory, "skills", skill.id);
     await mkdir(skillDir, { recursive: true });
-    const description = contract.description ?? `Harness component '${contract.id}'.`;
+    const description =
+      skill.description ??
+      (skill.source !== undefined
+        ? `Harness skill '${skill.id}' sourced from '${skill.source}'.`
+        : `Harness skill '${skill.id}'.`);
     const body = [
       "---",
-      `name: ${contract.id}`,
+      `name: ${skill.id}`,
       `description: ${JSON.stringify(description)}`,
       "---",
       "",
       description,
       "",
-      `Provenance: harness revision ${revision.revisionId}, component hash ` +
-        `${revision.resolved.components.find((entry) => entry.id === contract.id)?.contentHash ?? "unknown"}.`,
+      `Provenance: harness revision ${revision.revisionId}, capability hash ` +
+        `${revision.resolved.capabilities.find((entry) => entry.id === skill.id)?.contentHash ?? "unknown"}.`,
       "",
     ].join("\n");
     await writeFile(join(skillDir, "SKILL.md"), body, "utf8");
-    written.push(join("skills", contract.id, "SKILL.md"));
+    written.push(join("skills", skill.id, "SKILL.md"));
   }
   return written;
 }

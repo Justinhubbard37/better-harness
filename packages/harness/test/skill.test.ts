@@ -21,8 +21,8 @@ afterEach(async () => {
   );
 });
 
-function runValidator(file: string, ...compositionIds: string[]) {
-  return spawnSync(process.execPath, [VALIDATOR_PATH, file, ...compositionIds], {
+function runValidator(file: string, ...harnessIds: string[]) {
+  return spawnSync(process.execPath, [VALIDATOR_PATH, file, ...harnessIds], {
     encoding: "utf8",
   });
 }
@@ -35,13 +35,14 @@ describe("generate-harness-dsl validator", () => {
     const output = JSON.parse(result.stdout);
     expect(output.valid).toBe(true);
     expect(output.diagnostics).toEqual([]);
-    expect(output.compositions).toEqual([
-      expect.objectContaining({ compositionId: "standard-coding", status: "resolved" }),
-      expect.objectContaining({ compositionId: "standard-coding-qoder", status: "resolved" }),
+    expect(output.harnesses).toEqual([
+      expect.objectContaining({ harnessId: "standard-coding", runtime: "pi", status: "resolved" }),
+      expect.objectContaining({ harnessId: "standard-coding", runtime: "qoder", status: "resolved" }),
     ]);
-    expect(output.compositions[0].realizations).toContainEqual(
+    expect(output.harnesses[0].realizations).toContainEqual(
       expect.objectContaining({
-        componentId: "verification-before-complete",
+        agentId: "verifier",
+        capabilityId: "verification-before-complete",
         declaredStrength: "enforced",
         realized: "advisory",
         action: "degraded",
@@ -55,7 +56,7 @@ describe("generate-harness-dsl validator", () => {
     const file = join(directory, "invalid.harness");
     await writeFile(
       file,
-      "composition broken { target qoder include [ plugin.missing@1 ] }",
+      "harness broken { workflow missing-workflow agent coder { use skill missing-skill } }",
       "utf8",
     );
 
@@ -64,32 +65,33 @@ describe("generate-harness-dsl validator", () => {
     expect(result.status).toBe(1);
     const output = JSON.parse(result.stdout);
     expect(output.valid).toBe(false);
-    expect(output.compositions).toEqual([]);
+    expect(output.harnesses).toEqual([]);
     expect(output.diagnostics).toContainEqual(expect.objectContaining({ severity: "error" }));
   });
 
-  it("fails when a requested composition does not exist", () => {
-    const result = runValidator(EXAMPLE_PATH, "missing-composition");
+  it("fails when a requested harness does not exist", () => {
+    const result = runValidator(EXAMPLE_PATH, "missing-harness");
 
     expect(result.status).toBe(1);
     const output = JSON.parse(result.stdout);
     expect(output.valid).toBe(false);
-    expect(output.compositions).toEqual([
+    expect(output.harnesses).toEqual([
       expect.objectContaining({
-        compositionId: "missing-composition",
+        harnessId: "missing-harness",
         status: "failed",
-        errors: ["Composition 'missing-composition' is not defined in the bundle."],
+        errors: ["Harness 'missing-harness' is not defined in the bundle."],
       }),
+      expect.objectContaining({ harnessId: "missing-harness", status: "failed" }),
     ]);
   });
 
-  it("requires generated files to declare an independently resolvable composition", async () => {
+  it("requires generated files to declare an independently resolvable harness", async () => {
     const directory = await mkdtemp(join(tmpdir(), "harness-skill-test-"));
     temporaryDirectories.push(directory);
     const file = join(directory, "library-only.harness");
     await writeFile(
       file,
-      "component repository-analysis { kind skill permissions { workspace read } }",
+      'skill repository-analysis { description "Analyze the repository." permissions { workspace read } }',
       "utf8",
     );
 
@@ -98,11 +100,11 @@ describe("generate-harness-dsl validator", () => {
     expect(result.status).toBe(1);
     const output = JSON.parse(result.stdout);
     expect(output.valid).toBe(false);
-    expect(output.compositions).toEqual([]);
+    expect(output.harnesses).toEqual([]);
     expect(output.diagnostics).toContainEqual(
       expect.objectContaining({
         severity: "error",
-        message: "No composition is declared; generated DSL must be independently resolvable.",
+        message: "No harness is declared; generated DSL must be independently resolvable.",
       }),
     );
   });

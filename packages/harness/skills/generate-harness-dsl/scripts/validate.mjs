@@ -9,7 +9,7 @@ function print(value) {
 
 function usage() {
   process.stderr.write(
-    "Usage: node scripts/validate.mjs <file.harness> [composition-id ...]\n",
+    "Usage: node scripts/validate.mjs <file.harness> [harness-id ...]\n",
   );
 }
 
@@ -32,7 +32,7 @@ async function main() {
 
   const inputPath = resolve(input);
   const text = await readFile(inputPath, "utf8");
-  const { compileHarness, resolveComposition } = await loadHarnessApi();
+  const { compileHarness, resolveHarness } = await loadHarnessApi();
   const source = `harness://input/${encodeURIComponent(basename(inputPath))}`;
   const compiled = await compileHarness([{ uri: source, text }]);
 
@@ -41,30 +41,38 @@ async function main() {
       valid: false,
       file: input,
       diagnostics: compiled.diagnostics,
-      compositions: [],
+      harnesses: [],
     });
     process.exitCode = 1;
     return;
   }
 
-  const compositionIds = requestedIds.length > 0
+  const harnessIds = requestedIds.length > 0
     ? requestedIds
-    : compiled.bundle.compositions.map((composition) => composition.id);
-  const reports = compositionIds.map((compositionId) => {
-    const { revision, report } = resolveComposition(compiled.bundle, compositionId);
+    : compiled.bundle.harnesses.map((harness) => harness.id);
+  // Resolve each harness against every deployable runtime: declared targets
+  // first, declared runtimes otherwise. With neither, a single unqualified
+  // resolution surfaces the resolver's own runtime-selection error.
+  const runtimeIds = compiled.bundle.targets.length > 0
+    ? compiled.bundle.targets.map((target) => target.runtime)
+    : compiled.bundle.runtimes.length > 0
+      ? compiled.bundle.runtimes.map((runtime) => runtime.id)
+      : [undefined];
+  const reports = harnessIds.flatMap((harnessId) => runtimeIds.map((runtimeId) => {
+    const { revision, report } = resolveHarness(compiled.bundle, harnessId, runtimeId);
     return {
-      compositionId,
-      target: report.target,
+      harnessId,
+      runtime: report.runtime,
       status: report.status,
       revisionId: revision?.revisionId ?? null,
       errors: report.errors,
       realizations: report.realizations,
     };
-  });
-  const structuralErrors = compositionIds.length === 0
+  }));
+  const structuralErrors = harnessIds.length === 0
     ? [{
         severity: "error",
-        message: "No composition is declared; generated DSL must be independently resolvable.",
+        message: "No harness is declared; generated DSL must be independently resolvable.",
         source,
       }]
     : [];
@@ -74,7 +82,7 @@ async function main() {
     valid,
     file: input,
     diagnostics: [...compiled.diagnostics, ...structuralErrors],
-    compositions: reports,
+    harnesses: reports,
   });
   if (!valid) {
     process.exitCode = 1;
@@ -83,6 +91,6 @@ async function main() {
 
 main().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
-  print({ valid: false, diagnostics: [{ severity: "error", message }], compositions: [] });
+  print({ valid: false, diagnostics: [{ severity: "error", message }], harnesses: [] });
   process.exitCode = 1;
 });

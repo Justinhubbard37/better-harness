@@ -1,6 +1,6 @@
 Create `README.md` for this package. Change no other repository file.
 
-Runtime policy for this environment, identical for every composition: the
+Runtime policy for this environment, identical for every harness: the
 bounded Bash policy accepts these validation commands exactly: `npm test`,
 `npm run example`, `node --test`, `node examples/basic.mjs`,
 `node ./examples/basic.mjs`, `git status --short`, and `git diff --check`.

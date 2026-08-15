@@ -1,69 +1,44 @@
-// Example harness assembly: contracts, host bindings, plugins, and one
-// composition targeting the Pi host.
+// Example assembly: one coding loop with author/verifier roles, capability
+// requirements with the degradation ladder, adapter bindings onto host-native
+// assets, and deployment targets for the Pi and Qoder runtimes.
 
-component impact-analysis {
-  kind skill
+skill impact-analysis {
   description "Before editing, map the blast radius of the change and list affected modules."
-  input { changed-files }
-  output { impact-report }
   permissions {
     workspace read
   }
 }
 
-component verification-before-complete {
-  kind policy
+skill verification-before-complete {
   description "Do not declare the task complete until verification evidence (tests or diff review) exists."
-  input { verification-evidence }
   permissions {
     workspace read
     network deny
   }
 }
 
-binding impact-analysis for pi {
-  mechanism skill-package
-  strength advisory
+workflow coding-loop {
+  author -> verifier
+  on verifier.failed -> author
+  stop when verifier.passed
 }
 
-binding impact-analysis for qoder {
-  mechanism skill-routing
-  strength advisory
-}
+harness standard-coding {
+  workflow coding-loop
 
-binding verification-before-complete for pi {
-  mechanism extension-event
-  strength enforced
-}
+  agent author {
+    use skill impact-analysis
+    require tool workspace.read
+    require tool workspace.write
+  }
 
-binding verification-before-complete for qoder {
-  mechanism system-instruction
-  strength advisory
-  notes "Qoder CLI print mode cannot intercept completion; the policy is prompt-injected."
-}
-
-plugin repository-understanding {
-  version "1.4.2"
-  provides [ component.impact-analysis ]
-}
-
-plugin change-verification {
-  version "2.1.3"
-  provides [ component.verification-before-complete ]
-}
-
-composition standard-coding {
-  target pi
-
-  include [
-    plugin.repository-understanding@^1,
-    plugin.change-verification@^2
-  ]
-
-  require verification-before-complete {
-    preferred enforced
-    minimum advisory
-    on-degrade report
+  agent verifier {
+    use skill verification-before-complete {
+      preferred enforced
+      minimum advisory
+      on-degrade report
+    }
+    require tool process.exec
   }
 
   configure {
@@ -72,8 +47,26 @@ composition standard-coding {
   }
 }
 
-// Same assembly, different host. `extends` inherits the includes,
-// requirements, and configuration above; only the target changes.
-composition standard-coding-qoder extends standard-coding {
-  target qoder
+// Adapter layer: how each runtime realizes the capabilities, in the host's
+// own namespace. The core DSL has no generic plugin; `pi.extension` and
+// `qoder.system-instruction` are host-native assets behind the adapter.
+binding impact-analysis for [pi, qoder] {
+  mechanism prompt-preamble
+  strength advisory
 }
+
+binding verification-before-complete for pi {
+  mechanism pi.extension
+  strength enforced
+}
+
+binding verification-before-complete for qoder {
+  mechanism qoder.system-instruction
+  strength advisory
+  notes "Qoder CLI print mode cannot intercept completion; the policy is prompt-injected."
+}
+
+// Same assembly, different runtime: deployment is a target choice, not a
+// harness rewrite.
+target pi uses adapter.pi
+target qoder uses adapter.qoder

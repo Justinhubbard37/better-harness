@@ -28,7 +28,8 @@ export const harnessTextMateGrammar: LanguageRegistration = {
     declarations: {
       patterns: [
         {
-          match: "\\b(component|binding|plugin|composition)\\b\\s+([_a-zA-Z][\\w-]*)",
+          match:
+            "\\b(harness|workflow|agent|skill|tool|mcp|runtime|target|binding)\\b\\s+([_a-zA-Z][\\w-]*(?:\\.[_a-zA-Z][\\w-]*)*)",
           captures: {
             "1": { name: "keyword.declaration.harness" },
             "2": { name: "entity.name.type.harness" },
@@ -36,7 +37,7 @@ export const harnessTextMateGrammar: LanguageRegistration = {
         },
         {
           name: "keyword.control.harness",
-          match: "\\b(for|require|include|provides|extends)\\b",
+          match: "\\b(for|use|require|connect|uses|program|on|stop|when)\\b|->",
         },
       ],
     },
@@ -45,7 +46,7 @@ export const harnessTextMateGrammar: LanguageRegistration = {
         {
           name: "keyword.other.section.harness",
           match:
-            "\\b(kind|description|input|output|permissions|mechanism|strength|notes|version|target|preferred|minimum|on-degrade|configure)\\b",
+            "\\b(source|description|input|output|permissions|mechanism|strength|notes|adapter|execution|transport|url|command|env|preferred|minimum|on-degrade|configure)\\b",
         },
       ],
     },
@@ -56,8 +57,12 @@ export const harnessTextMateGrammar: LanguageRegistration = {
           match: "\\b(unsupported|advisory|wired|enforced)\\b",
         },
         {
-          name: "constant.language.kind.harness",
-          match: "\\b(skill|tool|program|workflow|hook|policy|observer|ui)\\b",
+          name: "constant.language.execution.harness",
+          match: "\\b(tool-calling|programmatic)\\b",
+        },
+        {
+          name: "constant.language.transport.harness",
+          match: "\\b(stdio|http|sse)\\b",
         },
         {
           name: "constant.language.permission.harness",

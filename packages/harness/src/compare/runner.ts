@@ -17,7 +17,7 @@ import type { HarnessExecutor, HarnessRunResult } from "../exec/executor.js";
 import { QoderSdkExecutor } from "../exec/qoder-sdk.js";
 import { canonicalJson, sha256Hex } from "../ir/canonical.js";
 import type { HarnessIrBundle, HarnessRevision } from "../ir/index.js";
-import { resolveComposition } from "../resolver/resolve.js";
+import { resolveHarness } from "../resolver/resolve.js";
 import { gradeReadmePackage, type ReadmeGrade } from "./grader.js";
 import {
   loadHarnessCompareManifest,
@@ -55,7 +55,7 @@ export interface FileEvidence {
 
 export interface CompareTrialResult {
   variant: CompareVariant;
-  compositionId: string;
+  harnessId: string;
   runtimeProfile: string;
   trial: number;
   classification: TrialClassification;
@@ -137,14 +137,14 @@ export async function runHarnessComparison(options: {
 
   const results: CompareTrialResult[] = [];
   for (const job of jobs) {
-    const compositionId = loaded.value.variants[job.variant];
+    const harnessId = loaded.value.variants[job.variant];
     const result = await runTrial({
       loaded,
       outputDirectory,
       prompt,
       bundle,
       revision: revisions[job.variant],
-      compositionId,
+      harnessId,
       variant: job.variant,
       trial: job.trial,
       executorFactory: options.executorFactory ?? defaultExecutorFactory,
@@ -189,14 +189,14 @@ async function compileAndResolveVariants(
   }
   const revisions = {} as Record<CompareVariant, HarnessRevision>;
   for (const variant of ["baseline", "candidate"] as const) {
-    const compositionId = loaded.value.variants[variant];
-    const resolved = resolveComposition(compiled.bundle, compositionId);
+    const harnessId = loaded.value.variants[variant];
+    const resolved = resolveHarness(compiled.bundle, harnessId, loaded.value.runtime.host);
     if (!resolved.revision) {
-      throw new Error(`Cannot resolve ${variant} composition '${compositionId}': ${resolved.report.errors.join("; ")}`);
+      throw new Error(`Cannot resolve ${variant} harness '${harnessId}': ${resolved.report.errors.join("; ")}`);
     }
-    if (resolved.revision.target.host !== loaded.value.runtime.host) {
+    if (resolved.revision.target.runtime !== loaded.value.runtime.host) {
       throw new Error(
-        `${variant} composition targets '${resolved.revision.target.host}', expected '${loaded.value.runtime.host}'.`,
+        `${variant} harness targets '${resolved.revision.target.runtime}', expected '${loaded.value.runtime.host}'.`,
       );
     }
     revisions[variant] = resolved.revision;
@@ -210,7 +210,7 @@ async function runTrial(options: {
   prompt: string;
   bundle: HarnessIrBundle;
   revision: HarnessRevision;
-  compositionId: string;
+  harnessId: string;
   variant: CompareVariant;
   trial: number;
   executorFactory: CompareExecutorFactory;
@@ -291,7 +291,7 @@ async function runTrial(options: {
       const classification = classifyTrial(execution, grade, infrastructureError);
       const result: CompareTrialResult = {
         variant: options.variant,
-        compositionId: options.compositionId,
+        harnessId: options.harnessId,
         runtimeProfile: runtime.profile,
         trial: options.trial,
         classification,
@@ -316,7 +316,7 @@ async function runTrial(options: {
       return await recordInfrastructureFailure({
         artifactDirectory,
         variantDirectory,
-        compositionId: options.compositionId,
+        harnessId: options.harnessId,
         runtimeProfile: runtime.profile,
         variant: options.variant,
         trial: options.trial,
@@ -334,7 +334,7 @@ async function runTrial(options: {
 async function recordInfrastructureFailure(options: {
   artifactDirectory: string;
   variantDirectory: string;
-  compositionId: string;
+  harnessId: string;
   runtimeProfile: string;
   variant: CompareVariant;
   trial: number;
@@ -345,7 +345,7 @@ async function recordInfrastructureFailure(options: {
 }): Promise<CompareTrialResult> {
   const result: CompareTrialResult = {
     variant: options.variant,
-    compositionId: options.compositionId,
+    harnessId: options.harnessId,
     runtimeProfile: options.runtimeProfile,
     trial: options.trial,
     classification: "infrastructure_error",
