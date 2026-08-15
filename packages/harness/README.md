@@ -160,6 +160,32 @@ failure. Payloads pass the same redaction as the trace. The companion
 `@qoder-ai/harness-ui` package maps this lifecycle onto the AG-UI protocol
 over SSE, and `@qoder-ai/harness-studio` renders it in a local React UI.
 
+### Adapter sessions (experimental)
+
+`execute` is a one-turn convenience built on the `harness-adapter-v1`
+contract: `QoderSdkAdapter` and `PiSdkAdapter` implement `HarnessAdapterV1`
+(`specificationVersion: "harness-adapter-v1"`), whose `doStart` binds a
+resolved revision to a live host session for multiple sequential prompt
+turns. Each turn emits its own complete run-event sequence and resolves to
+the same `HarnessRunResult` shape as a batch execution.
+
+```ts
+import { QoderSdkAdapter } from "@qoder-ai/harness";
+
+const adapter = new QoderSdkAdapter();
+const session = await adapter.doStart({ revision, bundle, workDir: process.cwd() });
+const first = await session.doPromptTurn({ prompt: "Explain the repository." });
+const second = await session.doPromptTurn({ prompt: "Now list its packages." });
+await session.doStop();
+```
+
+Optional behaviors degrade with a typed signal instead of silence: an
+adapter that cannot honour a request (for example a turn `abortSignal` on
+the Pi SDK, which exposes no abort surface) throws
+`HarnessCapabilityUnsupportedError`, and the batch wrapper `runOnce` maps an
+unsupported graceful stop to a `doDestroy` fallback plus a result warning.
+The surface is experimental until `@qoder-ai/harness-studio` adopts it.
+
 [`examples/full-surface.harness`](examples/full-surface.harness) is the compiler
 conformance fixture: it deliberately exercises every v0.2 capability kind,
 transport, execution style, permission, strength, degradation policy, and

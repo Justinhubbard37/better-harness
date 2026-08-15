@@ -1,10 +1,19 @@
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { HarnessIrBundle, HarnessRevision } from "../ir/index.js";
+import {
+  HARNESS_ADAPTER_SPECIFICATION_VERSION,
+  HarnessCapabilityUnsupportedError,
+  runOnce,
+  type HarnessAdapterSession,
+  type HarnessAdapterStartOptions,
+  type HarnessAdapterTurnOptions,
+  type HarnessAdapterV1,
+} from "./adapter.js";
 import { HarnessRunEmitter, type HarnessRunEventListener } from "./events.js";
 import {
   assertRevisionHost,
-  buildRunPrompt,
+  buildRunPreamble,
   type HarnessExecutor,
   type HarnessRunResult,
   type HarnessRunTask,
@@ -62,10 +71,17 @@ export interface PiSdkExecutorOptions {
 }
 
 /**
- * Executes a resolved revision through the Pi coding agent SDK
- * (`@earendil-works/pi-coding-agent`, an optional peer dependency).
+ * `harness-adapter-v1` binding for the Pi coding agent SDK.
+ *
+ * One `createAgentSession` call backs the whole adapter session, so
+ * conversation continuity lives in the Pi session itself and the run preamble
+ * ships on the first turn only. The Pi SDK exposes no abort surface: a turn
+ * requested with an `abortSignal` fails with
+ * {@link HarnessCapabilityUnsupportedError} (`turn-abort`) before it starts.
  */
-export class PiSdkExecutor implements HarnessExecutor {
+export class PiSdkAdapter implements HarnessAdapterV1 {
+  readonly specificationVersion = HARNESS_ADAPTER_SPECIFICATION_VERSION;
+  readonly adapterId = "@harness/adapter-pi";
   readonly host = "pi";
   private readonly loadSdk: () => Promise<PiSdkLike>;
   private readonly configureModelRuntime?: PiSdkExecutorOptions["configureModelRuntime"];
@@ -79,46 +95,75 @@ export class PiSdkExecutor implements HarnessExecutor {
     this.onRunEvent = options.onRunEvent;
   }
 
-  async execute(
-    revision: HarnessRevision,
-    bundle: HarnessIrBundle,
-    task: HarnessRunTask,
-  ): Promise<HarnessRunResult> {
-    assertRevisionHost(revision, this.host);
-    const emitter = new HarnessRunEmitter(this.onRunEvent);
-    const { prompt, warnings } = buildRunPrompt(revision, bundle, task);
-    emitter.start({ revisionId: revision.revisionId, host: this.host });
-    for (const warning of warnings) {
-      emitter.warning(warning);
-    }
-    try {
-      return await this.run({ revision, task, prompt, warnings, emitter });
-    } catch (error) {
-      emitter.error(error instanceof Error ? error.message : String(error));
-      emitter.finish(1);
-      throw error;
-    }
-  }
-
-  private async run(context: {
-    revision: HarnessRevision;
-    task: HarnessRunTask;
-    prompt: string;
-    warnings: string[];
-    emitter: HarnessRunEmitter;
-  }): Promise<HarnessRunResult> {
-    const { revision, task, prompt, warnings, emitter } = context;
+  async doStart(start: HarnessAdapterStartOptions): Promise<HarnessAdapterSession> {
+    assertRevisionHost(start.revision, this.host);
     const sdk = await this.loadSdk();
     const modelRuntime = await sdk.ModelRuntime.create();
     await this.configureModelRuntime?.(modelRuntime);
     const model = await this.selectModel?.(modelRuntime);
     const { session } = await sdk.createAgentSession({
-      cwd: task.cwd,
+      cwd: start.workDir,
       sessionManager: sdk.SessionManager.inMemory(),
       modelRuntime,
       ...(model !== undefined ? { model } : {}),
       noTools: "all",
     });
+    const { preamble, warnings } = buildRunPreamble(start.revision, start.bundle);
+    const adapter = this;
+    let turnCount = 0;
+    let ended = false;
+    const end = (): void => {
+      if (!ended) {
+        ended = true;
+        session.dispose?.();
+      }
+    };
+    return {
+      adapterId: this.adapterId,
+      revisionId: start.revision.revisionId,
+      async doPromptTurn(turn: HarnessAdapterTurnOptions): Promise<HarnessRunResult> {
+        if (ended) {
+          throw new Error(`Pi adapter session for '${start.revision.revisionId}' has ended.`);
+        }
+        assertRevisionHost(start.revision, adapter.host);
+        if (turn.abortSignal !== undefined) {
+          throw new HarnessCapabilityUnsupportedError(
+            adapter.adapterId,
+            "turn-abort",
+            "The Pi SDK session exposes no abort surface for an in-flight turn.",
+          );
+        }
+        const firstTurn = turnCount === 0;
+        turnCount += 1;
+        return adapter.runTurn({ session, start, turn, preamble, warnings, firstTurn });
+      },
+      async doStop(): Promise<void> {
+        end();
+      },
+      async doDestroy(): Promise<void> {
+        end();
+      },
+    };
+  }
+
+  private async runTurn(context: {
+    session: Awaited<ReturnType<PiSdkLike["createAgentSession"]>>["session"];
+    start: HarnessAdapterStartOptions;
+    turn: HarnessAdapterTurnOptions;
+    preamble: string;
+    warnings: string[];
+    firstTurn: boolean;
+  }): Promise<HarnessRunResult> {
+    const { session, start, turn, preamble, warnings, firstTurn } = context;
+    const revision = start.revision;
+    const emitter = new HarnessRunEmitter(turn.onRunEvent ?? start.onRunEvent ?? this.onRunEvent);
+    emitter.start({ revisionId: revision.revisionId, host: this.host });
+    for (const warning of warnings) {
+      emitter.warning(warning);
+    }
+    const prompt = firstTurn && preamble.length > 0
+      ? `${preamble}\n\n${turn.prompt}`
+      : turn.prompt;
     let streamedOutput = "";
     let errorOutput = "";
     const unsubscribe = session.subscribe?.((event) => {
@@ -141,9 +186,12 @@ export class PiSdkExecutor implements HarnessExecutor {
     });
     try {
       await session.prompt(prompt);
+    } catch (error) {
+      emitter.error(error instanceof Error ? error.message : String(error));
+      emitter.finish(1);
+      throw error;
     } finally {
       unsubscribe?.();
-      session.dispose?.();
     }
     if (errorOutput) {
       emitter.error(errorOutput);
@@ -155,8 +203,33 @@ export class PiSdkExecutor implements HarnessExecutor {
       exitCode: errorOutput ? 1 : 0,
       output: streamedOutput,
       errorOutput,
-      warnings,
+      warnings: [...warnings],
     };
+  }
+}
+
+/**
+ * Executes a resolved revision through the Pi coding agent SDK
+ * (`@earendil-works/pi-coding-agent`, an optional peer dependency).
+ */
+export class PiSdkExecutor implements HarnessExecutor {
+  readonly host = "pi";
+  private readonly adapter: PiSdkAdapter;
+  private readonly onRunEvent?: HarnessRunEventListener;
+
+  constructor(options: PiSdkExecutorOptions = {}) {
+    this.adapter = new PiSdkAdapter(options);
+    this.onRunEvent = options.onRunEvent;
+  }
+
+  async execute(
+    revision: HarnessRevision,
+    bundle: HarnessIrBundle,
+    task: HarnessRunTask,
+  ): Promise<HarnessRunResult> {
+    return runOnce(this.adapter, revision, bundle, task, {
+      ...(this.onRunEvent !== undefined ? { onRunEvent: this.onRunEvent } : {}),
+    });
   }
 }
 

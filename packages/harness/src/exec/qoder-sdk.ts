@@ -1,8 +1,16 @@
 import type { HarnessIrBundle, HarnessRevision } from "../ir/index.js";
+import {
+  HARNESS_ADAPTER_SPECIFICATION_VERSION,
+  runOnce,
+  type HarnessAdapterSession,
+  type HarnessAdapterStartOptions,
+  type HarnessAdapterTurnOptions,
+  type HarnessAdapterV1,
+} from "./adapter.js";
 import { HarnessRunEmitter, type HarnessRunEventListener } from "./events.js";
 import {
   assertRevisionHost,
-  buildRunPrompt,
+  buildRunPreamble,
   type HarnessExecutor,
   type HarnessRunResult,
   type HarnessRunTask,
@@ -145,8 +153,18 @@ export interface QoderSdkExecutorOptions {
   profile?: QoderRuntimeProfile;
 }
 
-/** Execute one resolved revision through the official Qoder Agent SDK. */
-export class QoderSdkExecutor implements HarnessExecutor {
+/**
+ * `harness-adapter-v1` binding for the official Qoder Agent SDK.
+ *
+ * The Qoder SDK is stateless per `query` call, so conversation continuity is
+ * the host's `persistSession` behavior: with `persistSession: false` (the
+ * default) every turn is independent and the run preamble is prepended to
+ * each turn's prompt; with `persistSession: true` the host keeps history and
+ * the preamble ships on the first turn only.
+ */
+export class QoderSdkAdapter implements HarnessAdapterV1 {
+  readonly specificationVersion = HARNESS_ADAPTER_SPECIFICATION_VERSION;
+  readonly adapterId = "@harness/adapter-qoder";
   readonly host = "qoder";
   private readonly loadSdk: () => Promise<QoderSdkLike>;
   private readonly auth: QoderAuthFactory;
@@ -204,151 +222,224 @@ export class QoderSdkExecutor implements HarnessExecutor {
     }
   }
 
+  async doStart(start: HarnessAdapterStartOptions): Promise<HarnessAdapterSession> {
+    assertRevisionHost(start.revision, this.host);
+    const sdk = await this.loadSdk();
+    const { preamble, warnings } = buildRunPreamble(start.revision, start.bundle);
+    const adapter = this;
+    let turnCount = 0;
+    let ended = false;
+    return {
+      adapterId: this.adapterId,
+      revisionId: start.revision.revisionId,
+      async doPromptTurn(turn: HarnessAdapterTurnOptions): Promise<HarnessRunResult> {
+        if (ended) {
+          throw new Error(`Qoder adapter session for '${start.revision.revisionId}' has ended.`);
+        }
+        assertRevisionHost(start.revision, adapter.host);
+        const firstTurn = turnCount === 0;
+        turnCount += 1;
+        return adapter.runTurn({ sdk, start, turn, preamble, warnings, firstTurn });
+      },
+      async doStop(): Promise<void> {
+        ended = true;
+      },
+      async doDestroy(): Promise<void> {
+        ended = true;
+      },
+    };
+  }
+
+  private async runTurn(context: {
+    sdk: QoderSdkLike;
+    start: HarnessAdapterStartOptions;
+    turn: HarnessAdapterTurnOptions;
+    preamble: string;
+    warnings: string[];
+    firstTurn: boolean;
+  }): Promise<HarnessRunResult> {
+    const { sdk, start, turn, preamble, warnings, firstTurn } = context;
+    const revision = start.revision;
+    const emitter = new HarnessRunEmitter(turn.onRunEvent ?? start.onRunEvent ?? this.onRunEvent);
+    emitter.start({ revisionId: revision.revisionId, host: this.host });
+    for (const warning of warnings) {
+      emitter.warning(warning);
+    }
+    const { abortController, detachAbort } = this.turnAbortController(turn.abortSignal);
+    try {
+      const includePreamble = firstTurn || !this.persistSession;
+      const prompt = includePreamble && preamble.length > 0
+        ? `${preamble}\n\n${turn.prompt}`
+        : turn.prompt;
+      const systemPrompt = this.profile === "qoder-minimal-v1"
+        ? buildQoderMinimalSystemPrompt(start.workDir)
+        : undefined;
+      const sdkOptions: Parameters<QoderSdkLike["query"]>[0]["options"] = {
+        auth: this.auth(sdk),
+        cwd: start.workDir,
+        allowedTools: [...this.allowedTools],
+        tools: [...this.tools],
+        disallowedTools: [...this.disallowedTools],
+        persistSession: this.persistSession,
+        maxTurns: this.maxTurns,
+        enableFileCheckpointing: this.enableFileCheckpointing,
+        includePartialMessages: true,
+        ...(this.permissionMode !== undefined ? { permissionMode: this.permissionMode } : {}),
+        ...(this.canUseTool !== undefined ? { canUseTool: this.canUseTool } : {}),
+        ...(this.model !== undefined ? { model: this.model } : {}),
+        ...(abortController !== undefined ? { abortController } : {}),
+        ...(this.settingSources !== undefined ? { settingSources: [...this.settingSources] } : {}),
+        ...(this.skills !== undefined ? { skills: Array.isArray(this.skills) ? [...this.skills] : this.skills } : {}),
+        ...(this.extensions !== undefined ? { extensions: [...this.extensions] } : {}),
+        ...(this.plugins !== undefined ? { plugins: [...this.plugins] } : {}),
+        ...(this.mcpServers !== undefined ? { mcpServers: { ...this.mcpServers } } : {}),
+        ...(this.strictMcpConfig !== undefined ? { strictMcpConfig: this.strictMcpConfig } : {}),
+        ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+      };
+      const stream = sdk.query({
+        prompt,
+        options: sdkOptions,
+      });
+      const output: string[] = [];
+      const errors: string[] = [];
+      const trace: unknown[] = [];
+      let metrics: HarnessRunResult["metrics"];
+      let exitCode = 0;
+      let sawResult = false;
+      const eventMappingState = createQoderSdkMessageMappingState();
+      for await (const message of stream) {
+        const traceEvent = redactTraceValue(message);
+        trace.push(traceEvent);
+        this.onTraceEvent?.(traceEvent);
+        applyQoderSdkMessage(emitter, traceEvent as QoderSdkMessage, eventMappingState);
+        if (message.type === "assistant") {
+          for (const block of contentBlocks(message)) {
+            if (block.type === "text" && typeof block.text === "string") {
+              output.push(block.text);
+            }
+          }
+        }
+        if (message.type === "result") {
+          sawResult = true;
+          metrics = {
+            ...(message.duration_ms !== undefined ? { durationMs: message.duration_ms } : {}),
+            ...(message.duration_api_ms !== undefined ? { durationApiMs: message.duration_api_ms } : {}),
+            ...(message.num_turns !== undefined ? { turns: message.num_turns } : {}),
+            ...(message.total_cost_usd !== undefined ? { costUsd: message.total_cost_usd } : {}),
+            ...(message.total_credits !== undefined ? { credits: message.total_credits } : {}),
+            ...(message.usage !== undefined ? { usage: redactTraceValue(message.usage) as Record<string, unknown> } : {}),
+            ...(message.modelUsage !== undefined
+              ? { modelUsage: redactTraceValue(message.modelUsage) as Record<string, unknown> }
+              : {}),
+            ...(message.permission_denials !== undefined
+              ? { permissionDenials: redactTraceValue(message.permission_denials) as unknown[] }
+              : {}),
+            ...(message.session_id !== undefined ? { sessionId: message.session_id } : {}),
+            ...(message.stop_reason ? { stopReason: message.stop_reason } : {}),
+            ...(message.terminal_reason ? { terminalReason: message.terminal_reason } : {}),
+          };
+          if (message.is_error === true || message.subtype !== "success") {
+            exitCode = 1;
+            errors.push(...(message.errors ?? [message.error ?? stringifyResult(message.result)]));
+          }
+        }
+      }
+      if (!sawResult) {
+        exitCode = 1;
+        errors.push("Qoder SDK query ended without a result message.");
+      }
+      const errorOutput = errors.filter(Boolean).join("\n");
+      if (errorOutput.length > 0) {
+        emitter.error(errorOutput);
+      }
+      emitter.finish(exitCode, metrics);
+      return {
+        host: this.host,
+        revisionId: revision.revisionId,
+        exitCode,
+        output: output.join(""),
+        errorOutput,
+        warnings: [...warnings],
+        trace,
+        runtimeReceipt: {
+          executor: "@qoder-ai/qoder-agent-sdk",
+          runtimeProfile: this.profile,
+          tools: [...this.tools],
+          allowedTools: [...this.allowedTools],
+          disallowedTools: [...this.disallowedTools],
+          ...(this.permissionMode !== undefined ? { permissionMode: this.permissionMode } : {}),
+          maxTurns: this.maxTurns,
+          persistSession: this.persistSession,
+          ...(this.model !== undefined ? { model: this.model } : {}),
+          fileCheckpointing: this.enableFileCheckpointing,
+          partialMessages: true,
+          permissionCallback: this.canUseTool ? "configured" : "none",
+          systemPromptSource: systemPrompt === undefined ? "runtime-default" : "executor-profile",
+          settingSources: this.settingSources === undefined ? "runtime-default" : [...this.settingSources],
+          skills: this.skills === undefined
+            ? "runtime-default"
+            : Array.isArray(this.skills) ? [...this.skills] : this.skills,
+          ...(this.extensions !== undefined ? { extensionCount: this.extensions.length } : {}),
+          ...(this.plugins !== undefined ? { pluginCount: this.plugins.length } : {}),
+          ...(this.mcpServers !== undefined ? { mcpServerNames: Object.keys(this.mcpServers).sort() } : {}),
+          ...(this.strictMcpConfig !== undefined ? { strictMcpConfig: this.strictMcpConfig } : {}),
+        },
+        ...(metrics !== undefined ? { metrics } : {}),
+      };
+    } catch (error) {
+      emitter.error(error instanceof Error ? error.message : String(error));
+      emitter.finish(1);
+      throw error;
+    } finally {
+      detachAbort?.();
+    }
+  }
+
+  /**
+   * The adapter-level `abortController` option keeps its historical meaning
+   * (one controller shared across the run); a per-turn `abortSignal` is only
+   * bridged onto a fresh controller when no shared one was configured.
+   */
+  private turnAbortController(abortSignal?: AbortSignal): {
+    abortController?: AbortController;
+    detachAbort?: () => void;
+  } {
+    if (this.abortController !== undefined || abortSignal === undefined) {
+      return this.abortController !== undefined ? { abortController: this.abortController } : {};
+    }
+    const controller = new AbortController();
+    if (abortSignal.aborted) {
+      controller.abort(abortSignal.reason);
+      return { abortController: controller };
+    }
+    const onAbort = () => controller.abort(abortSignal.reason);
+    abortSignal.addEventListener("abort", onAbort, { once: true });
+    return {
+      abortController: controller,
+      detachAbort: () => abortSignal.removeEventListener("abort", onAbort),
+    };
+  }
+}
+
+/** Execute one resolved revision through the official Qoder Agent SDK. */
+export class QoderSdkExecutor implements HarnessExecutor {
+  readonly host = "qoder";
+  private readonly adapter: QoderSdkAdapter;
+  private readonly onRunEvent?: HarnessRunEventListener;
+
+  constructor(options: QoderSdkExecutorOptions = {}) {
+    this.adapter = new QoderSdkAdapter(options);
+    this.onRunEvent = options.onRunEvent;
+  }
+
   async execute(
     revision: HarnessRevision,
     bundle: HarnessIrBundle,
     task: HarnessRunTask,
   ): Promise<HarnessRunResult> {
-    assertRevisionHost(revision, this.host);
-    const emitter = new HarnessRunEmitter(this.onRunEvent);
-    const { prompt, warnings } = buildRunPrompt(revision, bundle, task);
-    emitter.start({ revisionId: revision.revisionId, host: this.host });
-    for (const warning of warnings) {
-      emitter.warning(warning);
-    }
-    try {
-      return await this.run({ revision, task, prompt, warnings, emitter });
-    } catch (error) {
-      emitter.error(error instanceof Error ? error.message : String(error));
-      emitter.finish(1);
-      throw error;
-    }
-  }
-
-  private async run(context: {
-    revision: HarnessRevision;
-    task: HarnessRunTask;
-    prompt: string;
-    warnings: string[];
-    emitter: HarnessRunEmitter;
-  }): Promise<HarnessRunResult> {
-    const { revision, task, prompt, warnings, emitter } = context;
-    const sdk = await this.loadSdk();
-    const systemPrompt = this.profile === "qoder-minimal-v1"
-      ? buildQoderMinimalSystemPrompt(task.cwd)
-      : undefined;
-    const sdkOptions: Parameters<QoderSdkLike["query"]>[0]["options"] = {
-      auth: this.auth(sdk),
-      cwd: task.cwd,
-      allowedTools: [...this.allowedTools],
-      tools: [...this.tools],
-      disallowedTools: [...this.disallowedTools],
-      persistSession: this.persistSession,
-      maxTurns: this.maxTurns,
-      enableFileCheckpointing: this.enableFileCheckpointing,
-      includePartialMessages: true,
-      ...(this.permissionMode !== undefined ? { permissionMode: this.permissionMode } : {}),
-      ...(this.canUseTool !== undefined ? { canUseTool: this.canUseTool } : {}),
-      ...(this.model !== undefined ? { model: this.model } : {}),
-      ...(this.abortController !== undefined ? { abortController: this.abortController } : {}),
-      ...(this.settingSources !== undefined ? { settingSources: [...this.settingSources] } : {}),
-      ...(this.skills !== undefined ? { skills: Array.isArray(this.skills) ? [...this.skills] : this.skills } : {}),
-      ...(this.extensions !== undefined ? { extensions: [...this.extensions] } : {}),
-      ...(this.plugins !== undefined ? { plugins: [...this.plugins] } : {}),
-      ...(this.mcpServers !== undefined ? { mcpServers: { ...this.mcpServers } } : {}),
-      ...(this.strictMcpConfig !== undefined ? { strictMcpConfig: this.strictMcpConfig } : {}),
-      ...(systemPrompt !== undefined ? { systemPrompt } : {}),
-    };
-    const stream = sdk.query({
-      prompt,
-      options: sdkOptions,
+    return runOnce(this.adapter, revision, bundle, task, {
+      ...(this.onRunEvent !== undefined ? { onRunEvent: this.onRunEvent } : {}),
     });
-    const output: string[] = [];
-    const errors: string[] = [];
-    const trace: unknown[] = [];
-    let metrics: HarnessRunResult["metrics"];
-    let exitCode = 0;
-    let sawResult = false;
-    const eventMappingState = createQoderSdkMessageMappingState();
-    for await (const message of stream) {
-      const traceEvent = redactTraceValue(message);
-      trace.push(traceEvent);
-      this.onTraceEvent?.(traceEvent);
-      applyQoderSdkMessage(emitter, traceEvent as QoderSdkMessage, eventMappingState);
-      if (message.type === "assistant") {
-        for (const block of contentBlocks(message)) {
-          if (block.type === "text" && typeof block.text === "string") {
-            output.push(block.text);
-          }
-        }
-      }
-      if (message.type === "result") {
-        sawResult = true;
-        metrics = {
-          ...(message.duration_ms !== undefined ? { durationMs: message.duration_ms } : {}),
-          ...(message.duration_api_ms !== undefined ? { durationApiMs: message.duration_api_ms } : {}),
-          ...(message.num_turns !== undefined ? { turns: message.num_turns } : {}),
-          ...(message.total_cost_usd !== undefined ? { costUsd: message.total_cost_usd } : {}),
-          ...(message.total_credits !== undefined ? { credits: message.total_credits } : {}),
-          ...(message.usage !== undefined ? { usage: redactTraceValue(message.usage) as Record<string, unknown> } : {}),
-          ...(message.modelUsage !== undefined
-            ? { modelUsage: redactTraceValue(message.modelUsage) as Record<string, unknown> }
-            : {}),
-          ...(message.permission_denials !== undefined
-            ? { permissionDenials: redactTraceValue(message.permission_denials) as unknown[] }
-            : {}),
-          ...(message.session_id !== undefined ? { sessionId: message.session_id } : {}),
-          ...(message.stop_reason ? { stopReason: message.stop_reason } : {}),
-          ...(message.terminal_reason ? { terminalReason: message.terminal_reason } : {}),
-        };
-        if (message.is_error === true || message.subtype !== "success") {
-          exitCode = 1;
-          errors.push(...(message.errors ?? [message.error ?? stringifyResult(message.result)]));
-        }
-      }
-    }
-    if (!sawResult) {
-      exitCode = 1;
-      errors.push("Qoder SDK query ended without a result message.");
-    }
-    const errorOutput = errors.filter(Boolean).join("\n");
-    if (errorOutput.length > 0) {
-      emitter.error(errorOutput);
-    }
-    emitter.finish(exitCode, metrics);
-    return {
-      host: this.host,
-      revisionId: revision.revisionId,
-      exitCode,
-      output: output.join(""),
-      errorOutput,
-      warnings,
-      trace,
-      runtimeReceipt: {
-        executor: "@qoder-ai/qoder-agent-sdk",
-        runtimeProfile: this.profile,
-        tools: [...this.tools],
-        allowedTools: [...this.allowedTools],
-        disallowedTools: [...this.disallowedTools],
-        ...(this.permissionMode !== undefined ? { permissionMode: this.permissionMode } : {}),
-        maxTurns: this.maxTurns,
-        persistSession: this.persistSession,
-        ...(this.model !== undefined ? { model: this.model } : {}),
-        fileCheckpointing: this.enableFileCheckpointing,
-        partialMessages: true,
-        permissionCallback: this.canUseTool ? "configured" : "none",
-        systemPromptSource: systemPrompt === undefined ? "runtime-default" : "executor-profile",
-        settingSources: this.settingSources === undefined ? "runtime-default" : [...this.settingSources],
-        skills: this.skills === undefined
-          ? "runtime-default"
-          : Array.isArray(this.skills) ? [...this.skills] : this.skills,
-        ...(this.extensions !== undefined ? { extensionCount: this.extensions.length } : {}),
-        ...(this.plugins !== undefined ? { pluginCount: this.plugins.length } : {}),
-        ...(this.mcpServers !== undefined ? { mcpServerNames: Object.keys(this.mcpServers).sort() } : {}),
-        ...(this.strictMcpConfig !== undefined ? { strictMcpConfig: this.strictMcpConfig } : {}),
-      },
-      ...(metrics !== undefined ? { metrics } : {}),
-    };
   }
 }
 

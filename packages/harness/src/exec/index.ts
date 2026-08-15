@@ -1,4 +1,14 @@
 export {
+  HARNESS_ADAPTER_SPECIFICATION_VERSION,
+  HarnessCapabilityUnsupportedError,
+  runOnce,
+  type HarnessAdapterSession,
+  type HarnessAdapterStartOptions,
+  type HarnessAdapterTurnOptions,
+  type HarnessAdapterV1,
+  type RunOnceOptions,
+} from "./adapter.js";
+export {
   HarnessRunEmitter,
   MAX_RETAINED_TOOL_RESULT_BYTES,
   type HarnessRunEvent,
@@ -19,6 +29,7 @@ export {
   type RunPreamble,
 } from "./executor.js";
 export {
+  QoderSdkAdapter,
   QoderSdkExecutor,
   applyQoderSdkMessage,
   createQoderSdkMessageMappingState,
@@ -36,6 +47,7 @@ export {
   redactTraceValue,
 } from "./qoder-sdk.js";
 export {
+  PiSdkAdapter,
   PiSdkExecutor,
   materializePiPackage,
   type PiSdkExecutorOptions,
