@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { HarnessRevision } from "@qoder-ai/harness";
 import { HarnessRunEmitter, loadSkillDeliveries, type HarnessExecutor } from "@qoder-ai/harness/exec";
@@ -352,7 +352,7 @@ describe("harness-ui CLI", () => {
       parseHarnessUiArgs(["serve", "agent.harness", "--source-root", "/workspace"]).sourceRoot,
     ).toBe("/workspace");
     expect(resolveHarnessUiSourceRoot("/workspace/harnesses/agent.harness")).toBe(
-      "/workspace/harnesses",
+      resolve("/workspace/harnesses"),
     );
     expect(resolveHarnessUiSourceRoot("/workspace/harnesses/agent.harness", "/skills")).toBe(
       "/skills",

@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { HarnessRunEmitter, loadSkillDeliveries, type HarnessExecutor } from "@qoder-ai/harness/exec";
 import { decodeSseStream, type HarnessUiExecutorFactory } from "@qoder-ai/harness-ui";
@@ -265,7 +265,7 @@ describe("harness-studio CLI", () => {
 
   it("resolves the default source root from the harness file and honors an override", () => {
     expect(resolveHarnessStudioSourceRoot("/workspace/harnesses/agent.harness")).toBe(
-      "/workspace/harnesses",
+      resolve("/workspace/harnesses"),
     );
     expect(resolveHarnessStudioSourceRoot("/workspace/harnesses/agent.harness", "/skills")).toBe(
       "/skills",
