@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { initSync, parse } from "es-module-lexer";
 import { describe, expect, it } from "vitest";
 
@@ -23,7 +24,7 @@ function resolvedBuiltGraph(entry: string): Set<string> {
 
 describe("harness-ui package graph", () => {
   it("keeps the built main entry injection-only", () => {
-    const graph = resolvedBuiltGraph(new URL("../dist/index.js", import.meta.url).pathname);
+    const graph = resolvedBuiltGraph(fileURLToPath(new URL("../dist/index.js", import.meta.url)));
     expect([...graph].some((item) =>
       item === "@qoder-ai/harness/exec" || item.includes("qoder-sdk") || item.includes("pi-sdk"),
     )).toBe(false);
