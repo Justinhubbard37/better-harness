@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { initSync, parse } from "es-module-lexer";
 import { describe, expect, it } from "vitest";
 
@@ -36,17 +37,18 @@ function resolveSourceFile(file: string): string {
 
 describe("package module graph boundaries", () => {
   it("keeps the core and browser verdict entries outside Node and devtool owners", () => {
-    const builtCore = new URL("../dist/index.js", import.meta.url).pathname;
-    const builtVerdict = new URL("../dist/compare/verdict.js", import.meta.url).pathname;
-    const core = resolvedModuleGraph(existsSync(builtCore) ? builtCore : new URL("../src/index.ts", import.meta.url).pathname);
-    const verdict = resolvedModuleGraph(existsSync(builtVerdict) ? builtVerdict : new URL("../src/compare/verdict.ts", import.meta.url).pathname);
+    const builtCore = fileURLToPath(new URL("../dist/index.js", import.meta.url));
+    const builtVerdict = fileURLToPath(new URL("../dist/compare/verdict.js", import.meta.url));
+    const core = resolvedModuleGraph(existsSync(builtCore) ? builtCore : fileURLToPath(new URL("../src/index.ts", import.meta.url)));
+    const verdict = resolvedModuleGraph(existsSync(builtVerdict) ? builtVerdict : fileURLToPath(new URL("../src/compare/verdict.ts", import.meta.url)));
     const forbidden = [
       "/src/exec/", "/src/compare/runner", "/src/highlight/", "node:",
       "@qoder-ai/qoder-agent-sdk", "@earendil-works/pi-coding-agent", "shiki",
     ];
     for (const graph of [core, verdict]) {
       for (const item of graph) {
-        expect(forbidden.some((needle) => item.includes(needle)), item).toBe(false);
+        const portableItem = item.replaceAll("\\", "/");
+        expect(forbidden.some((needle) => portableItem.includes(needle)), item).toBe(false);
       }
     }
   });

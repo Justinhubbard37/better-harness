@@ -37,7 +37,7 @@ describe("harness compare manifest", () => {
       variants: { baseline: "readme-baseline", candidate: "readme-grounded" },
       runtime: { host: "qoder", permissionMode: "default", network: "deny" },
     });
-    expect(loaded.resolved.fixture.endsWith("examples/readme-compare/fixture")).toBe(true);
+    expect(loaded.resolved.fixture).toBe(fileURLToPath(FIXTURE_URL));
   });
 
   it("rejects every auto-approved tool surface", async () => {
@@ -316,7 +316,8 @@ describe("README coding comparison", () => {
     });
     expect(await readFile(join(output, "H1/trial-001/patch.diff"), "utf8")).toContain("README.md");
     expect(await readFile(join(output, "H1/trial-001/patch.diff"), "utf8")).toContain("+# Retry Kit");
-    expect(await readFile(join(output, "H1/trial-001/trace.jsonl"), "utf8")).toContain("<trial-root>/README.md");
+    const redactedTrace = await readFile(join(output, "H1/trial-001/trace.jsonl"), "utf8");
+    expect(redactedTrace.replaceAll("\\", "/")).toContain("<trial-root>/README.md");
     expect(JSON.parse(await readFile(join(output, "H1/trial-001/validation.json"), "utf8"))).toMatchObject({ passed: true });
     const persistedVerdict = JSON.parse(await readFile(join(output, "verdict.json"), "utf8")) as unknown;
     expect(parseHarnessCompareVerdict(persistedVerdict)).toEqual(verdict);
