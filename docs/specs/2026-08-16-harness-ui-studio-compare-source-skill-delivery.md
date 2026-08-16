@@ -73,7 +73,9 @@ paths in a document resolve against that document's own directory.
 - Root suite: 1,325 tests pass.
 - `packages/harness`: 152 tests pass (`compare.test.ts` proves a nested harness
   resolves its source relative to its own directory and the executor can load
-  the locked `SKILL.md` body from the forwarded root).
+  the locked `SKILL.md` body from the forwarded root). The test authors its
+  source-backed harness fixture directly, so Windows CRLF checkout settings do
+  not control whether the required skill binding is inserted.
 - `packages/harness-ui`: 29 tests pass (fail-closed without a root, successful
   `SKILL.md` delivery with one, and CLI default/override resolution).
 - `packages/harness-studio`: 31 tests pass (embedded `SKILL.md` delivery and

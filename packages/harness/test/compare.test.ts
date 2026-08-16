@@ -350,20 +350,33 @@ describe("README coding comparison", () => {
     const harnessDirectory = join(directory, "harnesses");
     await mkdir(harnessDirectory, { recursive: true });
 
-    const harnessSource = await readFile(new URL("../examples/readme-compare/readme-compare.harness", import.meta.url), "utf8");
-    const withSourceSkill = harnessSource
-      .replace(
-        "workflow readme-loop {",
-        `skill deep-guide {\n  source "./skills/deep-guide"\n}\n\nworkflow readme-loop {`,
-      )
-      .replace(
-        "agent writer {\n    use skill coding-loop-discipline { minimum advisory }\n  }\n}\n\nharness readme-grounded",
-        "agent writer {\n    use skill coding-loop-discipline { minimum advisory }\n    use skill deep-guide { minimum advisory }\n  }\n}\n\nharness readme-grounded",
-      );
-    // The replacement must have actually landed, or this test would silently
-    // exercise the unmodified baseline harness and prove nothing.
-    expect(withSourceSkill).toContain("use skill deep-guide");
-    await writeFile(join(harnessDirectory, "readme-compare.harness"), withSourceSkill, "utf8");
+    const sourceBackedHarness = `
+      skill coding-loop-discipline {
+        description "Inspect the repository, make the requested scoped change, and validate it."
+      }
+      skill deep-guide {
+        source "./skills/deep-guide"
+      }
+      workflow readme-loop {
+        writer -> writer
+        stop when writer.done
+      }
+      harness readme-baseline {
+        workflow readme-loop
+        agent writer {
+          use skill coding-loop-discipline { minimum advisory }
+          use skill deep-guide { minimum advisory }
+        }
+      }
+      harness readme-grounded {
+        workflow readme-loop
+        agent writer {
+          use skill coding-loop-discipline { minimum advisory }
+        }
+      }
+      target qoder uses adapter.qoder
+    `;
+    await writeFile(join(harnessDirectory, "readme-compare.harness"), sourceBackedHarness, "utf8");
     await mkdir(join(harnessDirectory, "skills", "deep-guide"), { recursive: true });
     await writeFile(
       join(harnessDirectory, "skills", "deep-guide", "SKILL.md"),
