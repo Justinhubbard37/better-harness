@@ -190,6 +190,62 @@ the Pi SDK, which exposes no abort surface) throws
 unsupported graceful stop to a `doDestroy` fallback plus a result warning.
 The surface is experimental until `@qoder-ai/harness-studio` adopts it.
 
+### Session checkpoint executor (POC)
+
+The package also exposes a Pi-first checkpoint continuation contract at
+`@qoder-ai/harness/session-executor`. It pairs an exact committed Git tree with
+an exact Pi JSONL entry, creates a tamper-evident plan, continues the session in
+a detached temporary worktree, and writes the changed tree as a new one-parent
+commit. The result is kept on
+`refs/better-harness/session-executions/<plan-id>`; the caller's branch, index,
+and working tree are never switched or updated.
+
+This POC intentionally does not claim to restore dirty files, the historical
+index, environment state, or external side effects between commits. The
+commit/entry relationship is caller-supplied and recorded, not inferred. Pi is
+the first provider because its public `SessionManager` supports JSONL forks and
+entry-level branches; another host needs an explicit checkpoint adapter before
+it can use the same plan/apply contract.
+
+```ts
+import {
+  createSessionExecutionPlan,
+  executeSessionExecutionPlan,
+} from "@qoder-ai/harness/session-executor";
+
+const plan = await createSessionExecutionPlan({
+  workspace: process.cwd(),
+  base: "<full-or-resolvable-commit>",
+  sessionFile: "<pi-session.jsonl>",
+  entryId: "<pi-entry-id>",
+  prompt: "Continue the implementation from this checkpoint.",
+  commitMessage: "feat(example): continue checkpoint",
+});
+
+// Revalidates every immutable input before invoking Pi or creating Git state.
+const receipt = await executeSessionExecutionPlan(plan);
+console.log(receipt.result.ref, receipt.result.commit);
+```
+
+The package CLI separates the non-executing plan step from the confirmed run:
+
+```sh
+harness-session-executor plan --workspace . --base <commit> \
+  --session <pi-session.jsonl> --entry <entry-id> \
+  --prompt-file continuation.txt --commit-message "feat(example): continue checkpoint" \
+  --out checkpoint.plan.json
+
+harness-session-executor run --plan checkpoint.plan.json --yes
+```
+
+The live Pi continuation disables Bash, extensions, skills, prompt templates,
+delete, and rename. Its custom `read`, `ls`, `edit`, and `write` definitions
+reject paths outside the isolated worktree and all `.git` metadata. The
+continuation is bounded to 64 tool calls and 15 minutes. The continued JSONL,
+validated plan, and receipt remain under the repository's Git common directory
+so a later executor can select another checkpoint without putting private
+prompts or transcripts into the result commit.
+
 [`examples/full-surface.harness`](examples/full-surface.harness) is the compiler
 conformance fixture: it deliberately exercises every v0.2 capability kind,
 transport, workflow mode, permission, deployment veto, degradation policy, and

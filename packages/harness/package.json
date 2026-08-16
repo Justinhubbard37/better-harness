@@ -17,7 +17,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "harness-compare": "./dist/compare/cli.js"
+    "harness-compare": "./dist/compare/cli.js",
+    "harness-session-executor": "./dist/session-executor/cli.js"
   },
   "exports": {
     ".": {
@@ -35,6 +36,10 @@
     "./exec": {
       "types": "./dist/exec/index.d.ts",
       "import": "./dist/exec/index.js"
+    },
+    "./session-executor": {
+      "types": "./dist/session-executor/index.d.ts",
+      "import": "./dist/session-executor/index.js"
     },
     "./compare": {
       "types": "./dist/compare/index.d.ts",
