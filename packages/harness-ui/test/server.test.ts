@@ -3,7 +3,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { HarnessRunEmitter, type HarnessExecutor } from "@qoder-ai/harness/exec";
 import { decodeSseStream } from "../src/sse.js";
 import { parseHarnessUiArgs, runHarnessUiCli } from "../src/cli.js";
-import { startHarnessUiServer, type StartedHarnessUiServer } from "../src/server.js";
+import {
+  HarnessUiRemoteBindError,
+  assertBindAddressAllowed,
+  startHarnessUiServer,
+  type StartedHarnessUiServer,
+} from "../src/server.js";
 import type { HarnessUiExecutorFactory } from "../src/run.js";
 
 const SOURCE = `
@@ -328,5 +333,45 @@ describe("harness-ui CLI", () => {
     ]);
 
     expect(parsed.allowedOrigins).toEqual(["https://one.example", "http://localhost:5173"]);
+  });
+
+  it("parses the explicit opt-in for a reachable bind address", () => {
+    expect(parseHarnessUiArgs(["serve", "agent.harness"]).allowRemote).toBe(false);
+    expect(
+      parseHarnessUiArgs(["serve", "agent.harness", "--unsafe-allow-remote"]).allowRemote,
+    ).toBe(true);
+  });
+});
+
+describe("bind address boundary", () => {
+  it("accepts loopback addresses in every spelling", () => {
+    for (const host of ["127.0.0.1", "127.0.0.53", "localhost", "::1", "[::1]", " LocalHost "]) {
+      expect(() => assertBindAddressAllowed(host, false)).not.toThrow();
+    }
+  });
+
+  it("refuses a reachable bind address because POST /agui has no authentication", () => {
+    // The origin check is a browser-CSRF guard: a request with no Origin header
+    // is allowed by design, so the socket itself is the only boundary left.
+    for (const host of ["0.0.0.0", "::", "192.168.1.20", "10.0.0.4"]) {
+      expect(() => assertBindAddressAllowed(host, false)).toThrow(HarnessUiRemoteBindError);
+    }
+  });
+
+  it("lets a caller take the risk explicitly", () => {
+    expect(() => assertBindAddressAllowed("0.0.0.0", true)).not.toThrow();
+  });
+
+  it("refuses to start a server on a reachable address without the opt-in", async () => {
+    await expect(
+      startHarnessUiServer({
+        source: SOURCE,
+        executorFactory: (() => {
+          throw new Error("must not run");
+        }) as unknown as HarnessUiExecutorFactory,
+        host: "0.0.0.0",
+        port: 0,
+      }),
+    ).rejects.toThrow(HarnessUiRemoteBindError);
   });
 });

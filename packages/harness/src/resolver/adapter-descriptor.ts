@@ -15,7 +15,8 @@
  * - mcp   → connected as a live server with discovered tools
  * - flow  → orchestrated by the adapter, or only described to the model
  */
-import type { CapabilityKind, Strength, WorkflowIr } from "../ir/index.js";
+import { contentEquals } from "../ir/canonical.js";
+import type { CapabilityKind, PermissionGrant, Strength, WorkflowIr } from "../ir/index.js";
 
 export interface AdapterSkillDelivery {
   mechanism: string;
@@ -54,8 +55,15 @@ export interface AdapterRealizationDescriptor {
   agentIsolation: "single-session" | "session-per-agent";
   /** Setting keys the adapter reads. Everything else is reported as ignored. */
   consumedSettings: readonly string[];
-  /** Permission domains the adapter enforces on the host runtime. */
-  enforcedPermissionDomains: readonly string[];
+  /**
+   * Exact permission grants the adapter enforces on the host runtime.
+   *
+   * Grants, not domains: enforcing `workspace read` is a weaker claim than
+   * enforcing `workspace deny`, and a domain list cannot tell the two apart. A
+   * requested grant counts as enforced only when an identical domain/access
+   * pair appears here.
+   */
+  enforcedPermissions: readonly PermissionGrant[];
 }
 
 /**
@@ -75,7 +83,7 @@ export const PROMPT_ONLY_DESCRIPTOR: AdapterRealizationDescriptor = Object.freez
   programmaticLanguages: Object.freeze([]),
   agentIsolation: "single-session",
   consumedSettings: Object.freeze([]),
-  enforcedPermissionDomains: Object.freeze([]),
+  enforcedPermissions: Object.freeze([]),
 });
 
 /** Build a descriptor from the prompt-only floor plus the facts an adapter adds. */
@@ -83,6 +91,21 @@ export function describeAdapter(
   overrides: Partial<AdapterRealizationDescriptor> & Pick<AdapterRealizationDescriptor, "adapterId">,
 ): AdapterRealizationDescriptor {
   return Object.freeze({ ...PROMPT_ONLY_DESCRIPTOR, ...overrides });
+}
+
+/**
+ * Identity of two descriptors by canonical content.
+ *
+ * Descriptors are assembled by spreading a floor and then overrides, so two
+ * descriptors stating identical facts can differ in key order. Comparing the
+ * canonical form is what makes the drift guards meaningful rather than
+ * accidentally order-dependent.
+ */
+export function descriptorsEqual(
+  a: AdapterRealizationDescriptor,
+  b: AdapterRealizationDescriptor,
+): boolean {
+  return contentEquals(a, b);
 }
 
 export interface CapabilityRealizationFact {

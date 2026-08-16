@@ -157,10 +157,11 @@ export interface StartedHarnessUiServer {
 }
 
 export async function startHarnessUiServer(
-  options: HarnessUiServerOptions & { port?: number; host?: string },
+  options: HarnessUiServerOptions & { port?: number; host?: string; allowRemote?: boolean },
 ): Promise<StartedHarnessUiServer> {
   const server = createHarnessUiServer(options);
   const host = options.host ?? "127.0.0.1";
+  assertBindAddressAllowed(host, options.allowRemote === true);
   await new Promise<void>((resolvePromise, rejectPromise) => {
     server.once("error", rejectPromise);
     server.listen(options.port ?? 0, host, resolvePromise);
@@ -203,6 +204,43 @@ function authorizeBrowserOrigin(
   response.setHeader("Access-Control-Allow-Origin", normalizedOrigin);
   response.setHeader("Vary", "Origin");
   return true;
+}
+
+export class HarnessUiRemoteBindError extends Error {
+  constructor(readonly host: string) {
+    super(
+      `Refusing to bind the AG-UI endpoint to '${host}'. POST /agui runs a coding agent with ` +
+        "host tools in the server's working directory and has no authentication, so a " +
+        "reachable bind address hands that agent to anyone who can route to it. Bind to " +
+        "loopback and put a gateway in front, or pass allowRemote (CLI: " +
+        "--unsafe-allow-remote) to accept that risk explicitly.",
+    );
+    this.name = "HarnessUiRemoteBindError";
+  }
+}
+
+/**
+ * Refuse a reachable bind address unless the caller opted in.
+ *
+ * The origin check below is a browser-CSRF guard, not authentication: a request
+ * without an `Origin` header — any script, any `curl` — is allowed through by
+ * design. That is safe only while the socket itself is unreachable, which makes
+ * the bind address the real boundary.
+ */
+export function assertBindAddressAllowed(host: string, allowRemote: boolean): void {
+  if (allowRemote || isLoopbackBindAddress(host)) {
+    return;
+  }
+  throw new HarnessUiRemoteBindError(host);
+}
+
+/** Loopback as a *bind* address; wildcards such as `0.0.0.0` and `::` are reachable. */
+function isLoopbackBindAddress(host: string): boolean {
+  const hostname = host.trim().toLowerCase().replace(/^\[|\]$/gu, "");
+  if (hostname === "localhost" || hostname === "::1") {
+    return true;
+  }
+  return isIP(hostname) === 4 && hostname.startsWith("127.");
 }
 
 function isLoopbackHost(host: string): boolean {

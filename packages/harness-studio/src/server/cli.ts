@@ -18,6 +18,9 @@ Options:
   --port <n>          Listen port (default: 3311)
   --host <addr>       Bind address (default: 127.0.0.1)
   --cwd <dir>         Working directory for executor runs (default: process cwd)
+  --unsafe-allow-remote
+                      Permit a non-loopback --host. The studio's /agui endpoint is
+                      unauthenticated and runs a coding agent in --cwd.
   -h, --help          Print help without reading any file or opening a port
 `;
 
@@ -33,13 +36,14 @@ interface ParsedArgs {
   runtime?: string;
   port: number;
   host: string;
+  allowRemote: boolean;
   cwd?: string;
   help: boolean;
   error?: string;
 }
 
 export function parseHarnessStudioArgs(argv: string[]): ParsedArgs {
-  const parsed: ParsedArgs = { port: 3311, host: "127.0.0.1", help: false };
+  const parsed: ParsedArgs = { port: 3311, host: "127.0.0.1", allowRemote: false, help: false };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     const takeValue = (): string | undefined => {
@@ -65,6 +69,9 @@ export function parseHarnessStudioArgs(argv: string[]): ParsedArgs {
         break;
       case "--host":
         parsed.host = takeValue() ?? parsed.host;
+        break;
+      case "--unsafe-allow-remote":
+        parsed.allowRemote = true;
         break;
       case "--cwd":
         parsed.cwd = takeValue();
@@ -110,12 +117,19 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     appDir: defaultAppDir(),
     port: parsed.port,
     host: parsed.host,
+    allowRemote: parsed.allowRemote,
     ...(parsed.evidence !== undefined ? { evidenceDir: resolve(parsed.evidence) } : {}),
     ...(harnessSource !== undefined ? { harnessSource } : {}),
     ...(parsed.harnessId !== undefined ? { harnessId: parsed.harnessId } : {}),
     ...(parsed.runtime !== undefined ? { runtimeId: parsed.runtime } : {}),
     ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
   });
+  if (parsed.allowRemote) {
+    io.stderr(
+      `Warning: ${started.url} is reachable beyond loopback and has no authentication. ` +
+        `Anyone who can route to it can run a coding agent in ${parsed.cwd ?? process.cwd()}.\n`,
+    );
+  }
   io.stdout(`Harness Studio: ${started.url}\n`);
   return 0;
 }

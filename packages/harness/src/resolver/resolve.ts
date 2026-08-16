@@ -105,7 +105,10 @@ export function resolveHarness(
     return { report: failedReport(harness.id, runtimeId ?? "unknown", [], errors) };
   }
 
-  const descriptor = descriptorFor(options.adapter, runtime.id, runtime.adapter);
+  const descriptor = descriptorFor(options.adapter, runtime.id, runtime.adapter, errors);
+  if (!descriptor) {
+    return { report: failedReport(harness.id, runtime.id, [], errors) };
+  }
 
   const workflow = bundle.workflows.find((candidate) => candidate.id === harness.workflow);
   if (!workflow) {
@@ -131,7 +134,7 @@ export function resolveHarness(
       }
       enabledCapabilityIds.add(capability.id);
       realizations.push(
-        ...realizeRequirement(bundle, agent, requirement, runtime.id, descriptor, errors),
+        realizeRequirement(bundle, agent, requirement, runtime.id, descriptor, errors),
       );
     }
   }
@@ -187,11 +190,14 @@ export function resolveHarness(
       : {}),
   };
   // Frozen at the boundary: a revision handed to an executor is a run fact, and
-  // an executor that can edit it can also invalidate its own evidence.
-  const revision = deepFreeze<HarnessRevision>({
-    ...revisionBody,
-    revisionId: computeRevisionId(revisionBody),
-  });
+  // an executor that can edit it can also invalidate its own evidence. The body
+  // is cloned first because `settings` still aliases the caller's bundle and
+  // `realization` is shared with the report — freezing those in place would
+  // reach back out of the revision and immobilize documents the caller still
+  // owns.
+  const revision = deepFreeze<HarnessRevision>(
+    structuredClone({ ...revisionBody, revisionId: computeRevisionId(revisionBody) }),
+  );
 
   return {
     revision,
@@ -255,19 +261,37 @@ function selectSourceLocks(
  *
  * A lookup that has nothing for the selected runtime falls back to prompt-only
  * facts: an unknown host must not inherit another adapter's abilities.
+ *
+ * A supplied descriptor must also *be* the adapter the runtime selected.
+ * Measuring `runtime qoder { adapter "@acme/other" }` against the built-in
+ * Qoder facts would mint a revision that names one adapter package while every
+ * realization in it came from another — an artifact that contradicts itself and
+ * that no downstream consumer of `revision.json` could falsify. Returning
+ * `undefined` fails the resolve instead.
  */
 function descriptorFor(
   adapter: ResolveOptions["adapter"],
   runtimeId: string,
   adapterId: string,
-): AdapterRealizationDescriptor {
+  errors: string[],
+): AdapterRealizationDescriptor | undefined {
+  const floor = { ...PROMPT_ONLY_DESCRIPTOR, adapterId };
   if (adapter === undefined) {
-    return { ...PROMPT_ONLY_DESCRIPTOR, adapterId };
+    return floor;
   }
-  if (typeof adapter === "function") {
-    return adapter(runtimeId) ?? { ...PROMPT_ONLY_DESCRIPTOR, adapterId };
+  const supplied = typeof adapter === "function" ? adapter(runtimeId) : adapter;
+  if (supplied === undefined) {
+    return floor;
   }
-  return adapter;
+  if (supplied.adapterId !== adapterId) {
+    errors.push(
+      `Runtime '${runtimeId}' selects adapter '${adapterId}', but the supplied realization ` +
+        `descriptor describes '${supplied.adapterId}'. Resolve against the descriptor of the ` +
+        "adapter that will run the revision.",
+    );
+    return undefined;
+  }
+  return supplied;
 }
 
 function selectRuntime(
@@ -353,7 +377,7 @@ function realizeRequirement(
   runtimeId: string,
   descriptor: AdapterRealizationDescriptor,
   errors: string[],
-): Realization[] {
+): Realization {
   const binding =
     bundle.bindings.find(
       (candidate) =>
@@ -372,7 +396,7 @@ function realizeRequirement(
         `on runtime '${runtimeId}', below the required minimum '${requirement.minimum}': ` +
         `${materialization.reason}.`,
     );
-    return [realize(agent, requirement, binding, materialization, "failed", materialization.reason)];
+    return realize(agent, requirement, binding, materialization, "failed", materialization.reason);
   }
   if (realizedIndex < preferredIndex) {
     if (requirement.onDegrade === "fail") {
@@ -381,11 +405,11 @@ function realizeRequirement(
           `on runtime '${runtimeId}', below the preferred '${requirement.preferred}' ` +
           `and the requirement declares 'on-degrade fail'.`,
       );
-      return [realize(agent, requirement, binding, materialization, "failed", materialization.reason)];
+      return realize(agent, requirement, binding, materialization, "failed", materialization.reason);
     }
-    return [realize(agent, requirement, binding, materialization, "degraded", materialization.reason)];
+    return realize(agent, requirement, binding, materialization, "degraded", materialization.reason);
   }
-  return [realize(agent, requirement, binding, materialization, "satisfied")];
+  return realize(agent, requirement, binding, materialization, "satisfied");
 }
 
 /**

@@ -18,7 +18,7 @@ export const QODER_ADAPTER_DESCRIPTOR = describeAdapter({
   programmaticLanguages: Object.freeze([]),
   agentIsolation: "single-session",
   consumedSettings: Object.freeze([]),
-  enforcedPermissionDomains: Object.freeze([]),
+  enforcedPermissions: Object.freeze([]),
 });
 
 export const PI_ADAPTER_DESCRIPTOR = describeAdapter({
@@ -32,7 +32,7 @@ export const PI_ADAPTER_DESCRIPTOR = describeAdapter({
   programmaticLanguages: Object.freeze([]),
   agentIsolation: "single-session",
   consumedSettings: Object.freeze([]),
-  enforcedPermissionDomains: Object.freeze([]),
+  enforcedPermissions: Object.freeze([]),
 });
 
 export const ADAPTER_DESCRIPTOR_REGISTRY: Readonly<Record<string, AdapterRealizationDescriptor>> =

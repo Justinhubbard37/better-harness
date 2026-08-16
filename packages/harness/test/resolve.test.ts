@@ -306,7 +306,7 @@ describe("resolveHarness", () => {
         workflow scripted
         agent driver { require tool process.exec }
       }
-      target pi
+      target qoder
     `);
     const { revision, report } = resolveHarness(bundle, "run", undefined, {
       adapter: TOOL_EXPOSING_ADAPTER,
@@ -440,5 +440,55 @@ describe("resolveHarness", () => {
 
     expect(report.status).toBe("failed");
     expect(report.errors).toEqual(["Harness 'missing' is not defined in the bundle."]);
+  });
+
+  it("refuses to measure a runtime against another adapter's realization facts", async () => {
+    const bundle = await compileSource(`
+      skill s { description "x" }
+      workflow single { stop when coder.done }
+      harness h {
+        workflow single
+        agent coder {
+          use skill s
+          require tool workspace.write
+        }
+      }
+      runtime qoder { adapter "@acme/totally-different-adapter" }
+      target qoder
+    `);
+
+    const { revision, report } = resolveHarness(bundle, "h", "qoder", {
+      adapter: TOOL_EXPOSING_ADAPTER,
+    });
+
+    // Without this the revision would name '@acme/...' while every realization
+    // in it came from the Qoder descriptor — an artifact that contradicts itself.
+    expect(revision).toBeUndefined();
+    expect(report.status).toBe("failed");
+    expect(report.errors[0]).toContain("@acme/totally-different-adapter");
+    expect(report.errors[0]).toContain("@harness/adapter-qoder");
+  });
+
+  it("leaves the caller's bundle and report mutable when it freezes a revision", async () => {
+    const bundle = await compileSource(`
+      skill s { description "x" }
+      workflow single { stop when coder.done }
+      harness h {
+        workflow single
+        agent coder { use skill s }
+        configure { shell.timeout = 60s }
+      }
+      target qoder
+    `);
+
+    const { revision, report } = resolveHarness(bundle, "h", "qoder", {
+      adapter: TOOL_EXPOSING_ADAPTER,
+    });
+
+    expect(Object.isFrozen(revision)).toBe(true);
+    expect(Object.isFrozen(bundle.harnesses[0].settings)).toBe(false);
+    expect(Object.isFrozen(report.realizations)).toBe(false);
+    expect(revision!.settings).not.toBe(bundle.harnesses[0].settings);
+    expect(revision!.realization).not.toBe(report.realizations);
   });
 });

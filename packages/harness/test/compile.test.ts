@@ -388,6 +388,58 @@ describe("compileHarness", () => {
     );
   });
 
+  it("rejects a declarative workflow that never states when the run ends", async () => {
+    const result = await compileHarness(`
+      workflow loop {
+        author -> verifier
+        on verifier.failed -> author
+      }
+    `);
+
+    expect(result.bundle).toBeUndefined();
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: "error",
+        message: expect.stringContaining("Workflow 'loop' declares no stop condition"),
+      }),
+    );
+  });
+
+  it("rejects an agent role the workflow can never reach", async () => {
+    const result = await compileHarness(`
+      skill s { description "x" }
+      workflow single { stop when author.done }
+      harness stranded {
+        workflow single
+        agent author { use skill s }
+        agent orphan { use skill s }
+      }
+    `);
+
+    expect(result.bundle).toBeUndefined();
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: "error",
+        message: expect.stringContaining(
+          "Harness 'stranded' declares agent 'orphan', which workflow 'single' never references",
+        ),
+      }),
+    );
+  });
+
+  it("accepts an unreferenced role when a program owns the control flow", async () => {
+    const result = await compileHarness(`
+      skill s { description "x" }
+      workflow scripted { program deno "./flow.ts" }
+      harness driven {
+        workflow scripted
+        agent author { use skill s }
+      }
+    `);
+
+    expect(result.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+  });
+
   it("rejects a harness whose workflow references undeclared agent roles", async () => {
     const result = await compileHarness(`
       workflow coding-loop {

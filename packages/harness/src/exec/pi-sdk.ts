@@ -1,11 +1,14 @@
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
   HarnessIrBundle,
   HarnessMaterializationReceipt,
   HarnessRevision,
 } from "../ir/index.js";
-import type { AdapterRealizationDescriptor } from "../resolver/adapter-descriptor.js";
+import {
+  descriptorsEqual,
+  type AdapterRealizationDescriptor,
+} from "../resolver/adapter-descriptor.js";
 import { PI_ADAPTER_DESCRIPTOR } from "../resolver/adapter-registry.js";
 import { verifyRevisionSourceLocks } from "../resolver/source-lock.js";
 import {
@@ -20,6 +23,7 @@ import {
 } from "./adapter.js";
 import { HarnessRunEmitter, type HarnessRunEventListener } from "./events.js";
 import { prepareMaterialization } from "./materialization.js";
+import { loadSkillDeliveries } from "./skill-delivery.js";
 import {
   assertRevisionHost,
   buildRunPreamble,
@@ -116,7 +120,7 @@ export class PiSdkAdapter implements HarnessAdapterV1 {
 
   async doStart(start: HarnessAdapterStartOptions): Promise<HarnessAdapterSession> {
     const descriptor = this.describe();
-    if (JSON.stringify(descriptor) !== JSON.stringify(PI_ADAPTER_DESCRIPTOR)) {
+    if (!descriptorsEqual(descriptor, PI_ADAPTER_DESCRIPTOR)) {
       throw new Error(`Adapter descriptor drift for '${this.adapterId}'; update the pure-data registry.`);
     }
     preflightRevision(start.revision, start.bundle, this.host, descriptor);
@@ -125,6 +129,9 @@ export class PiSdkAdapter implements HarnessAdapterV1 {
       start.sourceRoot === undefined ? undefined : { root: start.sourceRoot },
     );
     const receipt = prepareMaterialization(start.revision, start.bundle, descriptor);
+    const deliveries = await loadSkillDeliveries(start.revision, start.bundle, {
+      ...(start.sourceRoot !== undefined ? { sourceRoot: start.sourceRoot } : {}),
+    });
     const sdk = await this.loadSdk();
     const modelRuntime = await sdk.ModelRuntime.create();
     await this.configureModelRuntime?.(modelRuntime);
@@ -136,7 +143,12 @@ export class PiSdkAdapter implements HarnessAdapterV1 {
       ...(model !== undefined ? { model } : {}),
       noTools: "all",
     });
-    const { preamble, warnings } = buildRunPreamble(start.revision, start.bundle, receipt);
+    const { preamble, warnings } = buildRunPreamble(
+      start.revision,
+      start.bundle,
+      receipt,
+      deliveries,
+    );
     const adapter = this;
     let turnCount = 0;
     let inFlight = false;
@@ -320,6 +332,9 @@ export async function materializePiPackage(
     revision,
     options.sourceRoot === undefined ? undefined : { root: options.sourceRoot },
   );
+  const deliveries = await loadSkillDeliveries(revision, bundle, {
+    ...(options.sourceRoot !== undefined ? { sourceRoot: options.sourceRoot } : {}),
+  });
   const written: string[] = [];
   const manifest = {
     name: `harness-revision-${revision.revisionId.slice(3, 15)}`,
@@ -358,11 +373,29 @@ export async function materializePiPackage(
     writtenSkillIds.add(skill.id);
     const skillDir = join(directory, "skills", skill.id);
     await mkdir(skillDir, { recursive: true });
-    const description =
-      skill.description ??
-      (skill.source !== undefined
-        ? `Harness skill '${skill.id}' sourced from '${skill.source}'.`
-        : `Harness skill '${skill.id}'.`);
+    const provenance =
+      `Provenance: harness revision ${revision.revisionId}, capability hash ` +
+      `${revision.resolved.capabilities.find((entry) => entry.id === skill.id)?.contentHash ?? "unknown"}.`;
+    const delivery = deliveries.get(skill.id);
+    if (delivery !== undefined) {
+      // A source-backed skill is materialized from its real bytes, references
+      // included. Writing a generated stub that only names the source path would
+      // ship a package whose skills teach nothing.
+      if (delivery.directory) {
+        await cp(delivery.absolutePath, skillDir, { recursive: true });
+        for (const reference of delivery.references) {
+          written.push(join("skills", skill.id, ...reference.split("/")));
+        }
+      }
+      await writeFile(
+        join(skillDir, "SKILL.md"),
+        `${delivery.body.trimEnd()}\n\n${provenance}\n`,
+        "utf8",
+      );
+      written.push(join("skills", skill.id, "SKILL.md"));
+      continue;
+    }
+    const description = skill.description ?? `Harness skill '${skill.id}'.`;
     const body = [
       "---",
       `name: ${skill.id}`,
@@ -371,12 +404,11 @@ export async function materializePiPackage(
       "",
       description,
       "",
-      `Provenance: harness revision ${revision.revisionId}, capability hash ` +
-        `${revision.resolved.capabilities.find((entry) => entry.id === skill.id)?.contentHash ?? "unknown"}.`,
+      provenance,
       "",
     ].join("\n");
     await writeFile(join(skillDir, "SKILL.md"), body, "utf8");
     written.push(join("skills", skill.id, "SKILL.md"));
   }
-  return written;
+  return written.sort();
 }

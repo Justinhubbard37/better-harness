@@ -3,8 +3,10 @@ import type {
   HarnessMaterializationReceipt,
   HarnessRevision,
 } from "../ir/index.js";
+import { contentEquals } from "../ir/canonical.js";
 import {
   describeAdapter,
+  descriptorsEqual,
   type AdapterRealizationDescriptor,
 } from "../resolver/adapter-descriptor.js";
 import { QODER_ADAPTER_DESCRIPTOR } from "../resolver/adapter-registry.js";
@@ -20,6 +22,7 @@ import {
 } from "./adapter.js";
 import { HarnessRunEmitter, type HarnessRunEventListener } from "./events.js";
 import { exposedHostTools, prepareMaterialization } from "./materialization.js";
+import { loadSkillDeliveries } from "./skill-delivery.js";
 import {
   assertRevisionHost,
   buildRunPreamble,
@@ -303,9 +306,9 @@ export class QoderSdkAdapter implements HarnessAdapterV1 {
       programmaticLanguages: [],
       agentIsolation: "single-session",
       consumedSettings: [],
-      enforcedPermissionDomains: [],
+      enforcedPermissions: [],
     });
-    return JSON.stringify(descriptor) === JSON.stringify(QODER_ADAPTER_DESCRIPTOR)
+    return descriptorsEqual(descriptor, QODER_ADAPTER_DESCRIPTOR)
       ? QODER_ADAPTER_DESCRIPTOR
       : descriptor;
   }
@@ -319,8 +322,16 @@ export class QoderSdkAdapter implements HarnessAdapterV1 {
       start.sourceRoot === undefined ? undefined : { root: start.sourceRoot },
     );
     const receipt = prepareMaterialization(start.revision, start.bundle, descriptor);
+    const deliveries = await loadSkillDeliveries(start.revision, start.bundle, {
+      ...(start.sourceRoot !== undefined ? { sourceRoot: start.sourceRoot } : {}),
+    });
     const sdk = await this.loadSdk();
-    const { preamble, warnings } = buildRunPreamble(start.revision, start.bundle, receipt);
+    const { preamble, warnings } = buildRunPreamble(
+      start.revision,
+      start.bundle,
+      receipt,
+      deliveries,
+    );
     return new QoderQuerySession({
       adapter: this,
       sdk,
@@ -377,7 +388,7 @@ export class QoderSdkAdapter implements HarnessAdapterV1 {
       allowedTools: [...this.allowedTools],
       disallowedTools: [...this.disallowedTools],
       ...(this.permissionMode !== undefined ? { permissionMode: this.permissionMode } : {}),
-      maxTurns: this.maxTurns,
+      ...(this.maxTurns !== undefined ? { maxTurns: this.maxTurns } : {}),
       persistSession: this.persistSession,
       ...(this.model !== undefined ? { model: this.model } : {}),
       fileCheckpointing: this.enableFileCheckpointing,
@@ -412,19 +423,35 @@ export class QoderSdkAdapter implements HarnessAdapterV1 {
   }
 }
 
+/**
+ * Guard the pure-data registry against drift in the adapter's own facts.
+ *
+ * The registry is the resolver-side mirror of what this adapter can do, so the
+ * two must not disagree about the *standard* surface. Caller-supplied
+ * exposures are a different thing: `toolExposure` is a documented extension
+ * point for hosts that expose more than the standard map, and an extension the
+ * registry has never heard of is not drift. Only a standard capability whose
+ * host tool changed underneath the registry is.
+ */
 function assertRegistryDescriptorCompatible(
   registered: AdapterRealizationDescriptor,
   live: AdapterRealizationDescriptor,
 ): void {
-  const registeredFacts = { ...registered, toolExposure: undefined };
-  const liveFacts = { ...live, toolExposure: undefined };
-  if (JSON.stringify(registeredFacts) !== JSON.stringify(liveFacts)) {
+  const withoutExposure = (
+    descriptor: AdapterRealizationDescriptor,
+  ): Omit<AdapterRealizationDescriptor, "toolExposure"> => {
+    const { toolExposure: _toolExposure, ...facts } = descriptor;
+    return facts;
+  };
+  if (!contentEquals(withoutExposure(registered), withoutExposure(live))) {
     throw new Error(`Adapter descriptor drift for '${live.adapterId}'; update the pure-data registry.`);
   }
   for (const [capability, hostTool] of Object.entries(live.toolExposure)) {
-    if (registered.toolExposure[capability] !== hostTool) {
+    const standard = QODER_TOOL_EXPOSURE[capability];
+    if (standard !== undefined && standard !== hostTool) {
       throw new Error(
-        `Adapter descriptor drift for '${live.adapterId}' capability '${capability}'; update the pure-data registry.`,
+        `Adapter descriptor drift for '${live.adapterId}' capability '${capability}': the standard ` +
+          `map exposes '${standard}' but this adapter reports '${hostTool}'; update the pure-data registry.`,
       );
     }
   }

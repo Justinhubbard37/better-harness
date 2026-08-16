@@ -121,9 +121,18 @@ workflow scripted-loop {
 }
 ```
 
-A workflow declares exactly one of the two forms. Every agent a workflow
-references must be declared by each harness that uses it. A programmatic
-workflow resolves only against a runtime whose execution is
+A workflow declares exactly one of the two forms. A declarative graph must
+state at least one `stop when <agent>.<outcome>`: a graph with no terminal
+state describes a loop nobody can leave.
+
+Agent roles and the workflow must agree in both directions. Every agent a
+workflow references must be declared by each harness that uses it, and every
+agent a harness declares must be referenced by its declarative workflow — an
+unreferenced role still contributes its capabilities to the run while the
+control flow can never reach it. Only a `program` workflow may leave roles
+unreferenced, because the program owns the routing.
+
+A programmatic workflow resolves only against a runtime whose execution is
 `programmatic.<same-language>`; declarative workflows deploy anywhere.
 
 ## Capabilities: skill, tool, mcp
@@ -213,7 +222,12 @@ on an adapter that exposes a matching host tool (Qoder does, Pi does not). An
   `connect mcp`).
 - Keep declaration ids, bindings, targets, agents, requirements, inputs,
   outputs, and configuration keys unique within their applicable scope.
-- Ensure every agent named by a workflow exists in each harness using it.
+- Ensure every agent named by a workflow exists in each harness using it, and
+  that every declared agent is named by its declarative workflow.
+- Give every declarative workflow a `stop when` condition.
+- Give a `source`-backed skill a real `SKILL.md` at that path: the executor
+  delivers the file's text into the run, and a source it cannot read fails the
+  run instead of degrading to a path reference.
 - Pair programmatic workflows with a runtime declaring the same
   `programmatic.<language>` execution, or keep the workflow declarative.
 - Bind capabilities for a runtime only to declare a stronger host-native

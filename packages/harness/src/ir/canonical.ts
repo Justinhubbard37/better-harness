@@ -2,10 +2,21 @@
  * Deterministic JSON serialization: object keys are sorted recursively so the
  * same logical document always hashes to the same revision id.
  */
+
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(sortValue(value));
 }
 
+/**
+ * SHA-256 over UTF-8 text or raw bytes.
+ *
+ * Deliberately implemented here rather than delegating to `node:crypto`: this
+ * module sits on the core and browser-verdict entry graphs, which
+ * `test/module-graph.test.ts` keeps free of `node:` imports so revision ids and
+ * comparison verdicts can be verified in a browser. Node-only callers that
+ * digest bulk file bytes use `node:crypto` directly instead; this function is
+ * for the small canonical documents on the portable path.
+ */
 export function sha256Hex(content: string | Uint8Array): string {
   const input = typeof content === "string" ? new TextEncoder().encode(content) : content;
   const bitLength = input.length * 8;
@@ -79,6 +90,17 @@ const SHA256_CONSTANTS = new Uint32Array([
 
 export function contentHash(value: unknown): string {
   return `sha256:${sha256Hex(canonicalJson(value))}`;
+}
+
+/**
+ * Canonical-content equality for plain data documents.
+ *
+ * `JSON.stringify` comparison is key-order sensitive, so two descriptors built
+ * from the same facts through different spread orders compare unequal. Every
+ * identity check in this package goes through the canonical form instead.
+ */
+export function contentEquals(a: unknown, b: unknown): boolean {
+  return canonicalJson(a) === canonicalJson(b);
 }
 
 function sortValue(value: unknown): unknown {

@@ -10,6 +10,7 @@
  * synchronous, but a source-backed capability cannot produce a revision until
  * the caller supplies its lock.
  */
+import { createHash } from "node:crypto";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { canonicalJson, sha256Hex } from "../ir/canonical.js";
@@ -90,23 +91,37 @@ export async function verifyRevisionSourceLocks(
   }
 }
 
-async function lockOneSource(
-  capabilityId: string,
-  source: string,
-  options: SourceLockOptions,
-): Promise<SourceLock> {
-  const lexicalRoot = resolve(options.root);
+/**
+ * Resolve a declared source against the workspace root, rejecting anything that
+ * leaves it.
+ *
+ * Both a lexical and a `realpath` check are needed: the first rejects `../`
+ * traversal in the declaration, the second rejects a symlink inside the root
+ * that points out of it. Shared with skill delivery so the bytes a run reads
+ * are bounded by exactly the same rule as the bytes a lock digests.
+ */
+export async function resolveContainedSource(root: string, source: string): Promise<string> {
+  const lexicalRoot = resolve(root);
   const lexicalSource = resolve(lexicalRoot, source);
   const lexicalPrefix = lexicalRoot.endsWith(sep) ? lexicalRoot : `${lexicalRoot}${sep}`;
   if (lexicalSource !== lexicalRoot && !lexicalSource.startsWith(lexicalPrefix)) {
     throw new Error(`source '${source}' escapes the workspace root`);
   }
-  const root = await realpath(lexicalRoot);
+  const realRoot = await realpath(lexicalRoot);
   const absolute = await realpath(lexicalSource);
-  const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
-  if (absolute !== root && !absolute.startsWith(prefix)) {
+  const prefix = realRoot.endsWith(sep) ? realRoot : `${realRoot}${sep}`;
+  if (absolute !== realRoot && !absolute.startsWith(prefix)) {
     throw new Error(`source '${source}' resolves outside the workspace root`);
   }
+  return absolute;
+}
+
+async function lockOneSource(
+  capabilityId: string,
+  source: string,
+  options: SourceLockOptions,
+): Promise<SourceLock> {
+  const absolute = await resolveContainedSource(options.root, source);
   const metadata = await stat(absolute);
   const entries: Array<{ path: string; sha256: string }> = [];
   if (metadata.isFile()) {
@@ -148,9 +163,21 @@ async function walk(
     }
     entries.push({
       path: portable(relative(root, absolute)),
-      sha256: sha256Hex(await readFile(absolute)),
+      sha256: digestFile(await readFile(absolute)),
     });
   }
+}
+
+/**
+ * Digest one file's bytes.
+ *
+ * Locking walks whole skill trees, so this is the only hot hashing path in the
+ * package and it is Node-only by construction. `node:crypto` is used directly
+ * here; the portable implementation in `ir/canonical.ts` stays reserved for the
+ * small canonical documents that must also hash in a browser.
+ */
+function digestFile(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 function portable(value: string): string {

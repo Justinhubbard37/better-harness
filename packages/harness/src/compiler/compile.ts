@@ -253,6 +253,23 @@ function collectBundleDiagnostics(
             ),
           );
         }
+        // A declarative graph states when the run ends. Without a stop condition
+        // the edges describe a loop nobody can leave, which reads as a complete
+        // specification while defining no terminal state at all.
+        if (
+          element.program === undefined &&
+          element.statements.length > 0 &&
+          !element.statements.some(isStopStatement)
+        ) {
+          diagnostics.push(
+            semanticDiagnostic(
+              `Workflow '${element.name}' declares no stop condition; add ` +
+                "'stop when <agent>.<outcome>' so the run has a terminal state.",
+              source,
+              line,
+            ),
+          );
+        }
       } else if (isRuntimeDeclaration(element)) {
         recordUnique(runtimes, element.name, "runtime", source, line);
         if (element.execution !== undefined) {
@@ -342,8 +359,9 @@ function collectBundleDiagnostics(
         continue; // Linking already reported the missing workflow.
       }
       const roles = new Set(element.agents.map((agent) => agent.name));
+      const referencedRoles = workflowAgentNames(workflow);
       const line = element.$cstNode?.range.start.line;
-      for (const referenced of workflowAgentNames(workflow)) {
+      for (const referenced of referencedRoles) {
         if (!roles.has(referenced)) {
           diagnostics.push(
             semanticDiagnostic(
@@ -353,6 +371,24 @@ function collectBundleDiagnostics(
               line,
             ),
           );
+        }
+      }
+      // The reverse direction matters just as much. A declared role the workflow
+      // never names still contributes its capabilities to the run and still
+      // counts toward the adapter's agent-isolation limits, while the control
+      // flow can never reach it.
+      if (workflow.program === undefined) {
+        for (const role of roles) {
+          if (!referencedRoles.has(role)) {
+            diagnostics.push(
+              semanticDiagnostic(
+                `Harness '${element.name}' declares agent '${role}', which workflow ` +
+                  `'${workflow.name}' never references; give it an edge, event, or stop condition.`,
+                source,
+                line,
+              ),
+            );
+          }
         }
       }
     }

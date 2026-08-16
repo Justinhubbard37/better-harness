@@ -304,7 +304,7 @@ capability kinds are not realized along the same dimension:
 
 | Kind | Realized when the adapter… | v0.2 shipped adapters |
 | --- | --- | --- |
-| `skill` | *delivers* the guidance | prompt preamble at `advisory` |
+| `skill` | *delivers* the guidance | prompt preamble at `advisory`; a `source` skill's `SKILL.md` text is read and inlined |
 | `tool` | *exposes* a callable host tool | Qoder maps standard tool ids onto host tools (`workspace.read` → `Read`) at `wired`; Pi exposes none |
 | `mcp` | *connects* and discovers its tools | none — `connect mcp` fails resolution |
 | `workflow` | *orchestrates* the control flow | declarative only; a `program` controller fails resolution |
@@ -321,6 +321,19 @@ state, requested versus enforced permissions, and consumed versus ignored
 settings. A multi-agent harness on a single-session adapter is recorded as an
 explicit degradation with a run warning, not as satisfied orchestration.
 
+A `source` skill is delivered, not referenced. The executor reads the declared
+`SKILL.md` under the run's `sourceRoot` and inlines its text into the preamble,
+listing the remaining files in the tree as further reading; oversized bodies are
+truncated with an explicit run warning, and a source that cannot be read fails
+the run. Naming the path alone would let a revision record `delivered` guidance
+the model never saw, which is exactly the claim the source lock exists to make
+falsifiable.
+
+Resolution measures a harness against the descriptor of the adapter the runtime
+actually selected. Passing a descriptor whose `adapterId` differs from the
+runtime's `adapter` fails resolution rather than minting a revision that names
+one adapter package while every realization in it came from another.
+
 Before any host SDK loads, an executor validates that the revision is the one it
 claims to be: host, adapter package/version/descriptor match, the revision still
 hashes to its own `revisionId`, the supplied bundle is the bundle it was resolved
@@ -328,7 +341,8 @@ from, and every source-backed skill has a `sourceLock` that still matches the
 explicit `sourceRoot` supplied for execution. The source root is separate from
 the task `cwd`, so changing the agent's working directory cannot retarget a lock.
 `materializePiPackage()` runs the same preflight and emits an
-installable Pi package only for delivered skill capabilities and stamps every
+installable Pi package only for delivered skill capabilities, copying a
+source-backed skill's real files rather than a generated stub, and stamps every
 generated skill with revision provenance.
 
 The Qoder executor uses the optional peer `@qoder-ai/qoder-agent-sdk` and defaults to

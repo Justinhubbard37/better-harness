@@ -31,8 +31,10 @@ export {
   type HarnessUiExecutorFactory,
 } from "./run.js";
 export {
+  assertBindAddressAllowed,
   createHarnessUiServer,
   handleAguiRun,
+  HarnessUiRemoteBindError,
   startHarnessUiServer,
   type HarnessUiServerOptions,
   type StartedHarnessUiServer,

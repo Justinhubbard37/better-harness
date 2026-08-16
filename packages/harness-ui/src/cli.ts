@@ -28,6 +28,9 @@ Options:
   --host <addr>    Bind address (default: 127.0.0.1)
   --allow-origin <origin>
                     Permit one exact browser origin (repeatable)
+  --unsafe-allow-remote
+                    Permit a non-loopback --host. POST /agui is unauthenticated
+                    and runs a coding agent in --cwd; only use behind a gateway.
   --cwd <dir>      Working directory for executor runs (default: process cwd)
   -h, --help       Print help without reading any file or opening a port
 
@@ -50,6 +53,7 @@ interface ParsedArgs {
   host: string;
   cwd?: string;
   allowedOrigins: string[];
+  allowRemote: boolean;
   help: boolean;
   error?: string;
 }
@@ -59,6 +63,7 @@ export function parseHarnessUiArgs(argv: string[]): ParsedArgs {
     port: 3210,
     host: "127.0.0.1",
     allowedOrigins: [],
+    allowRemote: false,
     help: false,
   };
   const positionals: string[] = [];
@@ -84,6 +89,9 @@ export function parseHarnessUiArgs(argv: string[]): ParsedArgs {
         break;
       case "--cwd":
         parsed.cwd = takeValue();
+        break;
+      case "--unsafe-allow-remote":
+        parsed.allowRemote = true;
         break;
       case "--allow-origin": {
         const value = takeValue();
@@ -137,11 +145,18 @@ export async function runHarnessUiCli(argv: string[], io: HarnessUiCliIo): Promi
     executorFactory: builtInExecutorFactory,
     port: parsed.port,
     host: parsed.host,
+    allowRemote: parsed.allowRemote,
     ...(parsed.harness !== undefined ? { harnessId: parsed.harness } : {}),
     ...(parsed.runtime !== undefined ? { runtimeId: parsed.runtime } : {}),
     ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
     ...(parsed.allowedOrigins.length > 0 ? { allowedOrigins: parsed.allowedOrigins } : {}),
   });
+  if (parsed.allowRemote) {
+    io.stderr(
+      `Warning: ${started.url}/agui is reachable beyond loopback and has no authentication. ` +
+        `Anyone who can route to it can run a coding agent in ${parsed.cwd ?? process.cwd()}.\n`,
+    );
+  }
   io.stdout(`AG-UI endpoint for ${parsed.file}: ${started.url}/agui\n`);
   return 0;
 }

@@ -1,11 +1,13 @@
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { compileHarness } from "../src/compiler/compile.js";
 import type { HarnessIrBundle, HarnessRevision } from "../src/ir/index.js";
-import type { AdapterRealizationDescriptor } from "../src/resolver/adapter-descriptor.js";
+import { describeAdapter, type AdapterRealizationDescriptor } from "../src/resolver/adapter-descriptor.js";
 import { resolveHarness } from "../src/resolver/resolve.js";
+import { lockCapabilitySources } from "../src/resolver/source-lock.js";
+import { prepareMaterialization } from "../src/exec/materialization.js";
 import { PiSdkAdapter, PiSdkExecutor, materializePiPackage, type PiSdkLike } from "../src/exec/pi-sdk.js";
 import {
   QoderSdkAdapter,
@@ -217,6 +219,53 @@ describe("QoderSdkExecutor", () => {
         }),
       ]),
     );
+  });
+
+  it("honours a caller-declared exposure the standard map has never heard of", async () => {
+    // `toolExposure` is documented as an extension point for hosts that expose
+    // more than the standard map, so an unknown capability is an extension, not
+    // registry drift.
+    const extended = { toolExposure: { "workspace.notebook": "NotebookEdit" } };
+    const bundle = (await compileHarness(`
+      skill s { description "x" }
+      workflow solo { stop when coder.done }
+      harness notebooks {
+        workflow solo
+        agent coder {
+          use skill s
+          require tool workspace.notebook
+        }
+      }
+      target qoder
+    `)).bundle!;
+    const descriptor = new QoderSdkAdapter(extended).describe();
+    const { revision } = resolveHarness(bundle, "notebooks", "qoder", { adapter: descriptor });
+    const state = newFakeSession();
+
+    const result = await new QoderSdkExecutor({
+      ...extended,
+      loadSdk: async () => fakeQoderSdk(state),
+    }).execute(revision!, bundle, { prompt: "Fix the notebook" });
+
+    expect(state.queries[0].options.tools).toContain("NotebookEdit");
+    expect(result.materialization?.capabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          capabilityId: "workspace.notebook",
+          mechanism: "host-tool:NotebookEdit",
+          state: "materialized",
+        }),
+      ]),
+    );
+  });
+
+  it("still rejects a standard capability remapped away from the registry", async () => {
+    await expect(
+      new QoderSdkAdapter({ toolExposure: { "workspace.read": "ReadFile" } }).doStart({
+        revision: {} as HarnessRevision,
+        bundle: {} as HarnessIrBundle,
+      }),
+    ).rejects.toThrow(/descriptor drift/);
   });
 
   it("refuses a revision whose tool exposure this adapter cannot reproduce", async () => {
@@ -656,6 +705,49 @@ describe("materializePiPackage", () => {
     await expect(access(join(directory, "skills", "workspace.read", "SKILL.md"))).rejects.toThrow();
   });
 
+  it("ships a source-backed skill's real bytes, not a generated stub", async () => {
+    const root = await mkdtemp(join(tmpdir(), "harness-pi-src-"));
+    directory = await mkdtemp(join(tmpdir(), "harness-pi-"));
+    try {
+      const skillDir = join(root, "skills", "grounding");
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        join(skillDir, "SKILL.md"),
+        "---\nname: grounding\ndescription: \"Ground claims in the repository.\"\n---\n\nQuote the file you relied on.\n",
+        "utf8",
+      );
+      await writeFile(join(skillDir, "checklist.md"), "- cite a path\n", "utf8");
+      const bundle = (await compileHarness(`
+        skill grounding { source "./skills/grounding" }
+        workflow solo { stop when coder.done }
+        harness grounded {
+          workflow solo
+          agent coder { use skill grounding }
+        }
+        target pi
+      `)).bundle!;
+      const sourceLocks = await lockCapabilitySources(bundle, { root });
+      const { revision } = resolveHarness(bundle, "grounded", "pi", {
+        adapter: new PiSdkAdapter().describe(),
+        sourceLocks,
+      });
+
+      const written = await materializePiPackage(revision!, bundle, directory, { sourceRoot: root });
+
+      const skill = await readFile(join(directory, "skills", "grounding", "SKILL.md"), "utf8");
+      expect(skill).toContain("Quote the file you relied on.");
+      expect(skill).toContain(revision!.revisionId);
+      // The reference file travels with the skill, so its guidance can actually
+      // disclose it after installation.
+      expect(written).toContain(join("skills", "grounding", "checklist.md"));
+      expect(await readFile(join(directory, "skills", "grounding", "checklist.md"), "utf8")).toBe(
+        "- cite a path\n",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects materialization for a revision targeting another host", async () => {
     const { bundle, revision } = await resolveFor("qoder");
     directory = await mkdtemp(join(tmpdir(), "harness-pi-"));
@@ -690,5 +782,41 @@ describe("materializePiPackage", () => {
       /destination must be empty/,
     );
     expect(await readFile(join(directory, "keep.txt"), "utf8")).toBe("user-owned\n");
+  });
+});
+
+describe("prepareMaterialization", () => {
+  it("counts a permission as enforced only for the exact grant the adapter backs", async () => {
+    const bundle = (await compileHarness(`
+      skill guarded {
+        description "Read the workspace, never reach the network."
+        permissions {
+          workspace read
+          network deny
+        }
+      }
+      workflow solo { stop when coder.done }
+      harness guardedRun {
+        workflow solo
+        agent coder { use skill guarded }
+      }
+      target qoder
+    `)).bundle!;
+    // The adapter enforces reads in the workspace domain but cannot block the
+    // network, so a domain-level check would over-report `network deny`.
+    const descriptor = describeAdapter({
+      adapterId: "@harness/adapter-qoder",
+      enforcedPermissions: [{ domain: "workspace", access: "read" }],
+    });
+    const { revision } = resolveHarness(bundle, "guardedRun", "qoder", { adapter: descriptor });
+
+    const receipt = prepareMaterialization(revision!, bundle, descriptor);
+
+    expect(receipt.permissions.requested).toEqual([
+      { domain: "network", access: "deny" },
+      { domain: "workspace", access: "read" },
+    ]);
+    expect(receipt.permissions.enforced).toEqual([{ domain: "workspace", access: "read" }]);
+    expect(receipt.warnings.join("\n")).toContain("network deny");
   });
 });

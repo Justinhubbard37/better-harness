@@ -3,7 +3,11 @@ import { readFile, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { extname, join, normalize, resolve, sep } from "node:path";
-import { handleAguiRun, type HarnessUiExecutorFactory } from "@qoder-ai/harness-ui";
+import {
+  assertBindAddressAllowed,
+  handleAguiRun,
+  type HarnessUiExecutorFactory,
+} from "@qoder-ai/harness-ui";
 import { PiSdkExecutor, QoderSdkExecutor } from "@qoder-ai/harness/exec";
 
 const builtInExecutorFactory: HarnessUiExecutorFactory = (context) => {
@@ -137,10 +141,13 @@ export interface StartedHarnessStudioServer {
 }
 
 export async function startHarnessStudioServer(
-  options: HarnessStudioServerOptions & { port?: number; host?: string },
+  options: HarnessStudioServerOptions & { port?: number; host?: string; allowRemote?: boolean },
 ): Promise<StartedHarnessStudioServer> {
   const server = createHarnessStudioServer(options);
   const host = options.host ?? "127.0.0.1";
+  // The studio mounts the same unauthenticated AG-UI run endpoint, so it
+  // inherits the same bind-address boundary rather than restating it.
+  assertBindAddressAllowed(host, options.allowRemote === true);
   await new Promise<void>((resolvePromise, rejectPromise) => {
     server.once("error", rejectPromise);
     server.listen(options.port ?? 0, host, resolvePromise);

@@ -96,10 +96,13 @@ export function prepareMaterialization(
     warnings.push(`Workflow '${revision.workflow.id}' is degraded: ${workflowFact.limitation}.`);
   }
 
-  const enforced = revision.requestedPermissions.filter((grant) =>
-    descriptor.enforcedPermissionDomains.includes(grant.domain),
-  );
-  const unenforced = revision.requestedPermissions.filter((grant) => !enforced.includes(grant));
+  const isEnforced = (grant: PermissionGrant): boolean =>
+    descriptor.enforcedPermissions.some(
+      (enforcedGrant) =>
+        enforcedGrant.domain === grant.domain && enforcedGrant.access === grant.access,
+    );
+  const enforced = revision.requestedPermissions.filter(isEnforced);
+  const unenforced = revision.requestedPermissions.filter((grant) => !isEnforced(grant));
   if (unenforced.length > 0) {
     warnings.push(
       `Adapter '${descriptor.adapterId}' does not enforce ${unenforced.length} requested ` +

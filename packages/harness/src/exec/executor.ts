@@ -11,6 +11,11 @@ import {
   validateRevisionAgainstBundle,
 } from "../ir/revision.js";
 import type { AdapterRealizationDescriptor } from "../resolver/adapter-descriptor.js";
+import {
+  MAX_DELIVERED_SKILL_BYTES,
+  type SkillDelivery,
+  type SkillDeliveryMap,
+} from "./skill-delivery.js";
 
 export interface HarnessRunTask {
   prompt: string;
@@ -122,6 +127,7 @@ function capabilityGuidance(
   capability: CapabilityIr | undefined,
   capabilityId: string,
   mechanism: string | null,
+  deliveries: SkillDeliveryMap,
 ): string {
   const hostTool = mechanism?.startsWith("host-tool:") === true
     ? mechanism.slice("host-tool:".length)
@@ -130,11 +136,20 @@ function capabilityGuidance(
     return `Apply the '${capabilityId}' capability.`;
   }
   switch (capability.kind) {
-    case "skill":
-      return (
-        capability.description ??
-        `Apply the '${capability.id}' skill from '${capability.source ?? "its source"}'.`
-      );
+    case "skill": {
+      const delivered = deliveries.has(capability.id);
+      if (capability.description !== undefined) {
+        return delivered
+          ? `${capability.description} (full skill text below.)`
+          : capability.description;
+      }
+      // A source-backed skill with no inline description says what it is only in
+      // its delivered body, so the bullet points at that section instead of
+      // repeating a path the model cannot open.
+      return delivered
+        ? `Apply the '${capability.id}' skill, delivered in full below.`
+        : `Apply the '${capability.id}' skill.`;
+    }
     case "tool":
       return hostTool === undefined
         ? capability.description ?? `Use the '${capability.id}' tool when applicable.`
@@ -171,9 +186,12 @@ export function buildRunPreamble(
   revision: HarnessRevision,
   bundle: HarnessIrBundle,
   receipt?: HarnessMaterializationReceipt,
+  deliveries: SkillDeliveryMap = new Map(),
 ): RunPreamble {
   const lines: string[] = [];
   const warnings: string[] = [...(receipt?.warnings ?? [])];
+  const deliveredSections = new Set<string>();
+  const sections: string[] = [];
   for (const realization of revision.realization) {
     if (realization.action === "failed") {
       continue;
@@ -188,8 +206,42 @@ export function buildRunPreamble(
       const capability = findCapability(bundle, realization.capabilityId);
       lines.push(
         `- [${realization.agentId}/${realization.capabilityId}] ` +
-          capabilityGuidance(capability, realization.capabilityId, realization.materializedMechanism),
+          capabilityGuidance(
+            capability,
+            realization.capabilityId,
+            realization.materializedMechanism,
+            deliveries,
+          ),
       );
+      // Several agent roles may require the same skill; its text is delivered
+      // once.
+      const delivery = deliveries.get(realization.capabilityId);
+      if (delivery !== undefined && !deliveredSections.has(delivery.capabilityId)) {
+        deliveredSections.add(delivery.capabilityId);
+        sections.push(renderSkillSection(delivery));
+        if (delivery.truncated) {
+          warnings.push(
+            `Skill '${delivery.capabilityId}' was truncated to ${MAX_DELIVERED_SKILL_BYTES} of ` +
+              `${delivery.originalBytes} bytes when delivered into the run preamble.`,
+          );
+        }
+      }
+      // A source-backed skill realizes as *delivered* guidance. If the caller
+      // built this preamble without loading its source, nothing was delivered,
+      // and the run must say so rather than let the receipt's `materialized`
+      // stand on a prompt line that names a path the model cannot open.
+      if (
+        delivery === undefined &&
+        capability?.kind === "skill" &&
+        capability.source !== undefined &&
+        !deliveredSections.has(capability.id)
+      ) {
+        deliveredSections.add(capability.id);
+        warnings.push(
+          `Skill '${capability.id}' declares source '${capability.source}' but no content was ` +
+            "delivered into this run; call loadSkillDeliveries() with the revision's source root.",
+        );
+      }
     }
   }
   const flow = workflowGuidance(
@@ -202,9 +254,26 @@ export function buildRunPreamble(
           ...(flow !== undefined ? [flow] : []),
           "Follow these harness policies:",
           ...lines,
+          ...sections,
         ].join("\n")
       : "";
   return { preamble, warnings };
+}
+
+/** Inline one delivered skill body, plus the files it can progressively disclose. */
+function renderSkillSection(delivery: SkillDelivery): string {
+  const parts = [`\n## Skill: ${delivery.capabilityId}\n`, delivery.body.trimEnd()];
+  if (delivery.truncated) {
+    parts.push(
+      `\n[Truncated at ${MAX_DELIVERED_SKILL_BYTES} bytes of ${delivery.originalBytes}.]`,
+    );
+  }
+  if (delivery.references.length > 0) {
+    parts.push(
+      `\nFurther files under '${delivery.source}': ${delivery.references.join(", ")}.`,
+    );
+  }
+  return parts.join("\n");
 }
 
 export function buildRunPrompt(
@@ -212,8 +281,9 @@ export function buildRunPrompt(
   bundle: HarnessIrBundle,
   task: HarnessRunTask,
   receipt?: HarnessMaterializationReceipt,
+  deliveries: SkillDeliveryMap = new Map(),
 ): { prompt: string; warnings: string[] } {
-  const { preamble, warnings } = buildRunPreamble(revision, bundle, receipt);
+  const { preamble, warnings } = buildRunPreamble(revision, bundle, receipt, deliveries);
   return {
     prompt: preamble.length > 0 ? `${preamble}\n\n${task.prompt}` : task.prompt,
     warnings,

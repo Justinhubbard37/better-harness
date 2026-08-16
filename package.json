@@ -80,7 +80,7 @@
   },
   "scripts": {
     "bundle:zip": "node scripts/npm-package/create-bundle.mjs",
-    "check": "npm test && npm run harness:generated && npm run harness:build && npm run harness:test && npm run harness-ui:build && npm run harness-ui:test && npm run harness-studio:build && npm run harness-studio:test && npm run pack:verify",
+    "check": "npm test && npm run harness:generated && npm run harness:test && npm run harness-ui:test && npm run harness-studio:test && npm run pack:verify",
     "harness:build": "npm run build -w @qoder-ai/harness",
     "harness:generated": "npm run check:generated -w @qoder-ai/harness",
     "harness:test": "npm test -w @qoder-ai/harness",
