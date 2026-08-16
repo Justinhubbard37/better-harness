@@ -39,6 +39,8 @@ export interface HarnessStudioServerOptions {
   harnessId?: string;
   runtimeId?: string;
   cwd?: string;
+  /** Root a `source`-backed skill's path is locked and delivered against. */
+  sourceRoot?: string;
   executorFactory?: HarnessUiExecutorFactory;
 }
 
@@ -81,6 +83,7 @@ async function route(
         ...(options.harnessId !== undefined ? { harnessId: options.harnessId } : {}),
         ...(options.runtimeId !== undefined ? { runtimeId: options.runtimeId } : {}),
         ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+        ...(options.sourceRoot !== undefined ? { sourceRoot: options.sourceRoot } : {}),
         executorFactory: options.executorFactory ?? builtInExecutorFactory,
       });
       return;

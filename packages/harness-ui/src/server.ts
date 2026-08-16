@@ -18,6 +18,8 @@ export interface HarnessUiServerOptions {
   runtimeId?: string;
   /** Working directory handed to the executor for each run. */
   cwd?: string;
+  /** Root a `source`-backed skill's path is locked and delivered against. */
+  sourceRoot?: string;
   executorFactory: HarnessUiExecutorFactory;
   /** Exact browser origins allowed in addition to this server's own origin. */
   allowedOrigins?: readonly string[];
@@ -133,6 +135,7 @@ export async function handleAguiRun(
       ...(options.harnessId !== undefined ? { harnessId: options.harnessId } : {}),
       ...(options.runtimeId !== undefined ? { runtimeId: options.runtimeId } : {}),
       ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+      ...(options.sourceRoot !== undefined ? { sourceRoot: options.sourceRoot } : {}),
       executorFactory: options.executorFactory,
     });
   } catch (error) {

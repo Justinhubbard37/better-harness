@@ -36,6 +36,10 @@ rules as the core package. The embedded run endpoint accepts same-origin JSON
 browser requests only; use the standalone `@qoder-ai/harness-ui` server with
 an explicit `--allow-origin` when the frontend is hosted on another origin.
 
+A `source`-backed skill is locked and read from `--source-root`, which
+defaults to the directory containing `--harness`. Pass it explicitly when the
+harness's skills live somewhere else.
+
 ## Architecture
 
 ```text

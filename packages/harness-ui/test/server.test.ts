@@ -1,8 +1,12 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { HarnessRunEmitter, type HarnessExecutor } from "@qoder-ai/harness/exec";
+import type { HarnessRevision } from "@qoder-ai/harness";
+import { HarnessRunEmitter, loadSkillDeliveries, type HarnessExecutor } from "@qoder-ai/harness/exec";
 import { decodeSseStream } from "../src/sse.js";
-import { parseHarnessUiArgs, runHarnessUiCli } from "../src/cli.js";
+import { parseHarnessUiArgs, resolveHarnessUiSourceRoot, runHarnessUiCli } from "../src/cli.js";
 import {
   HarnessUiRemoteBindError,
   assertBindAddressAllowed,
@@ -341,6 +345,19 @@ describe("harness-ui CLI", () => {
       parseHarnessUiArgs(["serve", "agent.harness", "--unsafe-allow-remote"]).allowRemote,
     ).toBe(true);
   });
+
+  it("parses an explicit --source-root, leaving the file's own directory as the CLI's default", () => {
+    expect(parseHarnessUiArgs(["serve", "agent.harness"]).sourceRoot).toBeUndefined();
+    expect(
+      parseHarnessUiArgs(["serve", "agent.harness", "--source-root", "/workspace"]).sourceRoot,
+    ).toBe("/workspace");
+    expect(resolveHarnessUiSourceRoot("/workspace/harnesses/agent.harness")).toBe(
+      "/workspace/harnesses",
+    );
+    expect(resolveHarnessUiSourceRoot("/workspace/harnesses/agent.harness", "/skills")).toBe(
+      "/skills",
+    );
+  });
 });
 
 describe("bind address boundary", () => {
@@ -373,5 +390,96 @@ describe("bind address boundary", () => {
         port: 0,
       }),
     ).rejects.toThrow(HarnessUiRemoteBindError);
+  });
+});
+
+describe("source-backed skill delivery", () => {
+  const SOURCE_SKILL_HARNESS = `
+    skill deep-guide {
+      source "./skills/deep-guide"
+    }
+    workflow single-pass {
+      stop when coder.done
+    }
+    harness my-agent {
+      workflow single-pass
+      agent coder {
+        use skill deep-guide
+      }
+    }
+    target qoder
+  `;
+
+  let root: string;
+
+  afterEach(async () => {
+    if (root) await rm(root, { recursive: true, force: true });
+  });
+
+  it("fails the run closed when no sourceRoot is configured for a source-backed skill", async () => {
+    started = await startHarnessUiServer({
+      source: SOURCE_SKILL_HARNESS,
+      executorFactory: scriptedExecutorFactory,
+    });
+
+    const response = await postAgui(started.url, {
+      threadId: "t1",
+      runId: "r1",
+      messages: [{ role: "user", content: "run" }],
+    });
+
+    const events = decodeSseStream(await response.text());
+    expect(events.map((event) => event.type)).toEqual(["RUN_STARTED", "RUN_ERROR"]);
+    expect((events[1] as { message: string }).message).toContain("content lock");
+  });
+
+  it("locks and hands the executor a revision covering the source-backed skill when sourceRoot is set", async () => {
+    root = await mkdtemp(join(tmpdir(), "harness-ui-source-"));
+    const skillDir = join(root, "skills", "deep-guide");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), "Never touch generated files.\n", "utf8");
+
+    let seenRevision: HarnessRevision | undefined;
+    let seenSourceRoot: string | undefined;
+    let deliveredBody: string | undefined;
+    const capturingExecutorFactory: HarnessUiExecutorFactory = (context) => ({
+      host: "qoder",
+      async execute(revision, bundle, task) {
+        seenRevision = revision;
+        seenSourceRoot = task.sourceRoot;
+        const deliveries = await loadSkillDeliveries(revision, bundle, { sourceRoot: task.sourceRoot });
+        deliveredBody = deliveries.get("deep-guide")?.body;
+        const emitter = new HarnessRunEmitter(context.onRunEvent);
+        emitter.start({ revisionId: revision.revisionId, host: "qoder" });
+        emitter.finish(0);
+        return {
+          host: "qoder",
+          revisionId: revision.revisionId,
+          exitCode: 0,
+          output: "",
+          errorOutput: "",
+          warnings: [],
+        };
+      },
+    });
+    started = await startHarnessUiServer({
+      source: SOURCE_SKILL_HARNESS,
+      executorFactory: capturingExecutorFactory,
+      sourceRoot: root,
+    });
+
+    const response = await postAgui(started.url, {
+      threadId: "t1",
+      runId: "r1",
+      messages: [{ role: "user", content: "run" }],
+    });
+
+    const events = decodeSseStream(await response.text());
+    expect(events.map((event) => event.type)).toEqual(["RUN_STARTED", "RUN_FINISHED"]);
+    expect(seenRevision?.sourceLocks).toEqual([
+      expect.objectContaining({ capabilityId: "deep-guide", uri: "./skills/deep-guide" }),
+    ]);
+    expect(seenSourceRoot).toBe(root);
+    expect(deliveredBody).toBe("Never touch generated files.\n");
   });
 });

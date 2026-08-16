@@ -18,6 +18,8 @@ Options:
   --port <n>          Listen port (default: 3311)
   --host <addr>       Bind address (default: 127.0.0.1)
   --cwd <dir>         Working directory for executor runs (default: process cwd)
+  --source-root <dir> Root a 'source' skill's path locks and delivers against
+                      (default: the directory containing --harness)
   --unsafe-allow-remote
                       Permit a non-loopback --host. The studio's /agui endpoint is
                       unauthenticated and runs a coding agent in --cwd.
@@ -29,6 +31,14 @@ export interface HarnessStudioCliIo {
   stderr: (text: string) => void;
 }
 
+/** Resolve the skill root owned by an optional `.harness` document. */
+export function resolveHarnessStudioSourceRoot(
+  harness: string | undefined,
+  explicitRoot?: string,
+): string | undefined {
+  return explicitRoot ?? (harness !== undefined ? dirname(resolve(harness)) : undefined);
+}
+
 interface ParsedArgs {
   evidence?: string;
   harness?: string;
@@ -38,6 +48,7 @@ interface ParsedArgs {
   host: string;
   allowRemote: boolean;
   cwd?: string;
+  sourceRoot?: string;
   help: boolean;
   error?: string;
 }
@@ -76,6 +87,9 @@ export function parseHarnessStudioArgs(argv: string[]): ParsedArgs {
       case "--cwd":
         parsed.cwd = takeValue();
         break;
+      case "--source-root":
+        parsed.sourceRoot = takeValue();
+        break;
       case "--port": {
         const value = Number(takeValue());
         if (!Number.isInteger(value) || value < 0 || value > 65535) {
@@ -113,6 +127,9 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     return 2;
   }
   const harnessSource = parsed.harness !== undefined ? await readFile(parsed.harness, "utf8") : undefined;
+  // Skills are conventionally declared relative to their `.harness` file (see
+  // examples/*.harness), so loading one without a flag still delivers them.
+  const sourceRoot = resolveHarnessStudioSourceRoot(parsed.harness, parsed.sourceRoot);
   const started = await startHarnessStudioServer({
     appDir: defaultAppDir(),
     port: parsed.port,
@@ -123,6 +140,7 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     ...(parsed.harnessId !== undefined ? { harnessId: parsed.harnessId } : {}),
     ...(parsed.runtime !== undefined ? { runtimeId: parsed.runtime } : {}),
     ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
+    ...(sourceRoot !== undefined ? { sourceRoot } : {}),
   });
   if (parsed.allowRemote) {
     io.stderr(

@@ -1,10 +1,10 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { HarnessRunEmitter, type HarnessExecutor } from "@qoder-ai/harness/exec";
+import { HarnessRunEmitter, loadSkillDeliveries, type HarnessExecutor } from "@qoder-ai/harness/exec";
 import { decodeSseStream, type HarnessUiExecutorFactory } from "@qoder-ai/harness-ui";
-import { runHarnessStudioCli } from "../src/server/cli.js";
+import { resolveHarnessStudioSourceRoot, runHarnessStudioCli } from "../src/server/cli.js";
 import { startHarnessStudioServer, type StartedHarnessStudioServer } from "../src/server/server.js";
 import { FIXTURE_VERDICT } from "./compare-model.test.js";
 
@@ -19,6 +19,22 @@ const SOURCE = `
     workflow single-pass
     agent coder {
       use skill require-tests
+    }
+  }
+  target qoder
+`;
+
+const SOURCE_SKILL_HARNESS = `
+  skill deep-guide {
+    source "./skills/deep-guide"
+  }
+  workflow single-pass {
+    stop when coder.done
+  }
+  harness my-agent {
+    workflow single-pass
+    agent coder {
+      use skill deep-guide
     }
   }
   target qoder
@@ -155,6 +171,62 @@ describe("harness-studio server", () => {
     expect(hostile.status).toBe(403);
   });
 
+  it("delivers a source-backed skill through the embedded AG-UI endpoint", async () => {
+    const appDir = await makeAppDir();
+    const sourceRoot = await makeTempDir("studio-source-");
+    await mkdir(join(sourceRoot, "skills", "deep-guide"), { recursive: true });
+    await writeFile(
+      join(sourceRoot, "skills", "deep-guide", "SKILL.md"),
+      "Never touch generated files.\n",
+      "utf8",
+    );
+
+    let deliveredBody: string | undefined;
+    let seenSourceRoot: string | undefined;
+    started = await startHarnessStudioServer({
+      appDir,
+      harnessSource: SOURCE_SKILL_HARNESS,
+      sourceRoot,
+      executorFactory: (context) => ({
+        host: "qoder",
+        async execute(revision, bundle, task) {
+          seenSourceRoot = task.sourceRoot;
+          deliveredBody = (await loadSkillDeliveries(revision, bundle, {
+            sourceRoot: task.sourceRoot,
+          })).get("deep-guide")?.body;
+          const emitter = new HarnessRunEmitter(context.onRunEvent);
+          emitter.start({ revisionId: revision.revisionId, host: "qoder" });
+          emitter.finish(0);
+          return {
+            host: "qoder",
+            revisionId: revision.revisionId,
+            exitCode: 0,
+            output: "",
+            errorOutput: "",
+            warnings: [],
+          };
+        },
+      }),
+    });
+
+    const response = await fetch(`${started.url}/agui`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        threadId: "t1",
+        runId: "r-source",
+        messages: [{ role: "user", content: "run" }],
+      }),
+    });
+
+    expect(decodeSseStream(await response.text()).map((event) => event.type)).toEqual([
+      "RUN_STARTED",
+      "RUN_FINISHED",
+    ]);
+    expect(seenSourceRoot).toBe(sourceRoot);
+    expect(deliveredBody).toBe("Never touch generated files.\n");
+  });
+
   it("keeps /agui closed when no harness is loaded", async () => {
     const appDir = await makeAppDir();
     started = await startHarnessStudioServer({ appDir });
@@ -189,5 +261,15 @@ describe("harness-studio CLI", () => {
 
     expect(code).toBe(2);
     expect(errors.join("")).toMatch(/--evidence <dir>, --harness <file\.harness>/);
+  });
+
+  it("resolves the default source root from the harness file and honors an override", () => {
+    expect(resolveHarnessStudioSourceRoot("/workspace/harnesses/agent.harness")).toBe(
+      "/workspace/harnesses",
+    );
+    expect(resolveHarnessStudioSourceRoot("/workspace/harnesses/agent.harness", "/skills")).toBe(
+      "/skills",
+    );
+    expect(resolveHarnessStudioSourceRoot(undefined)).toBeUndefined();
   });
 });

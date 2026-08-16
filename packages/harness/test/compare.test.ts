@@ -1,9 +1,10 @@
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { HarnessExecutor } from "../src/exec/executor.js";
+import { loadSkillDeliveries } from "../src/exec/index.js";
 import { gradeReadmePackage } from "../src/compare/grader.js";
 import { loadHarnessCompareManifest, resolveHarnessCompareRuntime } from "../src/compare/manifest.js";
 import { createBoundedQoderPermissionCallback, type ToolPermissionDecision } from "../src/compare/permissions.js";
@@ -341,6 +342,89 @@ describe("README coding comparison", () => {
     expect(() => parseHarnessCompareVerdict(promoted)).toThrow(
       /status is 'accept'.*compute 'insufficient_evidence'/,
     );
+  });
+
+  it("locks and delivers a source-backed skill declared by a compared harness", async () => {
+    const directory = await makeTemporaryDirectory();
+    const output = join(directory, "evidence");
+    const harnessDirectory = join(directory, "harnesses");
+    await mkdir(harnessDirectory, { recursive: true });
+
+    const harnessSource = await readFile(new URL("../examples/readme-compare/readme-compare.harness", import.meta.url), "utf8");
+    const withSourceSkill = harnessSource
+      .replace(
+        "workflow readme-loop {",
+        `skill deep-guide {\n  source "./skills/deep-guide"\n}\n\nworkflow readme-loop {`,
+      )
+      .replace(
+        "agent writer {\n    use skill coding-loop-discipline { minimum advisory }\n  }\n}\n\nharness readme-grounded",
+        "agent writer {\n    use skill coding-loop-discipline { minimum advisory }\n    use skill deep-guide { minimum advisory }\n  }\n}\n\nharness readme-grounded",
+      );
+    // The replacement must have actually landed, or this test would silently
+    // exercise the unmodified baseline harness and prove nothing.
+    expect(withSourceSkill).toContain("use skill deep-guide");
+    await writeFile(join(harnessDirectory, "readme-compare.harness"), withSourceSkill, "utf8");
+    await mkdir(join(harnessDirectory, "skills", "deep-guide"), { recursive: true });
+    await writeFile(
+      join(harnessDirectory, "skills", "deep-guide", "SKILL.md"),
+      "Never touch generated files.\n",
+      "utf8",
+    );
+    await cp(fileURLToPath(new URL("../examples/readme-compare/fixture", import.meta.url)), join(directory, "fixture"), { recursive: true });
+    await cp(fileURLToPath(new URL("../examples/readme-compare/prompt.md", import.meta.url)), join(directory, "prompt.md"));
+    await cp(
+      fileURLToPath(new URL("../examples/readme-compare/grader-contract.json", import.meta.url)),
+      join(directory, "grader-contract.json"),
+    );
+    const manifest = JSON.parse(await readFile(EXPERIMENT_URL, "utf8")) as Record<string, unknown>;
+    manifest.harness = "./harnesses/readme-compare.harness";
+    await writeFile(join(directory, "manifest.json"), JSON.stringify(manifest), "utf8");
+
+    const seenRuns: Array<{
+      harnessId: string;
+      sourceLocks: unknown[];
+      sourceRoot: string | undefined;
+      deliveredBody: string | undefined;
+    }> = [];
+    const verdict = await runHarnessComparison({
+      manifestPath: join(directory, "manifest.json"),
+      outputDirectory: output,
+      trialCount: 1,
+      executorFactory: ({ trialRoot }): HarnessExecutor => ({
+        host: "qoder",
+        execute: async (revision, bundle, task) => {
+          const deliveries = await loadSkillDeliveries(revision, bundle, { sourceRoot: task.sourceRoot });
+          seenRuns.push({
+            harnessId: revision.harness.id,
+            sourceLocks: [...revision.sourceLocks],
+            sourceRoot: task.sourceRoot,
+            deliveredBody: deliveries.get("deep-guide")?.body,
+          });
+          if (revision.harness.id === "readme-grounded") {
+            await writeFile(join(trialRoot, "README.md"), VALID_README, "utf8");
+          }
+          return {
+            host: "qoder",
+            revisionId: revision.revisionId,
+            exitCode: 0,
+            output: "completed",
+            errorOutput: "",
+            warnings: [],
+          };
+        },
+      }),
+    });
+
+    // Resolution succeeding at all is the point: before locking was wired in,
+    // the baseline harness failed to resolve with "requires exactly one
+    // content lock".
+    expect(verdict.status).not.toBe("infrastructure_error");
+    const baselineRun = seenRuns.find((entry) => entry.harnessId === "readme-baseline");
+    expect(baselineRun?.sourceLocks).toEqual([
+      expect.objectContaining({ capabilityId: "deep-guide", uri: "./skills/deep-guide" }),
+    ]);
+    expect(baselineRun?.sourceRoot).toBe(harnessDirectory);
+    expect(baselineRun?.deliveredBody).toBe("Never touch generated files.\n");
   });
 
   it("accepts a candidate that wins the matched pairs its policy requires", async () => {

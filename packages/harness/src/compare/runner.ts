@@ -11,7 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { compileHarness } from "../compiler/compile.js";
 import type { HarnessExecutor, HarnessRunResult } from "../exec/executor.js";
 import { QoderSdkAdapter, QoderSdkExecutor } from "../exec/qoder-sdk.js";
@@ -19,6 +19,7 @@ import { prepareMaterialization } from "../exec/materialization.js";
 import { canonicalJson, sha256Hex } from "../ir/canonical.js";
 import type { HarnessIrBundle, HarnessRevision, ResolutionReport } from "../ir/index.js";
 import { resolveHarness } from "../resolver/resolve.js";
+import { lockCapabilitySources } from "../resolver/source-lock.js";
 import {
   aggregateVariant,
   decideVerdict,
@@ -202,6 +203,11 @@ async function compileAndResolveVariants(
     const diagnostics = compiled.diagnostics.map((item) => `${item.source}:${item.line ?? 1}: ${item.message}`).join("\n");
     throw new Error(`Harness compilation failed:\n${diagnostics}`);
   }
+  // A skill source belongs to the `.harness` document that declares it, so use
+  // the same document-relative convention as harness-ui and harness-studio.
+  // Locking is a no-op for a harness with only inline `description` skills.
+  const sourceRoot = dirname(loaded.resolved.harness);
+  const sourceLocks = await lockCapabilitySources(compiled.bundle, { root: sourceRoot });
   const revisions = {} as Record<CompareVariant, HarnessRevision>;
   const reports = {} as Record<CompareVariant, ResolutionReport>;
   for (const variant of ["baseline", "candidate"] as const) {
@@ -209,6 +215,7 @@ async function compileAndResolveVariants(
     const runtime = resolveHarnessCompareRuntime(loaded.value, variant);
     const resolved = resolveHarness(compiled.bundle, harnessId, loaded.value.runtime.host, {
       adapter: comparisonAdapterDescriptor(runtime),
+      sourceLocks,
     });
     if (!resolved.revision) {
       throw new Error(`Cannot resolve ${variant} harness '${harnessId}': ${resolved.report.errors.join("; ")}`);
@@ -289,7 +296,11 @@ async function runTrial(options: {
       });
       try {
         execution = await withTimeout(
-          executor.execute(options.revision, options.bundle, { prompt: options.prompt, cwd: trialRoot }),
+          executor.execute(options.revision, options.bundle, {
+            prompt: options.prompt,
+            cwd: trialRoot,
+            sourceRoot: dirname(options.loaded.resolved.harness),
+          }),
           runtime.timeoutMs,
           abortController,
         );

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { PiSdkExecutor, QoderSdkExecutor } from "@qoder-ai/harness/exec";
 import type { HarnessUiExecutorFactory } from "./run.js";
@@ -32,6 +33,9 @@ Options:
                     Permit a non-loopback --host. POST /agui is unauthenticated
                     and runs a coding agent in --cwd; only use behind a gateway.
   --cwd <dir>      Working directory for executor runs (default: process cwd)
+  --source-root <dir>
+                    Root a 'source' skill's path locks and delivers against
+                    (default: the directory containing <file.harness>)
   -h, --help       Print help without reading any file or opening a port
 
 Endpoints:
@@ -44,6 +48,11 @@ export interface HarnessUiCliIo {
   stderr: (text: string) => void;
 }
 
+/** Resolve the skill root owned by a `.harness` document. */
+export function resolveHarnessUiSourceRoot(file: string, explicitRoot?: string): string {
+  return explicitRoot ?? dirname(resolve(file));
+}
+
 interface ParsedArgs {
   command?: string;
   file?: string;
@@ -52,6 +61,7 @@ interface ParsedArgs {
   port: number;
   host: string;
   cwd?: string;
+  sourceRoot?: string;
   allowedOrigins: string[];
   allowRemote: boolean;
   help: boolean;
@@ -89,6 +99,9 @@ export function parseHarnessUiArgs(argv: string[]): ParsedArgs {
         break;
       case "--cwd":
         parsed.cwd = takeValue();
+        break;
+      case "--source-root":
+        parsed.sourceRoot = takeValue();
         break;
       case "--unsafe-allow-remote":
         parsed.allowRemote = true;
@@ -140,12 +153,16 @@ export async function runHarnessUiCli(argv: string[], io: HarnessUiCliIo): Promi
     return 2;
   }
   const source = await readFile(parsed.file, "utf8");
+  // Skills are conventionally declared relative to their `.harness` file (see
+  // examples/*.harness), so serving one without a flag still delivers them.
+  const sourceRoot = resolveHarnessUiSourceRoot(parsed.file, parsed.sourceRoot);
   const started = await startHarnessUiServer({
     source,
     executorFactory: builtInExecutorFactory,
     port: parsed.port,
     host: parsed.host,
     allowRemote: parsed.allowRemote,
+    sourceRoot,
     ...(parsed.harness !== undefined ? { harnessId: parsed.harness } : {}),
     ...(parsed.runtime !== undefined ? { runtimeId: parsed.runtime } : {}),
     ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),

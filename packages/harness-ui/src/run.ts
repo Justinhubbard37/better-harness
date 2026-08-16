@@ -4,6 +4,7 @@ import {
   resolveHarness,
   type AdapterRealizationDescriptor,
 } from "@qoder-ai/harness";
+import { lockCapabilitySources } from "@qoder-ai/harness/lock";
 import type {
   HarnessExecutor,
   HarnessRunEventListener,
@@ -33,6 +34,14 @@ export interface HarnessAguiRunOptions {
   runtimeId?: string;
   prompt: string;
   cwd?: string;
+  /**
+   * Root a `source`-backed skill's path is locked and delivered against.
+   * Without it, a harness whose skills carry only an inline `description`
+   * still resolves and runs; a harness with a `source` skill fails resolution
+   * with a clear "run lockCapabilitySources()" error instead of silently
+   * dropping the skill's guidance from the run.
+   */
+  sourceRoot?: string;
   threadId: string;
   runId: string;
   onEvent: (event: AguiEvent) => void;
@@ -82,11 +91,20 @@ export async function runHarnessAgui(options: HarnessAguiRunOptions): Promise<Ha
   if (harnessId === undefined) {
     return fail("The source declares no harness.");
   }
+  let sourceLocks: Awaited<ReturnType<typeof lockCapabilitySources>> | undefined;
+  if (options.sourceRoot !== undefined) {
+    try {
+      sourceLocks = await lockCapabilitySources(compiled.bundle, { root: options.sourceRoot });
+    } catch (error) {
+      return fail(error instanceof Error ? error.message : String(error));
+    }
+  }
   // Resolve against the facts of the adapter that will actually run the
   // revision, so a requirement this host cannot back fails here instead of
   // becoming a prompt line at run time.
   const { revision, report } = resolveHarness(compiled.bundle, harnessId, options.runtimeId, {
     adapter: options.adapterDescriptor ?? describeBuiltInAdapter,
+    ...(sourceLocks !== undefined ? { sourceLocks } : {}),
   });
   if (!revision) {
     return fail(report.errors.join("\n") || "Resolution failed.");
@@ -105,6 +123,7 @@ export async function runHarnessAgui(options: HarnessAguiRunOptions): Promise<Ha
     const result = await executor.execute(revision, compiled.bundle, {
       prompt: options.prompt,
       ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+      ...(options.sourceRoot !== undefined ? { sourceRoot: options.sourceRoot } : {}),
     });
     if (!translator.terminated) {
       if (result.exitCode === 0) {

@@ -47,6 +47,13 @@ execute through the same v0.2 executors as the core package (Qoder SDK by
 default), so the executor honesty rules and redaction guarantees apply
 unchanged.
 
+A skill declared with `source "./skills/x"` is delivered from disk, not
+merely referenced: the server locks and reads it against `--source-root`,
+which defaults to the directory containing `<file.harness>` (skills are
+conventionally authored relative to their harness file). A harness whose
+`source` cannot be resolved there fails the run instead of silently sending
+the model a path it cannot open.
+
 Browser POSTs are same-origin by default and must use
 `Content-Type: application/json`. To connect a separately hosted local UI,
 allow its exact origin explicitly (the option is repeatable):

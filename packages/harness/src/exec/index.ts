@@ -36,6 +36,14 @@ export {
   type RunPreamble,
 } from "./executor.js";
 export {
+  loadSkillDeliveries,
+  HarnessSkillDeliveryError,
+  MAX_DELIVERED_SKILL_BYTES,
+  SKILL_ENTRY_FILE,
+  type SkillDelivery,
+  type SkillDeliveryMap,
+} from "./skill-delivery.js";
+export {
   QODER_TOOL_EXPOSURE,
   QoderSdkAdapter,
   QoderSdkExecutor,
