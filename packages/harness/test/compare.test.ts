@@ -317,7 +317,8 @@ describe("README coding comparison", () => {
     expect(await readFile(join(output, "H1/trial-001/patch.diff"), "utf8")).toContain("README.md");
     expect(await readFile(join(output, "H1/trial-001/patch.diff"), "utf8")).toContain("+# Retry Kit");
     const redactedTrace = await readFile(join(output, "H1/trial-001/trace.jsonl"), "utf8");
-    expect(redactedTrace.replaceAll("\\", "/")).toContain("<trial-root>/README.md");
+    const traceEvent = JSON.parse(redactedTrace.trim()) as { file_path?: string };
+    expect(traceEvent.file_path?.replaceAll("\\", "/")).toBe("<trial-root>/README.md");
     expect(JSON.parse(await readFile(join(output, "H1/trial-001/validation.json"), "utf8"))).toMatchObject({ passed: true });
     const persistedVerdict = JSON.parse(await readFile(join(output, "verdict.json"), "utf8")) as unknown;
     expect(parseHarnessCompareVerdict(persistedVerdict)).toEqual(verdict);
