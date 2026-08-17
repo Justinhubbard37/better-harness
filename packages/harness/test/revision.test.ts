@@ -16,13 +16,14 @@ import { describeAdapter } from "../src/resolver/adapter-descriptor.js";
 import { lockCapabilitySources } from "../src/resolver/source-lock.js";
 import { QoderSdkAdapter, QoderSdkExecutor, type QoderSdkLike } from "../src/exec/qoder-sdk.js";
 
-function source(guidance: string, target = "target qoder"): string {
+function source(guidance: string, adapter = "@harness/adapter-qoder"): string {
   return `
+    language 0.3
     skill impact-analysis {
       description "${guidance}"
     }
     workflow solo-loop {
-      stop when coder.done
+      session coder
     }
     harness assembly {
       workflow solo-loop
@@ -30,7 +31,8 @@ function source(guidance: string, target = "target qoder"): string {
         use skill impact-analysis
       }
     }
-    ${target}
+    runtime qoder { adapter "${adapter}" }
+    deployment assembly-qoder { harness assembly runtime qoder }
   `;
 }
 
@@ -135,7 +137,7 @@ describe("revision execution closure", () => {
 
   it("refuses an adapter package the revision did not target", async () => {
     const bundle = await compileBundle(
-      source("Map the blast radius before editing.", "target qoder uses adapter.forked"),
+      source("Map the blast radius before editing.", "@harness/adapter-forked"),
     );
     const { revision } = resolveHarness(bundle, "assembly", "qoder", {
       adapter: describeAdapter({ adapterId: "@harness/adapter-forked" }),
@@ -158,12 +160,13 @@ describe("revision execution closure", () => {
     await mkdir(join(root, "skills", "impact"), { recursive: true });
     await writeFile(join(root, "skills", "impact", "SKILL.md"), "# Impact analysis\nOriginal.\n", "utf8");
     const bundle = await compileBundle(`
+      language 0.3
       skill impact-analysis {
         source "./skills/impact"
         description "Map the blast radius before editing."
       }
       workflow solo-loop {
-        stop when coder.done
+        session coder
       }
       harness assembly {
         workflow solo-loop
@@ -171,7 +174,8 @@ describe("revision execution closure", () => {
           use skill impact-analysis
         }
       }
-      target qoder
+      runtime qoder { adapter "@harness/adapter-qoder" }
+      deployment assembly-qoder { harness assembly runtime qoder }
     `);
     const sourceLocks = await lockCapabilitySources(bundle, { root });
     const { revision } = resolveHarness(bundle, "assembly", "qoder", {
@@ -197,16 +201,18 @@ describe("revision execution closure", () => {
 
   it("does not resolve a source-backed skill without a complete lock", async () => {
     const bundle = await compileBundle(`
+      language 0.3
       skill impact-analysis {
         source "./skills/impact"
         description "Map the blast radius before editing."
       }
-      workflow solo-loop { stop when coder.done }
+      workflow solo-loop { session coder }
       harness assembly {
         workflow solo-loop
         agent coder { use skill impact-analysis }
       }
-      target qoder
+      runtime qoder { adapter "@harness/adapter-qoder" }
+      deployment assembly-qoder { harness assembly runtime qoder }
     `);
 
     const { revision, report } = resolveHarness(bundle, "assembly", "qoder");

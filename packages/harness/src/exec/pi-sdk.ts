@@ -318,7 +318,7 @@ async function loadPiSdk(loader?: () => Promise<PiSdkLike>): Promise<PiSdkLike> 
 /**
  * Materialize a revision as an installable Pi package directory:
  * a `package.json` with the `pi.skills` contribution plus one
- * `skills/<skill>/SKILL.md` per advisory skill capability.
+ * `skills/<skill>/SKILL.md` per delivered skill capability.
  * Returns the relative paths that were written.
  */
 export async function materializePiPackage(
@@ -359,8 +359,7 @@ export async function materializePiPackage(
   const writtenSkillIds = new Set<string>();
   for (const realization of revision.realization) {
     if (
-      realization.action === "failed" ||
-      realization.realized !== "advisory" ||
+      realization.state !== "satisfied" ||
       realization.capabilityKind !== "skill" ||
       writtenSkillIds.has(realization.capabilityId)
     ) {

@@ -52,13 +52,15 @@ describe("checkpoint experiment runner", () => {
     git(root, ["update-ref", plan.output.ref, baseCommit]);
     const digest = `sha256:${createHash("sha256").update(planSource).digest("hex")}`;
     await writeFile(join(fixture, "agent.harness"), `
+      language 0.3
       skill inspect { description "Inspect before editing." }
-      workflow single-pass { stop when coder.done }
+      workflow single-pass { session coder }
       harness checkpoint-agent {
         workflow single-pass
         agent coder { use skill inspect }
       }
-      target qoder
+      runtime qoder { adapter "@harness/adapter-qoder" }
+      deployment checkpoint-agent-qoder { harness checkpoint-agent runtime qoder }
     `, "utf8");
     await writeFile(join(fixture, "prompt.md"), "Inspect the fixture.\n", "utf8");
     await writeFile(join(fixture, "grader.json"), JSON.stringify({

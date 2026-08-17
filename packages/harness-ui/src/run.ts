@@ -20,7 +20,7 @@ export interface HarnessUiExecutorContext {
 
 /**
  * Produces the executor that runs the resolved revision. The default picks
- * the v0.2 executor matching the revision's runtime; tests and embedders can
+ * the v0.3 executor matching the revision's runtime; tests and embedders can
  * inject a scripted executor instead.
  */
 export type HarnessUiExecutorFactory = (context: HarnessUiExecutorContext) => HarnessExecutor;
@@ -30,7 +30,7 @@ export interface HarnessAguiRunOptions {
   source: string;
   /** Defaults to the bundle's only harness. */
   harnessId?: string;
-  /** Defaults to the bundle's only target runtime. */
+  /** Narrows the harness to one explicitly declared deployment runtime. */
   runtimeId?: string;
   prompt: string;
   cwd?: string;

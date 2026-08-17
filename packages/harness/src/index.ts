@@ -19,10 +19,8 @@ export {
   type HarnessSource,
 } from "./compiler/compile.js";
 export {
-  materializeAgainstAdapter,
-  mergePermissions,
+  resolveDeployment,
   resolveHarness,
-  type AdapterMaterialization,
   type ResolveOptions,
   type ResolveResult,
 } from "./resolver/resolve.js";
@@ -34,6 +32,7 @@ export {
   type AdapterMcpSupport,
   type AdapterRealizationDescriptor,
   type AdapterSkillDelivery,
+  type AdapterToolExposure,
   type CapabilityRealizationFact,
   type WorkflowRealizationFact,
 } from "./resolver/adapter-descriptor.js";
@@ -43,5 +42,4 @@ export {
   QODER_ADAPTER_DESCRIPTOR,
   describeBuiltInAdapter,
 } from "./resolver/adapter-registry.js";
-export { STRENGTH_ORDER, strengthIndex } from "./language/harness-validator.js";
 export { createHarnessServices, type HarnessServices } from "./language/harness-module.js";

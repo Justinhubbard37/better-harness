@@ -1,50 +1,36 @@
-// Example assembly: one coding loop with author/verifier roles, capability
-// requirements with the degradation ladder, adapter bindings onto host-native
-// assets, and a deployment target whose adapter exposes the required tools.
+// An executable Qoder session. Agent names are logical roles; v0.3 only permits
+// one role in a session workflow because the shipped adapter starts one session.
+language 0.3
 
 skill impact-analysis {
   description "Before editing, map the blast radius of the change and list affected modules."
-  permissions {
-    workspace read
-  }
 }
 
 skill verification-before-complete {
   description "Do not declare the task complete until verification evidence (tests or diff review) exists."
-  permissions {
-    workspace read
-    network deny
-  }
 }
 
-workflow coding-loop {
-  author -> verifier
-  on verifier.failed -> author
-  stop when verifier.passed
+workflow coding-session {
+  session coder
 }
 
 harness standard-coding {
-  workflow coding-loop
+  workflow coding-session
 
-  agent author {
+  agent coder {
     use skill impact-analysis
+    use skill verification-before-complete
     require tool workspace.read
     require tool workspace.write
-  }
-
-  agent verifier {
-    use skill verification-before-complete {
-      preferred enforced
-      minimum advisory
-      on-degrade report
-    }
     require tool process.exec
-  }
-
-  configure {
-    shell.timeout = 60s
-    tool-call-budget = 80
   }
 }
 
-target qoder uses adapter.qoder
+runtime qoder {
+  adapter "@harness/adapter-qoder"
+}
+
+deployment standard-coding-qoder {
+  harness standard-coding
+  runtime qoder
+}

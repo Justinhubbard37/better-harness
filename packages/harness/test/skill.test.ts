@@ -40,11 +40,11 @@ describe("generate-harness-dsl validator", () => {
     ]);
     expect(output.harnesses[0].realizations).toContainEqual(
       expect.objectContaining({
-        agentId: "verifier",
+        agentId: "coder",
         capabilityId: "verification-before-complete",
-        declaredStrength: "advisory",
-        realized: "advisory",
-        action: "degraded",
+        dimension: "delivered",
+        state: "satisfied",
+        mechanism: "prompt-preamble",
       }),
     );
   });
@@ -55,7 +55,7 @@ describe("generate-harness-dsl validator", () => {
     const file = join(directory, "invalid.harness");
     await writeFile(
       file,
-      "harness broken { workflow missing-workflow agent coder { use skill missing-skill } }",
+      "language 0.3\nharness broken { workflow missing-workflow agent coder { use skill missing-skill } }",
       "utf8",
     );
 
@@ -89,7 +89,7 @@ describe("generate-harness-dsl validator", () => {
     const file = join(directory, "library-only.harness");
     await writeFile(
       file,
-      'skill repository-analysis { description "Analyze the repository." permissions { workspace read } }',
+      'language 0.3\nskill repository-analysis { description "Analyze the repository." }',
       "utf8",
     );
 

@@ -17,15 +17,17 @@ import { lockCapabilitySources } from "../src/resolver/source-lock.js";
 const ADAPTER = describeAdapter({ adapterId: "@harness/adapter-qoder" });
 
 const SOURCE = `
+language 0.3
 skill deep-guide {
   source "./skills/deep-guide"
 }
-workflow single { stop when coder.done }
+workflow single { session coder }
 harness h {
   workflow single
   agent coder { use skill deep-guide }
 }
-target qoder
+runtime qoder { adapter "@harness/adapter-qoder" }
+deployment h-qoder { harness h runtime qoder }
 `;
 
 let root: string;
@@ -128,13 +130,15 @@ describe("loadSkillDeliveries", () => {
 
   it("needs no delivery for a skill whose whole contract is its inline description", async () => {
     const compiled = await compileHarness(`
+      language 0.3
       skill inline { description "Prove the change with a test." }
-      workflow single { stop when coder.done }
+      workflow single { session coder }
       harness h {
         workflow single
         agent coder { use skill inline }
       }
-      target qoder
+      runtime qoder { adapter "@harness/adapter-qoder" }
+      deployment h-qoder { harness h runtime qoder }
     `);
     const bundle = compiled.bundle!;
     const { revision } = resolveHarness(bundle, "h", "qoder", { adapter: ADAPTER });

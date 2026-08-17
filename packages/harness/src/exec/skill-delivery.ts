@@ -5,9 +5,9 @@
  * deliver guidance — but only guidance it actually contains. A `source`
  * directory names progressive knowledge that lives on disk, so naming the path
  * in the preamble delivers nothing: the model cannot read a path. This module
- * reads the declared source and produces the text the executor inlines, so the
- * `advisory` strength a source-backed skill resolves to is backed by bytes that
- * reached the model.
+ * reads the declared source and produces the text the executor inlines, so a
+ * source-backed skill's `delivered` realization is backed by bytes that reached
+ * the model.
  *
  * The read is bounded and fails closed. A source that cannot be delivered is an
  * error before the run starts, never a silent downgrade to a path reference.
@@ -103,8 +103,7 @@ function sourceBackedSkills(revision: HarnessRevision, bundle: HarnessIrBundle):
       .filter(
         (realization) =>
           realization.capabilityKind === "skill" &&
-          realization.action !== "failed" &&
-          realization.realized !== "unsupported",
+          realization.state === "satisfied",
       )
       .map((realization) => realization.capabilityId),
   );

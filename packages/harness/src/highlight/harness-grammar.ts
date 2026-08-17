@@ -28,8 +28,15 @@ export const harnessTextMateGrammar: LanguageRegistration = {
     declarations: {
       patterns: [
         {
+          match: "\\b(language)\\b\\s+([0-9]+\\.[0-9]+)",
+          captures: {
+            "1": { name: "keyword.declaration.harness" },
+            "2": { name: "constant.other.version.harness" },
+          },
+        },
+        {
           match:
-            "\\b(harness|workflow|agent|skill|tool|mcp|runtime|target|binding)\\b\\s+([_a-zA-Z][\\w-]*(?:\\.[_a-zA-Z][\\w-]*)*)",
+            "\\b(harness|workflow|agent|skill|tool|mcp|runtime|deployment)\\b\\s+([_a-zA-Z][\\w-]*(?:\\.[_a-zA-Z][\\w-]*)*)",
           captures: {
             "1": { name: "keyword.declaration.harness" },
             "2": { name: "entity.name.type.harness" },
@@ -37,7 +44,7 @@ export const harnessTextMateGrammar: LanguageRegistration = {
         },
         {
           name: "keyword.control.harness",
-          match: "\\b(for|use|require|connect|uses|program|on|stop|when)\\b|->",
+          match: "\\b(use|require|connect|program|session|state-machine|on|stop|when)\\b|->",
         },
       ],
     },
@@ -46,35 +53,21 @@ export const harnessTextMateGrammar: LanguageRegistration = {
         {
           name: "keyword.other.section.harness",
           match:
-            "\\b(source|description|input|output|permissions|mechanism|strength|notes|adapter|execution|transport|url|command|env|preferred|minimum|on-degrade|configure)\\b",
+            "\\b(source|description|contract|adapter|transport|url|command|env|entry|outcomes)\\b",
         },
       ],
     },
     constants: {
       patterns: [
         {
-          name: "constant.language.strength.harness",
-          match: "\\b(unsupported|advisory|wired|enforced)\\b",
-        },
-        {
-          name: "constant.language.execution.harness",
-          match: "\\b(tool-calling|programmatic)\\b",
-        },
-        {
           name: "constant.language.transport.harness",
           match: "\\b(stdio|http|sse)\\b",
         },
-        {
-          name: "constant.language.permission.harness",
-          match: "\\b(workspace|process|network|model|read|write|allow|deny)\\b",
-        },
-        { name: "constant.language.degrade.harness", match: "\\b(fail|report)\\b" },
-        { name: "constant.language.boolean.harness", match: "\\b(true|false)\\b" },
       ],
     },
     versions: {
       patterns: [
-        { name: "constant.other.version.harness", match: "@[~^]?[0-9][0-9a-zA-Z.+*-]*" },
+        { name: "constant.other.version.harness", match: "\\b[0-9]+\\.[0-9]+\\b" },
       ],
     },
     durations: {

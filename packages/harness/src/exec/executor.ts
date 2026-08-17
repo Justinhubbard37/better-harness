@@ -4,7 +4,6 @@ import {
   type HarnessIrBundle,
   type HarnessMaterializationReceipt,
   type HarnessRevision,
-  type WorkflowIr,
 } from "../ir/index.js";
 import {
   assertRevisionAdapter,
@@ -38,7 +37,7 @@ export interface HarnessRunResult {
   trace?: unknown[];
   /** Non-secret options the executor actually passed to the host runtime. */
   runtimeReceipt?: HarnessRuntimeReceipt;
-  /** What the adapter wired for this revision: per-capability observed facts. */
+  /** What the adapter materialized for this revision: per-capability observed facts. */
   materialization?: HarnessMaterializationReceipt;
   /** Host-reported consumption and termination evidence. */
   metrics?: HarnessRunMetrics;
@@ -162,19 +161,6 @@ function capabilityGuidance(
   }
 }
 
-/** Render a declarative workflow graph as one prompt guidance line. */
-function workflowGuidance(workflow: WorkflowIr | undefined): string | undefined {
-  if (workflow === undefined || workflow.mode !== "declarative") {
-    return undefined;
-  }
-  const parts = [
-    ...workflow.edges.map((edge) => `${edge.from} -> ${edge.to}`),
-    ...workflow.events.map((event) => `on ${event.agent}.${event.outcome} -> ${event.to}`),
-    ...workflow.stops.map((stop) => `stop when ${stop.agent}.${stop.outcome}`),
-  ];
-  return parts.length > 0 ? `Workflow '${workflow.id}': ${parts.join("; ")}.` : undefined;
-}
-
 /**
  * Build the prompt-facing portion of a run from a resolved revision.
  *
@@ -195,65 +181,49 @@ export function buildRunPreamble(
   const deliveredSections = new Set<string>();
   const sections: string[] = [];
   for (const realization of revision.realization) {
-    if (realization.action === "failed") {
+    if (realization.state === "failed") {
       continue;
     }
-    if (receipt === undefined && realization.action === "degraded" && realization.reason) {
-      warnings.push(
-        `Realization '${realization.capabilityId}' for agent '${realization.agentId}' ` +
-          `is degraded: ${realization.reason}.`,
-      );
-    }
-    if (realization.realized !== "unsupported") {
-      const capability = findCapability(bundle, realization.capabilityId);
-      lines.push(
-        `- [${realization.agentId}/${realization.capabilityId}] ` +
-          capabilityGuidance(
-            capability,
-            realization.capabilityId,
-            realization.materializedMechanism,
-            deliveries,
-          ),
-      );
-      // Several agent roles may require the same skill; its text is delivered
-      // once.
-      const delivery = deliveries.get(realization.capabilityId);
-      if (delivery !== undefined && !deliveredSections.has(delivery.capabilityId)) {
-        deliveredSections.add(delivery.capabilityId);
-        sections.push(renderSkillSection(delivery));
-        if (delivery.truncated) {
-          warnings.push(
-            `Skill '${delivery.capabilityId}' was truncated to ${MAX_DELIVERED_SKILL_BYTES} of ` +
-              `${delivery.originalBytes} bytes when delivered into the run preamble.`,
-          );
-        }
-      }
-      // A source-backed skill realizes as *delivered* guidance. If the caller
-      // built this preamble without loading its source, nothing was delivered,
-      // and the run must say so rather than let the receipt's `materialized`
-      // stand on a prompt line that names a path the model cannot open.
-      if (
-        delivery === undefined &&
-        capability?.kind === "skill" &&
-        capability.source !== undefined &&
-        !deliveredSections.has(capability.id)
-      ) {
-        deliveredSections.add(capability.id);
+    const capability = findCapability(bundle, realization.capabilityId);
+    lines.push(
+      `- [${realization.agentId}/${realization.capabilityId}] ` +
+        capabilityGuidance(
+          capability,
+          realization.capabilityId,
+          realization.mechanism,
+          deliveries,
+        ),
+    );
+    // Several agent roles may require the same skill; its text is delivered once.
+    const delivery = deliveries.get(realization.capabilityId);
+    if (delivery !== undefined && !deliveredSections.has(delivery.capabilityId)) {
+      deliveredSections.add(delivery.capabilityId);
+      sections.push(renderSkillSection(delivery));
+      if (delivery.truncated) {
         warnings.push(
-          `Skill '${capability.id}' declares source '${capability.source}' but no content was ` +
-            "delivered into this run; call loadSkillDeliveries() with the revision's source root.",
+          `Skill '${delivery.capabilityId}' was truncated to ${MAX_DELIVERED_SKILL_BYTES} of ` +
+            `${delivery.originalBytes} bytes when delivered into the run preamble.`,
         );
       }
     }
+    // A source-backed skill is not delivered by naming its path in a prompt.
+    if (
+      delivery === undefined &&
+      capability?.kind === "skill" &&
+      capability.source !== undefined &&
+      !deliveredSections.has(capability.id)
+    ) {
+      deliveredSections.add(capability.id);
+      warnings.push(
+        `Skill '${capability.id}' declares source '${capability.source}' but no content was ` +
+          "delivered into this run; call loadSkillDeliveries() with the revision's source root.",
+      );
+    }
   }
-  const flow = workflowGuidance(
-    bundle.workflows.find((workflow) => workflow.id === revision.workflow.id),
-  );
   const preamble =
     lines.length > 0
       ? [
           `You are running under harness revision ${revision.revisionId}.`,
-          ...(flow !== undefined ? [flow] : []),
           "Follow these harness policies:",
           ...lines,
           ...sections,

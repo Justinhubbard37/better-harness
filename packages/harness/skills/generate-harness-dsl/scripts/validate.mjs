@@ -32,7 +32,7 @@ async function main() {
 
   const inputPath = resolve(input);
   const text = await readFile(inputPath, "utf8");
-  const { compileHarness, describeBuiltInAdapter, resolveHarness } = await loadHarnessApi();
+  const { compileHarness, describeBuiltInAdapter, resolveDeployment, resolveHarness } = await loadHarnessApi();
   const source = `harness://input/${encodeURIComponent(basename(inputPath))}`;
   const compiled = await compileHarness([{ uri: source, text }]);
 
@@ -50,27 +50,24 @@ async function main() {
   const harnessIds = requestedIds.length > 0
     ? requestedIds
     : compiled.bundle.harnesses.map((harness) => harness.id);
-  // Resolve each harness against every deployable runtime: declared targets
-  // first, declared runtimes otherwise. With neither, a single unqualified
-  // resolution surfaces the resolver's own runtime-selection error.
-  const runtimeIds = compiled.bundle.targets.length > 0
-    ? compiled.bundle.targets.map((target) => target.runtime)
-    : compiled.bundle.runtimes.length > 0
-      ? compiled.bundle.runtimes.map((runtime) => runtime.id)
-      : [undefined];
-  const reports = harnessIds.flatMap((harnessId) => runtimeIds.map((runtimeId) => {
-    const { revision, report } = resolveHarness(compiled.bundle, harnessId, runtimeId, {
-      adapter: describeBuiltInAdapter,
-    });
-    return {
+  const reports = harnessIds.flatMap((harnessId) => {
+    const deployments = compiled.bundle.deployments.filter(
+      (deployment) => deployment.harness === harnessId,
+    );
+    const attempts = deployments.length === 0
+      ? [resolveHarness(compiled.bundle, harnessId, undefined, { adapter: describeBuiltInAdapter })]
+      : deployments.map((deployment) =>
+          resolveDeployment(compiled.bundle, deployment.id, { adapter: describeBuiltInAdapter }));
+    return attempts.map(({ revision, report }) => ({
       harnessId,
+      deploymentId: report.deploymentId ?? null,
       runtime: report.runtime,
       status: report.status,
       revisionId: revision?.revisionId ?? null,
       errors: report.errors,
       realizations: report.realizations,
-    };
-  }));
+    }));
+  });
   const structuralErrors = harnessIds.length === 0
     ? [{
         severity: "error",

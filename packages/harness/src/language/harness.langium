@@ -1,71 +1,64 @@
-// Harness assembly language, v0.2 surface.
+// Harness assembly language, v0.3 surface.
 //
-// The DSL describes how an agent run works, host-neutrally: which harness
-// assembles which workflow and agent roles, which capabilities (skills,
-// tools, MCP connections) each role needs, and which runtimes the harness
-// deploys to. Adapters map capabilities onto host-native assets via
-// `binding` mechanisms in a host namespace (`qoder.plugin`, `pi.extension`);
-// the core language defines no generic plugin. Revisions and resolution
-// reports are resolver outputs, not authored syntax.
+// The DSL states only requirements that resolution and execution can falsify:
+// one harness workflow, logical agent roles, capability requirements, concrete
+// runtimes, and named harness/runtime deployments. Adapter capabilities remain
+// descriptor-owned facts; revisions and receipts remain resolver/executor output.
 grammar Harness
 
 entry HarnessDocument:
+    'language' languageVersion=LANGUAGE_VERSION
     (elements+=Declaration)*;
 
 Declaration:
     HarnessDeclaration | WorkflowDeclaration | CapabilityDeclaration
-    | RuntimeDeclaration | TargetDeclaration | CapabilityBinding;
+    | RuntimeDeclaration | DeploymentDeclaration;
 
-// A complete assembly: the workflow that drives the run, the logical agent
-// roles that participate, and run configuration. Runtimes are chosen at
-// deployment via `target`, never inside the harness itself.
+// A complete assembly. The workflow says how the declared roles are actually
+// driven; the deployment that selects a runtime is a separate source fact.
 HarnessDeclaration:
     'harness' name=ID '{'
         'workflow' workflow=[WorkflowDeclaration:ID]
         (agents+=AgentDeclaration)*
-        ('configure' '{' (settings+=ConfigEntry)* '}')?
     '}';
 
-// A logical role inside a harness (`author`, `verifier`). Hosts such as
-// Qoder or Pi are runtimes, not agents.
+// A logical role. State-machine workflows may route only outcomes declared by
+// the emitting role; session workflows need no outcomes.
 AgentDeclaration:
     'agent' name=ID '{'
+        ('outcomes' '{' (outcomes+=ID)* '}')?
         (requirements+=CapabilityUse)*
     '}';
 
-// One capability requirement of an agent. The verb states the capability
-// kind: `use skill`, `require tool`, `connect mcp`. Tools referenced without
-// a declaration become implicit atomic contracts; skills and MCP entries
-// must be declared because they carry source or connection facts. The
-// optional block keeps the v0.1 degradation ladder: a bare requirement asks
-// for the `advisory` floor with `on-degrade report`.
+// The verb is the satisfaction contract: skills must be delivered, tools must
+// be exposed with the exact contract id, and MCP servers must be connected.
 CapabilityUse:
     ( verb='use' 'skill' | verb='require' 'tool' | verb='connect' 'mcp' )
-    capability=QualifiedName
-    ('{'
-        ('preferred' preferred=Strength)?
-        ('minimum' minimum=Strength)?
-        ('on-degrade' onDegrade=DegradePolicy)?
-    '}')?;
+    capability=QualifiedName;
 
-// Control flow. Declarative graphs list agent-to-agent edges, event routes,
-// and stop conditions; programmatic workflows delegate control to a program
-// in a named language. A workflow declares exactly one of the two forms
-// (enforced semantically for precise diagnostics).
+// A workflow declares exactly one form (validated semantically for actionable
+// diagnostics):
+// - `session <agent>`: the one portable session shipped adapters really run;
+// - `program <language> <entry>`: an adapter-owned controller;
+// - `state-machine` + entry/events/stops: accepted only by an orchestration
+//   adapter that explicitly supports the mode.
 WorkflowDeclaration:
     'workflow' name=ID '{'
+        (session=SessionBody)?
         (program=ProgramBody)?
+        (stateMachine?='state-machine')?
+        ('entry' entry=ID)?
         (statements+=WorkflowStatement)*
     '}';
+
+SessionBody:
+    'session' agent=ID;
 
 ProgramBody:
     'program' language=ID entry=STRING;
 
 WorkflowStatement:
-    EdgeStatement | EventStatement | StopStatement;
-
-EdgeStatement:
-    from=ID '->' to=ID;
+    EventStatement | StopStatement;
 
 EventStatement:
     'on' agent=ID '.' outcome=ID '->' to=ID;
@@ -77,28 +70,25 @@ CapabilityDeclaration:
     SkillDeclaration | ToolDeclaration | McpDeclaration;
 
 // Progressive knowledge per the Agent Skills standard: either a `source`
-// directory, or inline `description` guidance, or both.
+// directory, inline `description` guidance, or both.
 SkillDeclaration:
-    'skill' name=ID '{'
+    'skill' name=QualifiedName '{'
         ('source' source=STRING)?
         ('description' description=STRING)?
-        ('permissions' '{' (permissions+=PermissionRule)* '}')?
     '}';
 
-// An atomic callable capability with input/output identifiers. Dotted names
-// (`workspace.read`) namespace tools by capability surface.
+// A custom atomic callable needs a stable contract identity. Standard builtin
+// tool ids may remain undeclared and are synthesized by the compiler.
 ToolDeclaration:
     'tool' name=QualifiedName '{'
+        'contract' contract=STRING
         ('description' description=STRING)?
-        ('input' '{' (inputs+=ID)* '}')?
-        ('output' '{' (outputs+=ID)* '}')?
-        ('permissions' '{' (permissions+=PermissionRule)* '}')?
     '}';
 
-// A capability connection, not a tool: what the MCP server is reached over.
-// Which tools/resources/prompts it provides is discovered at runtime.
+// A capability connection, not a tool: what server is reached over. Which
+// tools/resources/prompts it provides is discovered at runtime.
 McpDeclaration:
-    'mcp' name=ID '{'
+    'mcp' name=QualifiedName '{'
         'transport' transport=Transport
         ('url' url=McpEndpoint)?
         ('command' command=STRING)?
@@ -111,93 +101,35 @@ McpEndpoint:
     {infer EnvEndpoint} 'env' '.' variable=ID
   | {infer LiteralEndpoint} value=STRING;
 
-// A concrete host and the adapter package selected for deployment. Adapter
-// execution facts are registry-owned; the legacy execution clause remains
-// parseable for one deprecation window and has no lowering effect.
+// A concrete host and the adapter package selected for deployment. Execution
+// support is descriptor-owned and cannot be claimed in source.
 RuntimeDeclaration:
     'runtime' name=ID '{'
         'adapter' adapter=STRING
-        ('execution' execution=ExecutionSpec)?
     '}';
 
-ExecutionSpec:
-    {infer ToolCallingExecution} style='tool-calling'
-  | {infer ProgrammaticExecution} 'programmatic' '.' language=ID
-        ('{' (options+=ExecutionOption)* '}')?;
-
-ExecutionOption:
-    key=ID value=ID;
-
-// Deployment statement: this document's harnesses deploy to the named
-// runtime. `uses adapter.<id>` is shorthand when no runtime block exists;
-// a declared runtime already owns its adapter.
-TargetDeclaration:
-    'target' runtime=ID ('uses' 'adapter' '.' adapter=ID)?;
-
-// A deployment veto for one capability on one or more runtimes. Realization
-// mechanism and strength are adapter facts. Their legacy clauses remain
-// parseable for one deprecation window so the compiler can reject them with an
-// actionable ownership diagnostic instead of a generic syntax error.
-CapabilityBinding:
-    'binding' capability=QualifiedName 'for'
-        ( runtimes+=ID | '[' runtimes+=ID (',' runtimes+=ID)* ']' ) '{'
-        (unsupported?='unsupported')?
-        ('mechanism' legacyMechanism=QualifiedName)?
-        ('strength' legacyStrength=Strength)?
-        ('notes' notes=STRING)?
+// The composition rule is explicit and sparse: only named harness/runtime
+// pairs are deployable.
+DeploymentDeclaration:
+    'deployment' name=ID '{'
+        'harness' harness=[HarnessDeclaration:ID]
+        'runtime' runtime=[RuntimeDeclaration:ID]
     '}';
 
-Strength returns string:
-    'unsupported' | 'advisory' | 'wired' | 'enforced';
-
-DegradePolicy returns string:
-    'fail' | 'report';
-
-PermissionRule:
-    domain=PermissionDomain access=PermissionAccess;
-
-PermissionDomain returns string:
-    'workspace' | 'process' | 'network' | 'model';
-
-PermissionAccess returns string:
-    'read' | 'write' | 'allow' | 'deny';
-
-ConfigEntry:
-    key=QualifiedName '=' value=ConfigValue;
-
-// Dotted names appear as tool ids, binding mechanisms, and configuration
-// keys. Their segments accept the language's non-structural keywords as soft
-// keywords, so `workspace.read`, `process.exec`, or `runtime.timeout` stay
-// legal even though `workspace`, `process`, and `runtime` are keywords
-// elsewhere in the grammar.
+// Dotted names are shared by every capability kind. Their segments accept
+// non-structural keywords as soft keywords so `workspace.read` remains legal.
 QualifiedName returns string:
     NameSegment ('.' NameSegment)*;
 
 NameSegment returns string:
     ID | 'workspace' | 'process' | 'network' | 'model' | 'read' | 'write'
     | 'allow' | 'deny' | 'env' | 'url' | 'command' | 'source' | 'description'
-    | 'transport' | 'adapter' | 'execution' | 'program' | 'runtime' | 'target'
-    | 'agent' | 'skill' | 'tool' | 'mcp' | 'workflow' | 'harness' | 'input'
-    | 'output' | 'mechanism' | 'strength' | 'notes' | 'configure' | 'stdio'
-    | 'http' | 'sse';
+    | 'transport' | 'adapter' | 'program' | 'runtime' | 'agent' | 'skill'
+    | 'tool' | 'mcp' | 'workflow' | 'harness' | 'stdio' | 'http' | 'sse'
+    | 'contract' | 'session' | 'entry' | 'outcomes' | 'deployment' | 'language'
+    | 'state-machine' | 'on' | 'stop' | 'when' | 'use' | 'require' | 'connect';
 
-ConfigValue:
-    IntLiteral | DurationLiteral | StringLiteral | BooleanLiteral;
-
-IntLiteral:
-    value=INT;
-
-DurationLiteral:
-    value=DURATION;
-
-StringLiteral:
-    value=STRING;
-
-BooleanLiteral:
-    {infer BooleanLiteral} (value?='true' | 'false');
-
-terminal DURATION: /[0-9]+(ms|s|m|h)/;
-terminal INT returns number: /[0-9]+/;
+terminal LANGUAGE_VERSION: /[0-9]+\.[0-9]+/;
 terminal ID: /[_a-zA-Z][\w-]*/;
 terminal STRING returns string: /"[^"]*"/;
 

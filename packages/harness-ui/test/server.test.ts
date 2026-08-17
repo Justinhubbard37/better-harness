@@ -16,11 +16,12 @@ import {
 import type { HarnessUiExecutorFactory } from "../src/run.js";
 
 const SOURCE = `
+  language 0.3
   skill require-tests {
     description "Do not report the task complete until tests prove it."
   }
   workflow single-pass {
-    stop when coder.done
+    session coder
   }
   harness my-agent {
     workflow single-pass
@@ -28,7 +29,8 @@ const SOURCE = `
       use skill require-tests
     }
   }
-  target qoder
+  runtime qoder { adapter "@harness/adapter-qoder" }
+  deployment my-agent-qoder { harness my-agent runtime qoder }
 `;
 
 const scriptedExecutorFactory: HarnessUiExecutorFactory = (context) => {
@@ -395,11 +397,12 @@ describe("bind address boundary", () => {
 
 describe("source-backed skill delivery", () => {
   const SOURCE_SKILL_HARNESS = `
+    language 0.3
     skill deep-guide {
       source "./skills/deep-guide"
     }
     workflow single-pass {
-      stop when coder.done
+      session coder
     }
     harness my-agent {
       workflow single-pass
@@ -407,7 +410,8 @@ describe("source-backed skill delivery", () => {
         use skill deep-guide
       }
     }
-    target qoder
+    runtime qoder { adapter "@harness/adapter-qoder" }
+    deployment my-agent-qoder { harness my-agent runtime qoder }
   `;
 
   let root: string;

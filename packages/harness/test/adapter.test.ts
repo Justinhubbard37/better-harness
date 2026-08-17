@@ -21,11 +21,12 @@ import {
 } from "../src/exec/qoder-sdk.js";
 
 const SOURCE = `
+  language 0.3
   skill impact-analysis {
     description "Impact analysis: map the blast radius before editing."
   }
   workflow solo-loop {
-    stop when coder.done
+    session coder
   }
   harness assembly {
     workflow solo-loop
@@ -33,8 +34,10 @@ const SOURCE = `
       use skill impact-analysis
     }
   }
-  target qoder
-  target pi
+  runtime qoder { adapter "@harness/adapter-qoder" }
+  runtime pi { adapter "@harness/adapter-pi" }
+  deployment assembly-qoder { harness assembly runtime qoder }
+  deployment assembly-pi { harness assembly runtime pi }
 `;
 
 async function resolveFor(runtimeId: string): Promise<{ bundle: HarnessIrBundle; revision: HarnessRevision }> {
@@ -202,9 +205,7 @@ describe("QoderSdkAdapter sessions", () => {
     expect(adapter.describe()).toMatchObject({
       adapterId: "@harness/adapter-qoder",
       mcpSupport: null,
-      workflowModes: ["declarative"],
-      agentIsolation: "single-session",
-      consumedSettings: [],
+      workflowModes: ["session"],
     });
   });
 

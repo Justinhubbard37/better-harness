@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { compileHarness } from "../src/compiler/compile.js";
 import type { HarnessIrBundle, HarnessRevision } from "../src/ir/index.js";
-import { describeAdapter, type AdapterRealizationDescriptor } from "../src/resolver/adapter-descriptor.js";
+import type { AdapterRealizationDescriptor } from "../src/resolver/adapter-descriptor.js";
 import { resolveHarness } from "../src/resolver/resolve.js";
 import { lockCapabilitySources } from "../src/resolver/source-lock.js";
 import { prepareMaterialization } from "../src/exec/materialization.js";
@@ -17,6 +17,7 @@ import {
 } from "../src/exec/qoder-sdk.js";
 
 const SOURCE = `
+  language 0.3
   skill impact-analysis {
     description "Impact analysis: map the blast radius before editing."
   }
@@ -24,20 +25,17 @@ const SOURCE = `
     description "Do not complete without verification evidence."
   }
   tool workspace.read {
+    contract "builtin:workspace.read@1"
     description "Read files inside the workspace."
   }
   workflow solo-loop {
-    stop when coder.done
+    session coder
   }
   harness assembly {
     workflow solo-loop
     agent coder {
       use skill impact-analysis
-      use skill verification-before-complete {
-        preferred enforced
-        minimum advisory
-        on-degrade report
-      }
+      use skill verification-before-complete
     }
   }
   harness tooled {
@@ -47,8 +45,12 @@ const SOURCE = `
       require tool workspace.read
     }
   }
-  target qoder
-  target pi
+  runtime qoder { adapter "@harness/adapter-qoder" }
+  runtime pi { adapter "@harness/adapter-pi" }
+  deployment assembly-qoder { harness assembly runtime qoder }
+  deployment assembly-pi { harness assembly runtime pi }
+  deployment tooled-qoder { harness tooled runtime qoder }
+  deployment tooled-pi { harness tooled runtime pi }
 `;
 
 function descriptorFor(runtimeId: string): AdapterRealizationDescriptor {
@@ -214,7 +216,6 @@ describe("QoderSdkExecutor", () => {
           capabilityId: "workspace.read",
           dimension: "exposed",
           state: "materialized",
-          realized: "wired",
           mechanism: "host-tool:Read",
         }),
       ]),
@@ -225,10 +226,19 @@ describe("QoderSdkExecutor", () => {
     // `toolExposure` is documented as an extension point for hosts that expose
     // more than the standard map, so an unknown capability is an extension, not
     // registry drift.
-    const extended = { toolExposure: { "workspace.notebook": "NotebookEdit" } };
+    const extended = {
+      toolExposure: {
+        "workspace.notebook": {
+          hostTool: "NotebookEdit",
+          contract: "urn:test:workspace.notebook:v1",
+        },
+      },
+    };
     const bundle = (await compileHarness(`
+      language 0.3
       skill s { description "x" }
-      workflow solo { stop when coder.done }
+      tool workspace.notebook { contract "urn:test:workspace.notebook:v1" }
+      workflow solo { session coder }
       harness notebooks {
         workflow solo
         agent coder {
@@ -236,7 +246,8 @@ describe("QoderSdkExecutor", () => {
           require tool workspace.notebook
         }
       }
-      target qoder
+      runtime qoder { adapter "@harness/adapter-qoder" }
+      deployment notebooks-qoder { harness notebooks runtime qoder }
     `)).bundle!;
     const descriptor = new QoderSdkAdapter(extended).describe();
     const { revision } = resolveHarness(bundle, "notebooks", "qoder", { adapter: descriptor });
@@ -261,7 +272,14 @@ describe("QoderSdkExecutor", () => {
 
   it("still rejects a standard capability remapped away from the registry", async () => {
     await expect(
-      new QoderSdkAdapter({ toolExposure: { "workspace.read": "ReadFile" } }).doStart({
+      new QoderSdkAdapter({
+        toolExposure: {
+          "workspace.read": {
+            hostTool: "ReadFile",
+            contract: "builtin:workspace.read@1",
+          },
+        },
+      }).doStart({
         revision: {} as HarnessRevision,
         bundle: {} as HarnessIrBundle,
       }),
@@ -424,7 +442,7 @@ describe("QoderSdkExecutor", () => {
     expect(loaded).toBe(false);
   });
 
-  it("reports descriptor-backed advisory delivery as a degradation", async () => {
+  it("materializes delivered skill guidance without a synthetic degradation", async () => {
     const { bundle, revision } = await resolveFor("qoder");
     const executor = new QoderSdkExecutor({
       loadSdk: async () => fakeQoderSdk(newFakeSession(), () => [{ type: "result", subtype: "success" }]),
@@ -432,15 +450,14 @@ describe("QoderSdkExecutor", () => {
 
     const result = await executor.execute(revision, bundle, { prompt: "Fix the bug" });
 
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]).toContain("verification-before-complete");
-    expect(result.warnings[0]).toContain("prompt-preamble");
+    expect(result.warnings).toEqual([]);
     expect(result.materialization?.capabilities).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           capabilityId: "verification-before-complete",
           dimension: "delivered",
-          state: "degraded",
+          state: "materialized",
+          mechanism: "prompt-preamble",
         }),
       ]),
     );
@@ -685,7 +702,7 @@ describe("materializePiPackage", () => {
     }
   });
 
-  it("writes an installable Pi package with skills for advisory components", async () => {
+  it("writes an installable Pi package with delivered skills", async () => {
     const { bundle, revision } = await resolveFor("pi");
     directory = await mkdtemp(join(tmpdir(), "harness-pi-"));
 
@@ -718,13 +735,15 @@ describe("materializePiPackage", () => {
       );
       await writeFile(join(skillDir, "checklist.md"), "- cite a path\n", "utf8");
       const bundle = (await compileHarness(`
+        language 0.3
         skill grounding { source "./skills/grounding" }
-        workflow solo { stop when coder.done }
+        workflow solo { session coder }
         harness grounded {
           workflow solo
           agent coder { use skill grounding }
         }
-        target pi
+        runtime pi { adapter "@harness/adapter-pi" }
+        deployment grounded-pi { harness grounded runtime pi }
       `)).bundle!;
       const sourceLocks = await lockCapabilitySources(bundle, { root });
       const { revision } = resolveHarness(bundle, "grounded", "pi", {
@@ -786,37 +805,19 @@ describe("materializePiPackage", () => {
 });
 
 describe("prepareMaterialization", () => {
-  it("counts a permission as enforced only for the exact grant the adapter backs", async () => {
-    const bundle = (await compileHarness(`
-      skill guarded {
-        description "Read the workspace, never reach the network."
-        permissions {
-          workspace read
-          network deny
-        }
-      }
-      workflow solo { stop when coder.done }
-      harness guardedRun {
-        workflow solo
-        agent coder { use skill guarded }
-      }
-      target qoder
-    `)).bundle!;
-    // The adapter enforces reads in the workspace domain but cannot block the
-    // network, so a domain-level check would over-report `network deny`.
-    const descriptor = describeAdapter({
-      adapterId: "@harness/adapter-qoder",
-      enforcedPermissions: [{ domain: "workspace", access: "read" }],
-    });
-    const { revision } = resolveHarness(bundle, "guardedRun", "qoder", { adapter: descriptor });
+  it("records only adapter-observed facts", async () => {
+    const { bundle, revision } = await resolveFor("qoder");
+    const descriptor = new QoderSdkAdapter().describe();
 
-    const receipt = prepareMaterialization(revision!, bundle, descriptor);
+    const receipt = prepareMaterialization(revision, bundle, descriptor);
 
-    expect(receipt.permissions.requested).toEqual([
-      { domain: "network", access: "deny" },
-      { domain: "workspace", access: "read" },
-    ]);
-    expect(receipt.permissions.enforced).toEqual([{ domain: "workspace", access: "read" }]);
-    expect(receipt.warnings.join("\n")).toContain("network deny");
+    expect(receipt.capabilities).toContainEqual(expect.objectContaining({
+      capabilityId: "impact-analysis",
+      dimension: "delivered",
+      state: "materialized",
+      mechanism: "prompt-preamble",
+    }));
+    expect(receipt).not.toHaveProperty("permissions");
+    expect(receipt).not.toHaveProperty("settings");
   });
 });

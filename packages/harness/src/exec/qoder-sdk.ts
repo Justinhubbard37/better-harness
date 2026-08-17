@@ -8,6 +8,7 @@ import {
   describeAdapter,
   descriptorsEqual,
   type AdapterRealizationDescriptor,
+  type AdapterToolExposure,
 } from "../resolver/adapter-descriptor.js";
 import { QODER_ADAPTER_DESCRIPTOR } from "../resolver/adapter-registry.js";
 import { verifyRevisionSourceLocks } from "../resolver/source-lock.js";
@@ -186,11 +187,11 @@ export interface QoderSdkExecutorOptions {
   /** Tools removed from the session even when the runtime would normally expose them. */
   disallowedTools?: string[];
   /**
-   * Extra DSL tool id → host tool name exposures on top of the standard map.
+   * Extra DSL tool id → host tool and exact portable contract exposures.
    * Exposure is an adapter fact: it decides whether a `require tool` can be
    * materialized at all.
    */
-  toolExposure?: Readonly<Record<string, string>>;
+  toolExposure?: Readonly<Record<string, AdapterToolExposure>>;
   permissionMode?: QoderPermissionMode;
   canUseTool?: QoderToolPermissionCallback;
   /** Persist the host transcript so a closed session can be resumed by id. */
@@ -231,7 +232,7 @@ export class QoderSdkAdapter implements HarnessAdapterV1 {
   private readonly allowedTools: string[];
   private readonly tools: string[];
   private readonly disallowedTools: string[];
-  private readonly toolExposure: Readonly<Record<string, string>>;
+  private readonly toolExposure: Readonly<Record<string, AdapterToolExposure>>;
   private readonly permissionMode?: QoderPermissionMode;
   private readonly canUseTool?: QoderToolPermissionCallback;
   private readonly persistSession: boolean;
@@ -297,16 +298,12 @@ export class QoderSdkAdapter implements HarnessAdapterV1 {
       adapterId: this.adapterId,
       specificationVersion: HARNESS_ADAPTER_SPECIFICATION_VERSION,
       implementationVersion: QODER_ADAPTER_IMPLEMENTATION_VERSION,
-      skillDelivery: { mechanism: "prompt-preamble", strength: "advisory" },
+      skillDelivery: { mechanism: "prompt-preamble" },
       toolExposure: this.toolExposure,
-      // The adapter opens no MCP connection and consumes no DSL setting, so it
-      // claims neither. The receipt reports both as unrealized instead.
+      // The adapter opens no MCP connection, so it claims none.
       mcpSupport: null,
-      workflowModes: ["declarative"],
+      workflowModes: ["session"],
       programmaticLanguages: [],
-      agentIsolation: "single-session",
-      consumedSettings: [],
-      enforcedPermissions: [],
     });
     return descriptorsEqual(descriptor, QODER_ADAPTER_DESCRIPTOR)
       ? QODER_ADAPTER_DESCRIPTOR
@@ -446,12 +443,13 @@ function assertRegistryDescriptorCompatible(
   if (!contentEquals(withoutExposure(registered), withoutExposure(live))) {
     throw new Error(`Adapter descriptor drift for '${live.adapterId}'; update the pure-data registry.`);
   }
-  for (const [capability, hostTool] of Object.entries(live.toolExposure)) {
+  for (const [capability, exposure] of Object.entries(live.toolExposure)) {
     const standard = QODER_TOOL_EXPOSURE[capability];
-    if (standard !== undefined && standard !== hostTool) {
+    if (standard !== undefined && !contentEquals(standard, exposure)) {
       throw new Error(
         `Adapter descriptor drift for '${live.adapterId}' capability '${capability}': the standard ` +
-          `map exposes '${standard}' but this adapter reports '${hostTool}'; update the pure-data registry.`,
+          `map exposes '${standard.hostTool}' with contract '${standard.contract}' but this adapter ` +
+          `reports '${exposure.hostTool}' with contract '${exposure.contract}'; update the pure-data registry.`,
       );
     }
   }
@@ -903,17 +901,17 @@ function sameToolSet(actual: string[], expected: readonly string[]): boolean {
  * and a caller-pinned visible list is a ceiling rather than a suggestion.
  */
 function buildQoderToolExposure(limits: {
-  extra?: Readonly<Record<string, string>>;
+  extra?: Readonly<Record<string, AdapterToolExposure>>;
   visible?: readonly string[];
   denied: readonly string[];
   allowed?: readonly string[];
-}): Readonly<Record<string, string>> {
-  const exposure: Record<string, string> = {};
-  for (const [capabilityId, hostTool] of Object.entries({ ...QODER_TOOL_EXPOSURE, ...limits.extra })) {
-    if (limits.denied.includes(hostTool)) continue;
-    if (limits.allowed !== undefined && !limits.allowed.includes(hostTool)) continue;
-    if (limits.visible !== undefined && !limits.visible.includes(hostTool)) continue;
-    exposure[capabilityId] = hostTool;
+}): Readonly<Record<string, AdapterToolExposure>> {
+  const exposure: Record<string, AdapterToolExposure> = {};
+  for (const [capabilityId, entry] of Object.entries({ ...QODER_TOOL_EXPOSURE, ...limits.extra })) {
+    if (limits.denied.includes(entry.hostTool)) continue;
+    if (limits.allowed !== undefined && !limits.allowed.includes(entry.hostTool)) continue;
+    if (limits.visible !== undefined && !limits.visible.includes(entry.hostTool)) continue;
+    exposure[capabilityId] = Object.freeze({ ...entry });
   }
   return Object.freeze(exposure);
 }

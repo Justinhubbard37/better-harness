@@ -1,155 +1,111 @@
 import { readFile } from "node:fs/promises";
-import { Value } from "@sinclair/typebox/value";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { compileHarness } from "../src/compiler/compile.js";
-import { HarnessIrBundleSchema, type HarnessIrBundle } from "../src/ir/index.js";
-import { describeAdapter } from "../src/resolver/adapter-descriptor.js";
-import { resolveHarness } from "../src/resolver/resolve.js";
-
-const MINIMAL_URL = new URL("../examples/minimal.harness", import.meta.url);
+import type { HarnessIrBundle } from "../src/ir/index.js";
+import { QODER_ADAPTER_DESCRIPTOR } from "../src/resolver/adapter-registry.js";
+import { resolveDeployment, resolveHarness } from "../src/resolver/resolve.js";
 
 async function compile(source: string): Promise<HarnessIrBundle> {
   const result = await compileHarness(source);
-  expect(result.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+  expect(result.diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
   return result.bundle!;
 }
 
-describe("progressive-disclosure sugar", () => {
-  it("resolves a minimal file: a bare use skill with no runtime or binding", async () => {
-    const bundle = await compile(await readFile(MINIMAL_URL, "utf8"));
-    expect(Value.Check(HarnessIrBundleSchema, bundle)).toBe(true);
+describe("v0.3 explicit composition", () => {
+  it("resolves the minimal example through its named deployment", async () => {
+    const file = fileURLToPath(new URL("../examples/minimal.harness", import.meta.url));
+    const bundle = await compile(await readFile(file, "utf8"));
 
-    const { revision, report } = resolveHarness(bundle, "my-agent");
+    const { revision, report } = resolveDeployment(bundle, "my-agent-qoder", {
+      adapter: QODER_ADAPTER_DESCRIPTOR,
+    });
+
     expect(report.status).toBe("resolved");
-    expect(revision!.resolved.capabilities.map((capability) => capability.id)).toEqual([
-      "require-tests",
-    ]);
-    // The bare `target qoder` synthesizes a tool-calling runtime with the
-    // conventional adapter package.
-    expect(revision!.target).toMatchObject({
+    expect(revision?.deployment).toMatchObject({ id: "my-agent-qoder" });
+    expect(revision?.target).toMatchObject({
       runtime: "qoder",
       adapter: "@harness/adapter-qoder",
-      execution: { style: "tool-calling" },
     });
-    expect(report.realizations).toEqual([
+    expect(revision?.realization).toEqual([
       expect.objectContaining({
-        agentId: "coder",
         capabilityId: "require-tests",
-        declaredStrength: "advisory",
-        realized: "advisory",
-        materializedMechanism: "prompt-preamble",
-        action: "satisfied",
+        dimension: "delivered",
+        state: "satisfied",
+        mechanism: "prompt-preamble",
       }),
     ]);
   });
 
-  it("a bare requirement defaults to minimum advisory with on-degrade report", async () => {
-    const bundle = await compile(`
-      skill gate { description "Verify first." }
-      workflow solo { stop when coder.done }
-      harness run {
-        workflow solo
-        agent coder { use skill gate }
-      }
-      target pi
-    `);
-    expect(bundle.harnesses[0].agents[0].requirements).toEqual([
-      { capabilityId: "gate", capabilityKind: "skill", minimum: "advisory", onDegrade: "report" },
+  it("does not infer a deployment from a harness and runtime declaration", async () => {
+    const bundle = await compile(`language 0.3
+      workflow solo { session coder }
+      harness h { workflow solo agent coder {} }
+      runtime qoder { adapter "@harness/adapter-qoder" }`);
+
+    const result = resolveHarness(bundle, "h", "qoder", { adapter: QODER_ADAPTER_DESCRIPTOR });
+
+    expect(result.revision).toBeUndefined();
+    expect(result.report.errors).toEqual([
+      "Harness 'h' has no declared deployment on runtime 'qoder'.",
     ]);
   });
 
-  it("synthesizes an implicit tool contract for an undeclared require tool", async () => {
-    const bundle = await compile(`
-      workflow solo { stop when coder.done }
-      harness run {
-        workflow solo
-        agent coder {
-          require tool workspace.read
-          require tool process.exec
-        }
-      }
-      target pi
-    `);
-    expect(bundle.tools).toEqual([
-      expect.objectContaining({ id: "process.exec", implicit: true, permissions: [] }),
-      expect.objectContaining({ id: "workspace.read", implicit: true, permissions: [] }),
-    ]);
-    // An implicit contract still needs a real host tool behind it, so resolution
-    // only succeeds against an adapter that exposes one.
-    const exposing = describeAdapter({
-      adapterId: "@harness/adapter-pi",
-      toolExposure: { "workspace.read": "read_file", "process.exec": "shell" },
-    });
-    expect(resolveHarness(bundle, "run", undefined, { adapter: exposing }).report.status).toBe("resolved");
-    expect(resolveHarness(bundle, "run").report.status).toBe("failed");
+  it("keeps deployment composition sparse rather than taking a cartesian product", async () => {
+    const bundle = await compile(`language 0.3
+      workflow a-session { session a }
+      workflow b-session { session b }
+      harness alpha { workflow a-session agent a {} }
+      harness beta { workflow b-session agent b {} }
+      runtime qoder { adapter "@harness/adapter-qoder" }
+      runtime pi { adapter "@harness/adapter-pi" }
+      deployment alpha-qoder { harness alpha runtime qoder }
+      deployment beta-pi { harness beta runtime pi }`);
+
+    expect(bundle.deployments.map((deployment) =>
+      `${deployment.harness}:${deployment.runtime}`)).toEqual(["alpha:qoder", "beta:pi"]);
+    expect(resolveHarness(bundle, "alpha", "pi").report.status).toBe("failed");
+    expect(resolveHarness(bundle, "beta", "qoder").report.status).toBe("failed");
   });
 
-  it("expands a for [a, b] binding into one binding per runtime", async () => {
-    const bundle = await compile(`
-      skill gate { description "Verify first." }
-      binding gate for [pi, qoder] { unsupported }
-    `);
-    expect(bundle.bindings).toEqual([
-      expect.objectContaining({ runtime: "pi", strength: "unsupported" }),
-      expect.objectContaining({ runtime: "qoder", strength: "unsupported" }),
+  it("requires a deployment id when one harness has several runtime deployments", async () => {
+    const bundle = await compile(`language 0.3
+      workflow solo { session coder }
+      harness h { workflow solo agent coder {} }
+      runtime qoder { adapter "@harness/adapter-qoder" }
+      runtime pi { adapter "@harness/adapter-pi" }
+      deployment h-qoder { harness h runtime qoder }
+      deployment h-pi { harness h runtime pi }`);
+
+    expect(resolveHarness(bundle, "h").report.errors.join("\n")).toContain(
+      "multiple deployments; resolve by deployment id",
+    );
+    expect(resolveDeployment(bundle, "missing").report.errors).toEqual([
+      "Deployment 'missing' is not defined in the bundle.",
     ]);
   });
 
-  it("keeps an empty binding as a non-veto deployment overlay", async () => {
-    const bundle = await compile(`
-      skill gate { description "Verify first." }
-      binding gate for pi {}
-    `);
-    expect(bundle.bindings[0]).toMatchObject({
-      runtime: "pi",
-      mechanism: "deployment-veto",
-      strength: "advisory",
-    });
-  });
+  it("makes the deployment part of revision identity", async () => {
+    const first = await compile(`language 0.3
+      workflow solo { session coder }
+      harness h { workflow solo agent coder {} }
+      runtime qoder { adapter "@harness/adapter-qoder" }
+      deployment first { harness h runtime qoder }`);
+    const second = await compile(`language 0.3
+      workflow solo { session coder }
+      harness h { workflow solo agent coder {} }
+      runtime qoder { adapter "@harness/adapter-qoder" }
+      deployment second { harness h runtime qoder }`);
 
-  it("uses the target's adapter shorthand when synthesizing a runtime", async () => {
-    const bundle = await compile(`
-      skill gate { description "Verify first." }
-      workflow solo { stop when coder.done }
-      harness run {
-        workflow solo
-        agent coder { use skill gate }
-      }
-      target custom-host uses adapter.custom
-    `);
-    const { revision } = resolveHarness(bundle, "run");
-    expect(revision!.target.adapter).toBe("@harness/adapter-custom");
-  });
+    const firstRevision = resolveDeployment(first, "first", {
+      adapter: QODER_ADAPTER_DESCRIPTOR,
+    }).revision!;
+    const secondRevision = resolveDeployment(second, "second", {
+      adapter: QODER_ADAPTER_DESCRIPTOR,
+    }).revision!;
 
-  it("prefers a declared runtime over synthesis for the same target", async () => {
-    const bundle = await compile(`
-      skill gate { description "Verify first." }
-      workflow solo { stop when coder.done }
-      runtime prime {
-        adapter "@harness/adapter-prime"
-      }
-      harness run {
-        workflow solo
-        agent coder { use skill gate }
-      }
-      target prime
-    `);
-    const { revision } = resolveHarness(bundle, "run");
-    expect(revision!.target).toMatchObject({
-      runtime: "prime",
-      adapter: "@harness/adapter-prime",
-      execution: { style: "tool-calling" },
-    });
-  });
-
-  it("still reports duplicate runtimes within a single multi-runtime binding", async () => {
-    const result = await compileHarness(`
-      skill gate { description "Verify first." }
-      binding gate for [pi, pi] { unsupported }
-    `);
-    expect(result.bundle).toBeUndefined();
-    expect(
-      result.diagnostics.some((d) => d.message.includes("Duplicate capability/runtime binding")),
-    ).toBe(true);
+    expect(firstRevision.deployment.id).toBe("first");
+    expect(secondRevision.deployment.id).toBe("second");
+    expect(firstRevision.revisionId).not.toBe(secondRevision.revisionId);
   });
 });

@@ -17,17 +17,38 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
       "entry": true,
       "name": "HarnessDocument",
       "definition": {
-        "$type": "Assignment",
-        "feature": "elements",
-        "operator": "+=",
-        "terminal": {
-          "$type": "RuleCall",
-          "rule": {
-            "$ref": "#/rules@1"
+        "$type": "Group",
+        "elements": [
+          {
+            "$type": "Keyword",
+            "value": "language"
           },
-          "arguments": []
-        },
-        "cardinality": "*"
+          {
+            "$type": "Assignment",
+            "feature": "languageVersion",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@21"
+              },
+              "arguments": []
+            }
+          },
+          {
+            "$type": "Assignment",
+            "feature": "elements",
+            "operator": "+=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@1"
+              },
+              "arguments": []
+            },
+            "cardinality": "*"
+          }
+        ]
       },
       "fragment": false,
       "parameters": []
@@ -69,14 +90,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
           {
             "$type": "RuleCall",
             "rule": {
-              "$ref": "#/rules@20"
-            },
-            "arguments": []
-          },
-          {
-            "$type": "RuleCall",
-            "rule": {
-              "$ref": "#/rules@21"
+              "$ref": "#/rules@18"
             },
             "arguments": []
           }
@@ -103,7 +117,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@37"
+                "$ref": "#/rules@22"
               },
               "arguments": []
             }
@@ -128,7 +142,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
               "terminal": {
                 "$type": "RuleCall",
                 "rule": {
-                  "$ref": "#/rules@37"
+                  "$ref": "#/rules@22"
                 },
                 "arguments": []
               },
@@ -148,37 +162,6 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
               "arguments": []
             },
             "cardinality": "*"
-          },
-          {
-            "$type": "Group",
-            "elements": [
-              {
-                "$type": "Keyword",
-                "value": "configure"
-              },
-              {
-                "$type": "Keyword",
-                "value": "{"
-              },
-              {
-                "$type": "Assignment",
-                "feature": "settings",
-                "operator": "+=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@27"
-                  },
-                  "arguments": []
-                },
-                "cardinality": "*"
-              },
-              {
-                "$type": "Keyword",
-                "value": "}"
-              }
-            ],
-            "cardinality": "?"
           },
           {
             "$type": "Keyword",
@@ -207,7 +190,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@37"
+                "$ref": "#/rules@22"
               },
               "arguments": []
             }
@@ -215,6 +198,37 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
           {
             "$type": "Keyword",
             "value": "{"
+          },
+          {
+            "$type": "Group",
+            "elements": [
+              {
+                "$type": "Keyword",
+                "value": "outcomes"
+              },
+              {
+                "$type": "Keyword",
+                "value": "{"
+              },
+              {
+                "$type": "Assignment",
+                "feature": "outcomes",
+                "operator": "+=",
+                "terminal": {
+                  "$type": "RuleCall",
+                  "rule": {
+                    "$ref": "#/rules@22"
+                  },
+                  "arguments": []
+                },
+                "cardinality": "*"
+              },
+              {
+                "$type": "Keyword",
+                "value": "}"
+              }
+            ],
+            "cardinality": "?"
           },
           {
             "$type": "Assignment",
@@ -311,90 +325,10 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@28"
+                "$ref": "#/rules@19"
               },
               "arguments": []
             }
-          },
-          {
-            "$type": "Group",
-            "elements": [
-              {
-                "$type": "Keyword",
-                "value": "{"
-              },
-              {
-                "$type": "Group",
-                "elements": [
-                  {
-                    "$type": "Keyword",
-                    "value": "preferred"
-                  },
-                  {
-                    "$type": "Assignment",
-                    "feature": "preferred",
-                    "operator": "=",
-                    "terminal": {
-                      "$type": "RuleCall",
-                      "rule": {
-                        "$ref": "#/rules@22"
-                      },
-                      "arguments": []
-                    }
-                  }
-                ],
-                "cardinality": "?"
-              },
-              {
-                "$type": "Group",
-                "elements": [
-                  {
-                    "$type": "Keyword",
-                    "value": "minimum"
-                  },
-                  {
-                    "$type": "Assignment",
-                    "feature": "minimum",
-                    "operator": "=",
-                    "terminal": {
-                      "$type": "RuleCall",
-                      "rule": {
-                        "$ref": "#/rules@22"
-                      },
-                      "arguments": []
-                    }
-                  }
-                ],
-                "cardinality": "?"
-              },
-              {
-                "$type": "Group",
-                "elements": [
-                  {
-                    "$type": "Keyword",
-                    "value": "on-degrade"
-                  },
-                  {
-                    "$type": "Assignment",
-                    "feature": "onDegrade",
-                    "operator": "=",
-                    "terminal": {
-                      "$type": "RuleCall",
-                      "rule": {
-                        "$ref": "#/rules@23"
-                      },
-                      "arguments": []
-                    }
-                  }
-                ],
-                "cardinality": "?"
-              },
-              {
-                "$type": "Keyword",
-                "value": "}"
-              }
-            ],
-            "cardinality": "?"
           }
         ]
       },
@@ -419,7 +353,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@37"
+                "$ref": "#/rules@22"
               },
               "arguments": []
             }
@@ -430,7 +364,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
           },
           {
             "$type": "Assignment",
-            "feature": "program",
+            "feature": "session",
             "operator": "=",
             "terminal": {
               "$type": "RuleCall",
@@ -443,12 +377,57 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
           },
           {
             "$type": "Assignment",
+            "feature": "program",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@7"
+              },
+              "arguments": []
+            },
+            "cardinality": "?"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "stateMachine",
+            "operator": "?=",
+            "terminal": {
+              "$type": "Keyword",
+              "value": "state-machine"
+            },
+            "cardinality": "?"
+          },
+          {
+            "$type": "Group",
+            "elements": [
+              {
+                "$type": "Keyword",
+                "value": "entry"
+              },
+              {
+                "$type": "Assignment",
+                "feature": "entry",
+                "operator": "=",
+                "terminal": {
+                  "$type": "RuleCall",
+                  "rule": {
+                    "$ref": "#/rules@22"
+                  },
+                  "arguments": []
+                }
+              }
+            ],
+            "cardinality": "?"
+          },
+          {
+            "$type": "Assignment",
             "feature": "statements",
             "operator": "+=",
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@7"
+                "$ref": "#/rules@8"
               },
               "arguments": []
             },
@@ -457,6 +436,34 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
           {
             "$type": "Keyword",
             "value": "}"
+          }
+        ]
+      },
+      "entry": false,
+      "fragment": false,
+      "parameters": []
+    },
+    {
+      "$type": "ParserRule",
+      "name": "SessionBody",
+      "definition": {
+        "$type": "Group",
+        "elements": [
+          {
+            "$type": "Keyword",
+            "value": "session"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "agent",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@22"
+              },
+              "arguments": []
+            }
           }
         ]
       },
@@ -481,7 +488,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@37"
+                "$ref": "#/rules@22"
               },
               "arguments": []
             }
@@ -493,7 +500,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@38"
+                "$ref": "#/rules@23"
               },
               "arguments": []
             }
@@ -513,13 +520,6 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
           {
             "$type": "RuleCall",
             "rule": {
-              "$ref": "#/rules@8"
-            },
-            "arguments": []
-          },
-          {
-            "$type": "RuleCall",
-            "rule": {
               "$ref": "#/rules@9"
             },
             "arguments": []
@@ -530,46 +530,6 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
               "$ref": "#/rules@10"
             },
             "arguments": []
-          }
-        ]
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "EdgeStatement",
-      "definition": {
-        "$type": "Group",
-        "elements": [
-          {
-            "$type": "Assignment",
-            "feature": "from",
-            "operator": "=",
-            "terminal": {
-              "$type": "RuleCall",
-              "rule": {
-                "$ref": "#/rules@37"
-              },
-              "arguments": []
-            }
-          },
-          {
-            "$type": "Keyword",
-            "value": "->"
-          },
-          {
-            "$type": "Assignment",
-            "feature": "to",
-            "operator": "=",
-            "terminal": {
-              "$type": "RuleCall",
-              "rule": {
-                "$ref": "#/rules@37"
-              },
-              "arguments": []
-            }
           }
         ]
       },
@@ -594,7 +554,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@37"
+                "$ref": "#/rules@22"
               },
               "arguments": []
             }
@@ -610,7 +570,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@37"
+                "$ref": "#/rules@22"
               },
               "arguments": []
             }
@@ -626,7 +586,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@37"
+                "$ref": "#/rules@22"
               },
               "arguments": []
             }
@@ -658,7 +618,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@37"
+                "$ref": "#/rules@22"
               },
               "arguments": []
             }
@@ -674,7 +634,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@37"
+                "$ref": "#/rules@22"
               },
               "arguments": []
             }
@@ -735,7 +695,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@37"
+                "$ref": "#/rules@19"
               },
               "arguments": []
             }
@@ -758,7 +718,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
                 "terminal": {
                   "$type": "RuleCall",
                   "rule": {
-                    "$ref": "#/rules@38"
+                    "$ref": "#/rules@23"
                   },
                   "arguments": []
                 }
@@ -780,41 +740,10 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
                 "terminal": {
                   "$type": "RuleCall",
                   "rule": {
-                    "$ref": "#/rules@38"
+                    "$ref": "#/rules@23"
                   },
                   "arguments": []
                 }
-              }
-            ],
-            "cardinality": "?"
-          },
-          {
-            "$type": "Group",
-            "elements": [
-              {
-                "$type": "Keyword",
-                "value": "permissions"
-              },
-              {
-                "$type": "Keyword",
-                "value": "{"
-              },
-              {
-                "$type": "Assignment",
-                "feature": "permissions",
-                "operator": "+=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@24"
-                  },
-                  "arguments": []
-                },
-                "cardinality": "*"
-              },
-              {
-                "$type": "Keyword",
-                "value": "}"
               }
             ],
             "cardinality": "?"
@@ -846,7 +775,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@28"
+                "$ref": "#/rules@19"
               },
               "arguments": []
             }
@@ -854,6 +783,22 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
           {
             "$type": "Keyword",
             "value": "{"
+          },
+          {
+            "$type": "Keyword",
+            "value": "contract"
+          },
+          {
+            "$type": "Assignment",
+            "feature": "contract",
+            "operator": "=",
+            "terminal": {
+              "$type": "RuleCall",
+              "rule": {
+                "$ref": "#/rules@23"
+              },
+              "arguments": []
+            }
           },
           {
             "$type": "Group",
@@ -869,103 +814,10 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
                 "terminal": {
                   "$type": "RuleCall",
                   "rule": {
-                    "$ref": "#/rules@38"
+                    "$ref": "#/rules@23"
                   },
                   "arguments": []
                 }
-              }
-            ],
-            "cardinality": "?"
-          },
-          {
-            "$type": "Group",
-            "elements": [
-              {
-                "$type": "Keyword",
-                "value": "input"
-              },
-              {
-                "$type": "Keyword",
-                "value": "{"
-              },
-              {
-                "$type": "Assignment",
-                "feature": "inputs",
-                "operator": "+=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@37"
-                  },
-                  "arguments": []
-                },
-                "cardinality": "*"
-              },
-              {
-                "$type": "Keyword",
-                "value": "}"
-              }
-            ],
-            "cardinality": "?"
-          },
-          {
-            "$type": "Group",
-            "elements": [
-              {
-                "$type": "Keyword",
-                "value": "output"
-              },
-              {
-                "$type": "Keyword",
-                "value": "{"
-              },
-              {
-                "$type": "Assignment",
-                "feature": "outputs",
-                "operator": "+=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@37"
-                  },
-                  "arguments": []
-                },
-                "cardinality": "*"
-              },
-              {
-                "$type": "Keyword",
-                "value": "}"
-              }
-            ],
-            "cardinality": "?"
-          },
-          {
-            "$type": "Group",
-            "elements": [
-              {
-                "$type": "Keyword",
-                "value": "permissions"
-              },
-              {
-                "$type": "Keyword",
-                "value": "{"
-              },
-              {
-                "$type": "Assignment",
-                "feature": "permissions",
-                "operator": "+=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@24"
-                  },
-                  "arguments": []
-                },
-                "cardinality": "*"
-              },
-              {
-                "$type": "Keyword",
-                "value": "}"
               }
             ],
             "cardinality": "?"
@@ -997,7 +849,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@37"
+                "$ref": "#/rules@19"
               },
               "arguments": []
             }
@@ -1058,7 +910,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
                 "terminal": {
                   "$type": "RuleCall",
                   "rule": {
-                    "$ref": "#/rules@38"
+                    "$ref": "#/rules@23"
                   },
                   "arguments": []
                 }
@@ -1132,7 +984,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
                 "terminal": {
                   "$type": "RuleCall",
                   "rule": {
-                    "$ref": "#/rules@37"
+                    "$ref": "#/rules@22"
                   },
                   "arguments": []
                 }
@@ -1156,7 +1008,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
                 "terminal": {
                   "$type": "RuleCall",
                   "rule": {
-                    "$ref": "#/rules@38"
+                    "$ref": "#/rules@23"
                   },
                   "arguments": []
                 }
@@ -1186,7 +1038,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@37"
+                "$ref": "#/rules@22"
               },
               "arguments": []
             }
@@ -1206,32 +1058,10 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@38"
+                "$ref": "#/rules@23"
               },
               "arguments": []
             }
-          },
-          {
-            "$type": "Group",
-            "elements": [
-              {
-                "$type": "Keyword",
-                "value": "execution"
-              },
-              {
-                "$type": "Assignment",
-                "feature": "execution",
-                "operator": "=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@18"
-                  },
-                  "arguments": []
-                }
-              }
-            ],
-            "cardinality": "?"
           },
           {
             "$type": "Keyword",
@@ -1245,547 +1075,81 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
     },
     {
       "$type": "ParserRule",
-      "name": "ExecutionSpec",
-      "definition": {
-        "$type": "Alternatives",
-        "elements": [
-          {
-            "$type": "Group",
-            "elements": [
-              {
-                "$type": "Action",
-                "inferredType": {
-                  "$type": "InferredType",
-                  "name": "ToolCallingExecution"
-                }
-              },
-              {
-                "$type": "Assignment",
-                "feature": "style",
-                "operator": "=",
-                "terminal": {
-                  "$type": "Keyword",
-                  "value": "tool-calling"
-                }
-              }
-            ]
-          },
-          {
-            "$type": "Group",
-            "elements": [
-              {
-                "$type": "Action",
-                "inferredType": {
-                  "$type": "InferredType",
-                  "name": "ProgrammaticExecution"
-                }
-              },
-              {
-                "$type": "Keyword",
-                "value": "programmatic"
-              },
-              {
-                "$type": "Keyword",
-                "value": "."
-              },
-              {
-                "$type": "Assignment",
-                "feature": "language",
-                "operator": "=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@37"
-                  },
-                  "arguments": []
-                }
-              },
-              {
-                "$type": "Group",
-                "elements": [
-                  {
-                    "$type": "Keyword",
-                    "value": "{"
-                  },
-                  {
-                    "$type": "Assignment",
-                    "feature": "options",
-                    "operator": "+=",
-                    "terminal": {
-                      "$type": "RuleCall",
-                      "rule": {
-                        "$ref": "#/rules@19"
-                      },
-                      "arguments": []
-                    },
-                    "cardinality": "*"
-                  },
-                  {
-                    "$type": "Keyword",
-                    "value": "}"
-                  }
-                ],
-                "cardinality": "?"
-              }
-            ]
-          }
-        ]
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "ExecutionOption",
-      "definition": {
-        "$type": "Group",
-        "elements": [
-          {
-            "$type": "Assignment",
-            "feature": "key",
-            "operator": "=",
-            "terminal": {
-              "$type": "RuleCall",
-              "rule": {
-                "$ref": "#/rules@37"
-              },
-              "arguments": []
-            }
-          },
-          {
-            "$type": "Assignment",
-            "feature": "value",
-            "operator": "=",
-            "terminal": {
-              "$type": "RuleCall",
-              "rule": {
-                "$ref": "#/rules@37"
-              },
-              "arguments": []
-            }
-          }
-        ]
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "TargetDeclaration",
+      "name": "DeploymentDeclaration",
       "definition": {
         "$type": "Group",
         "elements": [
           {
             "$type": "Keyword",
-            "value": "target"
+            "value": "deployment"
           },
           {
             "$type": "Assignment",
-            "feature": "runtime",
+            "feature": "name",
             "operator": "=",
             "terminal": {
               "$type": "RuleCall",
               "rule": {
-                "$ref": "#/rules@37"
+                "$ref": "#/rules@22"
               },
               "arguments": []
             }
-          },
-          {
-            "$type": "Group",
-            "elements": [
-              {
-                "$type": "Keyword",
-                "value": "uses"
-              },
-              {
-                "$type": "Keyword",
-                "value": "adapter"
-              },
-              {
-                "$type": "Keyword",
-                "value": "."
-              },
-              {
-                "$type": "Assignment",
-                "feature": "adapter",
-                "operator": "=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@37"
-                  },
-                  "arguments": []
-                }
-              }
-            ],
-            "cardinality": "?"
-          }
-        ]
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "CapabilityBinding",
-      "definition": {
-        "$type": "Group",
-        "elements": [
-          {
-            "$type": "Keyword",
-            "value": "binding"
-          },
-          {
-            "$type": "Assignment",
-            "feature": "capability",
-            "operator": "=",
-            "terminal": {
-              "$type": "RuleCall",
-              "rule": {
-                "$ref": "#/rules@28"
-              },
-              "arguments": []
-            }
-          },
-          {
-            "$type": "Keyword",
-            "value": "for"
-          },
-          {
-            "$type": "Alternatives",
-            "elements": [
-              {
-                "$type": "Assignment",
-                "feature": "runtimes",
-                "operator": "+=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@37"
-                  },
-                  "arguments": []
-                }
-              },
-              {
-                "$type": "Group",
-                "elements": [
-                  {
-                    "$type": "Keyword",
-                    "value": "["
-                  },
-                  {
-                    "$type": "Assignment",
-                    "feature": "runtimes",
-                    "operator": "+=",
-                    "terminal": {
-                      "$type": "RuleCall",
-                      "rule": {
-                        "$ref": "#/rules@37"
-                      },
-                      "arguments": []
-                    }
-                  },
-                  {
-                    "$type": "Group",
-                    "elements": [
-                      {
-                        "$type": "Keyword",
-                        "value": ","
-                      },
-                      {
-                        "$type": "Assignment",
-                        "feature": "runtimes",
-                        "operator": "+=",
-                        "terminal": {
-                          "$type": "RuleCall",
-                          "rule": {
-                            "$ref": "#/rules@37"
-                          },
-                          "arguments": []
-                        }
-                      }
-                    ],
-                    "cardinality": "*"
-                  },
-                  {
-                    "$type": "Keyword",
-                    "value": "]"
-                  }
-                ]
-              }
-            ]
           },
           {
             "$type": "Keyword",
             "value": "{"
           },
           {
+            "$type": "Keyword",
+            "value": "harness"
+          },
+          {
             "$type": "Assignment",
-            "feature": "unsupported",
-            "operator": "?=",
+            "feature": "harness",
+            "operator": "=",
             "terminal": {
-              "$type": "Keyword",
-              "value": "unsupported"
-            },
-            "cardinality": "?"
+              "$type": "CrossReference",
+              "type": {
+                "$ref": "#/rules@2"
+              },
+              "terminal": {
+                "$type": "RuleCall",
+                "rule": {
+                  "$ref": "#/rules@22"
+                },
+                "arguments": []
+              },
+              "deprecatedSyntax": false,
+              "isMulti": false
+            }
           },
           {
-            "$type": "Group",
-            "elements": [
-              {
-                "$type": "Keyword",
-                "value": "mechanism"
-              },
-              {
-                "$type": "Assignment",
-                "feature": "legacyMechanism",
-                "operator": "=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@28"
-                  },
-                  "arguments": []
-                }
-              }
-            ],
-            "cardinality": "?"
+            "$type": "Keyword",
+            "value": "runtime"
           },
           {
-            "$type": "Group",
-            "elements": [
-              {
-                "$type": "Keyword",
-                "value": "strength"
+            "$type": "Assignment",
+            "feature": "runtime",
+            "operator": "=",
+            "terminal": {
+              "$type": "CrossReference",
+              "type": {
+                "$ref": "#/rules@17"
               },
-              {
-                "$type": "Assignment",
-                "feature": "legacyStrength",
-                "operator": "=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@22"
-                  },
-                  "arguments": []
-                }
-              }
-            ],
-            "cardinality": "?"
-          },
-          {
-            "$type": "Group",
-            "elements": [
-              {
-                "$type": "Keyword",
-                "value": "notes"
+              "terminal": {
+                "$type": "RuleCall",
+                "rule": {
+                  "$ref": "#/rules@22"
+                },
+                "arguments": []
               },
-              {
-                "$type": "Assignment",
-                "feature": "notes",
-                "operator": "=",
-                "terminal": {
-                  "$type": "RuleCall",
-                  "rule": {
-                    "$ref": "#/rules@38"
-                  },
-                  "arguments": []
-                }
-              }
-            ],
-            "cardinality": "?"
+              "deprecatedSyntax": false,
+              "isMulti": false
+            }
           },
           {
             "$type": "Keyword",
             "value": "}"
-          }
-        ]
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "Strength",
-      "dataType": "string",
-      "definition": {
-        "$type": "Alternatives",
-        "elements": [
-          {
-            "$type": "Keyword",
-            "value": "unsupported"
-          },
-          {
-            "$type": "Keyword",
-            "value": "advisory"
-          },
-          {
-            "$type": "Keyword",
-            "value": "wired"
-          },
-          {
-            "$type": "Keyword",
-            "value": "enforced"
-          }
-        ]
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "DegradePolicy",
-      "dataType": "string",
-      "definition": {
-        "$type": "Alternatives",
-        "elements": [
-          {
-            "$type": "Keyword",
-            "value": "fail"
-          },
-          {
-            "$type": "Keyword",
-            "value": "report"
-          }
-        ]
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "PermissionRule",
-      "definition": {
-        "$type": "Group",
-        "elements": [
-          {
-            "$type": "Assignment",
-            "feature": "domain",
-            "operator": "=",
-            "terminal": {
-              "$type": "RuleCall",
-              "rule": {
-                "$ref": "#/rules@25"
-              },
-              "arguments": []
-            }
-          },
-          {
-            "$type": "Assignment",
-            "feature": "access",
-            "operator": "=",
-            "terminal": {
-              "$type": "RuleCall",
-              "rule": {
-                "$ref": "#/rules@26"
-              },
-              "arguments": []
-            }
-          }
-        ]
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "PermissionDomain",
-      "dataType": "string",
-      "definition": {
-        "$type": "Alternatives",
-        "elements": [
-          {
-            "$type": "Keyword",
-            "value": "workspace"
-          },
-          {
-            "$type": "Keyword",
-            "value": "process"
-          },
-          {
-            "$type": "Keyword",
-            "value": "network"
-          },
-          {
-            "$type": "Keyword",
-            "value": "model"
-          }
-        ]
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "PermissionAccess",
-      "dataType": "string",
-      "definition": {
-        "$type": "Alternatives",
-        "elements": [
-          {
-            "$type": "Keyword",
-            "value": "read"
-          },
-          {
-            "$type": "Keyword",
-            "value": "write"
-          },
-          {
-            "$type": "Keyword",
-            "value": "allow"
-          },
-          {
-            "$type": "Keyword",
-            "value": "deny"
-          }
-        ]
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "ConfigEntry",
-      "definition": {
-        "$type": "Group",
-        "elements": [
-          {
-            "$type": "Assignment",
-            "feature": "key",
-            "operator": "=",
-            "terminal": {
-              "$type": "RuleCall",
-              "rule": {
-                "$ref": "#/rules@28"
-              },
-              "arguments": []
-            }
-          },
-          {
-            "$type": "Keyword",
-            "value": "="
-          },
-          {
-            "$type": "Assignment",
-            "feature": "value",
-            "operator": "=",
-            "terminal": {
-              "$type": "RuleCall",
-              "rule": {
-                "$ref": "#/rules@30"
-              },
-              "arguments": []
-            }
           }
         ]
       },
@@ -1803,7 +1167,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
           {
             "$type": "RuleCall",
             "rule": {
-              "$ref": "#/rules@29"
+              "$ref": "#/rules@20"
             },
             "arguments": []
           },
@@ -1817,7 +1181,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
               {
                 "$type": "RuleCall",
                 "rule": {
-                  "$ref": "#/rules@29"
+                  "$ref": "#/rules@20"
                 },
                 "arguments": []
               }
@@ -1840,7 +1204,7 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
           {
             "$type": "RuleCall",
             "rule": {
-              "$ref": "#/rules@37"
+              "$ref": "#/rules@22"
             },
             "arguments": []
           },
@@ -1906,19 +1270,11 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
           },
           {
             "$type": "Keyword",
-            "value": "execution"
-          },
-          {
-            "$type": "Keyword",
             "value": "program"
           },
           {
             "$type": "Keyword",
             "value": "runtime"
-          },
-          {
-            "$type": "Keyword",
-            "value": "target"
           },
           {
             "$type": "Keyword",
@@ -1946,30 +1302,6 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
           },
           {
             "$type": "Keyword",
-            "value": "input"
-          },
-          {
-            "$type": "Keyword",
-            "value": "output"
-          },
-          {
-            "$type": "Keyword",
-            "value": "mechanism"
-          },
-          {
-            "$type": "Keyword",
-            "value": "strength"
-          },
-          {
-            "$type": "Keyword",
-            "value": "notes"
-          },
-          {
-            "$type": "Keyword",
-            "value": "configure"
-          },
-          {
-            "$type": "Keyword",
             "value": "stdio"
           },
           {
@@ -1979,140 +1311,58 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
           {
             "$type": "Keyword",
             "value": "sse"
-          }
-        ]
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "ConfigValue",
-      "definition": {
-        "$type": "Alternatives",
-        "elements": [
-          {
-            "$type": "RuleCall",
-            "rule": {
-              "$ref": "#/rules@31"
-            },
-            "arguments": []
           },
           {
-            "$type": "RuleCall",
-            "rule": {
-              "$ref": "#/rules@32"
-            },
-            "arguments": []
+            "$type": "Keyword",
+            "value": "contract"
           },
           {
-            "$type": "RuleCall",
-            "rule": {
-              "$ref": "#/rules@33"
-            },
-            "arguments": []
+            "$type": "Keyword",
+            "value": "session"
           },
           {
-            "$type": "RuleCall",
-            "rule": {
-              "$ref": "#/rules@34"
-            },
-            "arguments": []
-          }
-        ]
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "IntLiteral",
-      "definition": {
-        "$type": "Assignment",
-        "feature": "value",
-        "operator": "=",
-        "terminal": {
-          "$type": "RuleCall",
-          "rule": {
-            "$ref": "#/rules@36"
-          },
-          "arguments": []
-        }
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "DurationLiteral",
-      "definition": {
-        "$type": "Assignment",
-        "feature": "value",
-        "operator": "=",
-        "terminal": {
-          "$type": "RuleCall",
-          "rule": {
-            "$ref": "#/rules@35"
-          },
-          "arguments": []
-        }
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "StringLiteral",
-      "definition": {
-        "$type": "Assignment",
-        "feature": "value",
-        "operator": "=",
-        "terminal": {
-          "$type": "RuleCall",
-          "rule": {
-            "$ref": "#/rules@38"
-          },
-          "arguments": []
-        }
-      },
-      "entry": false,
-      "fragment": false,
-      "parameters": []
-    },
-    {
-      "$type": "ParserRule",
-      "name": "BooleanLiteral",
-      "definition": {
-        "$type": "Group",
-        "elements": [
-          {
-            "$type": "Action",
-            "inferredType": {
-              "$type": "InferredType",
-              "name": "BooleanLiteral"
-            }
+            "$type": "Keyword",
+            "value": "entry"
           },
           {
-            "$type": "Alternatives",
-            "elements": [
-              {
-                "$type": "Assignment",
-                "feature": "value",
-                "operator": "?=",
-                "terminal": {
-                  "$type": "Keyword",
-                  "value": "true"
-                }
-              },
-              {
-                "$type": "Keyword",
-                "value": "false"
-              }
-            ]
+            "$type": "Keyword",
+            "value": "outcomes"
+          },
+          {
+            "$type": "Keyword",
+            "value": "deployment"
+          },
+          {
+            "$type": "Keyword",
+            "value": "language"
+          },
+          {
+            "$type": "Keyword",
+            "value": "state-machine"
+          },
+          {
+            "$type": "Keyword",
+            "value": "on"
+          },
+          {
+            "$type": "Keyword",
+            "value": "stop"
+          },
+          {
+            "$type": "Keyword",
+            "value": "when"
+          },
+          {
+            "$type": "Keyword",
+            "value": "use"
+          },
+          {
+            "$type": "Keyword",
+            "value": "require"
+          },
+          {
+            "$type": "Keyword",
+            "value": "connect"
           }
         ]
       },
@@ -2122,25 +1372,10 @@ export const HarnessGrammar = (): Grammar => loadedHarnessGrammar ?? (loadedHarn
     },
     {
       "$type": "TerminalRule",
-      "name": "DURATION",
+      "name": "LANGUAGE_VERSION",
       "definition": {
         "$type": "RegexToken",
-        "regex": "/[0-9]+(ms|s|m|h)/",
-        "parenthesized": false
-      },
-      "fragment": false,
-      "hidden": false
-    },
-    {
-      "$type": "TerminalRule",
-      "name": "INT",
-      "type": {
-        "$type": "ReturnType",
-        "name": "number"
-      },
-      "definition": {
-        "$type": "RegexToken",
-        "regex": "/[0-9]+/",
+        "regex": "/[0-9]+\\\\.[0-9]+/",
         "parenthesized": false
       },
       "fragment": false,

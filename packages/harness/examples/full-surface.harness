@@ -1,9 +1,9 @@
-// Compiler conformance fixture: every v0.2 authored syntax branch appears here.
+// Compiler conformance fixture: every v0.3 authored syntax branch appears here.
+language 0.3
 
 skill repository-grounding {
   source "./skills/repository-grounding"
   description "Read repository evidence before changing files."
-  permissions { workspace read workspace write }
 }
 
 skill inline-guidance {
@@ -11,15 +11,13 @@ skill inline-guidance {
 }
 
 tool workspace.read {
+  contract "builtin:workspace.read@1"
   description "Read files inside the workspace."
-  input { path }
-  output { contents }
-  permissions { workspace read }
 }
 
-tool process.exec {
-  description "Run a workspace-scoped process."
-  permissions { process allow }
+tool review.approve {
+  contract "urn:better-harness:review.approve:v1"
+  description "Record a review decision."
 }
 
 mcp package-registry {
@@ -38,7 +36,9 @@ mcp local-indexer {
 }
 
 workflow coding-loop {
-  author -> verifier
+  state-machine
+  entry author
+  on author.ready -> verifier
   on verifier.failed -> author
   stop when verifier.passed
 }
@@ -51,30 +51,20 @@ harness full-surface {
   workflow coding-loop
 
   agent author {
+    outcomes { ready }
     use skill repository-grounding
     use skill inline-guidance
     require tool workspace.read
-    // Implicit tool: never declared, synthesized as an atomic contract.
     require tool workspace.write
     connect mcp package-registry
     connect mcp local-indexer
   }
 
   agent verifier {
-    require tool process.exec {
-      preferred wired
-      minimum advisory
-      on-degrade report
-    }
+    outcomes { failed passed }
+    require tool process.exec
+    require tool review.approve
     connect mcp docs-search
-  }
-
-  configure {
-    runtime.max-turns = 24
-    runtime.timeout = 10m
-    runtime.label = "full-surface"
-    runtime.checkpoints = true
-    runtime.network-enabled = false
   }
 }
 
@@ -86,20 +76,29 @@ harness scripted-surface {
   }
 }
 
-runtime prime {
-  adapter "@harness/adapter-prime"
-}
-
-runtime deepseek {
-  adapter "@harness/adapter-deepseek"
+runtime qoder {
+  adapter "@harness/adapter-qoder"
 }
 
 runtime pi {
   adapter "@harness/adapter-pi"
 }
 
-target qoder uses adapter.qoder
-target pi
+runtime prime {
+  adapter "@harness/adapter-prime"
+}
 
-// Bindings are deployment vetoes. Adapter descriptors own realization facts.
-binding inline-guidance for qoder { unsupported }
+deployment full-qoder {
+  harness full-surface
+  runtime qoder
+}
+
+deployment full-pi {
+  harness full-surface
+  runtime pi
+}
+
+deployment scripted-prime {
+  harness scripted-surface
+  runtime prime
+}

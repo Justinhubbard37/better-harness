@@ -17,11 +17,12 @@ import {
 import { PiSdkAdapter, PiSdkExecutor, type PiSdkLike } from "../src/exec/pi-sdk.js";
 
 const SOURCE = `
+  language 0.3
   skill require-tests {
     description "Do not report the task complete until tests prove it."
   }
   workflow single-pass {
-    stop when coder.done
+    session coder
   }
   harness assembly {
     workflow single-pass
@@ -29,8 +30,10 @@ const SOURCE = `
       use skill require-tests
     }
   }
-  target qoder
-  target pi
+  runtime qoder { adapter "@harness/adapter-qoder" }
+  runtime pi { adapter "@harness/adapter-pi" }
+  deployment assembly-qoder { harness assembly runtime qoder }
+  deployment assembly-pi { harness assembly runtime pi }
 `;
 
 async function resolveFor(runtimeId: string): Promise<{ bundle: HarnessIrBundle; revision: HarnessRevision }> {

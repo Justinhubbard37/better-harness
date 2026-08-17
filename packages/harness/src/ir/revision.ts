@@ -108,6 +108,15 @@ export function validateRevisionAgainstBundle(
     mismatches.push(`harness '${revision.harness.id}' content changed`);
   }
 
+  const deployment = bundle.deployments.find(
+    (candidate) => candidate.id === revision.deployment.id,
+  );
+  if (!deployment) {
+    mismatches.push(`deployment '${revision.deployment.id}' is absent`);
+  } else if (contentHash(deployment) !== revision.deployment.contentHash) {
+    mismatches.push(`deployment '${revision.deployment.id}' content changed`);
+  }
+
   const workflow = bundle.workflows.find((candidate) => candidate.id === revision.workflow.id);
   if (!workflow) {
     mismatches.push(`workflow '${revision.workflow.id}' is absent`);

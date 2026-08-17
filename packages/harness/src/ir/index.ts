@@ -1,29 +1,21 @@
-/**
- * Versioned JSON intermediate representation for the Harness DSL.
- *
- * Every artifact carries `irVersion` plus a `kind` discriminator so stored
- * documents stay self-describing. The v0.2 entities follow the standard
- * resource model: capabilities (skill / tool / mcp), workflows, runtimes,
- * harnesses with agent roles, deployment targets, capability bindings,
- * HarnessRevision, and ResolutionReport. There is no generic plugin entity:
- * host-native assets appear only as binding mechanisms in a host namespace
- * (`qoder.plugin`, `pi.extension`).
- */
+/** Versioned JSON intermediate representation for Harness DSL v0.3. */
 import { type Static, Type } from "@sinclair/typebox";
 
-export const IR_VERSION = "0.2.0";
+export const LANGUAGE_VERSION = "0.3";
+export const IR_VERSION = "0.3.0";
 
 const IrVersion = Type.Literal(IR_VERSION);
 const Identifier = Type.String({ pattern: "^[_a-zA-Z][\\w-]*$" });
 const QualifiedIdentifier = Type.String({ pattern: "^[_a-zA-Z][\\w-]*(\\.[_a-zA-Z][\\w-]*)*$" });
 
-export const StrengthSchema = Type.Union([
-  Type.Literal("unsupported"),
-  Type.Literal("advisory"),
-  Type.Literal("wired"),
-  Type.Literal("enforced"),
-]);
-export type Strength = Static<typeof StrengthSchema>;
+export const STANDARD_TOOL_CONTRACTS: Readonly<Record<string, string>> = Object.freeze({
+  "workspace.read": "builtin:workspace.read@1",
+  "workspace.glob": "builtin:workspace.glob@1",
+  "workspace.search": "builtin:workspace.search@1",
+  "workspace.edit": "builtin:workspace.edit@1",
+  "workspace.write": "builtin:workspace.write@1",
+  "process.exec": "builtin:process.exec@1",
+});
 
 export const CapabilityKindSchema = Type.Union([
   Type.Literal("skill"),
@@ -32,70 +24,25 @@ export const CapabilityKindSchema = Type.Union([
 ]);
 export type CapabilityKind = Static<typeof CapabilityKindSchema>;
 
-export const PermissionGrantSchema = Type.Object(
-  {
-    domain: Type.Union([
-      Type.Literal("workspace"),
-      Type.Literal("process"),
-      Type.Literal("network"),
-      Type.Literal("model"),
-    ]),
-    access: Type.Union([
-      Type.Literal("read"),
-      Type.Literal("write"),
-      Type.Literal("allow"),
-      Type.Literal("deny"),
-    ]),
-  },
-  { additionalProperties: false },
-);
-export type PermissionGrant = Static<typeof PermissionGrantSchema>;
-
-export const ConfigValueSchema = Type.Union([
-  Type.Object({ type: Type.Literal("int"), value: Type.Number() }, { additionalProperties: false }),
-  Type.Object(
-    { type: Type.Literal("duration"), value: Type.String(), ms: Type.Number() },
-    { additionalProperties: false },
-  ),
-  Type.Object({ type: Type.Literal("string"), value: Type.String() }, { additionalProperties: false }),
-  Type.Object({ type: Type.Literal("boolean"), value: Type.Boolean() }, { additionalProperties: false }),
-]);
-export type ConfigValue = Static<typeof ConfigValueSchema>;
-
-export const ConfigEntrySchema = Type.Object(
-  { key: Type.String(), value: ConfigValueSchema },
-  { additionalProperties: false },
-);
-export type ConfigEntryIr = Static<typeof ConfigEntrySchema>;
-
-/** Progressive knowledge: a source directory, inline guidance, or both. */
 export const SkillIrSchema = Type.Object(
   {
     irVersion: IrVersion,
     kind: Type.Literal("skill"),
-    id: Identifier,
+    id: QualifiedIdentifier,
     source: Type.Optional(Type.String()),
     description: Type.Optional(Type.String()),
-    permissions: Type.Array(PermissionGrantSchema),
   },
   { additionalProperties: false },
 );
 export type SkillIr = Static<typeof SkillIrSchema>;
 
-/**
- * An atomic callable capability. `implicit` marks tools that were only ever
- * named by a `require tool` and never declared: a contract synthesized from
- * its dotted name, with no permissions of its own.
- */
 export const ToolIrSchema = Type.Object(
   {
     irVersion: IrVersion,
     kind: Type.Literal("tool"),
     id: QualifiedIdentifier,
+    contract: Type.String({ minLength: 1 }),
     description: Type.Optional(Type.String()),
-    inputs: Type.Array(Identifier),
-    outputs: Type.Array(Identifier),
-    permissions: Type.Array(PermissionGrantSchema),
     implicit: Type.Boolean(),
   },
   { additionalProperties: false },
@@ -114,12 +61,11 @@ export const McpEndpointIrSchema = Type.Union([
 ]);
 export type McpEndpointIr = Static<typeof McpEndpointIrSchema>;
 
-/** A capability connection (transport + endpoint), not a tool itself. */
 export const McpIrSchema = Type.Object(
   {
     irVersion: IrVersion,
     kind: Type.Literal("mcp"),
-    id: Identifier,
+    id: QualifiedIdentifier,
     transport: Type.Union([Type.Literal("stdio"), Type.Literal("http"), Type.Literal("sse")]),
     url: Type.Optional(McpEndpointIrSchema),
     command: Type.Optional(Type.String()),
@@ -129,12 +75,6 @@ export const McpIrSchema = Type.Object(
 export type McpIr = Static<typeof McpIrSchema>;
 
 export type CapabilityIr = SkillIr | ToolIr | McpIr;
-
-export const WorkflowEdgeSchema = Type.Object(
-  { from: Identifier, to: Identifier },
-  { additionalProperties: false },
-);
-export type WorkflowEdge = Static<typeof WorkflowEdgeSchema>;
 
 export const WorkflowEventSchema = Type.Object(
   { agent: Identifier, outcome: Identifier, to: Identifier },
@@ -148,18 +88,20 @@ export const WorkflowStopSchema = Type.Object(
 );
 export type WorkflowStop = Static<typeof WorkflowStopSchema>;
 
-/**
- * Control flow: a declarative graph of edges/events/stops, or a programmatic
- * controller in a named language. The two dimensions are independent of how
- * a runtime exposes capabilities (tool calling vs programmatic calling).
- */
+export const WorkflowModeSchema = Type.Union([
+  Type.Literal("session"),
+  Type.Literal("state-machine"),
+  Type.Literal("programmatic"),
+]);
+export type WorkflowMode = Static<typeof WorkflowModeSchema>;
+
 export const WorkflowIrSchema = Type.Object(
   {
     irVersion: IrVersion,
     kind: Type.Literal("workflow"),
     id: Identifier,
-    mode: Type.Union([Type.Literal("declarative"), Type.Literal("programmatic")]),
-    edges: Type.Array(WorkflowEdgeSchema),
+    mode: WorkflowModeSchema,
+    entry: Type.Optional(Identifier),
     events: Type.Array(WorkflowEventSchema),
     stops: Type.Array(WorkflowStopSchema),
     program: Type.Optional(
@@ -173,29 +115,12 @@ export const WorkflowIrSchema = Type.Object(
 );
 export type WorkflowIr = Static<typeof WorkflowIrSchema>;
 
-export const ExecutionIrSchema = Type.Union([
-  Type.Object({ style: Type.Literal("tool-calling") }, { additionalProperties: false }),
-  Type.Object(
-    {
-      style: Type.Literal("programmatic"),
-      language: Identifier,
-      options: Type.Array(
-        Type.Object({ key: Identifier, value: Identifier }, { additionalProperties: false }),
-      ),
-    },
-    { additionalProperties: false },
-  ),
-]);
-export type ExecutionIr = Static<typeof ExecutionIrSchema>;
-
-/** A concrete host with its adapter package and capability-calling style. */
 export const RuntimeIrSchema = Type.Object(
   {
     irVersion: IrVersion,
     kind: Type.Literal("runtime"),
     id: Identifier,
-    adapter: Type.String(),
-    execution: ExecutionIrSchema,
+    adapter: Type.String({ minLength: 1 }),
   },
   { additionalProperties: false },
 );
@@ -205,9 +130,6 @@ export const CapabilityRequirementIrSchema = Type.Object(
   {
     capabilityId: QualifiedIdentifier,
     capabilityKind: CapabilityKindSchema,
-    preferred: Type.Optional(StrengthSchema),
-    minimum: StrengthSchema,
-    onDegrade: Type.Union([Type.Literal("fail"), Type.Literal("report")]),
   },
   { additionalProperties: false },
 );
@@ -216,6 +138,7 @@ export type CapabilityRequirementIr = Static<typeof CapabilityRequirementIrSchem
 export const AgentIrSchema = Type.Object(
   {
     id: Identifier,
+    outcomes: Type.Array(Identifier),
     requirements: Type.Array(CapabilityRequirementIrSchema),
   },
   { additionalProperties: false },
@@ -229,35 +152,22 @@ export const HarnessSpecIrSchema = Type.Object(
     id: Identifier,
     workflow: Identifier,
     agents: Type.Array(AgentIrSchema),
-    settings: Type.Array(ConfigEntrySchema),
   },
   { additionalProperties: false },
 );
 export type HarnessSpecIr = Static<typeof HarnessSpecIrSchema>;
 
-/** Deployment statement: harnesses in the bundle deploy to this runtime. */
-export const TargetIrSchema = Type.Object(
-  {
-    runtime: Identifier,
-    adapter: Type.Optional(Identifier),
-  },
-  { additionalProperties: false },
-);
-export type TargetIr = Static<typeof TargetIrSchema>;
-
-export const CapabilityBindingIrSchema = Type.Object(
+export const DeploymentIrSchema = Type.Object(
   {
     irVersion: IrVersion,
-    kind: Type.Literal("capability-binding"),
-    capabilityId: QualifiedIdentifier,
+    kind: Type.Literal("deployment"),
+    id: Identifier,
+    harness: Identifier,
     runtime: Identifier,
-    mechanism: QualifiedIdentifier,
-    strength: StrengthSchema,
-    notes: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );
-export type CapabilityBindingIr = Static<typeof CapabilityBindingIrSchema>;
+export type DeploymentIr = Static<typeof DeploymentIrSchema>;
 
 export const HarnessIrBundleSchema = Type.Object(
   {
@@ -269,52 +179,40 @@ export const HarnessIrBundleSchema = Type.Object(
     workflows: Type.Array(WorkflowIrSchema),
     runtimes: Type.Array(RuntimeIrSchema),
     harnesses: Type.Array(HarnessSpecIrSchema),
-    targets: Type.Array(TargetIrSchema),
-    bindings: Type.Array(CapabilityBindingIrSchema),
+    deployments: Type.Array(DeploymentIrSchema),
   },
   { additionalProperties: false },
 );
 export type HarnessIrBundle = Static<typeof HarnessIrBundleSchema>;
+
+export const RealizationDimensionSchema = Type.Union([
+  Type.Literal("delivered"),
+  Type.Literal("exposed"),
+  Type.Literal("connected"),
+  Type.Literal("orchestrated"),
+]);
+export type RealizationDimension = Static<typeof RealizationDimensionSchema>;
 
 export const RealizationSchema = Type.Object(
   {
     agentId: Identifier,
     capabilityId: QualifiedIdentifier,
     capabilityKind: CapabilityKindSchema,
-    requestedMinimum: StrengthSchema,
-    requestedPreferred: Type.Optional(StrengthSchema),
-    declaredStrength: StrengthSchema,
-    declaredMechanism: Type.Union([QualifiedIdentifier, Type.Null()]),
-    realized: StrengthSchema,
-    /**
-     * How the adapter realized it: a DSL-shaped mechanism name for guidance, or
-     * a host-owned handle such as `host-tool:Write` for a real exposure. Adapter
-     * mechanisms are not DSL identifiers, so this is a free-form string.
-     */
-    materializedMechanism: Type.Union([Type.String(), Type.Null()]),
-    action: Type.Union([
-      Type.Literal("satisfied"),
-      Type.Literal("degraded"),
-      Type.Literal("failed"),
-    ]),
+    dimension: RealizationDimensionSchema,
+    state: Type.Union([Type.Literal("satisfied"), Type.Literal("failed")]),
+    mechanism: Type.Union([Type.String(), Type.Null()]),
     reason: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );
 export type Realization = Static<typeof RealizationSchema>;
 
-/**
- * Content lock for one capability's on-disk source. Path strings alone cannot
- * make a revision immutable: `./skills/impact-analysis` keeps its name while
- * its `SKILL.md` changes underneath. A lock digests the real bytes so drift is
- * detectable before a run starts.
- */
+/** Immutable content lock for one source-backed capability. */
 export const SourceLockSchema = Type.Object(
   {
     capabilityId: QualifiedIdentifier,
     uri: Type.String(),
     digest: Type.String(),
-    /** Files covered by the digest; a single file locks as 1. */
     files: Type.Integer({ minimum: 0 }),
   },
   { additionalProperties: false },
@@ -330,6 +228,10 @@ export const HarnessRevisionSchema = Type.Object(
       { id: Identifier, contentHash: Type.String() },
       { additionalProperties: false },
     ),
+    deployment: Type.Object(
+      { id: Identifier, contentHash: Type.String() },
+      { additionalProperties: false },
+    ),
     target: Type.Object(
       {
         runtime: Identifier,
@@ -337,16 +239,11 @@ export const HarnessRevisionSchema = Type.Object(
         adapterSpecificationVersion: Type.String(),
         adapterImplementationVersion: Type.String(),
         adapterDescriptorHash: Type.String(),
-        execution: ExecutionIrSchema,
       },
       { additionalProperties: false },
     ),
     workflow: Type.Object(
-      {
-        id: Identifier,
-        mode: Type.Union([Type.Literal("declarative"), Type.Literal("programmatic")]),
-        contentHash: Type.String(),
-      },
+      { id: Identifier, mode: WorkflowModeSchema, contentHash: Type.String() },
       { additionalProperties: false },
     ),
     resolved: Type.Object(
@@ -367,16 +264,7 @@ export const HarnessRevisionSchema = Type.Object(
       ),
     ),
     realization: Type.Array(RealizationSchema),
-    /**
-     * Permissions the capabilities asked for. Naming them `requested` keeps the
-     * artifact honest: no shipped adapter enforces them on the host runtime yet,
-     * and the materialization receipt records what was actually enforced.
-     */
-    requestedPermissions: Type.Array(PermissionGrantSchema),
-    settings: Type.Array(ConfigEntrySchema),
-    /** Empty unless the caller locked capability sources at resolve time. */
     sourceLocks: Type.Array(SourceLockSchema),
-    /** Optional link to the project-component inventory this revision was resolved against. */
     componentSnapshotRef: Type.Optional(Type.Object(
       { snapshotId: Type.String(), digest: Type.String() },
       { additionalProperties: false },
@@ -391,50 +279,24 @@ export const ResolutionReportSchema = Type.Object(
     irVersion: IrVersion,
     kind: Type.Literal("resolution-report"),
     harnessId: Identifier,
+    deploymentId: Type.Optional(Identifier),
     runtime: Identifier,
     status: Type.Union([Type.Literal("resolved"), Type.Literal("failed")]),
     realizations: Type.Array(RealizationSchema),
     errors: Type.Array(Type.String()),
-    /** Resolved, but weaker than the DSL reads: multi-agent flows on a single-session adapter. */
     warnings: Type.Array(Type.String()),
   },
   { additionalProperties: false },
 );
 export type ResolutionReport = Static<typeof ResolutionReportSchema>;
 
-/**
- * What one adapter actually wired for one revision.
- *
- * The resolver states desired strength; this receipt states observed runtime
- * facts, in the dimension each capability kind is realized along: a skill is
- * `delivered`, a tool is `exposed`, an MCP server is `connected`, a workflow is
- * `orchestrated`. A single `unsupported < advisory < wired < enforced` ladder
- * cannot express those differences on its own.
- */
-export const MaterializationStateSchema = Type.Union([
-  Type.Literal("materialized"),
-  Type.Literal("degraded"),
-  Type.Literal("unsupported"),
-]);
-export type MaterializationState = Static<typeof MaterializationStateSchema>;
-
-export const RealizationDimensionSchema = Type.Union([
-  Type.Literal("delivered"),
-  Type.Literal("exposed"),
-  Type.Literal("connected"),
-  Type.Literal("orchestrated"),
-]);
-export type RealizationDimension = Static<typeof RealizationDimensionSchema>;
-
 export const CapabilityMaterializationSchema = Type.Object(
   {
     capabilityId: QualifiedIdentifier,
     capabilityKind: CapabilityKindSchema,
     dimension: RealizationDimensionSchema,
-    requestedMinimum: StrengthSchema,
-    realized: StrengthSchema,
-    state: MaterializationStateSchema,
-    mechanism: Type.Union([Type.String(), Type.Null()]),
+    state: Type.Literal("materialized"),
+    mechanism: Type.String(),
     detail: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
@@ -454,23 +316,11 @@ export const HarnessMaterializationReceiptSchema = Type.Object(
     workflow: Type.Object(
       {
         id: Identifier,
-        dimension: RealizationDimensionSchema,
-        requestedMode: Type.String(),
-        realizedMode: Type.Union([Type.String(), Type.Null()]),
-        state: MaterializationStateSchema,
-        detail: Type.Optional(Type.String()),
+        dimension: Type.Literal("orchestrated"),
+        requestedMode: WorkflowModeSchema,
+        realizedMode: WorkflowModeSchema,
+        state: Type.Literal("materialized"),
       },
-      { additionalProperties: false },
-    ),
-    permissions: Type.Object(
-      {
-        requested: Type.Array(PermissionGrantSchema),
-        enforced: Type.Array(PermissionGrantSchema),
-      },
-      { additionalProperties: false },
-    ),
-    settings: Type.Object(
-      { consumed: Type.Array(Type.String()), ignored: Type.Array(Type.String()) },
       { additionalProperties: false },
     ),
     warnings: Type.Array(Type.String()),
@@ -479,7 +329,6 @@ export const HarnessMaterializationReceiptSchema = Type.Object(
 );
 export type HarnessMaterializationReceipt = Static<typeof HarnessMaterializationReceiptSchema>;
 
-/** Look up one capability across the bundle's skill/tool/mcp arrays. */
 export function findCapability(
   bundle: HarnessIrBundle,
   capabilityId: string,

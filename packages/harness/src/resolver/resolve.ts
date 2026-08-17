@@ -1,15 +1,11 @@
 import { contentHash } from "../ir/canonical.js";
-import { STRENGTH_ORDER, strengthIndex } from "../language/harness-validator.js";
 import {
-  type AgentIr,
-  type CapabilityBindingIr,
   type CapabilityIr,
-  type CapabilityRequirementIr,
+  type DeploymentIr,
   type HarnessIrBundle,
   type HarnessRevision,
   type HarnessSpecIr,
   IR_VERSION,
-  type PermissionGrant,
   type Realization,
   type ResolutionReport,
   type RuntimeIr,
@@ -23,66 +19,25 @@ import {
   realizationFactFor,
   workflowFactFor,
   type AdapterRealizationDescriptor,
-  type CapabilityRealizationFact,
 } from "./adapter-descriptor.js";
 
 export interface ResolveOptions {
-  /**
-   * Realization facts of the adapter that will run this revision, either the
-   * descriptor itself or a lookup keyed by the selected runtime for callers that
-   * let the bundle choose its target. Omitting it resolves against
-   * {@link PROMPT_ONLY_DESCRIPTOR}: guidance only, no tool surface, no MCP,
-   * declarative flows. An unknown runtime therefore fails closed instead of
-   * inheriting an optimistic assumption.
-   */
+  /** Adapter facts for the runtime selected by the deployment. */
   adapter?:
     | AdapterRealizationDescriptor
     | ((runtimeId: string) => AdapterRealizationDescriptor | undefined);
-  /** Content locks for declared capability sources, from `lockCapabilitySources`. */
+  /** Content locks for source-backed skills, from `lockCapabilitySources`. */
   sourceLocks?: readonly SourceLock[];
-  /** Provenance link to a HarnessComponentSnapshotV1, included in the revision hash. */
+  /** Provenance link included in the immutable revision hash. */
   componentSnapshotRef?: { snapshotId: string; digest: string };
 }
 
 export interface ResolveResult {
-  /** Immutable run fact. Only present when the report status is `resolved`. */
   revision?: HarnessRevision;
-  /** Always present: requested vs realized strength for every requirement. */
   report: ResolutionReport;
 }
 
-/**
- * Resolve a harness against a target runtime and one adapter's realization facts.
- *
- * Runtime selection: an explicit `runtimeId` wins; otherwise a single
- * `target` statement in the bundle, or a single declared `runtime`, selects
- * itself. A target without a runtime block synthesizes a tool-calling
- * runtime whose adapter is `@harness/adapter-<id>` — adapters are compile
- * backends that harness authors should not have to spell out.
- *
- * Materialization is capability-kind aware, because the kinds are not realized
- * along the same dimension:
- *
- * - a skill is *delivered* as guidance, which prompt text genuinely does
- * - a tool must be *exposed* as a callable host tool; prompt text never is one
- * - an MCP server must be *connected* and tool-discovered
- * - a workflow must be *orchestrated*, not merely described
- *
- * The adapter descriptor answers those questions. A declared binding still
- * bounds the result — `strength unsupported` keeps a capability off a runtime —
- * but a binding claiming `enforced` cannot raise what the adapter actually does.
- *
- * Degradation semantics:
- *
- * - realized >= preferred (or no preferred): satisfied
- * - minimum <= realized < preferred: degraded; `on-degrade fail` turns the
- *   degradation into a resolution failure instead of a silent prompt
- * - realized < minimum: always a resolution failure
- *
- * Deployability: a programmatic workflow only resolves against a runtime whose
- * execution is `programmatic` in the same language *and* an adapter that can
- * drive programmatic workflows.
- */
+/** Resolve the unique deployment of a harness, optionally narrowed by runtime. */
 export function resolveHarness(
   bundle: HarnessIrBundle,
   harnessId: string,
@@ -90,7 +45,7 @@ export function resolveHarness(
   options: ResolveOptions = {},
 ): ResolveResult {
   const harness = bundle.harnesses.find((candidate) => candidate.id === harnessId);
-  if (!harness) {
+  if (harness === undefined) {
     return {
       report: failedReport(harnessId, runtimeId ?? "unknown", [], [
         `Harness '${harnessId}' is not defined in the bundle.`,
@@ -98,52 +53,119 @@ export function resolveHarness(
     };
   }
 
+  const candidates = bundle.deployments.filter(
+    (deployment) =>
+      deployment.harness === harnessId &&
+      (runtimeId === undefined || deployment.runtime === runtimeId),
+  );
+  if (candidates.length !== 1) {
+    const message = candidates.length === 0
+      ? `Harness '${harnessId}' has no declared deployment${runtimeId === undefined ? "" : ` on runtime '${runtimeId}'`}.`
+      : `Harness '${harnessId}' has multiple deployments${runtimeId === undefined ? "" : ` on runtime '${runtimeId}'`}; resolve by deployment id.`;
+    return {
+      report: failedReport(harnessId, runtimeId ?? "unknown", [], [message]),
+    };
+  }
+  return resolveSelectedDeployment(bundle, candidates[0], harness, options);
+}
+
+/** Resolve one named deployment. This is the unambiguous v0.3 entrypoint. */
+export function resolveDeployment(
+  bundle: HarnessIrBundle,
+  deploymentId: string,
+  options: ResolveOptions = {},
+): ResolveResult {
+  const deployment = bundle.deployments.find((candidate) => candidate.id === deploymentId);
+  if (deployment === undefined) {
+    return {
+      report: failedReport("unknown", "unknown", [], [
+        `Deployment '${deploymentId}' is not defined in the bundle.`,
+      ], [], deploymentId),
+    };
+  }
+  const harness = bundle.harnesses.find((candidate) => candidate.id === deployment.harness);
+  if (harness === undefined) {
+    return {
+      report: failedReport(deployment.harness, deployment.runtime, [], [
+        `Deployment '${deployment.id}' references unknown harness '${deployment.harness}'.`,
+      ], [], deployment.id),
+    };
+  }
+  return resolveSelectedDeployment(bundle, deployment, harness, options);
+}
+
+function resolveSelectedDeployment(
+  bundle: HarnessIrBundle,
+  deployment: DeploymentIr,
+  harness: HarnessSpecIr,
+  options: ResolveOptions,
+): ResolveResult {
   const errors: string[] = [];
   const warnings: string[] = [];
-  const runtime = selectRuntime(bundle, runtimeId, errors);
-  if (!runtime) {
-    return { report: failedReport(harness.id, runtimeId ?? "unknown", [], errors) };
-  }
-
-  const descriptor = descriptorFor(options.adapter, runtime.id, runtime.adapter, errors);
-  if (!descriptor) {
-    return { report: failedReport(harness.id, runtime.id, [], errors) };
-  }
-
-  const workflow = bundle.workflows.find((candidate) => candidate.id === harness.workflow);
-  if (!workflow) {
+  const runtime = bundle.runtimes.find((candidate) => candidate.id === deployment.runtime);
+  if (runtime === undefined) {
     return {
-      report: failedReport(harness.id, runtime.id, [], [
-        `Workflow '${harness.workflow}' is not defined in the bundle.`,
-      ]),
+      report: failedReport(harness.id, deployment.runtime, [], [
+        `Deployment '${deployment.id}' references unknown runtime '${deployment.runtime}'.`,
+      ], warnings, deployment.id),
     };
   }
 
-  checkWorkflowDeployability(workflow, runtime, harness, descriptor, errors, warnings);
+  const descriptor = descriptorFor(options.adapter, runtime, errors);
+  if (descriptor === undefined) {
+    return {
+      report: failedReport(harness.id, runtime.id, [], errors, warnings, deployment.id),
+    };
+  }
+
+  const workflow = bundle.workflows.find((candidate) => candidate.id === harness.workflow);
+  if (workflow === undefined) {
+    return {
+      report: failedReport(harness.id, runtime.id, [], [
+        `Workflow '${harness.workflow}' is not defined in the bundle.`,
+      ], warnings, deployment.id),
+    };
+  }
+  checkWorkflowDeployability(workflow, runtime, descriptor, errors);
 
   const realizations: Realization[] = [];
   const enabledCapabilityIds = new Set<string>();
   for (const agent of harness.agents) {
     for (const requirement of agent.requirements) {
       const capability = findCapability(bundle, requirement.capabilityId);
-      if (!capability) {
+      if (capability === undefined) {
         errors.push(
           `Agent '${agent.id}' requires unknown capability '${requirement.capabilityId}'.`,
         );
         continue;
       }
       enabledCapabilityIds.add(capability.id);
-      realizations.push(
-        realizeRequirement(bundle, agent, requirement, runtime.id, descriptor, errors),
-      );
+      const fact = realizationFactFor(descriptor, capability);
+      const realization: Realization = {
+        agentId: agent.id,
+        capabilityId: capability.id,
+        capabilityKind: capability.kind,
+        dimension: fact.dimension,
+        state: fact.available ? "satisfied" : "failed",
+        mechanism: fact.mechanism,
+        ...(fact.limitation === undefined ? {} : { reason: fact.limitation }),
+      };
+      realizations.push(realization);
+      if (!fact.available) {
+        errors.push(
+          `Capability '${capability.id}' for agent '${agent.id}' is unavailable on runtime ` +
+            `'${runtime.id}': ${fact.limitation ?? "the adapter exposes no matching contract"}.`,
+        );
+      }
     }
   }
   realizations.sort(
     (a, b) => compareByKey(a.agentId, b.agentId) || compareByKey(a.capabilityId, b.capabilityId),
   );
-
   if (errors.length > 0) {
-    return { report: failedReport(harness.id, runtime.id, realizations, errors, warnings) };
+    return {
+      report: failedReport(harness.id, runtime.id, realizations, errors, warnings, deployment.id),
+    };
   }
 
   const enabledCapabilities = [...enabledCapabilityIds]
@@ -152,20 +174,22 @@ export function resolveHarness(
     .filter((capability): capability is CapabilityIr => capability !== undefined);
   const sourceLocks = selectSourceLocks(enabledCapabilities, options.sourceLocks ?? [], errors);
   if (errors.length > 0) {
-    return { report: failedReport(harness.id, runtime.id, realizations, errors, warnings) };
+    return {
+      report: failedReport(harness.id, runtime.id, realizations, errors, warnings, deployment.id),
+    };
   }
 
   const revisionBody: Omit<HarnessRevision, "revisionId"> = {
     irVersion: IR_VERSION,
-    kind: "harness-revision" as const,
+    kind: "harness-revision",
     harness: { id: harness.id, contentHash: contentHash(harness) },
+    deployment: { id: deployment.id, contentHash: contentHash(deployment) },
     target: {
       runtime: runtime.id,
       adapter: runtime.adapter,
       adapterSpecificationVersion: descriptor.specificationVersion,
       adapterImplementationVersion: descriptor.implementationVersion,
       adapterDescriptorHash: contentHash(descriptor),
-      execution: runtime.execution,
     },
     workflow: { id: workflow.id, mode: workflow.mode, contentHash: contentHash(workflow) },
     resolved: {
@@ -182,19 +206,11 @@ export function resolveHarness(
         .sort(compareByKey),
     })),
     realization: realizations,
-    requestedPermissions: mergePermissions(enabledCapabilities),
-    settings: harness.settings,
     sourceLocks,
-    ...(options.componentSnapshotRef !== undefined
-      ? { componentSnapshotRef: { ...options.componentSnapshotRef } }
-      : {}),
+    ...(options.componentSnapshotRef === undefined
+      ? {}
+      : { componentSnapshotRef: { ...options.componentSnapshotRef } }),
   };
-  // Frozen at the boundary: a revision handed to an executor is a run fact, and
-  // an executor that can edit it can also invalidate its own evidence. The body
-  // is cloned first because `settings` still aliases the caller's bundle and
-  // `realization` is shared with the report — freezing those in place would
-  // reach back out of the revision and immobilize documents the caller still
-  // owns.
   const revision = deepFreeze<HarnessRevision>(
     structuredClone({ ...revisionBody, revisionId: computeRevisionId(revisionBody) }),
   );
@@ -205,6 +221,7 @@ export function resolveHarness(
       irVersion: IR_VERSION,
       kind: "resolution-report",
       harnessId: harness.id,
+      deploymentId: deployment.id,
       runtime: runtime.id,
       status: "resolved",
       realizations,
@@ -214,14 +231,52 @@ export function resolveHarness(
   };
 }
 
-/**
- * Select and validate the exact source locks this revision depends on.
- *
- * `lockCapabilitySources` may lock a whole bundle while one harness uses only a
- * subset, so unrelated locks are ignored. Every resolved source-backed skill,
- * however, must have exactly one matching URI/digest entry: an empty or partial
- * lock set would recreate the mutable-source hole the revision is meant to close.
- */
+function descriptorFor(
+  adapter: ResolveOptions["adapter"],
+  runtime: RuntimeIr,
+  errors: string[],
+): AdapterRealizationDescriptor | undefined {
+  const floor = { ...PROMPT_ONLY_DESCRIPTOR, adapterId: runtime.adapter };
+  const supplied = adapter === undefined
+    ? floor
+    : typeof adapter === "function"
+      ? adapter(runtime.id) ?? floor
+      : adapter;
+  if (supplied.adapterId !== runtime.adapter) {
+    errors.push(
+      `Runtime '${runtime.id}' selects adapter '${runtime.adapter}', but the supplied realization ` +
+        `descriptor describes '${supplied.adapterId}'.`,
+    );
+    return undefined;
+  }
+  return supplied;
+}
+
+function checkWorkflowDeployability(
+  workflow: WorkflowIr,
+  runtime: RuntimeIr,
+  descriptor: AdapterRealizationDescriptor,
+  errors: string[],
+): void {
+  const fact = workflowFactFor(descriptor, workflow);
+  if (!fact.supported) {
+    errors.push(
+      `Workflow '${workflow.id}' cannot run on runtime '${runtime.id}': ${fact.limitation}.`,
+    );
+    return;
+  }
+  if (
+    workflow.mode === "programmatic" &&
+    !descriptor.programmaticLanguages.includes(workflow.program?.language ?? "")
+  ) {
+    errors.push(
+      `Workflow '${workflow.id}' uses programmatic language ` +
+        `'${workflow.program?.language ?? "unknown"}', but adapter '${descriptor.adapterId}' ` +
+        "does not declare that controller language.",
+    );
+  }
+}
+
 function selectSourceLocks(
   capabilities: readonly CapabilityIr[],
   supplied: readonly SourceLock[],
@@ -256,300 +311,19 @@ function selectSourceLocks(
   return selected.sort((a, b) => compareByKey(a.capabilityId, b.capabilityId));
 }
 
-/**
- * The descriptor this resolve measures against.
- *
- * A lookup that has nothing for the selected runtime falls back to prompt-only
- * facts: an unknown host must not inherit another adapter's abilities.
- *
- * A supplied descriptor must also *be* the adapter the runtime selected.
- * Measuring `runtime qoder { adapter "@acme/other" }` against the built-in
- * Qoder facts would mint a revision that names one adapter package while every
- * realization in it came from another — an artifact that contradicts itself and
- * that no downstream consumer of `revision.json` could falsify. Returning
- * `undefined` fails the resolve instead.
- */
-function descriptorFor(
-  adapter: ResolveOptions["adapter"],
-  runtimeId: string,
-  adapterId: string,
-  errors: string[],
-): AdapterRealizationDescriptor | undefined {
-  const floor = { ...PROMPT_ONLY_DESCRIPTOR, adapterId };
-  if (adapter === undefined) {
-    return floor;
-  }
-  const supplied = typeof adapter === "function" ? adapter(runtimeId) : adapter;
-  if (supplied === undefined) {
-    return floor;
-  }
-  if (supplied.adapterId !== adapterId) {
-    errors.push(
-      `Runtime '${runtimeId}' selects adapter '${adapterId}', but the supplied realization ` +
-        `descriptor describes '${supplied.adapterId}'. Resolve against the descriptor of the ` +
-        "adapter that will run the revision.",
-    );
-    return undefined;
-  }
-  return supplied;
-}
-
-function selectRuntime(
-  bundle: HarnessIrBundle,
-  runtimeId: string | undefined,
-  errors: string[],
-): RuntimeIr | undefined {
-  const id =
-    runtimeId ??
-    (bundle.targets.length === 1
-      ? bundle.targets[0].runtime
-      : bundle.targets.length === 0 && bundle.runtimes.length === 1
-        ? bundle.runtimes[0].id
-        : undefined);
-  if (id === undefined) {
-    errors.push(
-      bundle.targets.length === 0 && bundle.runtimes.length === 0
-        ? "No runtime is available: declare a 'target' or 'runtime', or pass a runtime id."
-        : "Multiple runtimes are available; pass the runtime id to resolve against.",
-    );
-    return undefined;
-  }
-  const declared = bundle.runtimes.find((runtime) => runtime.id === id);
-  if (declared) {
-    return declared;
-  }
-  const target = bundle.targets.find((candidate) => candidate.runtime === id);
-  if (!target && runtimeId !== undefined) {
-    errors.push(`Runtime '${id}' is neither declared as a runtime nor listed as a target.`);
-    return undefined;
-  }
-  // Deployment shorthand: `target qoder uses adapter.qoder` without a runtime
-  // block means a tool-calling runtime with a conventional adapter package.
-  return {
-    irVersion: IR_VERSION,
-    kind: "runtime",
-    id,
-    adapter: `@harness/adapter-${target?.adapter ?? id}`,
-    execution: { style: "tool-calling" },
-  };
-}
-
-/**
- * A workflow must be deployable against adapter-owned execution facts. A
- * programmatic controller that nobody executes is a resolution failure, not a
- * silent no-op.
- */
-function checkWorkflowDeployability(
-  workflow: WorkflowIr,
-  runtime: RuntimeIr,
-  harness: HarnessSpecIr,
-  descriptor: AdapterRealizationDescriptor,
-  errors: string[],
-  warnings: string[],
-): void {
-  if (workflow.mode === "programmatic") {
-    const language = workflow.program?.language ?? "unknown";
-    if (!descriptor.programmaticLanguages.includes(language)) {
-      errors.push(
-        `Workflow '${workflow.id}' is programmatic (${language}), but runtime '${runtime.id}' ` +
-          `uses adapter '${descriptor.adapterId}', whose descriptor does not list ` +
-          `programmatic language '${language}'.`,
-      );
-    }
-  }
-  const fact = workflowFactFor(descriptor, workflow, harness.agents.length);
-  if (!fact.supported) {
-    errors.push(
-      `Workflow '${workflow.id}' cannot be orchestrated on runtime '${runtime.id}': ` +
-        `${fact.limitation}.`,
-    );
-    return;
-  }
-  if (fact.limitation !== undefined) {
-    warnings.push(`Workflow '${workflow.id}' is degraded to '${fact.mode}': ${fact.limitation}.`);
-  }
-}
-
-function realizeRequirement(
-  bundle: HarnessIrBundle,
-  agent: AgentIr,
-  requirement: CapabilityRequirementIr,
-  runtimeId: string,
-  descriptor: AdapterRealizationDescriptor,
-  errors: string[],
-): Realization {
-  const binding =
-    bundle.bindings.find(
-      (candidate) =>
-        candidate.capabilityId === requirement.capabilityId && candidate.runtime === runtimeId,
-    ) ?? defaultBindingFor(requirement.capabilityId, runtimeId);
-  const materialization = materializeAgainstAdapter(binding, requirement, descriptor);
-  const realized = materialization.strength;
-  const minimumIndex = strengthIndex(requirement.minimum);
-  const realizedIndex = strengthIndex(realized);
-  const preferredIndex =
-    requirement.preferred !== undefined ? strengthIndex(requirement.preferred) : minimumIndex;
-
-  if (realizedIndex < minimumIndex) {
-    errors.push(
-      `Capability '${requirement.capabilityId}' for agent '${agent.id}' realizes '${realized}' ` +
-        `on runtime '${runtimeId}', below the required minimum '${requirement.minimum}': ` +
-        `${materialization.reason}.`,
-    );
-    return realize(agent, requirement, binding, materialization, "failed", materialization.reason);
-  }
-  if (realizedIndex < preferredIndex) {
-    if (requirement.onDegrade === "fail") {
-      errors.push(
-        `Capability '${requirement.capabilityId}' for agent '${agent.id}' realizes '${realized}' ` +
-          `on runtime '${runtimeId}', below the preferred '${requirement.preferred}' ` +
-          `and the requirement declares 'on-degrade fail'.`,
-      );
-      return realize(agent, requirement, binding, materialization, "failed", materialization.reason);
-    }
-    return realize(agent, requirement, binding, materialization, "degraded", materialization.reason);
-  }
-  return realize(agent, requirement, binding, materialization, "satisfied");
-}
-
-/**
- * Merge capability permission grants into the revision's requested permission
- * surface. The merge is monotonically tightening: an explicit `deny` on a domain
- * always wins over any grant, regardless of declaration order. MCP entries
- * carry no permission block; their transport implies the connection grant
- * (`stdio` spawns a process, `http`/`sse` reach the network).
- */
-export function mergePermissions(capabilities: CapabilityIr[]): PermissionGrant[] {
-  const byDomain = new Map<PermissionGrant["domain"], Set<PermissionGrant["access"]>>();
-  const add = (grant: PermissionGrant): void => {
-    const accesses = byDomain.get(grant.domain) ?? new Set();
-    accesses.add(grant.access);
-    byDomain.set(grant.domain, accesses);
-  };
-  for (const capability of capabilities) {
-    if (capability.kind === "mcp") {
-      add(
-        capability.transport === "stdio"
-          ? { domain: "process", access: "allow" }
-          : { domain: "network", access: "allow" },
-      );
-      continue;
-    }
-    for (const grant of capability.permissions) {
-      add(grant);
-    }
-  }
-  const merged: PermissionGrant[] = [];
-  for (const [domain, accesses] of byDomain) {
-    if (accesses.has("deny")) {
-      merged.push({ domain, access: "deny" });
-      continue;
-    }
-    for (const access of accesses) {
-      merged.push({ domain, access });
-    }
-  }
-  return merged.sort(
-    (a, b) => compareByKey(a.domain, b.domain) || compareByKey(a.access, b.access),
-  );
-}
-
-function realize(
-  agent: AgentIr,
-  requirement: CapabilityRequirementIr,
-  binding: CapabilityBindingIr,
-  materialization: AdapterMaterialization,
-  action: Realization["action"],
-  reason?: string,
-): Realization {
-  return {
-    agentId: agent.id,
-    capabilityId: requirement.capabilityId,
-    capabilityKind: requirement.capabilityKind,
-    requestedMinimum: requirement.minimum,
-    ...(requirement.preferred !== undefined ? { requestedPreferred: requirement.preferred } : {}),
-    declaredStrength: binding.strength,
-    declaredMechanism: binding.mechanism,
-    realized: materialization.strength,
-    materializedMechanism: materialization.mechanism,
-    action,
-    ...(reason !== undefined ? { reason } : {}),
-  };
-}
-
-/**
- * A capability without an explicit binding falls back to the adapter's own
- * mechanism for that kind: the binding block is a deployment overlay, not the
- * source of truth about what a runtime can do.
- */
-function defaultBindingFor(capabilityId: string, runtime: string): CapabilityBindingIr {
-  return {
-    irVersion: IR_VERSION,
-    kind: "capability-binding",
-    capabilityId,
-    runtime,
-    mechanism: "prompt-preamble",
-    strength: "advisory",
-  };
-}
-
-export interface AdapterMaterialization {
-  strength: Realization["realized"];
-  mechanism: string | null;
-  dimension: CapabilityRealizationFact["dimension"];
-  reason: string;
-}
-
-/**
- * Materialize one requirement against the adapter's facts.
- *
- * Observed realization belongs to the adapter, so the descriptor decides the
- * strength. The author-declared binding can only ever *withhold* a capability
- * from a runtime (`strength unsupported`); it cannot promise more than the
- * adapter delivers.
- */
-export function materializeAgainstAdapter(
-  binding: CapabilityBindingIr,
-  requirement: CapabilityRequirementIr,
-  descriptor: AdapterRealizationDescriptor,
-): AdapterMaterialization {
-  if (binding.strength === "unsupported") {
-    return {
-      strength: "unsupported",
-      mechanism: null,
-      dimension: dimensionFor(requirement.capabilityKind),
-      reason:
-        `the deployment binding declares '${requirement.capabilityId}' unsupported on ` +
-        `runtime '${binding.runtime}'` + (binding.notes ? `: ${binding.notes}` : ""),
-    };
-  }
-  const fact = realizationFactFor(descriptor, requirement.capabilityId, requirement.capabilityKind);
-  const declaredDetail =
-    `runtime '${binding.runtime}' declares '${binding.strength}' via '${binding.mechanism}', ` +
-    `and adapter '${descriptor.adapterId}' ${fact.limitation ?? `realizes '${fact.strength}'`}`;
-  return {
-    strength: fact.strength,
-    mechanism: fact.mechanism,
-    dimension: fact.dimension,
-    reason: binding.notes ? `${declaredDetail}: ${binding.notes}` : declaredDetail,
-  };
-}
-
-function dimensionFor(kind: CapabilityRequirementIr["capabilityKind"]): CapabilityRealizationFact["dimension"] {
-  return kind === "skill" ? "delivered" : kind === "tool" ? "exposed" : "connected";
-}
-
 function failedReport(
   harnessId: string,
   runtime: string,
   realizations: Realization[],
   errors: string[],
   warnings: string[] = [],
+  deploymentId?: string,
 ): ResolutionReport {
   return {
     irVersion: IR_VERSION,
     kind: "resolution-report",
     harnessId,
+    ...(deploymentId === undefined ? {} : { deploymentId }),
     runtime,
     status: "failed",
     realizations,
@@ -561,5 +335,3 @@ function failedReport(
 function compareByKey(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
-
-export { STRENGTH_ORDER };

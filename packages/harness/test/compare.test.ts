@@ -351,6 +351,7 @@ describe("README coding comparison", () => {
     await mkdir(harnessDirectory, { recursive: true });
 
     const sourceBackedHarness = `
+      language 0.3
       skill coding-loop-discipline {
         description "Inspect the repository, make the requested scoped change, and validate it."
       }
@@ -358,23 +359,24 @@ describe("README coding comparison", () => {
         source "./skills/deep-guide"
       }
       workflow readme-loop {
-        writer -> writer
-        stop when writer.done
+        session writer
       }
       harness readme-baseline {
         workflow readme-loop
         agent writer {
-          use skill coding-loop-discipline { minimum advisory }
-          use skill deep-guide { minimum advisory }
+          use skill coding-loop-discipline
+          use skill deep-guide
         }
       }
       harness readme-grounded {
         workflow readme-loop
         agent writer {
-          use skill coding-loop-discipline { minimum advisory }
+          use skill coding-loop-discipline
         }
       }
-      target qoder uses adapter.qoder
+      runtime qoder { adapter "@harness/adapter-qoder" }
+      deployment readme-baseline-qoder { harness readme-baseline runtime qoder }
+      deployment readme-grounded-qoder { harness readme-grounded runtime qoder }
     `;
     await writeFile(join(harnessDirectory, "readme-compare.harness"), sourceBackedHarness, "utf8");
     await mkdir(join(harnessDirectory, "skills", "deep-guide"), { recursive: true });

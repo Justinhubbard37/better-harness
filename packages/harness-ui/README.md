@@ -43,7 +43,7 @@ npx @qoder-ai/harness-ui serve my-agent.harness --port 3210
 - `GET /healthz` — liveness probe.
 
 The server binds to `127.0.0.1` and is a local development surface. Runs
-execute through the same v0.2 executors as the core package (Qoder SDK by
+execute through the same v0.3 executors as the core package (Qoder SDK by
 default), so the executor honesty rules and redaction guarantees apply
 unchanged.
 

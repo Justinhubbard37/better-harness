@@ -1,48 +1,40 @@
 import { URI, type LangiumDocument } from "langium";
+import {
+  IR_VERSION,
+  STANDARD_TOOL_CONTRACTS,
+  type CapabilityKind,
+  type DeploymentIr,
+  type HarnessIrBundle,
+  type HarnessSpecIr,
+  type McpIr,
+  type RuntimeIr,
+  type SkillIr,
+  type ToolIr,
+  type WorkflowIr,
+} from "../ir/index.js";
 import { createHarnessServices } from "../language/harness-module.js";
 import {
   type AgentDeclaration,
-  type CapabilityBinding,
   type CapabilityUse,
-  type ConfigValue,
+  type DeploymentDeclaration,
   type HarnessDeclaration,
   type HarnessDocument,
   type McpDeclaration,
   type RuntimeDeclaration,
   type SkillDeclaration,
-  type TargetDeclaration,
   type ToolDeclaration,
   type WorkflowDeclaration,
-  isEdgeStatement,
+  isDeploymentDeclaration,
   isEnvEndpoint,
   isEventStatement,
   isHarnessDeclaration,
   isMcpDeclaration,
-  isProgrammaticExecution,
   isRuntimeDeclaration,
   isSkillDeclaration,
   isStopStatement,
-  isTargetDeclaration,
   isToolDeclaration,
   isWorkflowDeclaration,
-  isCapabilityBinding,
 } from "../language/generated/ast.js";
-import {
-  type CapabilityBindingIr,
-  type CapabilityKind,
-  type ConfigValue as ConfigValueIr,
-  type ExecutionIr,
-  type HarnessIrBundle,
-  type HarnessSpecIr,
-  IR_VERSION,
-  type McpIr,
-  type RuntimeIr,
-  type SkillIr,
-  type Strength,
-  type TargetIr,
-  type ToolIr,
-  type WorkflowIr,
-} from "../ir/index.js";
 
 export interface CompileDiagnostic {
   severity: "error" | "warning";
@@ -61,24 +53,12 @@ export interface HarnessSource {
   text: string;
 }
 
-const DURATION_FACTORS: Record<string, number> = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 };
-
-/** Default strength for a binding or requirement that omits one. */
-const DEFAULT_STRENGTH: Strength = "advisory";
-
-/** The capability kind each requirement verb asks for. */
 const VERB_KIND: Record<string, CapabilityKind> = {
   use: "skill",
   require: "tool",
   connect: "mcp",
 };
 
-/**
- * Parse one or more Harness DSL sources and lower them into the versioned
- * JSON IR bundle. Cross-file references are resolved across all provided
- * sources. Compilation fails (no bundle) when any parser, linking, or
- * validation error is present.
- */
 export async function compileHarness(input: string | HarnessSource[]): Promise<CompileResult> {
   const sources = typeof input === "string" ? [{ text: input }] : input;
   const { shared } = createHarnessServices();
@@ -104,16 +84,15 @@ export async function compileHarness(input: string | HarnessSource[]): Promise<C
       });
     }
   }
+
   const index = indexDeclarations(documents);
   diagnostics.push(...collectBundleDiagnostics(documents, index));
   if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
     return { diagnostics };
   }
-
   return { bundle: lowerBundle(index), diagnostics };
 }
 
-/** All declarations across the source set, in declaration order. */
 interface DeclarationIndex {
   skills: SkillDeclaration[];
   tools: ToolDeclaration[];
@@ -121,11 +100,8 @@ interface DeclarationIndex {
   workflows: WorkflowDeclaration[];
   runtimes: RuntimeDeclaration[];
   harnesses: HarnessDeclaration[];
-  targets: TargetDeclaration[];
-  bindings: CapabilityBinding[];
-  /** Capability id -> declared kind, across the shared capability namespace. */
+  deployments: DeploymentDeclaration[];
   capabilityKinds: Map<string, CapabilityKind>;
-  /** Tool ids named by `require tool` but never declared. */
   implicitTools: Set<string>;
 }
 
@@ -137,8 +113,7 @@ function indexDeclarations(documents: LangiumDocument[]): DeclarationIndex {
     workflows: [],
     runtimes: [],
     harnesses: [],
-    targets: [],
-    bindings: [],
+    deployments: [],
     capabilityKinds: new Map(),
     implicitTools: new Set(),
   };
@@ -160,17 +135,19 @@ function indexDeclarations(documents: LangiumDocument[]): DeclarationIndex {
         index.runtimes.push(element);
       } else if (isHarnessDeclaration(element)) {
         index.harnesses.push(element);
-      } else if (isTargetDeclaration(element)) {
-        index.targets.push(element);
-      } else if (isCapabilityBinding(element)) {
-        index.bindings.push(element);
+      } else if (isDeploymentDeclaration(element)) {
+        index.deployments.push(element);
       }
     }
   }
   for (const harness of index.harnesses) {
     for (const agent of harness.agents) {
       for (const requirement of agent.requirements) {
-        if (requirement.verb === "require" && !index.capabilityKinds.has(requirement.capability)) {
+        if (
+          requirement.verb === "require" &&
+          !index.capabilityKinds.has(requirement.capability) &&
+          STANDARD_TOOL_CONTRACTS[requirement.capability] !== undefined
+        ) {
           index.implicitTools.add(requirement.capability);
         }
       }
@@ -188,8 +165,8 @@ function collectBundleDiagnostics(
   const workflows = new Map<string, string>();
   const runtimes = new Map<string, string>();
   const harnesses = new Map<string, string>();
-  const targets = new Map<string, string>();
-  const bindings = new Map<string, string>();
+  const deployments = new Map<string, string>();
+  const deploymentPairs = new Map<string, string>();
 
   for (const document of documents) {
     const source = document.uri.toString();
@@ -197,343 +174,278 @@ function collectBundleDiagnostics(
     for (const element of root.elements) {
       const line = element.$cstNode?.range.start.line;
       if (isSkillDeclaration(element)) {
-        recordUnique(capabilities, element.name, "capability", source, line);
+        recordUnique(capabilities, element.name, "capability", source, line, diagnostics);
         if (element.source === undefined && element.description === undefined) {
-          diagnostics.push(
-            semanticDiagnostic(
-              `Skill '${element.name}' declares neither 'source' nor 'description'; ` +
-                "a skill needs a source directory, inline guidance, or both.",
-              source,
-              line,
-            ),
-          );
+          diagnostics.push(semanticDiagnostic(
+            `Skill '${element.name}' declares neither 'source' nor 'description'.`,
+            source,
+            line,
+          ));
         }
       } else if (isToolDeclaration(element)) {
-        recordUnique(capabilities, element.name, "capability", source, line);
-        recordRepeatedValues(element.inputs, "tool input", source, line);
-        recordRepeatedValues(element.outputs, "tool output", source, line);
+        recordUnique(capabilities, element.name, "capability", source, line, diagnostics);
+        if (element.contract.length === 0) {
+          diagnostics.push(semanticDiagnostic(
+            `Tool '${element.name}' needs a non-empty contract id.`,
+            source,
+            line,
+          ));
+        }
+        const standard = STANDARD_TOOL_CONTRACTS[element.name];
+        if (standard !== undefined && element.contract !== standard) {
+          diagnostics.push(semanticDiagnostic(
+            `Standard tool '${element.name}' must use contract '${standard}', not '${element.contract}'.`,
+            source,
+            line,
+          ));
+        }
       } else if (isMcpDeclaration(element)) {
-        recordUnique(capabilities, element.name, "capability", source, line);
+        recordUnique(capabilities, element.name, "capability", source, line, diagnostics);
         if (element.transport === "stdio" && element.command === undefined) {
-          diagnostics.push(
-            semanticDiagnostic(
-              `MCP '${element.name}' uses 'stdio' transport but declares no 'command'.`,
-              source,
-              line,
-            ),
-          );
+          diagnostics.push(semanticDiagnostic(
+            `MCP '${element.name}' uses 'stdio' transport but declares no 'command'.`,
+            source,
+            line,
+          ));
         }
         if (element.transport !== "stdio" && element.url === undefined) {
-          diagnostics.push(
-            semanticDiagnostic(
-              `MCP '${element.name}' uses '${element.transport}' transport but declares no 'url'.`,
-              source,
-              line,
-            ),
-          );
+          diagnostics.push(semanticDiagnostic(
+            `MCP '${element.name}' uses '${element.transport}' transport but declares no 'url'.`,
+            source,
+            line,
+          ));
         }
       } else if (isWorkflowDeclaration(element)) {
-        recordUnique(workflows, element.name, "workflow", source, line);
-        if (element.program !== undefined && element.statements.length > 0) {
-          diagnostics.push(
-            semanticDiagnostic(
-              `Workflow '${element.name}' mixes 'program' with graph statements; ` +
-                "declare either a programmatic controller or a declarative graph.",
-              source,
-              line,
-            ),
-          );
-        }
-        if (element.program === undefined && element.statements.length === 0) {
-          diagnostics.push(
-            semanticDiagnostic(
-              `Workflow '${element.name}' is empty; declare edges or a 'program'.`,
-              source,
-              line,
-            ),
-          );
-        }
-        // A declarative graph states when the run ends. Without a stop condition
-        // the edges describe a loop nobody can leave, which reads as a complete
-        // specification while defining no terminal state at all.
-        if (
-          element.program === undefined &&
-          element.statements.length > 0 &&
-          !element.statements.some(isStopStatement)
-        ) {
-          diagnostics.push(
-            semanticDiagnostic(
-              `Workflow '${element.name}' declares no stop condition; add ` +
-                "'stop when <agent>.<outcome>' so the run has a terminal state.",
-              source,
-              line,
-            ),
-          );
-        }
+        recordUnique(workflows, element.name, "workflow", source, line, diagnostics);
+        diagnoseWorkflow(element, source, line, diagnostics);
       } else if (isRuntimeDeclaration(element)) {
-        recordUnique(runtimes, element.name, "runtime", source, line);
-        if (element.execution !== undefined) {
-          diagnostics.push({
-            severity: "warning",
-            message:
-              `Runtime '${element.name}' uses deprecated 'execution' syntax; execution ` +
-              "capabilities belong to the adapter descriptor and this declaration has no effect.",
-            source,
-            ...(line !== undefined ? { line: line + 1 } : {}),
-          });
-        }
-        if (element.execution !== undefined && isProgrammaticExecution(element.execution)) {
-          recordRepeatedValues(
-            element.execution.options.map((option) => option.key),
-            "execution option",
+        recordUnique(runtimes, element.name, "runtime", source, line, diagnostics);
+        if (element.adapter.length === 0) {
+          diagnostics.push(semanticDiagnostic(
+            `Runtime '${element.name}' needs a non-empty adapter package id.`,
             source,
             line,
-          );
+          ));
         }
       } else if (isHarnessDeclaration(element)) {
-        recordUnique(harnesses, element.name, "harness", source, line);
-        recordHarnessMembers(element, source, line);
-      } else if (isTargetDeclaration(element)) {
-        recordUnique(targets, element.runtime, "target runtime", source, line);
-        const runtime = index.runtimes.find((candidate) => candidate.name === element.runtime);
-        if (runtime !== undefined && element.adapter !== undefined) {
-          diagnostics.push(
-            semanticDiagnostic(
-              `Target '${element.runtime}' declares 'uses adapter.${element.adapter}', but runtime ` +
-                `'${runtime.name}' already owns adapter '${runtime.adapter}'; drop the target adapter.`,
-              source,
-              line,
-            ),
-          );
-        }
-      } else if (isCapabilityBinding(element)) {
-        if (element.legacyMechanism !== undefined || element.legacyStrength !== undefined) {
-          diagnostics.push(
-            semanticDiagnostic(
-              `Binding '${element.capability}' declares realization mechanism or strength, but ` +
-                "those facts belong to the adapter descriptor; keep only 'unsupported' as a deployment veto.",
-              source,
-              line,
-            ),
-          );
-        }
-        for (const runtime of element.runtimes) {
+        recordUnique(harnesses, element.name, "harness", source, line, diagnostics);
+        diagnoseHarnessMembers(element, index, source, line, diagnostics);
+      } else if (isDeploymentDeclaration(element)) {
+        recordUnique(deployments, element.name, "deployment", source, line, diagnostics);
+        const harness = element.harness?.$refText;
+        const runtime = element.runtime?.$refText;
+        if (harness !== undefined && runtime !== undefined) {
           recordUnique(
-            bindings,
-            `${element.capability}::${runtime}`,
-            "capability/runtime binding",
+            deploymentPairs,
+            `${harness}::${runtime}`,
+            "harness/runtime deployment",
             source,
             line,
-          );
-        }
-        if (
-          !index.capabilityKinds.has(element.capability) &&
-          !index.implicitTools.has(element.capability)
-        ) {
-          diagnostics.push(
-            semanticDiagnostic(
-              `Binding references unknown capability '${element.capability}'; declare it as a ` +
-                "skill, tool, or mcp, or require it from an agent.",
-              source,
-              line,
-            ),
+            diagnostics,
           );
         }
       }
     }
   }
 
-  // Workflow statements name agents by role. Every harness that uses a
-  // workflow must declare each referenced role.
   for (const document of documents) {
     const source = document.uri.toString();
     const root = document.parseResult.value as HarnessDocument;
     for (const element of root.elements) {
-      if (!isHarnessDeclaration(element)) {
-        continue;
-      }
-      // A malformed document can leave the workflow cross-reference entirely
-      // unset; parsing already reported the syntax error.
+      if (!isHarnessDeclaration(element)) continue;
       const workflow = element.workflow?.ref;
-      if (workflow === undefined) {
-        continue; // Linking already reported the missing workflow.
-      }
-      const roles = new Set(element.agents.map((agent) => agent.name));
-      const referencedRoles = workflowAgentNames(workflow);
-      const line = element.$cstNode?.range.start.line;
-      for (const referenced of referencedRoles) {
-        if (!roles.has(referenced)) {
-          diagnostics.push(
-            semanticDiagnostic(
-              `Workflow '${workflow.name}' references agent '${referenced}', which harness ` +
-                `'${element.name}' does not declare.`,
-              source,
-              line,
-            ),
-          );
-        }
-      }
-      // The reverse direction matters just as much. A declared role the workflow
-      // never names still contributes its capabilities to the run and still
-      // counts toward the adapter's agent-isolation limits, while the control
-      // flow can never reach it.
-      if (workflow.program === undefined) {
-        for (const role of roles) {
-          if (!referencedRoles.has(role)) {
-            diagnostics.push(
-              semanticDiagnostic(
-                `Harness '${element.name}' declares agent '${role}', which workflow ` +
-                  `'${workflow.name}' never references; give it an edge, event, or stop condition.`,
-                source,
-                line,
-              ),
-            );
-          }
-        }
+      if (workflow !== undefined) {
+        diagnoseHarnessWorkflow(element, workflow, source, diagnostics);
       }
     }
   }
   return diagnostics;
+}
 
-  function recordHarnessMembers(
-    harness: HarnessDeclaration,
-    source: string,
-    line: number | undefined,
-  ): void {
-    recordRepeatedValues(
-      harness.agents.map((agent) => agent.name),
-      "agent",
+function diagnoseWorkflow(
+  workflow: WorkflowDeclaration,
+  source: string,
+  line: number | undefined,
+  diagnostics: CompileDiagnostic[],
+): void {
+  const forms = Number(workflow.session !== undefined) + Number(workflow.program !== undefined) +
+    Number(workflow.stateMachine);
+  if (forms !== 1) {
+    diagnostics.push(semanticDiagnostic(
+      `Workflow '${workflow.name}' must declare exactly one of 'session', 'program', or 'state-machine'.`,
       source,
       line,
-    );
-    recordRepeatedValues(
-      harness.settings.map((setting) => setting.key),
-      "configuration key",
-      source,
-      line,
-    );
-    for (const agent of harness.agents) {
-      const agentLine = agent.$cstNode?.range.start.line ?? line;
-      recordRepeatedValues(
-        agent.requirements.map((requirement) => requirement.capability),
-        `agent '${agent.name}' requirement`,
+    ));
+    return;
+  }
+  if (workflow.session !== undefined) {
+    if (workflow.entry !== undefined || workflow.statements.length > 0) {
+      diagnostics.push(semanticDiagnostic(
+        `Session workflow '${workflow.name}' cannot declare state-machine entry, events, or stops.`,
         source,
-        agentLine,
-      );
-      for (const requirement of agent.requirements) {
-        diagnoseRequirement(requirement, source, agentLine);
-      }
+        line,
+      ));
     }
+    return;
   }
-
-  function diagnoseRequirement(
-    requirement: CapabilityUse,
-    source: string,
-    line: number | undefined,
-  ): void {
-    const expected = VERB_KIND[requirement.verb];
-    const declared = index.capabilityKinds.get(requirement.capability);
-    if (declared !== undefined && declared !== expected) {
-      diagnostics.push(
-        semanticDiagnostic(
-          `'${requirement.verb}' expects a ${expected}, but '${requirement.capability}' ` +
-            `is declared as a ${declared}.`,
-          source,
-          line,
-        ),
-      );
-      return;
+  if (workflow.program !== undefined) {
+    if (workflow.entry !== undefined || workflow.statements.length > 0) {
+      diagnostics.push(semanticDiagnostic(
+        `Programmatic workflow '${workflow.name}' cannot declare state-machine entry, events, or stops.`,
+        source,
+        line,
+      ));
     }
-    // Tools may stay implicit; skills carry sources and MCP entries carry
-    // connection facts, so both must be declared.
-    if (declared === undefined && expected !== "tool") {
-      diagnostics.push(
-        semanticDiagnostic(
-          `Agent requirement references unknown ${expected} '${requirement.capability}'; ` +
-            `declare '${expected} ${requirement.capability} { ... }'.`,
-          source,
-          line,
-        ),
-      );
-    }
+    return;
   }
-
-  function recordRepeatedValues(
-    values: string[],
-    kind: string,
-    source: string,
-    zeroBasedLine?: number,
-  ): void {
-    const seen = new Set<string>();
-    for (const value of values) {
-      if (seen.has(value)) {
-        diagnostics.push(duplicateDiagnostic(kind, value, source, zeroBasedLine));
-      }
-      seen.add(value);
-    }
+  if (workflow.entry === undefined) {
+    diagnostics.push(semanticDiagnostic(
+      `State-machine workflow '${workflow.name}' declares no entry agent.`,
+      source,
+      line,
+    ));
   }
-
-  function recordUnique(
-    seen: Map<string, string>,
-    key: string,
-    kind: string,
-    source: string,
-    zeroBasedLine?: number,
-  ): void {
-    const firstSource = seen.get(key);
-    if (firstSource !== undefined) {
-      diagnostics.push({
-        ...duplicateDiagnostic(kind, key, source, zeroBasedLine),
-        message: `Duplicate ${kind} '${key}'; first declared in ${firstSource}.`,
-      });
-      return;
-    }
-    seen.set(key, source);
+  if (!workflow.statements.some(isStopStatement)) {
+    diagnostics.push(semanticDiagnostic(
+      `State-machine workflow '${workflow.name}' declares no stop condition.`,
+      source,
+      line,
+    ));
   }
 }
 
-/** Agent role names referenced by a workflow's declarative statements. */
-function workflowAgentNames(workflow: WorkflowDeclaration): Set<string> {
-  const names = new Set<string>();
+function diagnoseHarnessMembers(
+  harness: HarnessDeclaration,
+  index: DeclarationIndex,
+  source: string,
+  line: number | undefined,
+  diagnostics: CompileDiagnostic[],
+): void {
+  if (harness.agents.length === 0) {
+    diagnostics.push(semanticDiagnostic(
+      `Harness '${harness.name}' must declare at least one agent.`,
+      source,
+      line,
+    ));
+  }
+  recordRepeatedValues(harness.agents.map((agent) => agent.name), "agent", source, line, diagnostics);
+  for (const agent of harness.agents) {
+    const agentLine = agent.$cstNode?.range.start.line ?? line;
+    recordRepeatedValues(agent.outcomes, `agent '${agent.name}' outcome`, source, agentLine, diagnostics);
+    recordRepeatedValues(
+      agent.requirements.map((requirement) => requirement.capability),
+      `agent '${agent.name}' requirement`,
+      source,
+      agentLine,
+      diagnostics,
+    );
+    for (const requirement of agent.requirements) {
+      diagnoseRequirement(requirement, index, source, agentLine, diagnostics);
+    }
+  }
+}
+
+function diagnoseRequirement(
+  requirement: CapabilityUse,
+  index: DeclarationIndex,
+  source: string,
+  line: number | undefined,
+  diagnostics: CompileDiagnostic[],
+): void {
+  const expected = VERB_KIND[requirement.verb];
+  const declared = index.capabilityKinds.get(requirement.capability);
+  if (declared !== undefined && declared !== expected) {
+    diagnostics.push(semanticDiagnostic(
+      `'${requirement.verb}' expects a ${expected}, but '${requirement.capability}' is declared as a ${declared}.`,
+      source,
+      line,
+    ));
+    return;
+  }
+  if (declared !== undefined) return;
+  if (expected === "tool" && STANDARD_TOOL_CONTRACTS[requirement.capability] !== undefined) return;
+  diagnostics.push(semanticDiagnostic(
+    expected === "tool"
+      ? `Unknown tool '${requirement.capability}'; declare it with a contract id or use a standard tool id.`
+      : `Agent requirement references unknown ${expected} '${requirement.capability}'; declare it first.`,
+    source,
+    line,
+  ));
+}
+
+function diagnoseHarnessWorkflow(
+  harness: HarnessDeclaration,
+  workflow: WorkflowDeclaration,
+  source: string,
+  diagnostics: CompileDiagnostic[],
+): void {
+  const line = harness.$cstNode?.range.start.line;
+  const roles = new Map(harness.agents.map((agent) => [agent.name, agent]));
+  if (workflow.session !== undefined) {
+    if (harness.agents.length !== 1 || !roles.has(workflow.session.agent)) {
+      diagnostics.push(semanticDiagnostic(
+        `Session workflow '${workflow.name}' names agent '${workflow.session.agent}', so harness ` +
+          `'${harness.name}' must declare exactly that one agent.`,
+        source,
+        line,
+      ));
+    }
+    return;
+  }
+  if (!workflow.stateMachine) return;
+
+  if (workflow.entry !== undefined && !roles.has(workflow.entry)) {
+    diagnostics.push(semanticDiagnostic(
+      `State-machine workflow '${workflow.name}' entry agent '${workflow.entry}' is not declared by harness '${harness.name}'.`,
+      source,
+      line,
+    ));
+  }
   for (const statement of workflow.statements) {
-    if (isEdgeStatement(statement)) {
-      names.add(statement.from);
-      names.add(statement.to);
-    } else if (isEventStatement(statement)) {
-      names.add(statement.agent);
-      names.add(statement.to);
-    } else if (isStopStatement(statement)) {
-      names.add(statement.agent);
+    const emitter = roles.get(statement.agent);
+    if (emitter === undefined) {
+      diagnostics.push(semanticDiagnostic(
+        `Workflow '${workflow.name}' references undeclared agent '${statement.agent}' in harness '${harness.name}'.`,
+        source,
+        line,
+      ));
+    } else if (!emitter.outcomes.includes(statement.outcome)) {
+      diagnostics.push(semanticDiagnostic(
+        `Workflow '${workflow.name}' routes undeclared outcome '${statement.agent}.${statement.outcome}'.`,
+        source,
+        line,
+      ));
+    }
+    if (isEventStatement(statement) && !roles.has(statement.to)) {
+      diagnostics.push(semanticDiagnostic(
+        `Workflow '${workflow.name}' routes to undeclared agent '${statement.to}' in harness '${harness.name}'.`,
+        source,
+        line,
+      ));
     }
   }
-  return names;
-}
 
-function duplicateDiagnostic(
-  kind: string,
-  value: string,
-  source: string,
-  zeroBasedLine?: number,
-): CompileDiagnostic {
-  return {
-    severity: "error",
-    message: `Duplicate ${kind} '${value}'.`,
-    source,
-    ...(zeroBasedLine !== undefined ? { line: zeroBasedLine + 1 } : {}),
-  };
-}
-
-function semanticDiagnostic(
-  message: string,
-  source: string,
-  zeroBasedLine?: number,
-): CompileDiagnostic {
-  return {
-    severity: "error",
-    message,
-    source,
-    ...(zeroBasedLine !== undefined ? { line: zeroBasedLine + 1 } : {}),
-  };
+  if (workflow.entry === undefined || !roles.has(workflow.entry)) return;
+  const reachable = new Set<string>([workflow.entry]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const statement of workflow.statements) {
+      if (isEventStatement(statement) && reachable.has(statement.agent) && !reachable.has(statement.to)) {
+        reachable.add(statement.to);
+        changed = true;
+      }
+    }
+  }
+  for (const role of roles.keys()) {
+    if (!reachable.has(role)) {
+      diagnostics.push(semanticDiagnostic(
+        `Harness '${harness.name}' agent '${role}' is unreachable from workflow '${workflow.name}' entry '${workflow.entry}'.`,
+        source,
+        line,
+      ));
+    }
+  }
 }
 
 function lowerBundle(index: DeclarationIndex): HarnessIrBundle {
@@ -542,15 +454,14 @@ function lowerBundle(index: DeclarationIndex): HarnessIrBundle {
     kind: "harness-ir-bundle",
     skills: index.skills.map(lowerSkill),
     tools: [
-      ...index.tools.map((tool) => lowerTool(tool)),
+      ...index.tools.map(lowerTool),
       ...[...index.implicitTools].sort().map(implicitTool),
     ],
     mcps: index.mcps.map(lowerMcp),
     workflows: index.workflows.map(lowerWorkflow),
     runtimes: index.runtimes.map(lowerRuntime),
     harnesses: index.harnesses.map(lowerHarness),
-    targets: index.targets.map(lowerTarget),
-    bindings: index.bindings.flatMap(lowerBinding),
+    deployments: index.deployments.map(lowerDeployment),
   };
 }
 
@@ -561,7 +472,6 @@ function lowerSkill(skill: SkillDeclaration): SkillIr {
     id: skill.name,
     ...(skill.source !== undefined ? { source: skill.source } : {}),
     ...(skill.description !== undefined ? { description: skill.description } : {}),
-    permissions: skill.permissions.map((rule) => ({ domain: rule.domain, access: rule.access })),
   };
 }
 
@@ -570,10 +480,8 @@ function lowerTool(tool: ToolDeclaration): ToolIr {
     irVersion: IR_VERSION,
     kind: "tool",
     id: tool.name,
+    contract: tool.contract,
     ...(tool.description !== undefined ? { description: tool.description } : {}),
-    inputs: [...tool.inputs],
-    outputs: [...tool.outputs],
-    permissions: tool.permissions.map((rule) => ({ domain: rule.domain, access: rule.access })),
     implicit: false,
   };
 }
@@ -583,9 +491,7 @@ function implicitTool(id: string): ToolIr {
     irVersion: IR_VERSION,
     kind: "tool",
     id,
-    inputs: [],
-    outputs: [],
-    permissions: [],
+    contract: STANDARD_TOOL_CONTRACTS[id],
     implicit: true,
   };
 }
@@ -608,24 +514,27 @@ function lowerMcp(mcp: McpDeclaration): McpIr {
 }
 
 function lowerWorkflow(workflow: WorkflowDeclaration): WorkflowIr {
-  const edges: WorkflowIr["edges"] = [];
   const events: WorkflowIr["events"] = [];
   const stops: WorkflowIr["stops"] = [];
   for (const statement of workflow.statements) {
-    if (isEdgeStatement(statement)) {
-      edges.push({ from: statement.from, to: statement.to });
-    } else if (isEventStatement(statement)) {
+    if (isEventStatement(statement)) {
       events.push({ agent: statement.agent, outcome: statement.outcome, to: statement.to });
     } else if (isStopStatement(statement)) {
       stops.push({ agent: statement.agent, outcome: statement.outcome });
     }
   }
+  const mode: WorkflowIr["mode"] = workflow.session !== undefined
+    ? "session"
+    : workflow.program !== undefined
+      ? "programmatic"
+      : "state-machine";
   return {
     irVersion: IR_VERSION,
     kind: "workflow",
     id: workflow.name,
-    mode: workflow.program !== undefined ? "programmatic" : "declarative",
-    edges,
+    mode,
+    ...(workflow.session !== undefined ? { entry: workflow.session.agent } : {}),
+    ...(workflow.stateMachine && workflow.entry !== undefined ? { entry: workflow.entry } : {}),
     events,
     stops,
     ...(workflow.program !== undefined
@@ -640,7 +549,6 @@ function lowerRuntime(runtime: RuntimeDeclaration): RuntimeIr {
     kind: "runtime",
     id: runtime.name,
     adapter: runtime.adapter,
-    execution: { style: "tool-calling" },
   };
 }
 
@@ -651,65 +559,75 @@ function lowerHarness(harness: HarnessDeclaration): HarnessSpecIr {
     id: harness.name,
     workflow: harness.workflow.$refText,
     agents: harness.agents.map(lowerAgent),
-    settings: harness.settings.map((entry) => ({
-      key: entry.key,
-      value: lowerConfigValue(entry.value),
-    })),
   };
 }
 
 function lowerAgent(agent: AgentDeclaration): HarnessSpecIr["agents"][number] {
   return {
     id: agent.name,
+    outcomes: [...agent.outcomes],
     requirements: agent.requirements.map((requirement) => ({
       capabilityId: requirement.capability,
       capabilityKind: VERB_KIND[requirement.verb],
-      ...(requirement.preferred !== undefined
-        ? { preferred: requirement.preferred as Strength }
-        : {}),
-      minimum: (requirement.minimum ?? DEFAULT_STRENGTH) as Strength,
-      onDegrade: requirement.onDegrade ?? "report",
     })),
   };
 }
 
-function lowerTarget(target: TargetDeclaration): TargetIr {
+function lowerDeployment(deployment: DeploymentDeclaration): DeploymentIr {
   return {
-    runtime: target.runtime,
-    ...(target.adapter !== undefined ? { adapter: target.adapter } : {}),
+    irVersion: IR_VERSION,
+    kind: "deployment",
+    id: deployment.name,
+    harness: deployment.harness.$refText,
+    runtime: deployment.runtime.$refText,
   };
 }
 
-function lowerBinding(binding: CapabilityBinding): CapabilityBindingIr[] {
-  return binding.runtimes.map((runtime) => ({
-    irVersion: IR_VERSION,
-    kind: "capability-binding",
-    capabilityId: binding.capability,
-    runtime,
-    mechanism: "deployment-veto",
-    strength: binding.unsupported ? "unsupported" : "advisory",
-    ...(binding.notes !== undefined ? { notes: binding.notes } : {}),
-  }));
+function recordRepeatedValues(
+  values: string[],
+  label: string,
+  source: string,
+  line: number | undefined,
+  diagnostics: CompileDiagnostic[],
+): void {
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) {
+      diagnostics.push(semanticDiagnostic(`Duplicate ${label} '${value}'.`, source, line));
+    }
+    seen.add(value);
+  }
 }
 
-function lowerConfigValue(value: ConfigValue): ConfigValueIr {
-  switch (value.$type) {
-    case "IntLiteral":
-      return { type: "int", value: value.value };
-    case "DurationLiteral": {
-      const match = /^([0-9]+)(ms|s|m|h)$/.exec(value.value);
-      if (!match) {
-        throw new Error(`Invalid duration literal: ${value.value}`);
-      }
-      return {
-        type: "duration",
-        value: value.value,
-        ms: Number(match[1]) * DURATION_FACTORS[match[2]],
-      };
-    }
-    case "StringLiteral":
-      return { type: "string", value: value.value };
-    case "BooleanLiteral":
-      return { type: "boolean", value: value.value };
+function recordUnique(
+  seen: Map<string, string>,
+  key: string,
+  label: string,
+  source: string,
+  line: number | undefined,
+  diagnostics: CompileDiagnostic[],
+): void {
+  const firstSource = seen.get(key);
+  if (firstSource !== undefined) {
+    diagnostics.push(semanticDiagnostic(
+      `Duplicate ${label} '${key}' (first declared in ${firstSource}).`,
+      source,
+      line,
+    ));
+  } else {
+    seen.set(key, source);
   }
+}
+
+function semanticDiagnostic(
+  message: string,
+  source: string,
+  line: number | undefined,
+): CompileDiagnostic {
+  return {
+    severity: "error",
+    message,
+    source,
+    ...(line !== undefined ? { line: line + 1 } : {}),
+  };
 }
