@@ -13,6 +13,9 @@ Usage:
 Options:
   --evidence <dir>    harness-compare evidence directory (enables Compare view)
   --harness <file>    .harness file to serve for live runs (enables Run view)
+  --experiment <file> harness-experiment.v1 manifest (enables Experiment view)
+  --experiment-out <dir>
+                      Evidence root for experiment runs
   --harness-id <id>   Harness to resolve (default: the file's only harness)
   --runtime <id>      Target runtime (default: the file's only target)
   --port <n>          Listen port (default: 3311)
@@ -42,6 +45,8 @@ export function resolveHarnessStudioSourceRoot(
 interface ParsedArgs {
   evidence?: string;
   harness?: string;
+  experiment?: string;
+  experimentOut?: string;
   harnessId?: string;
   runtime?: string;
   port: number;
@@ -71,6 +76,12 @@ export function parseHarnessStudioArgs(argv: string[]): ParsedArgs {
         break;
       case "--harness":
         parsed.harness = takeValue();
+        break;
+      case "--experiment":
+        parsed.experiment = takeValue();
+        break;
+      case "--experiment-out":
+        parsed.experimentOut = takeValue();
         break;
       case "--harness-id":
         parsed.harnessId = takeValue();
@@ -122,8 +133,8 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     io.stderr(`${parsed.error}\n`);
     return 2;
   }
-  if (parsed.evidence === undefined && parsed.harness === undefined) {
-    io.stderr("Nothing to show: pass --evidence <dir>, --harness <file.harness>, or both (see --help).\n");
+  if (parsed.evidence === undefined && parsed.harness === undefined && parsed.experiment === undefined) {
+    io.stderr("Nothing to show: pass --experiment, --evidence, or --harness (see --help).\n");
     return 2;
   }
   const harnessSource = parsed.harness !== undefined ? await readFile(parsed.harness, "utf8") : undefined;
@@ -141,6 +152,8 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     ...(parsed.runtime !== undefined ? { runtimeId: parsed.runtime } : {}),
     ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
     ...(sourceRoot !== undefined ? { sourceRoot } : {}),
+    ...(parsed.experiment !== undefined ? { experimentManifestPath: resolve(parsed.experiment) } : {}),
+    ...(parsed.experimentOut !== undefined ? { experimentOutputDirectory: resolve(parsed.experimentOut) } : {}),
   });
   if (parsed.allowRemote) {
     io.stderr(

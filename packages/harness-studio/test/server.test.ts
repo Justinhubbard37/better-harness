@@ -1,12 +1,18 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { HarnessRunEmitter, loadSkillDeliveries, type HarnessExecutor } from "@qoder-ai/harness/exec";
 import { decodeSseStream, type HarnessUiExecutorFactory } from "@qoder-ai/harness-ui";
 import { resolveHarnessStudioSourceRoot, runHarnessStudioCli } from "../src/server/cli.js";
 import { startHarnessStudioServer, type StartedHarnessStudioServer } from "../src/server/server.js";
 import { FIXTURE_VERDICT } from "./compare-model.test.js";
+
+const EXPERIMENT_MANIFEST = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../harness/examples/checkpoint-experiment/experiment.json",
+);
 
 const SOURCE = `
   skill require-tests {
@@ -93,7 +99,7 @@ describe("harness-studio server", () => {
 
     const config = await (await fetch(`${started.url}/api/config`)).json();
 
-    expect(config).toEqual({ aguiEnabled: false, evidenceEnabled: true });
+    expect(config).toEqual({ aguiEnabled: false, evidenceEnabled: true, experimentEnabled: false });
   });
 
   it("serves the evidence verdict.json and 404s when it is absent", async () => {
@@ -111,6 +117,93 @@ describe("harness-studio server", () => {
     const missing = await fetch(`${started.url}/api/evidence`);
     expect(missing.status).toBe(404);
     expect((await missing.json()).error).toMatch(/--evidence/);
+  });
+
+  it("serves an experiment preview and multiplexes lane-scoped events", async () => {
+    const appDir = await makeAppDir();
+    started = await startHarnessStudioServer({
+      appDir,
+      experimentManifestPath: EXPERIMENT_MANIFEST,
+      experimentRunner: async (options) => {
+        options.onEvent?.({
+          type: "lane-started",
+          experimentId: options.experimentId!,
+          laneId: "fresh-default",
+          runId: `${options.experimentId}:fresh-default:1`,
+          at: "2026-08-17T00:00:00.000Z",
+        });
+        options.onEvent?.({
+          type: "lane-event",
+          experimentId: options.experimentId!,
+          laneId: "fresh-default",
+          runId: `${options.experimentId}:fresh-default:1`,
+          at: "2026-08-17T00:00:01.000Z",
+          event: { type: "tool-call-started", toolCallId: "read-1", toolName: "Read", input: { path: "README.md" } },
+        });
+        return {} as never;
+      },
+    });
+
+    const preview = await (await fetch(`${started.url}/api/experiment`)).json();
+    expect(preview.manifest.lanes.map((lane: { id: string }) => lane.id)).toEqual([
+      "history",
+      "fresh-default",
+      "fresh-minimal",
+    ]);
+    expect(preview.contrasts[0]).toMatchObject({
+      id: "profile-effect",
+      attribution: { mode: "attributable", axis: "runtime-profile" },
+    });
+
+    const stream = await fetch(`${started.url}/api/experiment`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ experimentId: "exp_server_test" }),
+    });
+    const body = await stream.text();
+    expect(stream.headers.get("content-type")).toContain("text/event-stream");
+    expect(body).toContain('"experimentId":"exp_server_test"');
+    expect(body).toContain('"laneId":"fresh-default"');
+    expect(body).toContain('"toolName":"Read"');
+  });
+
+  it("rejects cross-origin experiment execution", async () => {
+    const appDir = await makeAppDir();
+    started = await startHarnessStudioServer({
+      appDir,
+      experimentManifestPath: EXPERIMENT_MANIFEST,
+      experimentRunner: async () => ({} as never),
+    });
+
+    const response = await fetch(`${started.url}/api/experiment`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "https://hostile.example" },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(403);
+  });
+
+  it("cancels a running experiment through its lifecycle endpoint", async () => {
+    const appDir = await makeAppDir();
+    started = await startHarnessStudioServer({
+      appDir,
+      experimentManifestPath: EXPERIMENT_MANIFEST,
+      experimentRunner: (options) => new Promise((_, reject) => {
+        options.signal?.addEventListener("abort", () => reject(options.signal?.reason), { once: true });
+      }),
+    });
+    const stream = await fetch(`${started.url}/api/experiment`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ experimentId: "exp_cancel_test" }),
+    });
+
+    const cancellation = await fetch(`${started.url}/api/experiment/exp_cancel_test`, { method: "DELETE" });
+
+    expect(cancellation.status).toBe(202);
+    expect(await cancellation.json()).toMatchObject({ status: "cancelling" });
+    expect(await stream.text()).toContain('"type":"experiment-cancelled"');
   });
 
   it("serves the app shell and refuses path escapes", async () => {
@@ -251,7 +344,7 @@ describe("harness-studio CLI", () => {
     expect(out.join("")).toContain("--evidence <dir>");
   });
 
-  it("requires at least one of --evidence or --harness", async () => {
+  it("requires at least one Studio surface", async () => {
     const errors: string[] = [];
 
     const code = await runHarnessStudioCli([], {
@@ -260,7 +353,7 @@ describe("harness-studio CLI", () => {
     });
 
     expect(code).toBe(2);
-    expect(errors.join("")).toMatch(/--evidence <dir>, --harness <file\.harness>/);
+    expect(errors.join("")).toMatch(/--experiment, --evidence, or --harness/);
   });
 
   it("resolves the default source root from the harness file and honors an override", () => {

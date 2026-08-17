@@ -22,6 +22,8 @@ export interface HarnessRunTask {
   cwd?: string;
   /** Root used to create revision source locks; intentionally independent from cwd. */
   sourceRoot?: string;
+  /** Optional host-neutral cancellation signal for an in-flight turn. */
+  abortSignal?: AbortSignal;
 }
 
 export interface HarnessRunResult {

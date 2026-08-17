@@ -49,6 +49,14 @@
       "types": "./dist/compare/verdict.d.ts",
       "import": "./dist/compare/verdict.js"
     },
+    "./experiment": {
+      "types": "./dist/experiment/index.d.ts",
+      "import": "./dist/experiment/index.js"
+    },
+    "./experiment/evidence": {
+      "types": "./dist/experiment/evidence.d.ts",
+      "import": "./dist/experiment/evidence.js"
+    },
     "./highlight": {
       "types": "./dist/highlight/shiki.d.ts",
       "import": "./dist/highlight/shiki.js"

@@ -163,7 +163,10 @@ export async function runOnce(
   }
   let result: HarnessRunResult;
   try {
-    result = await session.doPromptTurn({ prompt: task.prompt });
+    result = await session.doPromptTurn({
+      prompt: task.prompt,
+      ...(task.abortSignal !== undefined ? { abortSignal: task.abortSignal } : {}),
+    });
   } catch (error) {
     await destroyQuietly(session);
     throw error;

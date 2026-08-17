@@ -52,4 +52,23 @@ describe("package module graph boundaries", () => {
       }
     }
   });
+
+  it("keeps the experiment evidence entry importable from a browser bundle", () => {
+    // Asserted against the emitted module, not the source: the contract is what a
+    // bundler resolves, and `import type` is indistinguishable from a real import
+    // to a lexer reading TypeScript. `npm test` builds first via `pretest`.
+    const built = fileURLToPath(new URL("../dist/experiment/evidence.js", import.meta.url));
+    if (!existsSync(built)) {
+      throw new Error("Run `npm run build -w @qoder-ai/harness` before asserting the emitted module graph.");
+    }
+    const graph = resolvedModuleGraph(built);
+
+    // Studio renders lane configuration and per-contrast attribution in the
+    // browser, so the manifest loader's filesystem access must stay out of reach.
+    for (const item of graph) {
+      const portableItem = item.replaceAll("\\", "/");
+      expect(portableItem.includes("node:"), item).toBe(false);
+      expect(portableItem.includes("/experiment/manifest"), item).toBe(false);
+    }
+  });
 });

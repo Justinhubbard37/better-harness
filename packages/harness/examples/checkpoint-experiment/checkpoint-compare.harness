@@ -1,0 +1,50 @@
+// README-writing comparison: a baseline coding loop against the same loop
+// grounded in repository evidence. Both harnesses share one workflow and
+// deploy to the Qoder runtime; the compare manifest picks one harness per
+// variant.
+
+skill coding-loop-discipline {
+  description "Inspect the repository, make the requested scoped change, run relevant validation, and report concrete evidence."
+  permissions { workspace read workspace write process allow network deny }
+}
+
+skill repository-grounding {
+  description "Before writing documentation, derive every claim from package metadata, public source, executable examples, and current tests; treat archived documentation as stale evidence; state the real retry defaults and abort behavior precisely instead of approximating them."
+  permissions { workspace read network deny }
+}
+
+skill readme-only-scope {
+  description "Change only README.md, and give it exactly the sections a consumer needs in this order: Purpose, Installation, Quick Start, API, Behavior, Verification. Installation shows the consumer command `npm install <package name from package.json>`. Do not invent commands, module formats, badges, URLs, defaults, or capabilities that current repository evidence does not support."
+  permissions { workspace write network deny }
+}
+
+skill executable-readme-verification {
+  description "Write Quick Start as an executable ESM JavaScript example that imports the package by name, then run the package tests and that example before completing; repair the documentation until both pass."
+  permissions { process allow workspace read network deny }
+}
+
+workflow readme-loop {
+  writer -> writer
+  stop when writer.done
+}
+
+harness readme-baseline {
+  workflow readme-loop
+
+  agent writer {
+    use skill coding-loop-discipline { minimum advisory }
+  }
+}
+
+harness readme-grounded {
+  workflow readme-loop
+
+  agent writer {
+    use skill coding-loop-discipline { minimum advisory }
+    use skill repository-grounding { minimum advisory }
+    use skill readme-only-scope { minimum advisory }
+    use skill executable-readme-verification { minimum advisory }
+  }
+}
+
+target qoder uses adapter.qoder

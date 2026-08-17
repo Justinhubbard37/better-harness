@@ -445,7 +445,10 @@ function assertRefAbsent(repoRoot: string, ref: string): void {
   if (result.status === 0) fail("OUTPUT_EXISTS", `output ref already exists: ${ref}`);
 }
 
-export async function validateSessionExecutionPlan(plan: unknown): Promise<{
+export async function validateSessionExecutionPlan(
+  plan: unknown,
+  options: { allowExistingOutputRef?: boolean } = {},
+): Promise<{
   plan: SessionExecutionPlan;
   gitFacts: GitFacts;
   checkpoint: PiCheckpointInspection;
@@ -464,7 +467,9 @@ export async function validateSessionExecutionPlan(plan: unknown): Promise<{
     fail("BASE_CHANGED", "base commit or tree no longer matches the plan");
   }
   compareCheckpoint(validatedPlan, checkpoint);
-  assertRefAbsent(gitFacts.repoRoot, validatedPlan.output.ref);
+  if (options.allowExistingOutputRef !== true) {
+    assertRefAbsent(gitFacts.repoRoot, validatedPlan.output.ref);
+  }
   return { plan: validatedPlan, gitFacts, checkpoint };
 }
 
