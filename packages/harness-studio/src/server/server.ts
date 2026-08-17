@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { extname, join, normalize, resolve, sep } from "node:path";
+import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import {
   assertBindAddressAllowed,
   handleAguiRun,
@@ -12,12 +12,33 @@ import {
 import { PiSdkExecutor, QoderSdkExecutor } from "@qoder-ai/harness/exec";
 import {
   deriveContrastAttribution,
+  evaluateObservedLane,
+  isObservedLane,
   loadHarnessExperimentManifest,
   runHarnessExperiment,
   type ExperimentRunEvent,
   type HarnessExperimentCompareSet,
   type RunHarnessExperimentOptions,
 } from "@qoder-ai/harness/experiment";
+import {
+  canLockCompare,
+  countLaneMaterializations,
+  deriveCompareScenario,
+  deriveRequestProvenance,
+} from "../experiment-setup.js";
+import type { CheckpointSourcePreview } from "../experiment-setup.js";
+import type {
+  ExperimentLockReceipt,
+  ResolvedHistoryDraftPreview,
+} from "../experiment-setup.js";
+import {
+  createCheckpointHistoryCatalogAdapter,
+  type CheckpointHistoryAdapter,
+  type ResolvedCheckpointHistory,
+} from "./checkpoint-history.js";
+import { loadCheckpointSourcePreview } from "./checkpoint-source.js";
+import { lockHistoryExperiment } from "./experiment-lock.js";
+import { canonicalToolEvents, projectObservedCalls } from "./experiment-events.js";
 
 const builtInExecutorFactory: HarnessUiExecutorFactory = (context) => {
   if (context.runtimeId === "qoder") {
@@ -55,6 +76,16 @@ export interface HarnessStudioServerOptions {
   experimentManifestPath?: string;
   /** Runtime-only trajectory sources, useful for previewing imported host history before it is copied. */
   experimentTrajectoryOverrides?: Record<string, string>;
+  /** Adapter-owned browser projection; omitted to use the built-in session-plan adapter. */
+  checkpointSourcePreview?: CheckpointSourcePreview;
+  /** Optional source-owned history adapter; its opaque ids are the browser contract. */
+  checkpointHistoryAdapter?: CheckpointHistoryAdapter;
+  /** File-backed first adapter, used when no injected history adapter is supplied. */
+  checkpointHistoryCatalogPath?: string;
+  /** Durable root for content-addressed locked experiment definitions. */
+  experimentLockDirectory?: string;
+  /** Test/embedder seam; defaults to the durable content-addressed locker. */
+  experimentLocker?: typeof lockHistoryExperiment;
   experimentOutputDirectory?: string;
   experimentRunner?: (options: RunHarnessExperimentOptions) => Promise<HarnessExperimentCompareSet>;
 }
@@ -66,15 +97,33 @@ export interface HarnessStudioServerOptions {
  */
 export function createHarnessStudioServer(options: HarnessStudioServerOptions): Server {
   const experimentRuns = new Map<string, AbortController>();
+  const state: HarnessStudioState = {
+    activeManifestPath: options.experimentManifestPath,
+    templateManifestPath: options.experimentManifestPath,
+    trajectoryOverrides: options.experimentTrajectoryOverrides,
+    historyAdapter: options.checkpointHistoryAdapter
+      ?? (options.checkpointHistoryCatalogPath === undefined
+        ? undefined
+        : createCheckpointHistoryCatalogAdapter(options.checkpointHistoryCatalogPath)),
+  };
   return createServer((request, response) => {
-    void route(request, response, options, experimentRuns);
+    void route(request, response, options, state, experimentRuns);
   });
+}
+
+interface HarnessStudioState {
+  activeManifestPath?: string;
+  templateManifestPath?: string;
+  trajectoryOverrides?: Record<string, string>;
+  historyAdapter?: CheckpointHistoryAdapter;
+  lockReceipt?: ExperimentLockReceipt;
 }
 
 async function route(
   request: IncomingMessage,
   response: ServerResponse,
   options: HarnessStudioServerOptions,
+  state: HarnessStudioState,
   experimentRuns: Map<string, AbortController>,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://localhost");
@@ -82,17 +131,30 @@ async function route(
     respondJson(response, 200, {
       aguiEnabled: options.harnessSource !== undefined,
       evidenceEnabled: options.evidenceDir !== undefined,
-      experimentEnabled: options.experimentManifestPath !== undefined,
+      experimentEnabled: state.activeManifestPath !== undefined,
+      historyEnabled: state.historyAdapter !== undefined,
     });
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/checkpoint-history") {
+    await serveCheckpointHistory(response, state);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/checkpoint-history/resolve") {
+    await resolveCheckpointHistory(request, response, state);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/experiment/lock") {
+    await lockCheckpointHistory(request, response, options, state);
     return;
   }
   if (url.pathname === "/api/experiment") {
     if (request.method === "GET") {
-      await serveExperiment(response, options);
+      await serveExperiment(response, options, state);
       return;
     }
     if (request.method === "POST") {
-      await streamExperiment(request, response, options, experimentRuns);
+      await streamExperiment(request, response, options, state, experimentRuns);
       return;
     }
   }
@@ -140,51 +202,219 @@ async function route(
   respondJson(response, 404, { error: `No route for ${request.method} ${url.pathname}` });
 }
 
-async function serveExperiment(response: ServerResponse, options: HarnessStudioServerOptions): Promise<void> {
-  const manifestPath = options.experimentManifestPath;
+async function serveExperiment(
+  response: ServerResponse,
+  options: HarnessStudioServerOptions,
+  state: HarnessStudioState,
+): Promise<void> {
+  const manifestPath = state.activeManifestPath;
   if (manifestPath === undefined) {
     respondJson(response, 404, { error: "No experiment loaded; start with --experiment <experiment.json>." });
     return;
   }
   try {
-    const loaded = await loadHarnessExperimentManifest(manifestPath);
-    const observedEvents: Record<string, unknown[]> = {};
-    for (const [laneId, trajectory] of Object.entries({
-      ...loaded.resolved.trajectories,
-      ...options.experimentTrajectoryOverrides,
-    })) {
-      observedEvents[laneId] = await readJsonLines(trajectory).catch(() => []);
-    }
-    const prompt = await readFile(loaded.resolved.prompt);
-    const attributionContext = {
-      taskPromptHash: `sha256:${createHash("sha256").update(prompt).digest("hex")}`,
-      completeness: { kind: "unverified" as const, reason: "preflight runs when the experiment starts" },
-    };
-    respondJson(response, 200, {
-      manifest: loaded.value,
-      checkpoint: {
-        digest: loaded.value.checkpointRef.digest,
-        plan: loaded.value.checkpointRef.plan,
-      },
-      contrasts: loaded.value.contrasts.map((contrast) => ({
-        id: contrast.id,
-        lanes: contrast.lanes,
-        attribution: deriveContrastAttribution(loaded.value, contrast, attributionContext),
-      })),
-      observedEvents,
-    });
+    respondJson(response, 200, await buildExperimentPreview({
+      manifestPath,
+      trajectoryOverrides: state.trajectoryOverrides,
+      checkpointSourcePreview: state.lockReceipt === undefined ? options.checkpointSourcePreview : undefined,
+      lockReceipt: state.lockReceipt,
+    }));
   } catch (error) {
     respondJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
   }
+}
+
+async function buildExperimentPreview(input: {
+  manifestPath: string;
+  trajectoryOverrides?: Record<string, string>;
+  checkpointSourcePreview?: CheckpointSourcePreview;
+  lockReceipt?: ExperimentLockReceipt;
+}): Promise<Record<string, unknown>> {
+  const loaded = await loadHarnessExperimentManifest(input.manifestPath);
+  const observedCalls: Record<string, ReturnType<typeof projectObservedCalls>> = {};
+  for (const [laneId, trajectory] of Object.entries({
+    ...loaded.resolved.trajectories,
+    ...input.trajectoryOverrides,
+  })) {
+    const events = await readJsonLines(trajectory).catch(() => []);
+    observedCalls[laneId] = projectObservedCalls(laneId, events);
+  }
+  const prompt = await readFile(loaded.resolved.prompt);
+  const promptText = prompt.toString("utf8");
+  const promptHash = `sha256:${createHash("sha256").update(prompt).digest("hex")}`;
+  const materializationCount = countLaneMaterializations(loaded.value.lanes);
+  const checkpointSource = input.checkpointSourcePreview ?? await loadCheckpointSourcePreview({
+    planPath: loaded.resolved.checkpointPlan,
+    expectedDigest: loaded.value.checkpointRef.digest,
+    materializationCount,
+  });
+  const attributionContext = {
+    taskPromptHash: promptHash,
+    completeness: { kind: "unverified" as const, reason: "preflight runs when the experiment starts" },
+  };
+  const requestProvenance = deriveRequestProvenance(loaded.value.lanes, promptHash);
+  return {
+    manifest: loaded.value,
+    checkpoint: {
+      digest: loaded.value.checkpointRef.digest,
+      plan: loaded.value.checkpointRef.plan,
+    },
+    contrasts: loaded.value.contrasts.map((contrast) => ({
+      id: contrast.id,
+      lanes: contrast.lanes,
+      attribution: deriveContrastAttribution(loaded.value, contrast, attributionContext),
+    })),
+    setup: {
+      scenario: deriveCompareScenario(loaded.value.lanes),
+      checkpointSource,
+      request: {
+        label: requestProvenance === "new" ? "New request" : "Imported request",
+        prompt: promptText,
+        promptHash,
+        provenance: requestProvenance,
+        ...(requestProvenance === "unverified-history"
+          ? { limitation: "The loaded request is not proven to be the exact request that produced the observed history." }
+          : {}),
+      },
+      historicalGaps: loaded.value.lanes
+        .filter(isObservedLane)
+        .map((lane) => evaluateObservedLane(lane, attributionContext))
+        .filter((eligibility) => !eligibility.matched)
+        .map(({ laneId, missing }) => ({ laneId, missing })),
+    },
+    observedCalls,
+    ...(input.lockReceipt === undefined ? {} : { lock: input.lockReceipt }),
+  };
+}
+
+async function serveCheckpointHistory(response: ServerResponse, state: HarnessStudioState): Promise<void> {
+  if (state.historyAdapter === undefined) {
+    respondJson(response, 404, { error: "No checkpoint history adapter is configured." });
+    return;
+  }
+  try {
+    respondJson(response, 200, await state.historyAdapter.list());
+  } catch (error) {
+    respondJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function resolveCheckpointHistory(
+  request: IncomingMessage,
+  response: ServerResponse,
+  state: HarnessStudioState,
+): Promise<void> {
+  if (!sameOriginRequest(request)) {
+    respondJson(response, 403, { error: "Cross-origin checkpoint resolution is not allowed." });
+    return;
+  }
+  if (state.historyAdapter === undefined || state.templateManifestPath === undefined) {
+    respondJson(response, 404, { error: "Checkpoint history requires both an adapter and an experiment template." });
+    return;
+  }
+  try {
+    const id = historyId(await readJsonBody(request));
+    const loaded = await loadHarnessExperimentManifest(state.templateManifestPath);
+    const resolved = await state.historyAdapter.resolve(id, countLaneMaterializations(loaded.value.lanes));
+    respondJson(response, 200, historyDraftPreview(loaded.value.lanes, resolved));
+  } catch (error) {
+    respondJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function lockCheckpointHistory(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: HarnessStudioServerOptions,
+  state: HarnessStudioState,
+): Promise<void> {
+  if (!sameOriginRequest(request)) {
+    respondJson(response, 403, { error: "Cross-origin experiment locking is not allowed." });
+    return;
+  }
+  if (state.historyAdapter === undefined || state.templateManifestPath === undefined) {
+    respondJson(response, 404, { error: "Checkpoint history requires both an adapter and an experiment template." });
+    return;
+  }
+  try {
+    const id = historyId(await readJsonBody(request));
+    const template = await loadHarnessExperimentManifest(state.templateManifestPath);
+    const resolved = await state.historyAdapter.resolve(id, countLaneMaterializations(template.value.lanes));
+    const locked = await (options.experimentLocker ?? lockHistoryExperiment)({
+      templateManifestPath: state.templateManifestPath,
+      history: resolved,
+      outputRoot: options.experimentLockDirectory
+        ?? resolve(dirname(state.templateManifestPath), ".harness-studio-locks"),
+    });
+    const preview = await buildExperimentPreview({
+      manifestPath: locked.manifestPath,
+      lockReceipt: locked.receipt,
+    });
+    state.activeManifestPath = locked.manifestPath;
+    state.trajectoryOverrides = undefined;
+    state.lockReceipt = locked.receipt;
+    respondJson(response, 200, preview);
+  } catch (error) {
+    respondJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+function historyDraftPreview(
+  lanes: Array<{ id: string; origin: "observed" | "execute"; trials?: number }>,
+  resolved: ResolvedCheckpointHistory,
+): ResolvedHistoryDraftPreview {
+  const observed = lanes.find((lane) => lane.origin === "observed");
+  const missing = [
+    ...(!resolved.observed.startCheckpointVerified ? ["startCheckpointDigest"] : []),
+    ...(!resolved.request.verified ? ["promptHash"] : []),
+    ...(["harnessId", "revisionId", "profile", "model", "environmentReceipt"] as const)
+      .filter((key) => resolved.observed.identity?.[key] === undefined),
+  ];
+  const setup = {
+    scenario: "historical-replay" as const,
+    checkpointSource: resolved.checkpointSource,
+    request: {
+      label: "Selected historical request",
+      prompt: resolved.request.prompt,
+      promptHash: resolved.request.promptHash,
+      provenance: resolved.request.verified ? "verified-history" as const : "unverified-history" as const,
+      ...(!resolved.request.verified
+        ? { limitation: "The history source did not verify that these request bytes produced the observed trajectory." }
+        : {}),
+    },
+    historicalGaps: observed === undefined || missing.length === 0 ? [] : [{ laneId: observed.id, missing }],
+  };
+  return {
+    selection: resolved.item,
+    checkpoint: { digest: resolved.checkpointRef.digest },
+    setup,
+    lockable: canLockCompare(setup),
+    ...(resolved.checkpointSource.status === "ready"
+      ? {}
+      : { limitation: resolved.checkpointSource.limitation ?? "Checkpoint preflight failed." }),
+  };
+}
+
+function historyId(value: unknown): string {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("History request body must be an object.");
+  }
+  const id = (value as { historyId?: unknown }).historyId;
+  if (typeof id !== "string" || !/^[A-Za-z0-9_-]+$/.test(id)) {
+    throw new Error("historyId must be an opaque portable id.");
+  }
+  return id;
 }
 
 async function streamExperiment(
   request: IncomingMessage,
   response: ServerResponse,
   options: HarnessStudioServerOptions,
+  state: HarnessStudioState,
   experimentRuns: Map<string, AbortController>,
 ): Promise<void> {
-  if (options.experimentManifestPath === undefined) {
+  const manifestPath = state.activeManifestPath;
+  if (manifestPath === undefined) {
     respondJson(response, 404, { error: "No experiment loaded; start with --experiment <experiment.json>." });
     return;
   }
@@ -209,15 +439,24 @@ async function streamExperiment(
     "X-Accel-Buffering": "no",
   });
   response.flushHeaders();
-  const send = (event: ExperimentRunEvent): void => {
+  const sendPayload = (event: unknown): void => {
     response.write(`event: experiment\ndata: ${JSON.stringify(event)}\n\n`);
+  };
+  const send = (event: ExperimentRunEvent): void => {
+    if (event.type !== "lane-event") {
+      sendPayload(event);
+      return;
+    }
+    for (const canonical of canonicalToolEvents(event.event)) {
+      sendPayload({ ...event, event: canonical });
+    }
   };
   try {
     const outputRoot = options.experimentOutputDirectory
-      ?? resolve(options.experimentManifestPath, "..", ".harness-experiments");
+      ?? resolve(manifestPath, "..", ".harness-experiments");
     const outputDirectory = resolve(outputRoot, experimentId);
     await (options.experimentRunner ?? runHarnessExperiment)({
-      manifestPath: options.experimentManifestPath,
+      manifestPath,
       outputDirectory,
       experimentId,
       signal: controller.signal,

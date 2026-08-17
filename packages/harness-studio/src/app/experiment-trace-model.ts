@@ -1,15 +1,8 @@
 export type ToolRelation = "exact" | "same-resource" | "same-tool" | "none";
 
-export interface ExperimentToolCall {
-  laneId: string;
-  runId: string;
-  id: string;
-  sequence: number;
-  name: string;
-  input?: unknown;
-  status: "running" | "completed" | "failed" | "result-unavailable";
-  result?: string;
-}
+import type { ExperimentToolCall } from "../experiment-stream-contract.js";
+
+export type { ExperimentToolCall } from "../experiment-stream-contract.js";
 
 export interface NormalizedToolCall {
   tool: string;
@@ -21,6 +14,22 @@ export interface RelatedToolCall {
   relation: ToolRelation;
   score: number;
   call: ExperimentToolCall | null;
+  basis: string;
+}
+
+export type ActivityPhase =
+  | "Orient"
+  | "Discover"
+  | "Change"
+  | "Execute"
+  | "Diagnose"
+  | "Recover"
+  | "Verify"
+  | "Deliver";
+
+export interface ActivityProjection {
+  call: ExperimentToolCall;
+  phase: ActivityPhase;
   basis: string;
 }
 
@@ -130,6 +139,51 @@ export function localToolChain(
   const index = calls.findIndex((call) => call.id === selectedId);
   if (index < 0) return [];
   return calls.slice(Math.max(0, index - 1), Math.min(calls.length, index + 2));
+}
+
+/**
+ * Projects recorded calls into engineering phases using only observable tool
+ * names, command text, resources, and status. The projection is a navigation
+ * aid; it is not a claim about hidden agent intent.
+ */
+export function projectActivities(calls: readonly ExperimentToolCall[]): ActivityProjection[] {
+  return calls.map((call, index) => {
+    if (call.status === "failed") {
+      return { call, phase: "Diagnose", basis: "recorded failed tool result" };
+    }
+    if (index > 0 && calls[index - 1]?.status === "failed") {
+      return { call, phase: "Recover", basis: "first recorded call after a failure" };
+    }
+    const tool = call.name.trim().toLowerCase();
+    const normalized = normalizeToolCall(call);
+    const command = normalized.resource?.startsWith("command:")
+      ? normalized.resource.slice("command:".length).toLowerCase()
+      : "";
+    if (/todo|plan|agent|task/.test(tool)) {
+      return { call, phase: "Orient", basis: `tool ${call.name}` };
+    }
+    if (/read|grep|glob|search|find|list|fetch/.test(tool)) {
+      return { call, phase: "Discover", basis: `tool ${call.name}` };
+    }
+    if (/write|edit|patch|replace|notebook/.test(tool)) {
+      return { call, phase: "Change", basis: `tool ${call.name}` };
+    }
+    if (/git\s+commit|gh\s+pr\s+create|submit|publish|deploy/.test(command) || /deliver|submit|publish/.test(tool)) {
+      return { call, phase: "Deliver", basis: command === "" ? `tool ${call.name}` : "recorded delivery command" };
+    }
+    if (/test|lint|build|check|verify|typecheck|vitest|playwright/.test(command) || /test|verify|check/.test(tool)) {
+      return { call, phase: "Verify", basis: command === "" ? `tool ${call.name}` : "recorded verification command" };
+    }
+    return { call, phase: "Execute", basis: `tool ${call.name}` };
+  });
+}
+
+export function activityPhaseSequence(calls: readonly ExperimentToolCall[]): ActivityPhase[] {
+  const result: ActivityPhase[] = [];
+  for (const activity of projectActivities(calls)) {
+    if (result.at(-1) !== activity.phase) result.push(activity.phase);
+  }
+  return result;
 }
 
 function resourceFrom(input: unknown): string | null {

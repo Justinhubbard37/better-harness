@@ -16,6 +16,10 @@ Options:
   --experiment <file> harness-experiment.v1 manifest (enables Experiment view)
   --experiment-out <dir>
                       Evidence root for experiment runs
+  --history-catalog <file>
+                      checkpoint-history.v1 source for the Builder picker
+  --experiment-locks <dir>
+                      Durable root for content-addressed experiment locks
   --harness-id <id>   Harness to resolve (default: the file's only harness)
   --runtime <id>      Target runtime (default: the file's only target)
   --port <n>          Listen port (default: 3311)
@@ -47,6 +51,8 @@ interface ParsedArgs {
   harness?: string;
   experiment?: string;
   experimentOut?: string;
+  historyCatalog?: string;
+  experimentLocks?: string;
   harnessId?: string;
   runtime?: string;
   port: number;
@@ -82,6 +88,12 @@ export function parseHarnessStudioArgs(argv: string[]): ParsedArgs {
         break;
       case "--experiment-out":
         parsed.experimentOut = takeValue();
+        break;
+      case "--history-catalog":
+        parsed.historyCatalog = takeValue();
+        break;
+      case "--experiment-locks":
+        parsed.experimentLocks = takeValue();
         break;
       case "--harness-id":
         parsed.harnessId = takeValue();
@@ -154,6 +166,8 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     ...(sourceRoot !== undefined ? { sourceRoot } : {}),
     ...(parsed.experiment !== undefined ? { experimentManifestPath: resolve(parsed.experiment) } : {}),
     ...(parsed.experimentOut !== undefined ? { experimentOutputDirectory: resolve(parsed.experimentOut) } : {}),
+    ...(parsed.historyCatalog !== undefined ? { checkpointHistoryCatalogPath: resolve(parsed.historyCatalog) } : {}),
+    ...(parsed.experimentLocks !== undefined ? { experimentLockDirectory: resolve(parsed.experimentLocks) } : {}),
   });
   if (parsed.allowRemote) {
     io.stderr(

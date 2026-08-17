@@ -1,0 +1,241 @@
+import type { ReactNode } from "react";
+import type { ExperimentToolCall } from "../experiment-stream-contract.js";
+import {
+  activityPhaseSequence,
+  alignToolCalls,
+  localToolChain,
+  normalizeToolCall,
+  projectActivities,
+  type RelatedToolCall,
+} from "./experiment-trace-model.js";
+import {
+  deriveComparability,
+  emptyLane,
+  exactSelected,
+  filterCalls,
+  firstPhaseDivergence,
+  focusedRelations,
+  groupActivities,
+  laneIdentityLabel,
+  relationCounts,
+  relationLabel,
+  resourceLedger,
+  resultForPair,
+  roleFor,
+  selectedCallForPair,
+  shortDigest,
+} from "./experiment-comparison-model.js";
+import { compactPrompt, requestProvenanceLabel } from "./ExperimentBuilder.js";
+import type {
+  Comparability,
+  CompareView,
+  ContrastResult,
+  ExperimentPreview,
+  LaneDefinition,
+  LaneTrace,
+  Selection,
+  StreamEvent,
+  TraceLens,
+} from "./experiment-view-types.js";
+
+const COMPARE_VIEWS: Array<{ id: CompareView; label: string }> = [
+  { id: "summary", label: "Summary" },
+  { id: "trace", label: "Trace" },
+  { id: "evidence", label: "Evidence" },
+];
+
+export function ExperimentWorkbench(props: {
+  preview: ExperimentPreview;
+  navigation?: ReactNode;
+  lanes: Record<string, LaneTrace>;
+  baselineId: string;
+  candidateId: string;
+  selection: Selection | null;
+  activeView: CompareView;
+  traceLens: TraceLens;
+  filter: string;
+  diffOnly: boolean;
+  syncSelection: boolean;
+  running: boolean;
+  experimentId: string | null;
+  compareSet?: StreamEvent["compareSet"];
+  railCollapsed: boolean;
+  onRailCollapsed: (value: boolean) => void;
+  onSetup: () => void;
+  onRun: () => void;
+  onCancel: () => void;
+  onSelectRun: (id: string) => void;
+  onSelectCall: (selection: Selection) => void;
+  onActiveView: (view: CompareView) => void;
+  onTraceLens: (lens: TraceLens) => void;
+  onFilter: (value: string) => void;
+  onDiffOnly: (value: boolean) => void;
+  onSyncSelection: (value: boolean) => void;
+}): React.JSX.Element {
+  const baselineDefinition = props.preview.manifest.lanes.find((lane) => lane.id === props.baselineId);
+  const candidateDefinition = props.preview.manifest.lanes.find((lane) => lane.id === props.candidateId);
+  const baseline = props.lanes[props.baselineId] ?? emptyLane();
+  const candidate = props.lanes[props.candidateId] ?? emptyLane();
+  const selectedCall = selectedCallForPair(props.selection, baseline, candidate);
+  const relations = focusedRelations(selectedCall, props.baselineId, baseline, props.candidateId, candidate);
+  const resultRows = props.compareSet?.contrasts
+    ?? props.preview.contrasts.map((item) => ({ id: item.id, lanes: item.lanes, status: "not-run", reason: item.attribution.detail }));
+  const focusedResult = resultForPair(resultRows, props.baselineId, props.candidateId);
+  const comparability = deriveComparability(props.preview, baselineDefinition, candidateDefinition, baseline, candidate);
+  const totalCalls = Object.values(props.lanes).reduce((count, lane) => count + lane.calls.length, 0);
+
+  return <section className={`experiment-shell${props.railCollapsed ? " rail-collapsed" : ""}`}>
+    <aside className="experiment-rail" aria-label="Comparison context">
+      <div className="experiment-brand">
+        <div className="brand-copy"><strong>Harness Studio</strong><span>Checkpoint-backed compare</span></div>
+        <button className="rail-toggle" type="button" aria-label={props.railCollapsed ? "Show comparison context" : "Hide comparison context"} aria-expanded={!props.railCollapsed} onClick={() => props.onRailCollapsed(!props.railCollapsed)}><span className="hide-label">Hide</span><span className="show-label">Show setup</span></button>
+      </div>
+      <div className="rail-content">
+        {props.navigation}
+        <section className="rail-section checkpoint-section"><div className="rail-heading"><strong>{props.preview.setup.checkpointSource.resource.label}</strong><span>shared start</span></div><code title={props.preview.setup.checkpointSource.resource.detail}>{props.preview.setup.checkpointSource.resource.value}</code><p title={props.preview.setup.checkpointSource.revision.detail}>{props.preview.setup.checkpointSource.revision.label} · {props.preview.setup.checkpointSource.revision.value}</p></section>
+        <section className="rail-section task-section"><div className="rail-heading"><strong>Request</strong><span>{requestProvenanceLabel(props.preview.setup.request.provenance)}</span></div><p title={props.preview.setup.request.prompt}>{compactPrompt(props.preview.setup.request.prompt)}</p></section>
+        <section className="rail-section"><div className="rail-heading"><strong>Runs</strong><span>{props.preview.manifest.lanes.length}</span></div><ol className="rail-lanes">{props.preview.manifest.lanes.map((definition) => {
+          const run = props.lanes[definition.id] ?? emptyLane();
+          const role = roleFor(definition, props.baselineId, props.candidateId);
+          return <li key={definition.id}><span className={`rail-lane-dot status-${run.status}`} /><span><strong>{definition.id}</strong><small>{role} · {run.status}</small></span><em>{run.calls.length}</em></li>;
+        })}</ol></section>
+        <section className="rail-section"><div className="rail-heading"><strong>Comparisons</strong><span>{props.preview.contrasts.length}</span></div><div className="contrast-preview" aria-label="Comparison attribution preview">{props.preview.contrasts.map((contrast) => <span key={contrast.id} className={`contrast-chip mode-${contrast.attribution.mode}`} title={contrast.attribution.detail}><b>{contrast.id}</b><small>{contrast.attribution.mode === "attributable" ? contrast.attribution.axis : "descriptive"}</small></span>)}</div></section>
+      </div>
+      <footer className="rail-footer"><div><strong>{props.running ? "Comparison running" : `${totalCalls} tool calls`}</strong><span>{props.experimentId ? shortDigest(props.experimentId) : "ready"}</span></div><button className="secondary" onClick={props.onSetup}>Setup</button></footer>
+    </aside>
+
+    <div className="experiment-workspace">
+      <header className="experiment-workspace-header"><nav className="workspace-breadcrumb" aria-label="Comparison breadcrumb"><button type="button" onClick={props.onSetup}>Compare setup</button><i>/</i><strong>Workbench</strong></nav><div className="workspace-header-meta"><div className="scope-metrics" aria-label="Comparison metrics"><span className="metric"><strong>{totalCalls}</strong><span>calls</span></span><span className="metric"><strong>{props.preview.manifest.lanes.length}</strong><span>runs</span></span><span className="metric"><strong>{props.preview.manifest.contrasts.length}</strong><span>comparisons</span></span></div></div></header>
+      <div className="experiment-workspace-scroll"><section className="compare-surface">
+        <header className="compare-titlebar"><div><h1>Compare traces</h1><p>Canonical tool evidence updates while fresh runs execute.</p></div><div className="compare-actions"><span className={`live-state${props.running ? " running" : ""}`}><i />{props.running ? "streaming" : "ready"}</span>{props.running ? <button className="secondary" onClick={props.onCancel}>Cancel comparison</button> : <button onClick={props.onRun}>Run comparison</button>}</div></header>
+        <div className="object-bar" aria-label="Comparison runs">{props.preview.manifest.lanes.map((definition) => {
+          const run = props.lanes[definition.id] ?? emptyLane();
+          const role = roleFor(definition, props.baselineId, props.candidateId);
+          const content = <><div><small>{role}</small><strong>{definition.id}</strong><span>{laneIdentityLabel(definition)}</span></div><code>{run.calls.length}</code></>;
+          return definition.origin === "observed"
+            ? <article key={definition.id} className="object-card role-reference">{content}</article>
+            : <button key={definition.id} type="button" className={`object-card role-${role.toLowerCase()}`} aria-pressed={definition.id === props.baselineId || definition.id === props.candidateId} onClick={() => props.onSelectRun(definition.id)}>{content}</button>;
+        })}</div>
+        <div className={`comparability level-${comparability.level.toLowerCase()}`} role="status"><strong>{comparability.level}</strong><span>{comparability.detail}</span>{comparability.axis && <code>{comparability.axis}</code>}</div>
+        <nav className="compare-tabs" role="tablist" aria-label="Comparison views">{COMPARE_VIEWS.map((view) => <button key={view.id} type="button" role="tab" aria-selected={props.activeView === view.id} onClick={() => props.onActiveView(view.id)}>{view.label}</button>)}</nav>
+        <div className="compare-view" role="tabpanel">
+          {props.activeView === "summary" && <SummaryView baseline={baseline} candidate={candidate} result={focusedResult} comparability={comparability} />}
+          {props.activeView === "trace" && <TraceView lens={props.traceLens} onLens={props.onTraceLens} baseline={baseline} candidate={candidate} baselineDefinition={baselineDefinition} candidateDefinition={candidateDefinition} selectedCall={selectedCall} relations={relations} filter={props.filter} diffOnly={props.diffOnly} syncSelection={props.syncSelection} onFilter={props.onFilter} onDiffOnly={props.onDiffOnly} onSyncSelection={props.onSyncSelection} onSelect={(call) => props.onSelectCall({ laneId: call.laneId, callId: call.id })} />}
+          {props.activeView === "evidence" && <EvidenceView baseline={baseline} candidate={candidate} resultRows={resultRows} comparability={comparability} focusedResult={focusedResult} />}
+        </div>
+      </section></div>
+    </div>
+  </section>;
+}
+
+function SummaryView(props: { baseline: LaneTrace; candidate: LaneTrace; result?: ContrastResult; comparability: Comparability }): React.JSX.Element {
+  const matches = relationCounts(props.baseline.calls, props.candidate.calls);
+  const divergence = firstPhaseDivergence(activityPhaseSequence(props.baseline.calls), activityPhaseSequence(props.candidate.calls));
+  return <div className="summary-grid">
+    <section><small>Outcome</small><strong className={`summary-value status-${props.result?.status ?? "not-run"}`}>{props.result?.status ?? "Not run"}</strong><p>{props.result?.reason ?? "Run the fresh agents to produce a focused verdict."}</p></section>
+    <section><small>Process</small><strong className="summary-value">{divergence.label}</strong><p>{divergence.detail}</p></section>
+    <section><small>Volume</small><strong className="summary-value">{props.baseline.calls.length} ↔ {props.candidate.calls.length} calls</strong><p>Recorded calls only; duration, token, and cost evidence were not captured.</p></section>
+    <section><small>Evidence</small><strong className="summary-value">{matches.exact} exact · {matches["same-resource"]} resource</strong><p>{props.comparability.level}: {props.comparability.detail}</p></section>
+  </div>;
+}
+
+function TraceView(props: {
+  lens: TraceLens;
+  onLens: (lens: TraceLens) => void;
+  baseline: LaneTrace;
+  candidate: LaneTrace;
+  baselineDefinition?: LaneDefinition;
+  candidateDefinition?: LaneDefinition;
+  selectedCall?: ExperimentToolCall;
+  relations: Map<string, RelatedToolCall>;
+  filter: string;
+  diffOnly: boolean;
+  syncSelection: boolean;
+  onFilter: (value: string) => void;
+  onDiffOnly: (value: boolean) => void;
+  onSyncSelection: (value: boolean) => void;
+  onSelect: (call: ExperimentToolCall) => void;
+}): React.JSX.Element {
+  return <section className="trace-view">
+    <div className="trace-lenses" role="group" aria-label="Trace lens"><button type="button" aria-pressed={props.lens === "calls"} onClick={() => props.onLens("calls")}>Calls</button><button type="button" aria-pressed={props.lens === "resources"} onClick={() => props.onLens("resources")}>Resources</button><span>Phases are derived from recorded tool facts, not hidden intent.</span></div>
+    {props.lens === "calls"
+      ? <CallsView {...props} />
+      : <ResourcesView baseline={props.baseline} candidate={props.candidate} baselineId={props.baselineDefinition?.id ?? "baseline"} candidateId={props.candidateDefinition?.id ?? "candidate"} />}
+  </section>;
+}
+
+function CallsView(props: {
+  baseline: LaneTrace; candidate: LaneTrace; baselineDefinition?: LaneDefinition; candidateDefinition?: LaneDefinition;
+  selectedCall?: ExperimentToolCall; relations: Map<string, RelatedToolCall>; filter: string; diffOnly: boolean; syncSelection: boolean;
+  onFilter: (value: string) => void; onDiffOnly: (value: boolean) => void; onSyncSelection: (value: boolean) => void; onSelect: (call: ExperimentToolCall) => void;
+}): React.JSX.Element {
+  const baselineId = props.baselineDefinition?.id ?? "baseline";
+  const candidateId = props.candidateDefinition?.id ?? "candidate";
+  const alignment = alignToolCalls(props.baseline.calls, props.candidate.calls);
+  const exactLeft = new Set([...alignment].filter(([, relation]) => relation.relation === "exact").map(([id]) => id));
+  const exactRight = new Set([...alignment.values()].filter((relation) => relation.relation === "exact" && relation.call).map((relation) => relation.call!.id));
+  const left = filterCalls(props.baseline.calls, props.filter, props.diffOnly ? exactLeft : undefined);
+  const right = filterCalls(props.candidate.calls, props.filter, props.diffOnly ? exactRight : undefined);
+  const counterpart = props.selectedCall === undefined || !props.syncSelection
+    ? undefined
+    : props.relations.get(props.selectedCall.laneId === baselineId ? candidateId : baselineId)?.call ?? undefined;
+  return <section className="calls-view">
+    <div className="calls-toolbar"><label className="call-filter"><span>Filter</span><input value={props.filter} onChange={(event) => props.onFilter(event.target.value)} placeholder="Calls or resources…" aria-label="Filter calls" /></label><label className="switch-control"><input type="checkbox" checked={props.syncSelection} onChange={(event) => props.onSyncSelection(event.target.checked)} />Sync</label><label className="switch-control"><input type="checkbox" checked={props.diffOnly} onChange={(event) => props.onDiffOnly(event.target.checked)} />Diff only</label></div>
+    <div className="overview-pair" aria-label="Call overview strips"><CallOverview calls={left} selectedCall={props.selectedCall} onSelect={props.onSelect} /><CallOverview calls={right} selectedCall={props.selectedCall} counterpart={counterpart} onSelect={props.onSelect} /></div>
+    <div className="pair-board call-board" role="region" aria-label="Focused tool call comparison" tabIndex={0}>
+      <CallLane role="Baseline" definition={props.baselineDefinition} lane={props.baseline} calls={left} selectedCall={props.selectedCall} counterpart={counterpart} relation={props.selectedCall?.laneId === baselineId ? exactSelected(props.selectedCall) : props.relations.get(baselineId)} onSelect={props.onSelect} />
+      <CallLane role="Candidate" definition={props.candidateDefinition} lane={props.candidate} calls={right} selectedCall={props.selectedCall} counterpart={counterpart} relation={props.selectedCall?.laneId === candidateId ? exactSelected(props.selectedCall) : props.relations.get(candidateId)} onSelect={props.onSelect} />
+    </div>
+    {props.selectedCall && <LocalChainInspector baseline={props.baseline} candidate={props.candidate} baselineId={baselineId} candidateId={candidateId} selectedCall={props.selectedCall} relations={props.relations} syncSelection={props.syncSelection} />}
+  </section>;
+}
+
+function CallOverview(props: { calls: ExperimentToolCall[]; selectedCall?: ExperimentToolCall; counterpart?: ExperimentToolCall; onSelect: (call: ExperimentToolCall) => void }): React.JSX.Element {
+  return <div className="call-overview">{props.calls.length === 0 ? <span /> : props.calls.map((call) => {
+    const phase = projectActivities([call])[0]?.phase ?? "Execute";
+    const active = call.id === props.selectedCall?.id || call.id === props.counterpart?.id;
+    const resource = normalizeToolCall(call).resource ?? "no resource";
+    return <button key={call.id} className={`phase-${phase.toLowerCase()}${active ? " active" : ""}`} title={`${call.name} · ${resource}`} aria-label={`Select ${call.name} ${resource}`} onClick={() => props.onSelect(call)} />;
+  })}</div>;
+}
+
+function CallLane(props: { role: "Baseline" | "Candidate"; definition?: LaneDefinition; lane: LaneTrace; calls: ExperimentToolCall[]; selectedCall?: ExperimentToolCall; counterpart?: ExperimentToolCall; relation?: RelatedToolCall; onSelect: (call: ExperimentToolCall) => void }): React.JSX.Element {
+  const groups = groupActivities(projectActivities(props.calls));
+  const selectedId = props.selectedCall?.laneId === props.definition?.id ? props.selectedCall?.id : undefined;
+  const counterpartId = props.counterpart?.laneId === props.definition?.id ? props.counterpart?.id : undefined;
+  const highlightedId = selectedId ?? counterpartId;
+  return <article className="call-lane"><header className="call-lane-head"><div><small>{props.role}</small><strong>{props.definition?.id ?? props.role}</strong></div><span className={`lane-status lane-status-${props.lane.status}`}>{props.lane.status}</span></header><div className="lane-relation"><span className={`relation relation-${props.relation?.relation ?? "none"}`}>{props.selectedCall ? relationLabel(props.relation?.relation ?? "none") : "No selection"}</span><small>{props.relation?.basis ?? `${props.lane.eventCount} canonical events`}</small></div><div className="call-tree" role="tree">{groups.length === 0 ? <p className="trace-empty">{props.calls.length === 0 && props.lane.calls.length > 0 ? "No calls match this filter." : "Waiting for recorded calls…"}</p> : groups.map((group, groupIndex) => <section key={`${group.phase}:${groupIndex}`} className="call-group" role="group"><header><span className={`phase-dot phase-${group.phase.toLowerCase()}`} /><strong>{group.phase}</strong><em>{group.items.length}</em></header>{group.items.map(({ call }) => {
+    const normalized = normalizeToolCall(call);
+    const active = call.id === highlightedId;
+    return <button key={call.id} role="treeitem" className={active ? "selected" : ""} aria-selected={active} onClick={() => props.onSelect(call)}><span className="tool-sequence">{String(call.sequence + 1).padStart(2, "0")}</span><span className="tool-summary"><strong>{call.name}</strong><small>{normalized.resource ?? "No resource key"}</small></span><span className={`call-status call-status-${call.status}`}>{call.status}</span></button>;
+  })}</section>)}</div>{props.lane.detail && <p className="lane-detail">{props.lane.detail}</p>}</article>;
+}
+
+function LocalChainInspector(props: { baseline: LaneTrace; candidate: LaneTrace; baselineId: string; candidateId: string; selectedCall: ExperimentToolCall; relations: Map<string, RelatedToolCall>; syncSelection: boolean }): React.JSX.Element {
+  const pairs = [[props.baselineId, props.baseline], [props.candidateId, props.candidate]] as const;
+  return <section className="local-chain" aria-label="Selected tool chain comparison"><header><small>Local chain</small><strong>Previous → selected → next</strong><span>Neighbour calls provide sequence context, not causal proof.</span></header><div>{pairs.map(([id, lane]) => {
+    const match = props.selectedCall.laneId === id ? props.selectedCall : props.syncSelection ? props.relations.get(id)?.call ?? undefined : undefined;
+    const relation = props.selectedCall.laneId === id ? "exact" : props.relations.get(id)?.relation ?? "none";
+    const chain = match ? localToolChain(lane.calls, match.id) : [];
+    return <article key={id}><div><strong>{id}</strong><span className={`relation relation-${relation}`}>{relationLabel(relation)}</span></div>{chain.length === 0 ? <p>No synchronized counterpart</p> : <ol>{chain.map((call) => <li key={call.id} className={call.id === match?.id ? "selected" : ""}><b>{call.name}</b><code>{normalizeToolCall(call).resource ?? "no resource"}</code></li>)}</ol>}</article>;
+  })}</div></section>;
+}
+
+function ResourcesView(props: { baseline: LaneTrace; candidate: LaneTrace; baselineId: string; candidateId: string }): React.JSX.Element {
+  const left = resourceLedger(props.baseline.calls);
+  const right = resourceLedger(props.candidate.calls);
+  const shared = new Set([...left.keys()].filter((resource) => right.has(resource)));
+  return <section className="changes-view"><header className="view-explainer"><div><strong>Resource activity</strong><span>Read, edit, and command links come from canonical tool inputs.</span></div><p><b>{shared.size}</b> shared resources</p></header><div className="pair-board resource-board"><ResourceLane role="Baseline" id={props.baselineId} resources={left} shared={shared} /><ResourceLane role="Candidate" id={props.candidateId} resources={right} shared={shared} /></div></section>;
+}
+
+function ResourceLane(props: { role: "Baseline" | "Candidate"; id: string; resources: Map<string, Set<string>>; shared: Set<string> }): React.JSX.Element {
+  return <article className="resource-lane"><header><small>{props.role}</small><strong>{props.id}</strong><span>{props.resources.size} resources</span></header><ol>{props.resources.size === 0 ? <li className="trace-empty">No resource keys were recorded.</li> : [...props.resources].map(([resource, tools]) => <li key={resource} className={props.shared.has(resource) ? "shared" : ""}><code>{resource}</code><span>{[...tools].join(" · ")}</span><em>{props.shared.has(resource) ? "shared" : "run only"}</em></li>)}</ol></article>;
+}
+
+function EvidenceView(props: { baseline: LaneTrace; candidate: LaneTrace; resultRows: ContrastResult[]; comparability: Comparability; focusedResult?: ContrastResult }): React.JSX.Element {
+  const matches = relationCounts(props.baseline.calls, props.candidate.calls);
+  const conclusion = props.focusedResult === undefined || props.focusedResult.status === "not-run"
+    ? "No focused verdict yet. Run the fresh agents before judging the candidate."
+    : props.focusedResult.reason;
+  return <section className="evidence-view"><div className="evidence-layers"><article><small>Observed facts</small><strong>{props.baseline.calls.length} vs {props.candidate.calls.length} calls</strong><p>{matches.exact} exact, {matches["same-resource"]} same-resource, {matches["same-tool"]} same-tool, and {matches.none} unmatched baseline links.</p></article><article><small>Candidate explanation</small><strong>{props.comparability.axis ? `${props.comparability.axis} changed` : "No single treatment isolated"}</strong><p>The treatment is a hypothesis boundary, not a causal result.</p></article><article><small>Supported conclusion</small><strong>{props.focusedResult?.status ?? "Not run"}</strong><p>{conclusion}</p></article></div><section className="verdict-table"><header><small>Per-comparison evidence</small><strong>No global verdict</strong></header>{props.resultRows.map((result) => <article key={result.id}><span className={`result-status status-${result.status}`}>{result.status}</span><strong>{result.id}</strong><code>{result.lanes.join(" ↔ ")}</code><p>{result.reason}</p></article>)}</section><p className="evidence-limit"><strong>Limitation:</strong> tool and resource overlap do not prove authorship, correctness, intent, or causality.</p></section>;
+}

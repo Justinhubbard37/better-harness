@@ -10,6 +10,8 @@
   [Harness UI Studio](../specs/2026-08-15-harness-ui-studio.md)
 - Implementation spec: [Checkpoint-anchored multi-lane harness
   experiments](../specs/2026-08-17-harness-studio-checkpoint-compare.md)
+- Source abstraction: [Checkpoint-backed Compare Sources and
+  Materialization](checkpoint-backed-compare-sources.md)
 
 ## Context
 
@@ -27,20 +29,24 @@ multi-lane experiment:
   `refs/better-harness/session-executions` namespaced refs and never switch
   the user's branch.
 
-Studio users want to pick a Git checkpoint, replay the observed historical
+Studio users want to pick a checkpoint, replay the observed historical
 trajectory, run two fresh agents (different harness or different model) from
 the same checkpoint in parallel, and compare the three trajectories side by
-side. The temptation is to add a "sandbox checkpoint" type, copy checkpoint
-fields into a new experiment schema, or let a single global verdict summarize
-a three-lane view. Each of those blurs provenance or fabricates attribution.
+side. The first executable adapter resolves a Git commit and materializes
+detached worktrees, but ADR-0005 keeps those mechanics out of the generic
+product contract. The temptation is to add a "sandbox checkpoint" type, copy
+source-specific fields into a new experiment schema, or let a single global
+verdict summarize a three-lane view. Each of those blurs provenance or
+fabricates attribution.
 
 ## Decision
 
-- **One checkpoint definition.** The session-executor checkpoint contract is
-  the only checkpoint. A sandbox is a materialization of that checkpoint for
-  one lane's execution, never a new checkpoint type. Experiment documents
-  hold a `checkpointRef` (path plus digest) and never copy or reinterpret
-  checkpoint fields.
+- **One checkpoint definition per adapter.** The current session-executor plan
+  is the first checkpoint contract. Future source adapters may own other
+  versioned checkpoint formats under ADR-0005. A sandbox is a materialization
+  of the referenced checkpoint for one lane's execution, never a new checkpoint
+  type. Experiment documents hold a `checkpointRef` (path plus digest) and never
+  copy or reinterpret checkpoint fields.
 - **The `.harness` grammar does not change.** The upgrade lives entirely in
   the experiment and compare layer. `harness-compare.v1` remains the frozen
   fixture, two-variant path; it is not extended to cover checkpoints.

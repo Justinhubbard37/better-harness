@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  activityPhaseSequence,
   alignToolCalls,
   compareToolCalls,
   localToolChain,
+  projectActivities,
   relatedCallFor,
   type ExperimentToolCall,
 } from "../src/app/experiment-trace-model.js";
@@ -83,5 +85,32 @@ describe("experiment tool trace correlation", () => {
     ];
 
     expect(localToolChain(calls, "a2").map((item) => item.id)).toEqual(["a1", "a2", "a3"]);
+  });
+
+  it("projects observable tool facts into compact engineering phases", () => {
+    const calls = [
+      call("a1", "Read", { path: "README.md" }, 0),
+      call("a2", "Edit", { path: "README.md" }, 1),
+      call("a3", "Bash", { command: "npm test" }, 2),
+      call("a4", "Bash", { command: "git commit -m test" }, 3),
+    ];
+
+    expect(projectActivities(calls).map((item) => [item.phase, item.basis])).toEqual([
+      ["Discover", "tool Read"],
+      ["Change", "tool Edit"],
+      ["Verify", "recorded verification command"],
+      ["Deliver", "recorded delivery command"],
+    ]);
+    expect(activityPhaseSequence(calls)).toEqual(["Discover", "Change", "Verify", "Deliver"]);
+  });
+
+  it("labels a recorded failure and the next call without claiming intent", () => {
+    const failed = { ...call("a1", "Bash", { command: "npm test" }, 0), status: "failed" as const };
+    const retry = call("a2", "Bash", { command: "npm test" }, 1);
+
+    expect(projectActivities([failed, retry])).toMatchObject([
+      { phase: "Diagnose", basis: "recorded failed tool result" },
+      { phase: "Recover", basis: "first recorded call after a failure" },
+    ]);
   });
 });

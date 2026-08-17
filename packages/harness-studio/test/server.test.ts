@@ -1,12 +1,13 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { HarnessRunEmitter, loadSkillDeliveries, type HarnessExecutor } from "@qoder-ai/harness/exec";
 import { decodeSseStream, type HarnessUiExecutorFactory } from "@qoder-ai/harness-ui";
-import { resolveHarnessStudioSourceRoot, runHarnessStudioCli } from "../src/server/cli.js";
+import { parseHarnessStudioArgs, resolveHarnessStudioSourceRoot, runHarnessStudioCli } from "../src/server/cli.js";
 import { startHarnessStudioServer, type StartedHarnessStudioServer } from "../src/server/server.js";
+import type { CheckpointHistoryAdapter } from "../src/server/checkpoint-history.js";
 import { FIXTURE_VERDICT } from "./compare-model.test.js";
 
 const EXPERIMENT_MANIFEST = resolve(
@@ -15,11 +16,12 @@ const EXPERIMENT_MANIFEST = resolve(
 );
 
 const SOURCE = `
+  language 0.3
   skill require-tests {
     description "Do not report the task complete until tests prove it."
   }
   workflow single-pass {
-    stop when coder.done
+    session coder
   }
   harness my-agent {
     workflow single-pass
@@ -27,15 +29,22 @@ const SOURCE = `
       use skill require-tests
     }
   }
-  target qoder
+  runtime qoder {
+    adapter "@harness/adapter-qoder"
+  }
+  deployment my-agent-qoder {
+    harness my-agent
+    runtime qoder
+  }
 `;
 
 const SOURCE_SKILL_HARNESS = `
+  language 0.3
   skill deep-guide {
     source "./skills/deep-guide"
   }
   workflow single-pass {
-    stop when coder.done
+    session coder
   }
   harness my-agent {
     workflow single-pass
@@ -43,7 +52,13 @@ const SOURCE_SKILL_HARNESS = `
       use skill deep-guide
     }
   }
-  target qoder
+  runtime qoder {
+    adapter "@harness/adapter-qoder"
+  }
+  deployment my-agent-qoder {
+    harness my-agent
+    runtime qoder
+  }
 `;
 
 const scriptedExecutorFactory: HarnessUiExecutorFactory = (context) => {
@@ -99,7 +114,117 @@ describe("harness-studio server", () => {
 
     const config = await (await fetch(`${started.url}/api/config`)).json();
 
-    expect(config).toEqual({ aguiEnabled: false, evidenceEnabled: true, experimentEnabled: false });
+    expect(config).toEqual({
+      aguiEnabled: false,
+      evidenceEnabled: true,
+      experimentEnabled: false,
+      historyEnabled: false,
+    });
+  });
+
+  it("resolves source-neutral history and activates only the successfully locked manifest", async () => {
+    const appDir = await makeAppDir();
+    const alternateDir = await makeTempDir("studio-locked-manifest-");
+    await cp(dirname(EXPERIMENT_MANIFEST), alternateDir, { recursive: true });
+    await writeFile(join(alternateDir, "prompt.md"), "Locked presentation request.\n", "utf8");
+    const alternateManifest = join(alternateDir, "experiment.json");
+    const adapter: CheckpointHistoryAdapter = {
+      descriptor: { id: "pptx-history-v1", label: "Presentation history" },
+      async list() {
+        return {
+          adapter: this.descriptor,
+          items: [{
+            id: "deck_revision_42",
+            title: "Quarterly review edit",
+            requestPreview: "Tighten the executive summary.",
+            occurredAt: "2026-08-17T08:00:00.000Z",
+            adapter: this.descriptor,
+            provenance: "verified-history",
+            checkpointVerified: true,
+          }],
+        };
+      },
+      async resolve() {
+        return {
+          item: (await this.list()).items[0]!,
+          checkpointRef: { planPath: "/adapter-owned/deck-checkpoint.json", digest: `sha256:${"a".repeat(64)}` },
+          checkpointSource: {
+            status: "ready",
+            adapter: this.descriptor,
+            resource: { label: "Presentation", value: "Quarterly review.pptx" },
+            revision: { label: "Version", value: "42" },
+            history: { label: "Edit history", value: "change-108" },
+            materialization: { label: "Isolated document copy", value: "10 copies", timing: "on-run", count: 10 },
+            capabilities: { isolatedMaterialization: true, observedHistory: true, preserveResult: true },
+          },
+          request: {
+            promptPath: "/adapter-owned/prompt.md",
+            prompt: "Tighten the executive summary.\n",
+            promptHash: `sha256:${"b".repeat(64)}`,
+            verified: true,
+          },
+          observed: {
+            trajectoryPath: "/adapter-owned/trajectory.jsonl",
+            startCheckpointVerified: true,
+            identity: { harnessId: "readme-grounded", model: "performance" },
+          },
+        };
+      },
+    };
+    started = await startHarnessStudioServer({
+      appDir,
+      experimentManifestPath: EXPERIMENT_MANIFEST,
+      checkpointHistoryAdapter: adapter,
+      experimentLocker: async () => ({
+        manifestPath: alternateManifest,
+        receipt: {
+          lockId: "lock_presentation",
+          historyId: "deck_revision_42",
+          manifestDigest: `sha256:${"c".repeat(64)}`,
+          checkpointDigest: `sha256:${"a".repeat(64)}`,
+          manifestName: "experiment.json",
+        },
+      }),
+    });
+
+    const history = await (await fetch(`${started.url}/api/checkpoint-history`)).json();
+    expect(history.items[0]).toMatchObject({ id: "deck_revision_42", adapter: { id: "pptx-history-v1" } });
+    expect(JSON.stringify(history)).not.toContain("adapter-owned");
+
+    const resolved = await fetch(`${started.url}/api/checkpoint-history/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ historyId: "deck_revision_42" }),
+    });
+    expect(await resolved.json()).toMatchObject({
+      lockable: true,
+      setup: {
+        checkpointSource: { resource: { label: "Presentation" } },
+        request: { provenance: "verified-history" },
+      },
+    });
+
+    const hostile = await fetch(`${started.url}/api/experiment/lock`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "https://hostile.example" },
+      body: JSON.stringify({ historyId: "deck_revision_42" }),
+    });
+    expect(hostile.status).toBe(403);
+
+    const locked = await fetch(`${started.url}/api/experiment/lock`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ historyId: "deck_revision_42" }),
+    });
+    expect(await locked.json()).toMatchObject({
+      lock: { lockId: "lock_presentation" },
+      setup: { request: { prompt: "Locked presentation request.\n" } },
+    });
+    const active = await (await fetch(`${started.url}/api/experiment`)).json();
+    expect(active).toMatchObject({
+      lock: { lockId: "lock_presentation" },
+      setup: { request: { prompt: "Locked presentation request.\n" } },
+    });
   });
 
   it("serves the evidence verdict.json and 404s when it is absent", async () => {
@@ -138,7 +263,12 @@ describe("harness-studio server", () => {
           laneId: "fresh-default",
           runId: `${options.experimentId}:fresh-default:1`,
           at: "2026-08-17T00:00:01.000Z",
-          event: { type: "tool-call-started", toolCallId: "read-1", toolName: "Read", input: { path: "README.md" } },
+          event: {
+            type: "tool.requested",
+            toolInvocationId: "read-1",
+            toolName: "Read",
+            filePath: "README.md",
+          } as never,
         });
         return {} as never;
       },
@@ -154,6 +284,21 @@ describe("harness-studio server", () => {
       id: "profile-effect",
       attribution: { mode: "attributable", axis: "runtime-profile" },
     });
+    expect(preview.setup).toMatchObject({
+      scenario: "historical-replay",
+      checkpointSource: {
+        status: "unavailable",
+        materialization: { timing: "on-run", count: 10 },
+      },
+      request: { provenance: "unverified-history" },
+    });
+    expect(preview.setup.historicalGaps[0]).toMatchObject({ laneId: "history" });
+    expect(preview.observedCalls.history[0]).toMatchObject({
+      name: "Read",
+      input: { path: "README.md" },
+      status: "completed",
+    });
+    expect(preview).not.toHaveProperty("observedEvents");
 
     const stream = await fetch(`${started.url}/api/experiment`, {
       method: "POST",
@@ -164,7 +309,9 @@ describe("harness-studio server", () => {
     expect(stream.headers.get("content-type")).toContain("text/event-stream");
     expect(body).toContain('"experimentId":"exp_server_test"');
     expect(body).toContain('"laneId":"fresh-default"');
+    expect(body).toContain('"type":"tool-call-started"');
     expect(body).toContain('"toolName":"Read"');
+    expect(body).not.toContain('"type":"tool.requested"');
   });
 
   it("rejects cross-origin experiment execution", async () => {
@@ -364,5 +511,17 @@ describe("harness-studio CLI", () => {
       "/skills",
     );
     expect(resolveHarnessStudioSourceRoot(undefined)).toBeUndefined();
+  });
+
+  it("parses history catalog and lock directory options", () => {
+    expect(parseHarnessStudioArgs([
+      "--experiment", "experiment.json",
+      "--history-catalog", "history.json",
+      "--experiment-locks", ".locks",
+    ])).toMatchObject({
+      experiment: "experiment.json",
+      historyCatalog: "history.json",
+      experimentLocks: ".locks",
+    });
   });
 });

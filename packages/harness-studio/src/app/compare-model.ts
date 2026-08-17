@@ -92,8 +92,8 @@ export function summarizeVerdict(verdict: HarnessCompareVerdict): CompareSummary
       minimumMatchedPairs: verdict.policy.minimumMatchedPairs,
     },
     rows: [
-      row("baseline", "H0 baseline", verdict.baseline),
-      row("candidate", "H1 candidate", verdict.candidate),
+      row("baseline", "Baseline", verdict.baseline),
+      row("candidate", "Candidate", verdict.candidate),
     ],
     trials: verdict.trials.map((trial) => ({
       variant: trial.variant,

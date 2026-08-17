@@ -28,6 +28,12 @@ npx @qoder-ai/harness-studio --harness my-agent.harness
 
 # Both surfaces on one port
 npx @qoder-ai/harness-studio --harness my-agent.harness --evidence ./evidence
+
+# Discover project history, resolve a checkpoint, and lock it before Run
+npx @qoder-ai/harness-studio \
+  --experiment ./experiment.json \
+  --history-catalog ./checkpoint-history.json \
+  --experiment-locks ./.harness-studio-locks
 ```
 
 Then open the printed URL (default `http://127.0.0.1:3311`). The server binds
@@ -40,6 +46,16 @@ A `source`-backed skill is locked and read from `--source-root`, which
 defaults to the directory containing `--harness`. Pass it explicitly when the
 harness's skills live somewhere else.
 
+The optional `checkpoint-history.v1` catalog is the first file-backed history
+adapter. Studio exposes only opaque item ids and display projections to the
+browser. Resolving an item verifies its checkpoint, prompt, and trajectory but
+does not create a worktree or sandbox. `Lock selected history` writes a
+content-addressed experiment definition and makes it active only after the
+existing experiment loader accepts it; isolated lane copies are still created
+only by Run. Other providers, including versioned document or presentation
+systems, can inject the same server adapter interface without adopting the
+catalog's storage format.
+
 ## Architecture
 
 ```text
@@ -49,6 +65,7 @@ src/app/         components plus pure state modules:
                    compare-model.ts  verdict.json → table model
                    sse-client.ts     incremental SSE frame parser
 src/server/      static host + /api/config + /api/evidence + embedded /agui
+                 checkpoint history list/resolve + durable experiment lock
 ```
 
 The pure modules are the tested seam; the React components are direct renders

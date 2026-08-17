@@ -57,7 +57,7 @@ describe("summarizeVerdict", () => {
     expect(summary.rows).toEqual([
       {
         variant: "baseline",
-        label: "H0 baseline",
+        label: "Baseline",
         passedTrials: 0,
         completedTrials: 2,
         passRate: 0,
@@ -69,7 +69,7 @@ describe("summarizeVerdict", () => {
       },
       {
         variant: "candidate",
-        label: "H1 candidate",
+        label: "Candidate",
         passedTrials: 2,
         completedTrials: 2,
         passRate: 1,

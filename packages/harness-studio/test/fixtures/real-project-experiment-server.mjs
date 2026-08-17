@@ -35,13 +35,20 @@ const plan = await createSessionExecutionPlan({
 const planSource = `${JSON.stringify(plan, null, 2)}\n`;
 await writeFile(join(fixture, "checkpoint.json"), planSource, "utf8");
 await writeFile(join(fixture, "checkpoint-compare.harness"), `
+language 0.3
 skill evidence-first { description "Inspect implementation files before drawing conclusions. Do not edit for a read-only task." }
-workflow single-pass { stop when coder.done }
+workflow single-pass { session coder }
 harness checkpoint-agent {
   workflow single-pass
   agent coder { use skill evidence-first }
 }
-target qoder
+runtime qoder {
+  adapter "@harness/adapter-qoder"
+}
+deployment checkpoint-agent-qoder {
+  harness checkpoint-agent
+  runtime qoder
+}
 `, "utf8");
 await writeFile(join(fixture, "prompt.md"), `Inspect packages/harness/src/experiment/runner.ts and packages/harness-studio/src/app/ExperimentView.tsx in this real Better Harness checkout. Do not edit files. Explain how ACP tool calls are streamed and correlated across the historical lane and two fresh lanes. Keep the answer concise.\n`, "utf8");
 await writeFile(join(fixture, "grader.json"), `${JSON.stringify({
@@ -56,6 +63,22 @@ await writeFile(join(fixture, "grader.json"), `${JSON.stringify({
 await copyFile(resolvedHistorySource, join(fixture, "history.jsonl"));
 
 const digest = `sha256:${createHash("sha256").update(planSource).digest("hex")}`;
+await writeFile(join(fixture, "history-catalog.json"), `${JSON.stringify({
+  schemaVersion: "checkpoint-history.v1",
+  adapter: { id: "imported-qoder-history-v1", label: "Imported Qoder project history" },
+  items: [{
+    id: "better_harness_imported_episode",
+    title: "Better Harness ACP inspection",
+    occurredAt: timestamp,
+    checkpointRef: { plan: "./checkpoint.json", digest },
+    request: { prompt: "./prompt.md", verified: false },
+    observed: {
+      trajectory: "./history.jsonl",
+      startCheckpointVerified: false,
+      identity: { harnessId: "checkpoint-agent", model: "performance" },
+    },
+  }],
+}, null, 2)}\n`, "utf8");
 await writeFile(join(fixture, "experiment.json"), `${JSON.stringify({
   schemaVersion: "harness-experiment.v1",
   harness: "./checkpoint-compare.harness",
@@ -109,6 +132,8 @@ await mkdir(join(fixture, "evidence"));
 const started = await startHarnessStudioServer({
   appDir: resolve(packageRoot, "dist/app"),
   experimentManifestPath: join(fixture, "experiment.json"),
+  checkpointHistoryCatalogPath: join(fixture, "history-catalog.json"),
+  experimentLockDirectory: join(fixture, "locks"),
   experimentOutputDirectory: join(fixture, "evidence"),
   port: Number(process.env.HARNESS_STUDIO_DEMO_PORT ?? 3312),
 });

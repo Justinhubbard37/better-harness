@@ -14,7 +14,7 @@ export interface SseParser {
  * the blank-line delimiter and each `data:` payload is parsed as one AG-UI
  * event.
  */
-export function createSseParser(onEvent: (event: AguiEvent) => void): SseParser {
+export function createSseParser<T = AguiEvent>(onEvent: (event: T) => void): SseParser {
   let buffer = "";
   const emitFrame = (frame: string): void => {
     const data = frame
@@ -23,7 +23,7 @@ export function createSseParser(onEvent: (event: AguiEvent) => void): SseParser 
       .map((line) => line.slice(5).trimStart())
       .join("\n");
     if (data.length > 0) {
-      onEvent(JSON.parse(data) as AguiEvent);
+      onEvent(JSON.parse(data) as T);
     }
   };
   return {

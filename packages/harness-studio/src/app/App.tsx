@@ -42,13 +42,13 @@ export function App(): React.JSX.Element {
   const navigation = (
     <nav className="studio-tabs" aria-label="Studio views">
       {config.experimentEnabled && (
-        <button className={tab === "experiment" ? "active" : ""} onClick={() => setTab("experiment")}>Experiment</button>
+        <button className={tab === "experiment" ? "active" : ""} onClick={() => setTab("experiment")}>Compare</button>
       )}
       {config.aguiEnabled && (
         <button className={tab === "run" ? "active" : ""} onClick={() => setTab("run")}>Run</button>
       )}
       {config.evidenceEnabled && (
-        <button className={tab === "compare" ? "active" : ""} onClick={() => setTab("compare")}>Compare</button>
+        <button className={tab === "compare" ? "active" : ""} onClick={() => setTab("compare")}>Results</button>
       )}
     </nav>
   );
