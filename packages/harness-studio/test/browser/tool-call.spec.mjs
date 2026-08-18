@@ -334,14 +334,24 @@ test("navigates recorded session evidence as a debugger notebook", async ({ page
   await expect(page.getByRole("complementary", { name: "State Inspector" })).toBeVisible();
   await expect(page.locator('[aria-label="Session Timeline Minimap"]')).toBeVisible();
   await expect(page.locator('[data-notebook-event="change-workbench"]')).toHaveClass(/selected/);
+  await expect(page.locator('[data-code-diff="pierre"]').first()).toBeVisible();
   await expect(page.locator('.timeline-segment[aria-current="true"]')).toHaveAttribute("aria-label", "Change: Edit workbench.js");
   await expect(page.getByText("Restore", { exact: true })).toHaveCount(0);
+  const typography = await page.evaluate(() => ({
+    body: Number.parseFloat(getComputedStyle(document.querySelector(".prompt-cell p")).fontSize),
+    metadata: Number.parseFloat(getComputedStyle(document.querySelector(".debugger-event-card header span")).fontSize),
+    primary: Number.parseFloat(getComputedStyle(document.querySelector(".step-controls button.primary")).fontSize),
+  }));
+  expect(typography.body).toBeGreaterThanOrEqual(13);
+  expect(typography.metadata).toBeGreaterThanOrEqual(12);
+  expect(typography.primary).toBeGreaterThanOrEqual(14);
   await page.screenshot({ path: testInfo.outputPath("session-debugger-1440x900.png") });
 
   await page.locator(".tree-node").filter({ hasText: "Explore" }).click();
   await expect(page.getByRole("button", { name: "Step Into" })).toBeEnabled();
   await page.getByRole("button", { name: "Step Into" }).click();
   await expect(page.locator(".explore-tool-list button.selected")).toContainText("Read workbench.js");
+  await expect(page.getByLabel("Tool call input")).toHaveAttribute("data-highlight-state", "highlighted");
   await expect(page.locator(".state-inspector > header > span")).toHaveText("Tool Call Cursor");
   await expect(page.locator('.timeline-segment[aria-current="true"]')).toHaveAttribute("aria-label", "Explore: Inspect the current UI");
 
@@ -352,9 +362,11 @@ test("navigates recorded session evidence as a debugger notebook", async ({ page
   await page.getByRole("tab", { name: "Raw ACP" }).click();
   await expect(page.locator(".raw-acp")).toContainText("session/update");
   await expect(page.locator(".raw-acp")).toContainText("tool_test_failed");
+  await expect(page.getByLabel("Raw ACP JSON")).toHaveAttribute("data-highlight-state", "highlighted");
 
   await page.getByRole("tab", { name: "Diff view" }).click();
   await expect(page.locator(".notebook-diff-view .debugger-event")).toHaveCount(2);
+  await expect(page.locator('.notebook-diff-view [data-code-diff="pierre"]')).toHaveCount(2);
   await page.getByRole("tab", { name: "Notebook" }).click();
 
   const dimensions = await page.evaluate(() => ({
@@ -380,6 +392,9 @@ test("renders a keyboard-expandable failed and truncated Tool Call at 390px", as
   await page.getByRole("button", { name: "New live run" }).click();
   await page.getByPlaceholder("Task prompt for the harness run…").fill("Run the scripted browser fixture");
   await page.getByRole("button", { name: "Run harness" }).click();
+
+  await expect(page.getByRole("navigation", { name: "Session debugger controls" })).toHaveCount(0);
+  await expect(page.getByText("Live observation · no Evidence Cursor")).toBeVisible();
 
   await expect(page.locator(".run-status strong")).toHaveText("finished");
   const card = page.locator("details.tool-card");

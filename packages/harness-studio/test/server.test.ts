@@ -119,7 +119,31 @@ describe("harness-studio server", () => {
       evidenceEnabled: true,
       experimentEnabled: false,
       historyEnabled: false,
+      inspectorEnabled: false,
     });
+  });
+
+  it("serves one explicitly configured Inspector report without exposing a file picker", async () => {
+    const appDir = await makeAppDir();
+    const reportDir = await makeTempDir("studio-inspector-");
+    const reportPath = join(reportDir, "inspector.html");
+    await writeFile(reportPath, "<!doctype html><title>Inspector fixture</title><h1>Evidence Workbench</h1>\n", "utf8");
+    started = await startHarnessStudioServer({ appDir, inspectorReportPath: reportPath });
+
+    const config = await (await fetch(`${started.url}/api/config`)).json();
+    const report = await fetch(`${started.url}/inspector`);
+
+    expect(config.inspectorEnabled).toBe(true);
+    expect(report.status).toBe(200);
+    expect(report.headers.get("content-type")).toContain("text/html");
+    expect(report.headers.get("cache-control")).toBe("no-store");
+    expect(await report.text()).toContain("Evidence Workbench");
+
+    await started.close();
+    started = await startHarnessStudioServer({ appDir });
+    const missing = await fetch(`${started.url}/inspector`);
+    expect(missing.status).toBe(404);
+    expect((await missing.json()).error).toMatch(/--inspector/);
   });
 
   it("resolves source-neutral history and activates only the successfully locked manifest", async () => {
@@ -298,7 +322,14 @@ describe("harness-studio server", () => {
       input: { path: "README.md" },
       status: "completed",
     });
+    expect(preview.observedCallPages.history).toMatchObject({ complete: true, malformedLines: 0 });
     expect(preview).not.toHaveProperty("observedEvents");
+
+    const observedPage = await (await fetch(`${started.url}/api/experiment/observed-calls?laneId=history&limit=100`)).json();
+    expect(observedPage.complete).toBe(true);
+    expect(observedPage.calls).toEqual(expect.arrayContaining([expect.objectContaining({ name: "Read" })]));
+    const invalidPage = await fetch(`${started.url}/api/experiment/observed-calls?laneId=../history`);
+    expect(invalidPage.status).toBe(400);
 
     const stream = await fetch(`${started.url}/api/experiment`, {
       method: "POST",
@@ -500,7 +531,7 @@ describe("harness-studio CLI", () => {
     });
 
     expect(code).toBe(2);
-    expect(errors.join("")).toMatch(/--experiment, --evidence, or --harness/);
+    expect(errors.join("")).toMatch(/--inspector, --experiment, --evidence, or --harness/);
   });
 
   it("resolves the default source root from the harness file and honors an override", () => {
@@ -513,12 +544,14 @@ describe("harness-studio CLI", () => {
     expect(resolveHarnessStudioSourceRoot(undefined)).toBeUndefined();
   });
 
-  it("parses history catalog and lock directory options", () => {
+  it("parses Inspector, history catalog, and lock directory options", () => {
     expect(parseHarnessStudioArgs([
+      "--inspector", "inspector.html",
       "--experiment", "experiment.json",
       "--history-catalog", "history.json",
       "--experiment-locks", ".locks",
     ])).toMatchObject({
+      inspector: "inspector.html",
       experiment: "experiment.json",
       historyCatalog: "history.json",
       experimentLocks: ".locks",

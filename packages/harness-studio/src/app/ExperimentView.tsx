@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { CheckpointHistoryPreview, ResolvedHistoryDraftPreview } from "../experiment-setup.js";
-import { applyLaneEvent, emptyLane } from "./experiment-comparison-model.js";
+import { applyLaneEvent, emptyLane, mergeCallPage } from "./experiment-comparison-model.js";
 import { ExperimentBuilder, type HistoryActionState, type HistoryLoadState } from "./ExperimentBuilder.js";
 import { ExperimentWorkbench } from "./ExperimentWorkbench.js";
 import { createSseParser } from "./sse-client.js";
@@ -90,7 +90,9 @@ export function ExperimentView(props: { navigation?: ReactNode } = {}): React.JS
       initial[lane.id] = {
         status: lane.origin === "observed" ? "history" : "idle",
         calls,
-        eventCount: calls.length,
+        eventCount: payload.observedCallPages?.[lane.id]?.parsedLines ?? calls.length,
+        ...(payload.observedCallPages?.[lane.id]?.nextCursor === undefined ? {} : { nextCursor: payload.observedCallPages[lane.id]!.nextCursor }),
+        ...(lane.origin === "observed" ? { hasMore: payload.observedCallPages?.[lane.id]?.complete === false } : {}),
       };
     }
     const fresh = payload.manifest.lanes.filter((lane) => lane.origin === "execute");
@@ -102,6 +104,41 @@ export function ExperimentView(props: { navigation?: ReactNode } = {}): React.JS
     setCandidateId(candidate?.id ?? baseline?.id ?? "");
     setCompareSet(undefined);
     setSelection(null);
+  }
+
+  async function loadMoreCalls(laneId: string): Promise<void> {
+    const lane = lanes[laneId];
+    if (lane?.loadingMore || !lane?.hasMore || lane.nextCursor === undefined) return;
+    setLanes((current) => ({ ...current, [laneId]: { ...current[laneId]!, loadingMore: true } }));
+    try {
+      const query = new URLSearchParams({ laneId, cursor: lane.nextCursor, limit: "100" });
+      const response = await fetch(`api/experiment/observed-calls?${query}`);
+      const page = await response.json() as {
+        calls?: LaneTrace["calls"];
+        nextCursor?: string;
+        complete?: boolean;
+        parsedLines?: number;
+        error?: string;
+      };
+      if (!response.ok || page.calls === undefined) throw new Error(page.error ?? `Observed calls failed (${response.status}).`);
+      setLanes((current) => {
+        const existing = current[laneId] ?? emptyLane();
+        return { ...current, [laneId]: {
+          ...existing,
+          calls: mergeCallPage(existing.calls, page.calls!),
+          eventCount: page.parsedLines ?? existing.eventCount,
+          ...(page.nextCursor === undefined ? { nextCursor: undefined } : { nextCursor: page.nextCursor }),
+          hasMore: page.complete === false,
+          loadingMore: false,
+        } };
+      });
+    } catch (error) {
+      setLanes((current) => ({ ...current, [laneId]: {
+        ...(current[laneId] ?? emptyLane()),
+        loadingMore: false,
+        detail: error instanceof Error ? error.message : String(error),
+      } }));
+    }
   }
 
   async function resolveHistory(id: string): Promise<void> {
@@ -280,5 +317,6 @@ export function ExperimentView(props: { navigation?: ReactNode } = {}): React.JS
     onFilter={setFilter}
     onDiffOnly={setDiffOnly}
     onSyncSelection={setSyncSelection}
+    onLoadMore={(laneId) => void loadMoreCalls(laneId)}
   />;
 }

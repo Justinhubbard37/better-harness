@@ -22,20 +22,33 @@ export interface AguiRunState {
   status: "idle" | "running" | "finished" | "error";
   threadId?: string;
   runId?: string;
-  timeline: TimelineItem[];
+  /** Stable order plus O(1) lookup; React observes revision bumps. */
+  timelineKeys: string[];
+  timelineByKey: Map<string, TimelineItem>;
+  timelineRevision: number;
+  toolCallCount: number;
   warnings: string[];
   error?: string;
   result?: unknown;
 }
 
 export function initialRunState(): AguiRunState {
-  return { status: "idle", timeline: [], warnings: [] };
+  return { status: "idle", timelineKeys: [], timelineByKey: new Map(), timelineRevision: 0, toolCallCount: 0, warnings: [] };
+}
+
+export function timelineItems(state: AguiRunState): TimelineItem[] {
+  return state.timelineKeys.flatMap((key) => {
+    const item = state.timelineByKey.get(key);
+    return item === undefined ? [] : [item];
+  });
 }
 
 /**
- * Fold one AG-UI event into the run view state. Pure and immutable so the
- * React view is a direct render of `reduce(events)` and the behaviour is
- * testable without a DOM.
+ * Fold one AG-UI event into the keyed run store. The fold mutates the keyed
+ * map in place and bumps a revision so streaming argument and text deltas
+ * patch one entry in O(1) instead of reducing the full timeline. Argument and
+ * text deltas are not idempotent, so each event batch must be folded exactly
+ * once, outside React state updaters that StrictMode may double-invoke.
  */
 export function applyAguiEvent(state: AguiRunState, event: AguiEvent): AguiRunState {
   switch (event.type) {
@@ -105,12 +118,22 @@ function settleTools(
 ): AguiRunState {
   return {
     ...state,
-    timeline: state.timeline.map((item) =>
-      item.kind === "tool-call" && (item.status === "preparing" || item.status === "running")
-        ? { ...item, status: terminalStatus }
-        : item,
-    ),
+    timelineRevision: state.timelineRevision + 1,
+    timelineByKey: settleTimeline(state.timelineByKey, terminalStatus),
   };
+}
+
+function settleTimeline(
+  current: Map<string, TimelineItem>,
+  terminalStatus: "result-unavailable" | "interrupted",
+): Map<string, TimelineItem> {
+  const next = new Map(current);
+  for (const [key, item] of current) {
+    if (item.kind === "tool-call" && (item.status === "preparing" || item.status === "running")) {
+      next.set(key, { ...item, status: terminalStatus });
+    }
+  }
+  return next;
 }
 
 function parseToolResultMeta(value: unknown): HarnessToolResultMeta | undefined {
@@ -132,7 +155,15 @@ function parseToolResultMeta(value: unknown): HarnessToolResultMeta | undefined 
 }
 
 function appendItem(state: AguiRunState, item: TimelineItem): AguiRunState {
-  return { ...state, timeline: [...state.timeline, item] };
+  const key = itemKey(item.kind, item.id);
+  if (state.timelineByKey.has(key)) return state;
+  state.timelineByKey.set(key, item);
+  return {
+    ...state,
+    timelineKeys: [...state.timelineKeys, key],
+    timelineRevision: state.timelineRevision + 1,
+    toolCallCount: state.toolCallCount + (item.kind === "tool-call" ? 1 : 0),
+  };
 }
 
 function patchItem<Kind extends TimelineItem["kind"]>(
@@ -141,12 +172,13 @@ function patchItem<Kind extends TimelineItem["kind"]>(
   id: string,
   update: (item: Extract<TimelineItem, { kind: Kind }>) => TimelineItem,
 ): AguiRunState {
-  return {
-    ...state,
-    timeline: state.timeline.map((item) =>
-      item.kind === kind && item.id === id
-        ? update(item as Extract<TimelineItem, { kind: Kind }>)
-        : item,
-    ),
-  };
+  const key = itemKey(kind, id);
+  const item = state.timelineByKey.get(key);
+  if (item?.kind !== kind) return state;
+  state.timelineByKey.set(key, update(item as Extract<TimelineItem, { kind: Kind }>));
+  return { ...state, timelineRevision: state.timelineRevision + 1 };
+}
+
+function itemKey(kind: TimelineItem["kind"], id: string): string {
+  return `${kind}:${id}`;
 }

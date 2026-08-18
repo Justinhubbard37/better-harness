@@ -11,6 +11,7 @@ Usage:
   harness-studio --help
 
 Options:
+  --inspector <file>  self-contained Harness Inspector HTML (enables Inspector)
   --evidence <dir>    harness-compare evidence directory (enables Compare view)
   --harness <file>    .harness file to serve for live runs (enables Run view)
   --experiment <file> harness-experiment.v1 manifest (enables Experiment view)
@@ -47,6 +48,7 @@ export function resolveHarnessStudioSourceRoot(
 }
 
 interface ParsedArgs {
+  inspector?: string;
   evidence?: string;
   harness?: string;
   experiment?: string;
@@ -79,6 +81,9 @@ export function parseHarnessStudioArgs(argv: string[]): ParsedArgs {
         break;
       case "--evidence":
         parsed.evidence = takeValue();
+        break;
+      case "--inspector":
+        parsed.inspector = takeValue();
         break;
       case "--harness":
         parsed.harness = takeValue();
@@ -145,8 +150,13 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     io.stderr(`${parsed.error}\n`);
     return 2;
   }
-  if (parsed.evidence === undefined && parsed.harness === undefined && parsed.experiment === undefined) {
-    io.stderr("Nothing to show: pass --experiment, --evidence, or --harness (see --help).\n");
+  if (
+    parsed.inspector === undefined
+    && parsed.evidence === undefined
+    && parsed.harness === undefined
+    && parsed.experiment === undefined
+  ) {
+    io.stderr("Nothing to show: pass --inspector, --experiment, --evidence, or --harness (see --help).\n");
     return 2;
   }
   const harnessSource = parsed.harness !== undefined ? await readFile(parsed.harness, "utf8") : undefined;
@@ -158,6 +168,7 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     port: parsed.port,
     host: parsed.host,
     allowRemote: parsed.allowRemote,
+    ...(parsed.inspector !== undefined ? { inspectorReportPath: resolve(parsed.inspector) } : {}),
     ...(parsed.evidence !== undefined ? { evidenceDir: resolve(parsed.evidence) } : {}),
     ...(harnessSource !== undefined ? { harnessSource } : {}),
     ...(parsed.harnessId !== undefined ? { harnessId: parsed.harnessId } : {}),

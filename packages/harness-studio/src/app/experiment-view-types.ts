@@ -31,6 +31,12 @@ export interface ExperimentPreview {
   }>;
   setup: ExperimentSetupPreview;
   observedCalls: Record<string, ExperimentToolCall[]>;
+  observedCallPages?: Record<string, {
+    nextCursor?: string;
+    complete: boolean;
+    parsedLines: number;
+    malformedLines: number;
+  }>;
   lock?: ExperimentLockReceipt;
 }
 
@@ -39,6 +45,9 @@ export interface LaneTrace {
   calls: ExperimentToolCall[];
   eventCount: number;
   detail?: string;
+  nextCursor?: string;
+  hasMore?: boolean;
+  loadingMore?: boolean;
 }
 
 export interface ContrastResult {

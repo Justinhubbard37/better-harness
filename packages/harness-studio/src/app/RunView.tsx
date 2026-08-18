@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Icon } from "@phosphor-icons/react";
 import { ArrowBendDownRight } from "@phosphor-icons/react/ArrowBendDownRight";
 import { ArrowBendUpLeft } from "@phosphor-icons/react/ArrowBendUpLeft";
@@ -42,7 +42,9 @@ import { WarningCircle } from "@phosphor-icons/react/WarningCircle";
 import { Wrench } from "@phosphor-icons/react/Wrench";
 import { XCircle } from "@phosphor-icons/react/XCircle";
 import type { AguiEvent } from "@qoder-ai/harness-ui";
-import { applyAguiEvent, initialRunState, type AguiRunState, type TimelineItem } from "./agui-store.js";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { applyAguiEvent, initialRunState, timelineItems, type AguiRunState, type TimelineItem } from "./agui-store.js";
+import { HighlightedCode } from "./HighlightedCode.js";
 import { createSseParser } from "./sse-client.js";
 import {
   cumulativeFileChanges,
@@ -70,12 +72,15 @@ import {
   type StopConditionState,
 } from "./session-debugger-model.js";
 import { describeToolPayload } from "./tool-call-model.js";
+import { buildTimelineBins, groupLiveTimeline, semanticToolKind, type LiveTimelineGroup, type TimelineBin } from "./timeline-model.js";
+
+const StudioDiff = lazy(() => import("./StudioDiff.js"));
 
 /** Post one AG-UI run and fold the SSE stream into state updates. */
 async function streamRun(
   endpoint: string,
   prompt: string,
-  onUpdate: (updater: (state: AguiRunState) => AguiRunState) => void,
+  onEvents: (events: AguiEvent[]) => void,
 ): Promise<void> {
   const response = await fetch(endpoint, {
     method: "POST",
@@ -90,7 +95,18 @@ async function streamRun(
     const detail = await response.text().catch(() => "");
     throw new Error(`Run request failed (${response.status}): ${detail}`);
   }
-  const apply = (event: AguiEvent): void => onUpdate((state) => applyAguiEvent(state, event));
+  let pendingEvents: AguiEvent[] = [];
+  let frame: number | undefined;
+  const flush = (): void => {
+    frame = undefined;
+    const events = pendingEvents;
+    pendingEvents = [];
+    if (events.length > 0) onEvents(events);
+  };
+  const apply = (event: AguiEvent): void => {
+    pendingEvents.push(event);
+    frame ??= globalThis.requestAnimationFrame(flush);
+  };
   const parser = createSseParser(apply);
   const decoder = new TextDecoder();
   const reader = response.body.getReader();
@@ -101,6 +117,8 @@ async function streamRun(
   }
   parser.push(decoder.decode());
   parser.end();
+  if (frame !== undefined) globalThis.cancelAnimationFrame(frame);
+  flush();
 }
 
 type MessageTimelineItem = Extract<TimelineItem, { kind: "message" }>;
@@ -149,23 +167,24 @@ const MessageEntry = memo(function MessageEntry({ item }: { item: MessageTimelin
 });
 
 const ToolCallEntry = memo(function ToolCallEntry({ item }: { item: ToolCallTimelineItem }): React.JSX.Element {
+  const [expanded, setExpanded] = useState(false);
   const argumentsView = useMemo(() => describeToolPayload(item.argsText, "No arguments retained"), [item.argsText]);
   const resultView = useMemo(
     () => item.resultText === undefined ? undefined : describeToolPayload(item.resultText, "Empty result"),
     [item.resultText],
   );
-  return <details className={`tool-card status-${item.status}`}>
+  return <details className={`tool-card status-${item.status}`} onToggle={(event) => setExpanded(event.currentTarget.open)}>
     <summary>
       <span className="tool-icon" aria-hidden="true"><Wrench size={15} weight="bold" /></span>
       <span className="tool-title"><small>Tool call</small><strong>{item.name}</strong><code>{argumentsView.summary}</code></span>
       <span className="tool-status" aria-live="polite">{toolStatusLabel(item.status)}</span>
       <CaretDown className="tool-chevron" size={14} aria-hidden="true" />
     </summary>
-    <div className="tool-detail">
-      <section><h4>Arguments</h4><pre className={argumentsView.structured ? "structured" : ""}>{argumentsView.formatted}</pre></section>
-      <section><h4>Result</h4>{resultView ? <>{item.resultTruncated ? <p className="tool-notice">Result truncated{item.resultOriginalBytes === undefined ? "" : ` from ${item.resultOriginalBytes.toLocaleString()} bytes`}.</p> : null}<pre className={resultView.structured ? "structured" : ""}>{resultView.formatted}</pre></> : <p className="tool-empty">{item.status === "running" || item.status === "preparing" ? "Waiting for the tool result…" : item.status === "result-unavailable" ? "The run finished without a retained result payload." : "No result payload was retained."}</p>}</section>
+    {expanded && <div className="tool-detail">
+      <section><h4>Arguments</h4><HighlightedCode code={argumentsView.formatted} sourceHint={argumentsView.structured ? "tool-input.json" : "tool-input.txt"} className={argumentsView.structured ? "structured" : ""} label="Tool call arguments" /></section>
+      <section><h4>Result</h4>{resultView ? <>{item.resultTruncated ? <p className="tool-notice">Result truncated{item.resultOriginalBytes === undefined ? "" : ` from ${item.resultOriginalBytes.toLocaleString()} bytes`}.</p> : null}<HighlightedCode code={resultView.formatted} sourceHint={resultView.structured ? "tool-result.json" : "tool-result.txt"} className={resultView.structured ? "structured" : ""} label="Tool call result" /></> : <p className="tool-empty">{item.status === "running" || item.status === "preparing" ? "Waiting for the tool result…" : item.status === "result-unavailable" ? "The run finished without a retained result payload." : "No result payload was retained."}</p>}</section>
       <footer><span>Call ID</span><code title={item.id}>{item.id}</code></footer>
-    </div>
+    </div>}
   </details>;
 });
 
@@ -200,8 +219,16 @@ function stopConditionLabel(enabled: StopConditionState): string {
   return `${count} of ${STOP_CONDITIONS.length} stop conditions enabled`;
 }
 
-export function RunView({ aguiEndpoint, navigation }: { aguiEndpoint: string; navigation?: ReactNode }): React.JSX.Element {
-  const [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("recorded");
+export function RunView({
+  aguiEndpoint,
+  navigation,
+  initialMode = "recorded",
+}: {
+  aguiEndpoint: string;
+  navigation?: ReactNode;
+  initialMode?: SurfaceMode;
+}): React.JSX.Element {
+  const [surfaceMode, setSurfaceMode] = useState<SurfaceMode>(initialMode);
   const [prompt, setPrompt] = useState("");
   const [submittedPrompt, setSubmittedPrompt] = useState("");
   const [state, setState] = useState<AguiRunState>(initialRunState);
@@ -209,13 +236,20 @@ export function RunView({ aguiEndpoint, navigation }: { aguiEndpoint: string; na
   const [stopConditions, setStopConditions] = useState<StopConditionState>(DEFAULT_STOP_CONDITIONS);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => new Set(["session", "turn"]));
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("changes");
-  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(initialMode === "live");
   const [treeCollapsed, setTreeCollapsed] = useState(() => globalThis.matchMedia?.("(max-width: 900px)").matches ?? false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(() => globalThis.matchMedia?.("(max-width: 900px)").matches ?? false);
   const busy = useRef(false);
   const firstCursorRender = useRef(true);
+  const liveStateRef = useRef<AguiRunState>(initialRunState());
 
   const selectedEvent = eventForCursor(SAMPLE_DEBUGGER_SESSION, cursor);
+  const liveTimeline = useMemo(() => timelineItems(state), [state.timelineRevision]);
+  const liveGroups = useMemo(() => groupLiveTimeline(liveTimeline), [liveTimeline]);
+  const liveBins = useMemo(
+    () => buildTimelineBins(liveTimeline, 64, (item) => item.kind === "message" ? "response" : semanticToolKind(item)),
+    [liveTimeline],
+  );
 
   useEffect(() => {
     const media = globalThis.matchMedia?.("(max-width: 900px)");
@@ -261,9 +295,16 @@ export function RunView({ aguiEndpoint, navigation }: { aguiEndpoint: string; na
     setSubmittedPrompt(prompt.trim());
     setSurfaceMode("live");
     setComposerOpen(false);
-    setState({ ...initialRunState(), status: "running" });
+    const fresh: AguiRunState = { ...initialRunState(), status: "running" };
+    liveStateRef.current = fresh;
+    setState(fresh);
     try {
-      await streamRun(aguiEndpoint, prompt.trim(), setState);
+      await streamRun(aguiEndpoint, prompt.trim(), (events) => {
+        // Fold outside any React updater: applyAguiEvent mutates the keyed
+        // map for O(1) deltas and each batch must be applied exactly once.
+        liveStateRef.current = events.reduce(applyAguiEvent, liveStateRef.current);
+        setState(liveStateRef.current);
+      });
     } catch (error) {
       setState((previous) => ({ ...previous, status: "error", error: error instanceof Error ? error.message : String(error) }));
     } finally {
@@ -278,34 +319,34 @@ export function RunView({ aguiEndpoint, navigation }: { aguiEndpoint: string; na
 
   return <section className={`debugger-shell${treeCollapsed ? " tree-collapsed" : ""}${inspectorCollapsed ? " inspector-collapsed" : ""}`}>
     <header className="debugger-topbar">
-      <div className="debugger-brand"><span className="debugger-mark"><BugBeetle size={18} weight="fill" /></span><strong>Harness Studio</strong><span>Session Debugger</span></div>
+      <div className="debugger-brand"><span className="debugger-mark"><BugBeetle size={18} weight="fill" /></span><strong>Inspector</strong><span>Session Debugger</span></div>
       <div className="debugger-session-meta"><span>Session</span><strong title={sessionName}>{sessionName}</strong><em className={live ? "live" : "recorded"}>{runMode}</em></div>
       <div className="debugger-runtime-meta"><span className={`connection-dot status-${connectionState}`} /><strong>{connectionState}</strong><i /><span>Agent</span><strong>{live ? "local harness" : SAMPLE_DEBUGGER_SESSION.agent}</strong><i /><span>Protocol</span><strong>{live ? "AG-UI / ACP evidence" : SAMPLE_DEBUGGER_SESSION.protocol}</strong></div>
       <div className="debugger-top-actions">{navigation}<button type="button" onClick={() => setTreeCollapsed((value) => !value)} aria-pressed={!treeCollapsed} title="Toggle Execution Tree"><TreeStructure size={15} /></button><button type="button" onClick={() => setInspectorCollapsed((value) => !value)} aria-pressed={!inspectorCollapsed} title="Toggle State Inspector"><SidebarSimple size={15} /></button>{live ? <button type="button" onClick={() => { setSurfaceMode("recorded"); setComposerOpen(false); }}><ArrowLeft size={14} />Recorded sample</button> : <button type="button" className="new-run" onClick={() => setComposerOpen(true)}><Plus size={14} weight="bold" />New live run</button>}</div>
     </header>
 
-    <nav className="debugger-toolbar" aria-label="Session debugger controls">
+    {!live ? <nav className="debugger-toolbar" aria-label="Session debugger controls">
       <div className="step-controls">
-        <ControlButton label="Previous Stop" icon={CaretLeft} disabled={live} onClick={() => selectCursor(nextStopCursor(SAMPLE_DEBUGGER_SESSION, cursor, stopConditions, -1))} />
-        <ControlButton label="Continue" icon={Play} primary disabled={live} onClick={() => selectCursor(nextStopCursor(SAMPLE_DEBUGGER_SESSION, cursor, stopConditions))} />
-        <ControlButton label="Next Stop" icon={SkipForward} disabled={live} onClick={() => selectCursor(nextStopCursor(SAMPLE_DEBUGGER_SESSION, cursor, stopConditions))} />
+        <ControlButton label="Previous Stop" icon={CaretLeft} onClick={() => selectCursor(nextStopCursor(SAMPLE_DEBUGGER_SESSION, cursor, stopConditions, -1))} />
+        <ControlButton label="Continue" icon={Play} primary onClick={() => selectCursor(nextStopCursor(SAMPLE_DEBUGGER_SESSION, cursor, stopConditions))} />
+        <ControlButton label="Next Stop" icon={SkipForward} onClick={() => selectCursor(nextStopCursor(SAMPLE_DEBUGGER_SESSION, cursor, stopConditions))} />
         <span className="toolbar-divider" />
-        <ControlButton label="Step Into" icon={ArrowBendDownRight} disabled={live || selectedEvent.toolCalls === undefined} onClick={() => selectCursor(stepIntoCursor(SAMPLE_DEBUGGER_SESSION, cursor))} />
-        <ControlButton label="Step Over" icon={ArrowRight} disabled={live} onClick={() => selectCursor(stepOverCursor(SAMPLE_DEBUGGER_SESSION, cursor))} />
-        <ControlButton label="Step Out" icon={ArrowBendUpLeft} disabled={live || cursor.toolCallId === undefined} onClick={() => selectCursor(stepOutCursor(cursor))} />
-        <ControlButton label="Previous State" icon={ClockCounterClockwise} disabled={live} onClick={() => selectCursor(previousStateCursor(SAMPLE_DEBUGGER_SESSION, cursor))} />
+        <ControlButton label="Step Into" icon={ArrowBendDownRight} disabled={selectedEvent.toolCalls === undefined} onClick={() => selectCursor(stepIntoCursor(SAMPLE_DEBUGGER_SESSION, cursor))} />
+        <ControlButton label="Step Over" icon={ArrowRight} onClick={() => selectCursor(stepOverCursor(SAMPLE_DEBUGGER_SESSION, cursor))} />
+        <ControlButton label="Step Out" icon={ArrowBendUpLeft} disabled={cursor.toolCallId === undefined} onClick={() => selectCursor(stepOutCursor(cursor))} />
+        <ControlButton label="Previous State" icon={ClockCounterClockwise} onClick={() => selectCursor(previousStateCursor(SAMPLE_DEBUGGER_SESSION, cursor))} />
       </div>
-      <fieldset className="stop-conditions" disabled={live} aria-label={stopConditionLabel(stopConditions)}><legend>Stop on</legend>{STOP_CONDITIONS.map((condition) => <label key={condition}><input type="checkbox" checked={stopConditions[condition]} onChange={(event) => setStopConditions((previous) => ({ ...previous, [condition]: event.target.checked }))} /><span>{STOP_LABELS[condition]}</span></label>)}</fieldset>
-      <div className="pause-boundary"><Pause size={13} weight="fill" /><span>{live ? "Soft Pause only" : "Evidence Cursor"}</span></div>
-    </nav>
+      <fieldset className="stop-conditions" aria-label={stopConditionLabel(stopConditions)}><legend>Stop on</legend>{STOP_CONDITIONS.map((condition) => <label key={condition}><input type="checkbox" checked={stopConditions[condition]} onChange={(event) => setStopConditions((previous) => ({ ...previous, [condition]: event.target.checked }))} /><span>{STOP_LABELS[condition]}</span></label>)}</fieldset>
+      <div className="pause-boundary"><Pause size={13} weight="fill" /><span>Evidence Cursor</span></div>
+    </nav> : <div className="live-observation-bar" role="status"><span><Pause size={13} weight="fill" />Live observation · no Evidence Cursor</span><strong>Step controls unavailable until a recorded checkpoint exists</strong></div>}
 
     <div className="debugger-grid">
       {live ? <LiveExecutionTree state={state} prompt={submittedPrompt} /> : <ExecutionTree cursor={cursor} expanded={expandedNodes} onToggle={toggleExpanded} onSelect={selectNode} />}
-      {live ? <LiveNotebook state={state} prompt={submittedPrompt} /> : <SessionNotebook cursor={cursor} expanded={expandedNodes} onSelect={selectCursor} onToggle={toggleExpanded} />}
+      {live ? <LiveNotebook state={state} prompt={submittedPrompt} groups={liveGroups} /> : <SessionNotebook cursor={cursor} expanded={expandedNodes} onSelect={selectCursor} onToggle={toggleExpanded} />}
       {live ? <LiveInspector state={state} /> : <StateInspector cursor={cursor} activeTab={inspectorTab} onTab={setInspectorTab} onPrevious={() => selectCursor(previousStateCursor(SAMPLE_DEBUGGER_SESSION, cursor))} />}
     </div>
 
-    {live ? <LiveTimeline state={state} /> : <TimelineMinimap cursor={cursor} onSelect={selectCursor} />}
+    {live ? <LiveTimeline state={state} bins={liveBins} eventCount={liveTimeline.length} /> : <TimelineMinimap cursor={cursor} onSelect={selectCursor} />}
 
     {composerOpen && <div className="live-composer-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setComposerOpen(false); }}><section className="live-composer" role="dialog" aria-modal="true" aria-labelledby="live-composer-title"><header><div><small>Existing local runner</small><h2 id="live-composer-title">Start a live harness session</h2></div><button type="button" onClick={() => setComposerOpen(false)} aria-label="Close live run dialog"><XCircle size={19} /></button></header><p>Live events use the current AG-UI endpoint. Pausing this view only stops auto-follow; it does not stop the Agent unless a real gate is reported.</p><textarea value={prompt} placeholder="Task prompt for the harness run…" onChange={(event) => setPrompt(event.target.value)} rows={5} autoFocus /><footer><button type="button" onClick={() => setComposerOpen(false)}>Cancel</button><button type="button" className="primary" onClick={() => void start()} disabled={state.status === "running" || prompt.trim().length === 0}><Play size={14} weight="fill" />Run harness</button></footer></section></div>}
   </section>;
@@ -407,12 +448,12 @@ function ExploreCell(props: { event: DebuggerEvent; cursor: DebuggerCursor; expa
 }
 
 function ToolCallDetail({ tool }: { tool: DebuggerToolCall }): React.JSX.Element {
-  return <div className="mock-tool-detail"><section><small>Input</small><pre>{tool.input}</pre></section><section><small>Retained result</small><pre>{tool.output}</pre></section>{tool.resource && <footer><FileText size={12} /><code>{tool.resource}</code></footer>}</div>;
+  return <div className="mock-tool-detail"><section><small>Input</small><HighlightedCode code={tool.input} sourceHint="tool-input.json" label="Tool call input" /></section><section><small>Retained result</small><HighlightedCode code={tool.output} sourceHint={tool.resource ?? "tool-result.txt"} label="Retained tool result" /></section>{tool.resource && <footer><FileText size={12} /><code>{tool.resource}</code></footer>}</div>;
 }
 
 function DiffCell({ event }: { event: DebuggerEvent }): React.JSX.Element {
   const diff = event.diff!;
-  return <section className="diff-cell"><div className="diff-toolbar"><span><GitDiff size={13} /><code>{diff.path}</code></span><span className="diff-stats">+{event.fileChanges?.[0]?.additions ?? 0} <i>−{event.fileChanges?.[0]?.deletions ?? 0}</i></span></div><div className="diff-grid"><DiffPane label="Before" start={diff.beforeStart} lines={diff.before} tone="before" /><DiffPane label="After" start={diff.afterStart} lines={diff.after} tone="after" /></div></section>;
+  return <section className="diff-cell"><div className="diff-toolbar"><span><GitDiff size={13} /><code>{diff.path}</code></span><span className="diff-stats">+{event.fileChanges?.[0]?.additions ?? 0} <i>−{event.fileChanges?.[0]?.deletions ?? 0}</i></span></div><Suspense fallback={<div className="diff-grid" data-code-diff="loading"><DiffPane label="Before" start={diff.beforeStart} lines={diff.before} tone="before" /><DiffPane label="After" start={diff.afterStart} lines={diff.after} tone="after" /></div>}><StudioDiff diff={diff} /></Suspense></section>;
 }
 
 function DiffPane({ label, start, lines, tone }: { label: string; start: number; lines: string[]; tone: "before" | "after" }): React.JSX.Element {
@@ -448,7 +489,7 @@ function InspectorContent({ tab, cursor }: { tab: InspectorTab; cursor: Debugger
   if (tab === "plan") return <PlanInspector event={event} />;
   if (tab === "evidence") return <EvidenceInspector event={event} />;
   const rawAcp = tool === undefined ? event.rawAcp : { ...event.rawAcp, toolCallId: tool.id, payload: { name: tool.name, input: tool.input, retainedResult: tool.output } };
-  return <section className="raw-acp"><dl><div><dt>Direction</dt><dd>{rawAcp.direction}</dd></div><div><dt>Method</dt><dd>{rawAcp.method}</dd></div><div><dt>RPC ID</dt><dd>{rawAcp.rpcId}</dd></div><div><dt>Session ID</dt><dd>{rawAcp.sessionId}</dd></div>{rawAcp.toolCallId && <div><dt>Tool Call ID</dt><dd>{rawAcp.toolCallId}</dd></div>}<div><dt>Trace Context</dt><dd>{rawAcp.traceContext}</dd></div></dl><pre>{JSON.stringify({ jsonrpc: "2.0", id: rawAcp.rpcId, method: rawAcp.method, params: rawAcp.payload }, null, 2)}</pre></section>;
+  return <section className="raw-acp"><dl><div><dt>Direction</dt><dd>{rawAcp.direction}</dd></div><div><dt>Method</dt><dd>{rawAcp.method}</dd></div><div><dt>RPC ID</dt><dd>{rawAcp.rpcId}</dd></div><div><dt>Session ID</dt><dd>{rawAcp.sessionId}</dd></div>{rawAcp.toolCallId && <div><dt>Tool Call ID</dt><dd>{rawAcp.toolCallId}</dd></div>}<div><dt>Trace Context</dt><dd>{rawAcp.traceContext}</dd></div></dl><HighlightedCode code={JSON.stringify({ jsonrpc: "2.0", id: rawAcp.rpcId, method: rawAcp.method, params: rawAcp.payload }, null, 2)} sourceHint="event.json" label="Raw ACP JSON" /></section>;
 }
 
 function ChangesInspector({ event, cumulative }: { event: DebuggerEvent; cumulative: DebuggerFileChange[] }): React.JSX.Element {
@@ -475,7 +516,7 @@ function TestsInspector({ event }: { event: DebuggerEvent }): React.JSX.Element 
 
 function TerminalInspector({ event }: { event: DebuggerEvent }): React.JSX.Element {
   if (event.validation === undefined) return <InspectorSection title="Terminal"><p className="inspector-empty">No terminal result is linked to this cursor.</p></InspectorSection>;
-  return <InspectorSection title="Terminal"><div className={`terminal-card ${event.validation.status}`}><header><TerminalWindow size={13} /><code>{event.validation.command}</code><span>{event.validation.duration}</span></header><pre>{event.validation.output.join("\n")}</pre></div></InspectorSection>;
+  return <InspectorSection title="Terminal"><div className={`terminal-card ${event.validation.status}`}><header><TerminalWindow size={13} /><code>{event.validation.command}</code><span>{event.validation.duration}</span></header><HighlightedCode code={event.validation.output.join("\n")} sourceHint="terminal.txt" label="Terminal output" /></div></InspectorSection>;
 }
 
 function PlanInspector({ event }: { event: DebuggerEvent }): React.JSX.Element {
@@ -505,20 +546,42 @@ function TimelineMinimap(props: { cursor: DebuggerCursor; onSelect: (cursor: Deb
 }
 
 function LiveExecutionTree({ state, prompt }: { state: AguiRunState; prompt: string }): React.JSX.Element {
-  const toolCount = state.timeline.filter((item) => item.kind === "tool-call").length;
-  return <aside className="execution-tree live-tree" aria-label="Execution Tree"><header><div><small>Execution Tree</small><strong>Live observations</strong></div><span>{state.timeline.length} events</span></header><div className="execution-tree-scroll"><TreeRow nodeId="live-session" label="Session" detail={state.runId ?? "starting"} icon={Database} selected={false} depth={0} expandable expanded onSelect={() => undefined} /><TreeRow nodeId="live-turn" label="Turn 1" detail={prompt} icon={GitBranch} selected={false} depth={1} expandable expanded onSelect={() => undefined} /><TreeRow nodeId="live-prompt" label="Prompt" detail={prompt} icon={UserCircle} selected={false} depth={2} onSelect={() => undefined} /><TreeRow nodeId="live-tools" label="Agent activity" detail={`${toolCount} tool calls`} icon={Wrench} selected={false} depth={2} status={state.status} onSelect={() => undefined} /></div><footer><span><Pause size={12} />Soft Pause only</span><strong>Agent may continue</strong></footer></aside>;
+  return <aside className="execution-tree live-tree" aria-label="Execution Tree"><header><div><small>Execution Tree</small><strong>Live observations</strong></div><span>{state.timelineKeys.length} events</span></header><div className="execution-tree-scroll"><TreeRow nodeId="live-session" label="Session" detail={state.runId ?? "starting"} icon={Database} selected={false} depth={0} expandable expanded onSelect={() => undefined} /><TreeRow nodeId="live-turn" label="Turn 1" detail={prompt} icon={GitBranch} selected={false} depth={1} expandable expanded onSelect={() => undefined} /><TreeRow nodeId="live-prompt" label="Prompt" detail={prompt} icon={UserCircle} selected={false} depth={2} onSelect={() => undefined} /><TreeRow nodeId="live-tools" label="Explore / Change / Verify" detail={`${state.toolCallCount} tool calls`} icon={Wrench} selected={false} depth={2} status={state.status} onSelect={() => undefined} /></div><footer><span><Pause size={12} />Soft Pause only</span><strong>Agent may continue</strong></footer></aside>;
 }
 
-function LiveNotebook({ state, prompt }: { state: AguiRunState; prompt: string }): React.JSX.Element {
-  const toolCount = state.timeline.filter((item) => item.kind === "tool-call").length;
-  return <main className="session-notebook live-notebook" aria-label="Live Session Notebook"><header className="notebook-viewbar"><nav><button type="button" className="active"><ClipboardText size={13} />Live notebook</button></nav><span>{toolCount} tool call{toolCount === 1 ? "" : "s"}</span></header><div className="session-notebook-scroll"><article className="debugger-event event-prompt"><div className="event-rail"><span><UserCircle size={13} /></span></div><div className="debugger-event-card"><header><div><strong>User request</strong></div><span>Prompt</span></header><section className="prompt-cell"><p>{prompt}</p></section></div></article><section className="live-session-stage"><p className="status-line run-status"><span className={`status-dot status-${state.status}`} aria-hidden="true" />status: <strong>{state.status}</strong>{state.runId ? <span> · run {state.runId}</span> : null}</p>{state.warnings.map((warning, index) => <p className="warning" key={index}><WarningCircle size={14} />{warning}</p>)}{state.error ? <p className="error"><XCircle size={14} />{state.error}</p> : null}<section className="activity-panel" aria-label="Live agent activity"><header className="activity-panel-head"><div><small>Observed AG-UI stream</small><h2>Agent activity</h2></div><span>{toolCount} tool call{toolCount === 1 ? "" : "s"}</span></header><div className="timeline">{state.timeline.length > 0 ? state.timeline.map((item) => <TimelineEntry item={item} key={`${item.kind}:${item.id}`} />) : <p className="activity-empty">Waiting for the first retained message or tool call…</p>}</div></section>{state.result !== undefined ? <details className="live-run-result"><summary>Run result</summary><pre>{JSON.stringify(state.result, null, 2)}</pre></details> : null}</section></div></main>;
+function LiveNotebook({ state, prompt, groups }: { state: AguiRunState; prompt: string; groups: LiveTimelineGroup[] }): React.JSX.Element {
+  return <main className="session-notebook live-notebook" aria-label="Live Session Notebook"><header className="notebook-viewbar"><nav><button type="button" className="active"><ClipboardText size={13} />Live notebook</button></nav><span>{state.toolCallCount} tool call{state.toolCallCount === 1 ? "" : "s"}</span></header><div className="session-notebook-scroll"><article className="debugger-event event-prompt"><div className="event-rail"><span><UserCircle size={13} /></span></div><div className="debugger-event-card"><header><div><strong>User request</strong></div><span>Prompt</span></header><section className="prompt-cell"><p>{prompt}</p></section></div></article><section className="live-session-stage"><p className="status-line run-status"><span className={`status-dot status-${state.status}`} aria-hidden="true" />status: <strong>{state.status}</strong>{state.runId ? <span> · run {state.runId}</span> : null}</p>{state.warnings.map((warning, index) => <p className="warning" key={index}><WarningCircle size={14} />{warning}</p>)}{state.error ? <p className="error"><XCircle size={14} />{state.error}</p> : null}<section className="activity-panel" aria-label="Live agent activity"><header className="activity-panel-head"><div><small>Semantic stages</small><h2>Agent activity</h2></div><span>{state.toolCallCount} tool call{state.toolCallCount === 1 ? "" : "s"} · {groups.length} groups</span></header><VirtualLiveTimeline groups={groups} followLatest={state.status === "running"} /></section>{state.result !== undefined ? <details className="live-run-result"><summary>Run result</summary><pre>{JSON.stringify(state.result, null, 2)}</pre></details> : null}</section></div></main>;
+}
+
+function VirtualLiveTimeline(props: { groups: LiveTimelineGroup[]; followLatest: boolean }): React.JSX.Element {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
+    count: props.groups.length,
+    getScrollElement: () => scrollRef.current,
+    getItemKey: (index) => props.groups[index]?.key ?? index,
+    estimateSize: () => 72,
+    overscan: 5,
+    initialRect: { width: 720, height: 520 },
+    useFlushSync: false,
+  });
+  useEffect(() => {
+    if (props.followLatest && props.groups.length > 0) virtualizer.scrollToIndex(props.groups.length - 1, { align: "end" });
+  }, [props.followLatest, props.groups.length, virtualizer]);
+  if (props.groups.length === 0) return <p className="activity-empty">Waiting for the first retained message or tool call…</p>;
+  return <div className="timeline virtual-live-timeline" ref={scrollRef}><div className="virtual-live-spacer" style={{ height: virtualizer.getTotalSize() }}>{virtualizer.getVirtualItems().map((virtualItem) => { const group = props.groups[virtualItem.index]!; return <div className="virtual-live-row" data-index={virtualItem.index} key={group.key} ref={virtualizer.measureElement} style={{ transform: `translateY(${virtualItem.start}px)` }}><LiveGroupEntry group={group} /></div>; })}</div></div>;
+}
+
+function LiveGroupEntry({ group }: { group: LiveTimelineGroup }): React.JSX.Element {
+  const first = group.items[0]!;
+  if (group.items.length === 1) return <TimelineEntry item={first} />;
+  const tool = first as ToolCallTimelineItem;
+  return <details className={`live-tool-group kind-${group.kind}`}><summary><span>{group.kind}</span><strong>{tool.name} ×{group.items.length}</strong><em>Tool Group</em></summary><div>{group.items.map((item) => <ToolCallEntry item={item as ToolCallTimelineItem} key={item.id} />)}</div></details>;
 }
 
 function LiveInspector({ state }: { state: AguiRunState }): React.JSX.Element {
-  const toolCount = state.timeline.filter((item) => item.kind === "tool-call").length;
-  return <aside className="state-inspector live-inspector" aria-label="State Inspector"><header><div><small>State Inspector</small><strong>Live observation</strong></div><span>Soft Pause</span></header><div className="inspector-scroll"><InspectorSection title="Runtime boundary"><ul className="checkpoint-boundary"><li className="available"><CheckCircle size={13} weight="fill" /><span><strong>Evidence stream</strong><small>{state.status}</small></span></li><li><WarningCircle size={13} weight="fill" /><span><strong>Gate pause</strong><small>Not reported</small></span></li><li><WarningCircle size={13} weight="fill" /><span><strong>Hard pause</strong><small>Not reported</small></span></li></ul></InspectorSection><InspectorSection title="Observed state"><dl className="fact-list"><div><dt>Run ID</dt><dd>{state.runId ?? "Pending"}</dd></div><div><dt>Thread ID</dt><dd>{state.threadId ?? "Pending"}</dd></div><div><dt>Tool calls</dt><dd>{toolCount}</dd></div><div><dt>Warnings</dt><dd>{state.warnings.length}</dd></div></dl></InspectorSection><InspectorSection title="Meaning"><p className="inspector-note">Soft Pause stops this UI from claiming auto-follow. It does not cancel, gate, or suspend the running Agent.</p></InspectorSection></div></aside>;
+  return <aside className="state-inspector live-inspector" aria-label="State Inspector"><header><div><small>State Inspector</small><strong>Live observation</strong></div><span>Soft Pause</span></header><div className="inspector-scroll"><InspectorSection title="Runtime boundary"><ul className="checkpoint-boundary"><li className="available"><CheckCircle size={13} weight="fill" /><span><strong>Evidence stream</strong><small>{state.status}</small></span></li><li><WarningCircle size={13} weight="fill" /><span><strong>Gate pause</strong><small>Not reported</small></span></li><li><WarningCircle size={13} weight="fill" /><span><strong>Hard pause</strong><small>Not reported</small></span></li></ul></InspectorSection><InspectorSection title="Observed state"><dl className="fact-list"><div><dt>Run ID</dt><dd>{state.runId ?? "Pending"}</dd></div><div><dt>Thread ID</dt><dd>{state.threadId ?? "Pending"}</dd></div><div><dt>Tool calls</dt><dd>{state.toolCallCount}</dd></div><div><dt>Warnings</dt><dd>{state.warnings.length}</dd></div></dl></InspectorSection><InspectorSection title="Meaning"><p className="inspector-note">Soft Pause stops this UI from claiming auto-follow. It does not cancel, gate, or suspend the running Agent.</p></InspectorSection></div></aside>;
 }
 
-function LiveTimeline({ state }: { state: AguiRunState }): React.JSX.Element {
-  return <footer className="timeline-minimap live-minimap"><div className="timeline-range"><span>Live</span><strong>Observed AG-UI sequence</strong><span>{state.status}</span></div><div className="timeline-track">{state.timeline.length === 0 ? <span className="live-track-empty">Waiting for events</span> : state.timeline.map((item) => <span key={`${item.kind}:${item.id}`} className={`timeline-segment kind-${item.kind === "message" ? "response" : "explore"}`} />)}</div><div className="timeline-footer"><span>Soft Pause does not stop execution.</span><strong>{state.timeline.length} retained events</strong></div></footer>;
+function LiveTimeline({ state, bins, eventCount }: { state: AguiRunState; bins: TimelineBin<DebuggerEventKind>[]; eventCount: number }): React.JSX.Element {
+  return <footer className="timeline-minimap live-minimap"><div className="timeline-range"><span>Live</span><strong>Semantic timeline · fixed 64 bins</strong><span>{state.status}</span></div><div className="timeline-track">{bins.length === 0 ? <span className="live-track-empty">Waiting for events</span> : bins.map((bin) => <span key={bin.index} className={`timeline-segment kind-${bin.kind}`} title={`${bin.count} events`} />)}</div><div className="timeline-footer"><span>Soft Pause does not stop execution.</span><strong>{eventCount} retained events</strong></div></footer>;
 }

@@ -39,6 +39,7 @@ import {
 import { loadCheckpointSourcePreview } from "./checkpoint-source.js";
 import { lockHistoryExperiment } from "./experiment-lock.js";
 import { canonicalToolEvents, projectObservedCalls } from "./experiment-events.js";
+import { ObservedCallIndex, type ObservedCallPage } from "./observed-call-index.js";
 
 const builtInExecutorFactory: HarnessUiExecutorFactory = (context) => {
   if (context.runtimeId === "qoder") {
@@ -62,6 +63,8 @@ const CONTENT_TYPES: Record<string, string> = {
 export interface HarnessStudioServerOptions {
   /** Directory holding the built React app (index.html + assets/). */
   appDir: string;
+  /** Self-contained Harness Inspector HTML report mounted read-only at /inspector. */
+  inspectorReportPath?: string;
   /** harness-compare evidence directory containing verdict.json. */
   evidenceDir?: string;
   /** `.harness` source text; enables the embedded AG-UI endpoint. */
@@ -105,6 +108,7 @@ export function createHarnessStudioServer(options: HarnessStudioServerOptions): 
       ?? (options.checkpointHistoryCatalogPath === undefined
         ? undefined
         : createCheckpointHistoryCatalogAdapter(options.checkpointHistoryCatalogPath)),
+    observedIndexes: new Map(),
   };
   return createServer((request, response) => {
     void route(request, response, options, state, experimentRuns);
@@ -117,6 +121,7 @@ interface HarnessStudioState {
   trajectoryOverrides?: Record<string, string>;
   historyAdapter?: CheckpointHistoryAdapter;
   lockReceipt?: ExperimentLockReceipt;
+  observedIndexes: Map<string, ObservedCallIndex>;
 }
 
 async function route(
@@ -133,7 +138,12 @@ async function route(
       evidenceEnabled: options.evidenceDir !== undefined,
       experimentEnabled: state.activeManifestPath !== undefined,
       historyEnabled: state.historyAdapter !== undefined,
+      inspectorEnabled: options.inspectorReportPath !== undefined,
     });
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/inspector") {
+    await serveInspectorReport(response, options.inspectorReportPath);
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/checkpoint-history") {
@@ -146,6 +156,10 @@ async function route(
   }
   if (request.method === "POST" && url.pathname === "/api/experiment/lock") {
     await lockCheckpointHistory(request, response, options, state);
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/experiment/observed-calls") {
+    await serveObservedCalls(response, url, state);
     return;
   }
   if (url.pathname === "/api/experiment") {
@@ -202,6 +216,28 @@ async function route(
   respondJson(response, 404, { error: `No route for ${request.method} ${url.pathname}` });
 }
 
+async function serveInspectorReport(response: ServerResponse, reportPath: string | undefined): Promise<void> {
+  if (reportPath === undefined) {
+    respondJson(response, 404, {
+      error: "No Inspector report loaded; start with --inspector <report.html>.",
+    });
+    return;
+  }
+  try {
+    const html = await readFile(reportPath, "utf8");
+    response.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    });
+    response.end(html);
+  } catch (error) {
+    respondJson(response, 404, {
+      error: `Cannot read the configured Inspector report: ${error instanceof Error ? error.message : String(error)}`,
+    });
+  }
+}
+
 async function serveExperiment(
   response: ServerResponse,
   options: HarnessStudioServerOptions,
@@ -218,6 +254,7 @@ async function serveExperiment(
       trajectoryOverrides: state.trajectoryOverrides,
       checkpointSourcePreview: state.lockReceipt === undefined ? options.checkpointSourcePreview : undefined,
       lockReceipt: state.lockReceipt,
+      observedIndexes: state.observedIndexes,
     }));
   } catch (error) {
     respondJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
@@ -229,15 +266,23 @@ async function buildExperimentPreview(input: {
   trajectoryOverrides?: Record<string, string>;
   checkpointSourcePreview?: CheckpointSourcePreview;
   lockReceipt?: ExperimentLockReceipt;
+  observedIndexes: Map<string, ObservedCallIndex>;
 }): Promise<Record<string, unknown>> {
   const loaded = await loadHarnessExperimentManifest(input.manifestPath);
   const observedCalls: Record<string, ReturnType<typeof projectObservedCalls>> = {};
+  const observedCallPages: Record<string, { nextCursor?: string; complete: boolean; parsedLines: number; malformedLines: number }> = {};
   for (const [laneId, trajectory] of Object.entries({
     ...loaded.resolved.trajectories,
     ...input.trajectoryOverrides,
   })) {
-    const events = await readJsonLines(trajectory).catch(() => []);
-    observedCalls[laneId] = projectObservedCalls(laneId, events);
+    const page: ObservedCallPage = await observedIndex(input.observedIndexes, trajectory, laneId).page(undefined, 100).catch(() => ({ calls: [], complete: true, parsedLines: 0, malformedLines: 0 }));
+    observedCalls[laneId] = page.calls;
+    observedCallPages[laneId] = {
+      ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+      complete: page.complete,
+      parsedLines: page.parsedLines,
+      malformedLines: page.malformedLines,
+    };
   }
   const prompt = await readFile(loaded.resolved.prompt);
   const promptText = prompt.toString("utf8");
@@ -283,6 +328,7 @@ async function buildExperimentPreview(input: {
         .map(({ laneId, missing }) => ({ laneId, missing })),
     },
     observedCalls,
+    observedCallPages,
     ...(input.lockReceipt === undefined ? {} : { lock: input.lockReceipt }),
   };
 }
@@ -346,10 +392,16 @@ async function lockCheckpointHistory(
       outputRoot: options.experimentLockDirectory
         ?? resolve(dirname(state.templateManifestPath), ".harness-studio-locks"),
     });
+    // Build the preview before committing server state so a failed preview
+    // leaves the previously loaded experiment fully intact.
+    const observedIndexes = new Map<string, ObservedCallIndex>();
     const preview = await buildExperimentPreview({
       manifestPath: locked.manifestPath,
       lockReceipt: locked.receipt,
+      observedIndexes,
     });
+    for (const index of state.observedIndexes.values()) index.close();
+    state.observedIndexes = observedIndexes;
     state.activeManifestPath = locked.manifestPath;
     state.trajectoryOverrides = undefined;
     state.lockReceipt = locked.receipt;
@@ -477,11 +529,35 @@ async function streamExperiment(
   }
 }
 
-async function readJsonLines(path: string): Promise<unknown[]> {
-  return (await readFile(path, "utf8"))
-    .split(/\r?\n/)
-    .filter((line) => line.trim() !== "")
-    .map((line) => JSON.parse(line) as unknown);
+async function serveObservedCalls(response: ServerResponse, url: URL, state: HarnessStudioState): Promise<void> {
+  if (state.activeManifestPath === undefined) {
+    respondJson(response, 404, { error: "No experiment is loaded." });
+    return;
+  }
+  try {
+    const laneId = url.searchParams.get("laneId") ?? "";
+    const limit = Number(url.searchParams.get("limit") ?? "100");
+    if (!/^[A-Za-z0-9_-]+$/.test(laneId)) throw new Error("laneId must be a portable opaque id.");
+    if (!Number.isFinite(limit)) throw new Error("limit must be a finite number.");
+    const loaded = await loadHarnessExperimentManifest(state.activeManifestPath);
+    const trajectory = state.trajectoryOverrides?.[laneId] ?? loaded.resolved.trajectories[laneId];
+    if (trajectory === undefined) throw new Error(`Lane '${laneId}' has no observed trajectory.`);
+    const page = await observedIndex(state.observedIndexes, trajectory, laneId)
+      .page(url.searchParams.get("cursor") ?? undefined, limit);
+    respondJson(response, 200, page);
+  } catch (error) {
+    respondJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+function observedIndex(indexes: Map<string, ObservedCallIndex>, path: string, laneId: string): ObservedCallIndex {
+  const key = `${laneId}\0${path}`;
+  let index = indexes.get(key);
+  if (index === undefined) {
+    index = new ObservedCallIndex(path, laneId);
+    indexes.set(key, index);
+  }
+  return index;
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {

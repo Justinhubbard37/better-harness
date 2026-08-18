@@ -63,7 +63,7 @@ export function ExperimentBuilder(props: {
 
   return <section className="builder-shell">
     <header className="builder-topbar">
-      <div className="builder-brand"><strong>Harness Studio</strong><span>Compare</span></div>
+      <div className="builder-brand"><strong>Harness Bench</strong><span>Design</span></div>
       {props.navigation}
       <div className="builder-state">
         <span>{props.preview.lock ? "Locked" : "Draft"}</span>

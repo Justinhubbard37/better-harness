@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { ExperimentToolCall } from "../experiment-stream-contract.js";
 import {
   activityPhaseSequence,
@@ -10,6 +10,7 @@ import {
 } from "./experiment-trace-model.js";
 import {
   deriveComparability,
+  aggregateToolCalls,
   deriveTreatmentSummary,
   emptyLane,
   exactSelected,
@@ -26,6 +27,7 @@ import {
   selectedCallForPair,
   shortDigest,
 } from "./experiment-comparison-model.js";
+import { fixedVirtualWindow } from "./virtual-list-model.js";
 import { compactPrompt, requestProvenanceLabel } from "./ExperimentBuilder.js";
 import type {
   Comparability,
@@ -72,6 +74,7 @@ export function ExperimentWorkbench(props: {
   onFilter: (value: string) => void;
   onDiffOnly: (value: boolean) => void;
   onSyncSelection: (value: boolean) => void;
+  onLoadMore: (laneId: string) => void;
 }): React.JSX.Element {
   const baselineDefinition = props.preview.manifest.lanes.find((lane) => lane.id === props.baselineId);
   const candidateDefinition = props.preview.manifest.lanes.find((lane) => lane.id === props.candidateId);
@@ -91,7 +94,7 @@ export function ExperimentWorkbench(props: {
 
   return <section className={`experiment-shell${props.railCollapsed ? " rail-collapsed" : ""}`}>
     <header className="experiment-notebook-bar">
-      <div className="notebook-brand"><strong>Harness Studio</strong><span>Experiment Notebook</span></div>
+      <div className="notebook-brand"><strong>Harness Bench</strong><span>Experiment Notebook</span></div>
       <div className="notebook-navigation">{props.navigation}</div>
       <div className="notebook-document"><strong>Comparison workbench</strong><span>{treatment.value}</span></div>
       <div className="notebook-bar-actions"><span className={`notebook-save-state${props.running ? " running" : ""}`}>{props.running ? "Running" : "Saved"}</span><button type="button" onClick={props.onSetup}>Setup</button><button className="rail-toggle" type="button" aria-label={props.railCollapsed ? "Show checkpoints" : "Hide checkpoints"} aria-expanded={!props.railCollapsed} onClick={() => props.onRailCollapsed(!props.railCollapsed)}>{props.railCollapsed ? "Checkpoints" : "Hide rail"}</button></div>
@@ -116,7 +119,7 @@ export function ExperimentWorkbench(props: {
             <section className="run-prompt"><small>Prompt</small><p>{compactPrompt(props.preview.setup.request.prompt)}</p></section>
             <details className="run-process-summary"><summary><span>Process</span><em>{totalCalls} canonical tool calls across {props.preview.manifest.lanes.length} runs</em></summary><ol>{props.preview.manifest.lanes.map((definition) => {
               const run = props.lanes[definition.id] ?? emptyLane();
-              return <li key={definition.id}><strong>{roleFor(definition, props.baselineId, props.candidateId)} · {definition.id}</strong><span>{run.status}</span><em>{run.eventCount} events</em></li>;
+              return <li key={definition.id}><strong>{roleFor(definition, props.baselineId, props.candidateId)} · {definition.id}</strong><span>{run.status}</span><em>{run.eventCount}{run.hasMore ? "+" : ""} events</em></li>;
             })}</ol></details>
             <div className="run-output-label"><strong>Outputs</strong><span>Reference, Baseline, and Candidate stay evidence-distinct.</span></div>
             <div className="object-bar" aria-label="Comparison runs">{props.preview.manifest.lanes.map((definition) => {
@@ -153,8 +156,8 @@ export function ExperimentWorkbench(props: {
         <ol className="rail-lanes">{props.preview.manifest.lanes.map((definition) => {
           const run = props.lanes[definition.id] ?? emptyLane();
           const role = roleFor(definition, props.baselineId, props.candidateId);
-          const content = <><span className={`rail-lane-dot status-${run.status}`} /><span><strong>{definition.id}</strong><small>{role} · {run.status}</small><em>{run.calls.length} calls · {run.eventCount} events</em></span></>;
-          return <li key={definition.id}>{definition.origin === "observed" ? <article className="checkpoint-run">{content}</article> : <button type="button" className="checkpoint-run" aria-pressed={definition.id === props.baselineId || definition.id === props.candidateId} onClick={() => props.onSelectRun(definition.id)}>{content}</button>}</li>;
+          const content = <><span className={`rail-lane-dot status-${run.status}`} /><span><strong>{definition.id}</strong><small>{role} · {run.status}</small><em>{run.calls.length} calls · {run.eventCount}{run.hasMore ? "+" : ""} events</em></span></>;
+          return <li key={definition.id}>{definition.origin === "observed" ? <article className="checkpoint-run paged-run">{content}{run.hasMore && <button type="button" className="load-more-calls" disabled={run.loadingMore} onClick={() => props.onLoadMore(definition.id)}>{run.loadingMore ? "Loading…" : "Load 100 more"}</button>}</article> : <button type="button" className="checkpoint-run" aria-pressed={definition.id === props.baselineId || definition.id === props.candidateId} onClick={() => props.onSelectRun(definition.id)}>{content}</button>}</li>;
         })}</ol>
         <section className="checkpoint-detail"><header><strong>{props.candidateId}</strong><span>Candidate</span></header><dl><div><dt>Harness</dt><dd>{candidateDefinition?.harnessId ?? "unverified"}</dd></div><div><dt>Runtime</dt><dd>{candidateDefinition ? laneIdentityLabel(candidateDefinition) : "unavailable"}</dd></div><div><dt>Status</dt><dd>{candidate.status}</dd></div><div><dt>Evidence</dt><dd>{candidate.calls.length} calls</dd></div></dl><footer><button type="button" onClick={() => props.onActiveView("evidence")}>View evidence</button><button type="button" onClick={() => props.onActiveView("trace")}>Inspect trace</button></footer></section>
       </div>
@@ -239,11 +242,31 @@ function CallLane(props: { role: "Baseline" | "Candidate"; definition?: LaneDefi
   const selectedId = props.selectedCall?.laneId === props.definition?.id ? props.selectedCall?.id : undefined;
   const counterpartId = props.counterpart?.laneId === props.definition?.id ? props.counterpart?.id : undefined;
   const highlightedId = selectedId ?? counterpartId;
-  return <article className="call-lane"><header className="call-lane-head"><div><small>{props.role}</small><strong>{props.definition?.id ?? props.role}</strong></div><span className={`lane-status lane-status-${props.lane.status}`}>{props.lane.status}</span></header><div className="lane-relation"><span className={`relation relation-${props.relation?.relation ?? "none"}`}>{props.selectedCall ? relationLabel(props.relation?.relation ?? "none") : "No selection"}</span><small>{props.relation?.basis ?? `${props.lane.eventCount} canonical events`}</small></div><div className="call-tree" role="tree">{groups.length === 0 ? <p className="trace-empty">{props.calls.length === 0 && props.lane.calls.length > 0 ? "No calls match this filter." : "Waiting for recorded calls…"}</p> : groups.map((group, groupIndex) => <section key={`${group.phase}:${groupIndex}`} className="call-group" role="group"><header><span className={`phase-dot phase-${group.phase.toLowerCase()}`} /><strong>{group.phase}</strong><em>{group.items.length}</em></header>{group.items.map(({ call }) => {
-    const normalized = normalizeToolCall(call);
-    const active = call.id === highlightedId;
-    return <button key={call.id} role="treeitem" className={active ? "selected" : ""} aria-selected={active} onClick={() => props.onSelect(call)}><span className="tool-sequence">{String(call.sequence + 1).padStart(2, "0")}</span><span className="tool-summary"><strong>{call.name}</strong><small>{normalized.resource ?? "No resource key"}</small></span><span className={`call-status call-status-${call.status}`}>{call.status}</span></button>;
-  })}</section>)}</div>{props.lane.detail && <p className="lane-detail">{props.lane.detail}</p>}</article>;
+  const rows = groups.flatMap((group, groupIndex) => [
+    { type: "phase" as const, id: `${group.phase}:${groupIndex}`, phase: group.phase, count: group.items.length },
+    ...aggregateToolCalls(group.items.map(({ call }) => call)).map((toolGroup) => ({ type: "tools" as const, ...toolGroup })),
+  ]);
+  return <article className="call-lane"><header className="call-lane-head"><div><small>{props.role}</small><strong>{props.definition?.id ?? props.role}</strong></div><span className={`lane-status lane-status-${props.lane.status}`}>{props.lane.status}</span></header><div className="lane-relation"><span className={`relation relation-${props.relation?.relation ?? "none"}`}>{props.selectedCall ? relationLabel(props.relation?.relation ?? "none") : "No selection"}</span><small>{props.relation?.basis ?? `${props.lane.eventCount}${props.lane.hasMore ? "+" : ""} canonical events`}</small></div>{rows.length === 0 ? <div className="call-tree" role="tree"><p className="trace-empty">{props.calls.length === 0 && props.lane.calls.length > 0 ? "No calls match this filter." : "Waiting for recorded calls…"}</p></div> : rows.length > 100 ? <VirtualCallRows rows={rows} highlightedId={highlightedId} onSelect={props.onSelect} /> : <div className="call-tree" role="tree">{groups.map((group, groupIndex) => <section key={`${group.phase}:${groupIndex}`} className="call-group" role="group"><header><span className={`phase-dot phase-${group.phase.toLowerCase()}`} /><strong>{group.phase}</strong><em>{group.items.length}</em></header>{aggregateToolCalls(group.items.map(({ call }) => call)).map((toolGroup) => <ToolGroupRow key={toolGroup.id} group={toolGroup} highlightedId={highlightedId} onSelect={props.onSelect} />)}</section>)}</div>}{props.lane.detail && <p className="lane-detail">{props.lane.detail}</p>}</article>;
+}
+
+type CallLaneRow =
+  | { type: "phase"; id: string; phase: string; count: number }
+  | { type: "tools"; id: string; name: string; calls: ExperimentToolCall[] };
+
+function VirtualCallRows(props: { rows: CallLaneRow[]; highlightedId?: string; onSelect: (call: ExperimentToolCall) => void }): React.JSX.Element {
+  const [scrollTop, setScrollTop] = useState(0);
+  const rowHeight = 44;
+  const window = useMemo(() => fixedVirtualWindow(props.rows.length, rowHeight, scrollTop, 360), [props.rows.length, scrollTop]);
+  return <div className="call-tree virtual-call-tree" role="tree" onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}><div className="virtual-call-spacer" style={{ height: window.totalSize }}><div className="virtual-call-window" style={{ transform: `translateY(${window.offset}px)` }}>{props.rows.slice(window.start, window.end).map((row) => row.type === "phase" ? <header className="virtual-phase-row" key={row.id}><span className={`phase-dot phase-${row.phase.toLowerCase()}`} /><strong>{row.phase}</strong><em>{row.count}</em></header> : <ToolGroupRow key={row.id} group={row} highlightedId={props.highlightedId} onSelect={props.onSelect} />)}</div></div></div>;
+}
+
+function ToolGroupRow(props: { group: { id: string; name: string; calls: ExperimentToolCall[] }; highlightedId?: string; onSelect: (call: ExperimentToolCall) => void }): React.JSX.Element {
+  const first = props.group.calls[0]!;
+  const active = props.group.calls.some((call) => call.id === props.highlightedId);
+  const normalized = normalizeToolCall(first);
+  const statuses = new Set(props.group.calls.map((call) => call.status));
+  const status = statuses.has("failed") ? "failed" : statuses.has("running") ? "running" : first.status;
+  return <button key={props.group.id} role="treeitem" className={active ? "selected" : ""} aria-selected={active} onClick={() => props.onSelect(first)}><span className="tool-sequence">{String(first.sequence + 1).padStart(2, "0")}</span><span className="tool-summary"><strong>{props.group.name}{props.group.calls.length > 1 ? ` ×${props.group.calls.length}` : ""}</strong><small>{props.group.calls.length > 1 ? `${props.group.calls.length} consecutive calls` : normalized.resource ?? "No resource key"}</small></span><span className={`call-status call-status-${status}`}>{status}</span></button>;
 }
 
 function LocalChainInspector(props: { baseline: LaneTrace; candidate: LaneTrace; baselineId: string; candidateId: string; selectedCall: ExperimentToolCall; relations: Map<string, RelatedToolCall>; syncSelection: boolean }): React.JSX.Element {

@@ -9,9 +9,12 @@ const appDir = join(packageRoot, "dist", "app");
 
 await mkdir(join(appDir, "assets"), { recursive: true });
 await build({
-  entryPoints: [join(packageRoot, "src", "app", "main.tsx")],
-  outfile: join(appDir, "assets", "app.js"),
+  entryPoints: { app: join(packageRoot, "src", "app", "main.tsx") },
+  outdir: join(appDir, "assets"),
+  entryNames: "[name]",
+  chunkNames: "chunks/[name]-[hash]",
   bundle: true,
+  splitting: true,
   format: "esm",
   platform: "browser",
   target: "es2022",

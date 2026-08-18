@@ -170,6 +170,18 @@ export function groupActivities(
   return groups;
 }
 
+export function aggregateToolCalls(
+  calls: readonly ExperimentToolCall[],
+): Array<{ id: string; name: string; calls: ExperimentToolCall[] }> {
+  const groups: Array<{ id: string; name: string; calls: ExperimentToolCall[] }> = [];
+  for (const call of calls) {
+    const current = groups.at(-1);
+    if (current?.name === call.name) current.calls.push(call);
+    else groups.push({ id: call.id, name: call.name, calls: [call] });
+  }
+  return groups;
+}
+
 export function firstPhaseDivergence(
   left: ActivityPhase[],
   right: ActivityPhase[],
@@ -208,6 +220,16 @@ export function resourceLedger(calls: ExperimentToolCall[]): Map<string, Set<str
 
 export function emptyLane(): LaneTrace {
   return { status: "idle", calls: [], eventCount: 0 };
+}
+
+/** Merge a server page by stable call id while preserving the canonical order. */
+export function mergeCallPage(
+  current: readonly ExperimentToolCall[],
+  page: readonly ExperimentToolCall[],
+): ExperimentToolCall[] {
+  const keyed = new Map(current.map((call) => [call.id, call]));
+  for (const call of page) keyed.set(call.id, call);
+  return [...keyed.values()].sort((left, right) => left.sequence - right.sequence);
 }
 
 export function applyLaneEvent(lane: LaneTrace, wrapper: StreamEvent): LaneTrace {

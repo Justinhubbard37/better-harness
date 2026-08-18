@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HARNESS_TOOL_RESULT_META_EVENT, type AguiEvent } from "@qoder-ai/harness-ui";
-import { applyAguiEvent, initialRunState, type AguiRunState } from "../src/app/agui-store.js";
+import { applyAguiEvent, initialRunState, timelineItems, type AguiRunState } from "../src/app/agui-store.js";
 import { createSseParser } from "../src/app/sse-client.js";
 
 function reduce(events: AguiEvent[]): AguiRunState {
@@ -33,7 +33,7 @@ describe("applyAguiEvent", () => {
     expect(state.runId).toBe("r1");
     expect(state.warnings).toEqual(["degraded to advisory"]);
     expect(state.result).toEqual({ exitCode: 0 });
-    expect(state.timeline).toEqual([
+    expect(timelineItems(state)).toEqual([
       { kind: "message", id: "msg_1", text: "Hello world", complete: true },
       {
         kind: "tool-call",
@@ -57,7 +57,7 @@ describe("applyAguiEvent", () => {
 
     expect(state.status).toBe("error");
     expect(state.error).toBe("auth failed");
-    expect(state.timeline).toEqual([
+    expect(timelineItems(state)).toEqual([
       { kind: "message", id: "msg_1", text: "partial", complete: false },
     ]);
   });
@@ -82,7 +82,7 @@ describe("applyAguiEvent", () => {
       { type: "RUN_ERROR", message: "process stopped" },
     ]);
 
-    expect(state.timeline[0]).toMatchObject({ kind: "tool-call", status: "interrupted" });
+    expect(timelineItems(state)[0]).toMatchObject({ kind: "tool-call", status: "interrupted" });
   });
 
   it("keeps failed and truncated result metadata when the run finishes", () => {
@@ -105,7 +105,7 @@ describe("applyAguiEvent", () => {
       { type: "RUN_FINISHED", threadId: "t1", runId: "r1" },
     ]);
 
-    expect(state.timeline[0]).toMatchObject({
+    expect(timelineItems(state)[0]).toMatchObject({
       kind: "tool-call",
       status: "failed",
       resultText: "command failed",
@@ -122,7 +122,7 @@ describe("applyAguiEvent", () => {
       { type: "RUN_FINISHED", threadId: "t1", runId: "r1" },
     ]);
 
-    expect(state.timeline[0]).toMatchObject({ kind: "tool-call", status: "result-unavailable" });
+    expect(timelineItems(state)[0]).toMatchObject({ kind: "tool-call", status: "result-unavailable" });
   });
 });
 

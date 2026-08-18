@@ -1,7 +1,10 @@
 # @qoder-ai/harness-studio
 
 A local React studio for [`@qoder-ai/harness`](../harness/README.md): one UI
-over the two evidence surfaces the DSL toolchain produces.
+over the evidence and experiment surfaces the Harness toolchain produces.
+
+- **Inspector workspace** — embeds an explicitly supplied, self-contained
+  Harness Inspector report behind a sandboxed, read-only document boundary.
 
 - **Run view** — drives a live harness run over the AG-UI protocol served by
   [`@qoder-ai/harness-ui`](../harness-ui/README.md) (embedded under `/agui`),
@@ -20,6 +23,9 @@ studio reads the same evidence and adds interactivity on top.
 ## Usage
 
 ```sh
+# Inspector evidence only
+npx @qoder-ai/harness-studio --inspector ./harness-inspector.html
+
 # Compare evidence only
 npx @qoder-ai/harness-studio --evidence ./harness-readme-compare-evidence
 
@@ -27,7 +33,10 @@ npx @qoder-ai/harness-studio --evidence ./harness-readme-compare-evidence
 npx @qoder-ai/harness-studio --harness my-agent.harness
 
 # Both surfaces on one port
-npx @qoder-ai/harness-studio --harness my-agent.harness --evidence ./evidence
+npx @qoder-ai/harness-studio \
+  --inspector ./harness-inspector.html \
+  --harness my-agent.harness \
+  --evidence ./evidence
 
 # Discover project history, resolve a checkpoint, and lock it before Run
 npx @qoder-ai/harness-studio \
@@ -65,7 +74,8 @@ src/app/         components plus pure state modules:
                    compare-model.ts  verdict.json → table model
                    sse-client.ts     incremental SSE frame parser
 src/server/      static host + /api/config + /api/evidence + embedded /agui
-                 checkpoint history list/resolve + durable experiment lock
+                 read-only /inspector + checkpoint history list/resolve
+                 + durable experiment lock
 ```
 
 The pure modules are the tested seam; the React components are direct renders
