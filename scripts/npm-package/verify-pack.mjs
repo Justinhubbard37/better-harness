@@ -20,6 +20,9 @@ function run(command, args) {
     cwd: repoRoot,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    // `npm pack --json` includes one record per packaged file. The repository's
+    // intentionally large docs/reference surface exceeds Node's 1 MiB default.
+    maxBuffer: 64 * 1024 * 1024,
   });
   if (result.status !== 0) {
     fail(`${command} ${args.join(" ")} exited ${result.status}\n${result.error?.message ?? result.stderr}`);

@@ -57,6 +57,71 @@
     items:[],
   };
   const escape = value => String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;");
+  const markdownTextInline = value => {
+    const links = [];
+    const tokenized = String(value ?? '').replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/gu,(source,label,rawTarget) => {
+      const target = rawTarget.trim().replace(/^<|>$/gu,'');
+      if (!/^(?:https?:\/\/|mailto:|#|\.{0,2}\/)/iu.test(target)) return source;
+      const external = /^https?:\/\//iu.test(target);
+      const token = '@@SESSION_LINK_' + links.length + '@@';
+      links.push('<a href="' + escape(target) + '"' + (external ? ' target="_blank" rel="noreferrer"' : '') + '>' + escape(label) + '</a>');
+      return token;
+    });
+    let rendered = escape(tokenized).replace(/\*\*([^*\n]+)\*\*/gu,'<strong>$1</strong>');
+    links.forEach((link,index) => { rendered = rendered.replace('@@SESSION_LINK_' + index + '@@',link); });
+    return rendered;
+  };
+  const markdownInline = value => String(value ?? '').split(/(`[^`\n]+`)/gu).map(part => {
+    if (part.startsWith('`') && part.endsWith('`')) return '<code>' + escape(part.slice(1,-1)) + '</code>';
+    return markdownTextInline(part);
+  }).join('');
+  const renderSessionMarkdown = value => {
+    const lines = String(value ?? '').replaceAll('\r\n','\n').split('\n');
+    const blocks = [];
+    let index = 0;
+    while (index < lines.length) {
+      const line = lines[index];
+      if (!line.trim()) { index += 1; continue; }
+      const fence = line.match(/^\s*```([^`]*)$/u);
+      if (fence) {
+        const code = [];
+        index += 1;
+        while (index < lines.length && !/^\s*```\s*$/u.test(lines[index])) code.push(lines[index++]);
+        if (index < lines.length) index += 1;
+        const language = fence[1].trim().replaceAll(/[^a-z0-9_-]/giu,'');
+        blocks.push('<pre><code' + (language ? ' class="language-' + language + '"' : '') + '>' + escape(code.join('\n')) + '</code></pre>');
+        continue;
+      }
+      const heading = line.match(/^\s*(#{1,4})\s+(.+)$/u);
+      if (heading) {
+        const level = Math.min(4,heading[1].length + 1);
+        blocks.push('<h' + level + '>' + markdownInline(heading[2]) + '</h' + level + '>');
+        index += 1;
+        continue;
+      }
+      const list = line.match(/^\s*(?:([-*])|(\d+\.))\s+(.+)$/u);
+      if (list) {
+        const ordered = Boolean(list[2]);
+        const items = [];
+        while (index < lines.length) {
+          const item = lines[index].match(/^\s*(?:([-*])|(\d+\.))\s+(.+)$/u);
+          if (!item || Boolean(item[2]) !== ordered) break;
+          items.push('<li>' + markdownInline(item[3]) + '</li>');
+          index += 1;
+        }
+        blocks.push('<' + (ordered ? 'ol' : 'ul') + '>' + items.join('') + '</' + (ordered ? 'ol' : 'ul') + '>');
+        continue;
+      }
+      const paragraph = [line.trim()];
+      index += 1;
+      while (index < lines.length && lines[index].trim()
+        && !/^\s*```/u.test(lines[index])
+        && !/^\s*#{1,4}\s+/u.test(lines[index])
+        && !/^\s*(?:[-*]|\d+\.)\s+/u.test(lines[index])) paragraph.push(lines[index++].trim());
+      blocks.push('<p>' + paragraph.map(markdownInline).join('<br>') + '</p>');
+    }
+    return blocks.join('') || '<p></p>';
+  };
   const formatDuration = value => Number.isFinite(value) ? (value >= 3600000 ? (value / 3600000).toFixed(1) + "h" : Math.max(1,Math.round(value / 60000)) + "m") : "unknown";
   const formatLatency = value => !Number.isFinite(value) ? "timing unavailable"
     : value < 1000 ? Math.round(value) + " ms"
@@ -400,10 +465,22 @@
     ? (Number.isFinite(call.startedAt) ? call.startedAt : null)
     : call.step;
 
-  function activityChartMarkup(session, availableWidth, { compact = false } = {}) {
-    const activity = session.toolActivity;
+  function activityChartMarkup(session, availableWidth, { compact = false, calls = null } = {}) {
+    const retainedCalls = calls ?? session.toolActivity.calls;
+    const timedCalls = retainedCalls.filter(call => Number.isFinite(call.startedAt));
+    const activity = calls ? {
+      ...session.toolActivity,
+      calls:retainedCalls,
+      totalCalls:retainedCalls.length,
+      failedCalls:retainedCalls.filter(call => call.status === 'failed').length,
+      timeline:timedCalls.length ? {
+        basis:'observed-time',
+        startMs:Math.min(...timedCalls.map(call => call.startedAt)),
+        endMs:Math.max(...timedCalls.map(call => call.startedAt + (call.durationStatus === 'observed' && Number.isFinite(call.durationMs) ? Math.max(1,call.durationMs) : 1))),
+      } : { basis:'call-sequence' },
+    } : session.toolActivity;
     if (!activity.totalCalls) return '<div class="chart-empty">No normalized tool call was retained for this session.</div>';
-    const zoom = state.zoom.get(session.sessionId) ?? null;
+    const zoom = calls ? null : state.zoom.get(session.sessionId) ?? null;
     const domain = chartDomain(activity,zoom);
     const { lanes, laneFor } = chartLanes(activity,compact ? 4 : 7);
     const laneIndex = new Map(lanes.map((lane,index) => [lane.label,index]));
@@ -412,7 +489,7 @@
       const position = callPosition(call,domain.timeBasis);
       return position !== null && position >= domain.min && position <= domain.max;
     });
-    const commitEvents = domain.timeBasis ? session.commitLinks
+    const commitEvents = domain.timeBasis && !calls ? session.commitLinks
       .filter(isDirectCommitLink)
       .map(link => ({ link, commit:byCommit.get(link.hash) }))
       .map(item => ({ ...item, position:new Date(item.commit?.committedAt ?? item.commit?.authoredAt ?? NaN).getTime() }))
@@ -636,7 +713,11 @@
   function renderActivityChart(container) {
     const session = bySession.get(container.dataset.activityChart);
     if (!session || !container.clientWidth) return;
-    container.innerHTML = activityChartMarkup(session,container.clientWidth,{ compact:Boolean(container.closest('.session-axis-panel')) });
+    const turnIndex = Number(container.dataset.activityTurn);
+    const turn = Number.isFinite(turnIndex) ? session.dialogue?.turns?.find(item => item.index === turnIndex) : null;
+    const turnCallIds = turn ? new Set(turn.steps.filter(step => step.kind === 'tool').map(step => step.callId)) : null;
+    const calls = turnCallIds ? session.toolActivity.calls.filter(call => turnCallIds.has(call.id)) : null;
+    container.innerHTML = activityChartMarkup(session,container.clientWidth,{ compact:Boolean(container.closest('.session-axis-panel, .session-turn-activity')), calls });
     applySelectionPresentation();
   }
 
@@ -743,12 +824,12 @@
   }
 
   function toolListMarkup(session, calls) {
-    const blocks = toolRuns(calls).map((run,index) => {
+    const blocks = toolRuns(calls).map((run) => {
       if (run.calls.length === 1) return toolRowMarkup(session,run.calls[0]);
       const first = run.calls[0];
       const last = run.calls.at(-1);
       const total = run.calls.reduce((sum,call) => sum + (call.durationStatus === 'observed' ? call.durationMs : 0),0);
-      return '<details class="session-tool-run" data-tool="' + escape(first.toolName) + '" data-call-count="' + run.calls.length + '" id="' + escape(session.sessionId + '-run-' + index) + '"><summary><span class="session-tool-id">' + escape(first.id) + '–' + escape(last.id) + '</span>'
+      return '<details class="session-tool-run" data-tool="' + escape(first.toolName) + '" data-call-count="' + run.calls.length + '" id="' + escape(session.sessionId + '-run-' + first.id + '-' + last.id) + '"><summary><span class="session-tool-id">' + escape(first.id) + '–' + escape(last.id) + '</span>'
         + '<span class="session-tool-copy"><i class="family-dot" style="background:' + familyColor(first.family) + '" aria-hidden="true"></i><strong>' + escape(first.actionLabel) + ' ×' + run.calls.length + '</strong><code>' + escape(first.toolName) + '</code></span>'
         + '<span class="session-tool-time"><code>' + escape(formatStamp(first.startedAt) ?? '—') + '</code><small>' + escape(total ? formatLatency(total) + ' total' : '—') + '</small></span>'
         + (first.detail ? '<span class="session-tool-detail-row"><code class="session-tool-detail">' + escape(first.detail) + '</code>' + detailKindBadge(first) + '</span>' : '')
@@ -759,6 +840,64 @@
     return '<div class="session-call-list">' + blocks.slice(0,14).join('')
       + (blocks.length > 14 ? '<div class="session-call-overflow" data-call-overflow hidden>' + blocks.slice(14).join('') + '</div><button type="button" class="session-call-more" data-reveal-calls>Show ' + (blocks.length - 14) + ' more grouped rows</button>' : '')
       + '</div>';
+  }
+
+  function processStreamMarkup(session, turn, callsById) {
+    const rows = [];
+    let pendingCalls = [];
+    let noteIndex = 0;
+    const flushCalls = () => {
+      if (!pendingCalls.length) return;
+      const calls = pendingCalls;
+      pendingCalls = [];
+      const names = [...new Set(calls.map(call => call.toolName))];
+      rows.push('<details class="session-event tools session-process-tool-run" data-session-event="tools"><summary class="session-event-head"><strong>' + calls.length + ' tool call' + (calls.length === 1 ? '' : 's') + '</strong><span>' + escape(names.slice(0,3).join(' · ')) + (names.length > 3 ? ' +' + (names.length - 3) : '') + '</span></summary>' + toolListMarkup(session,calls) + '</details>');
+    };
+    (turn.steps ?? []).forEach(step => {
+      if (step.kind === 'tool') {
+        const call = callsById.get(step.callId);
+        if (call) pendingCalls.push(call);
+        else {
+          flushCalls();
+          rows.push('<article class="session-event session-tool-unavailable" data-session-event="tools"><div class="session-event-body"><strong>' + escape(step.toolName ?? 'Tool call') + '</strong><span>Structured call detail was not retained.</span></div></article>');
+        }
+        return;
+      }
+      flushCalls();
+      if (step.kind === 'note') {
+        noteIndex += 1;
+        rows.push('<article class="session-event intermediate" data-session-event="intermediate"><div class="session-note-label">Intermediate ' + noteIndex + '</div><div class="session-markdown">' + renderSessionMarkdown(step.text) + '</div></article>');
+      }
+    });
+    flushCalls();
+    return rows.join('');
+  }
+
+  function turnOutcomeMarkup(session, turn, calls, commits) {
+    const editCalls = calls.filter(call => call.family === 'change');
+    const verifyCalls = calls.filter(call => call.family === 'verify');
+    const editPaths = [...new Set(editCalls.flatMap(call => call.filePaths ?? []))];
+    const responseStatus = turn.responseStatus ?? (turn.response ? 'retained' : 'unavailable');
+    const statusLabel = responseStatus === 'retained' ? 'Terminal response retained'
+      : responseStatus === 'incomplete' ? 'Retained Turn is incomplete'
+        : 'Terminal response unavailable';
+    const facts = [
+      editCalls.length ? '<li><strong>' + editCalls.length + '</strong> edit call' + (editCalls.length === 1 ? '' : 's') + ' observed</li>' : '',
+      verifyCalls.length ? '<li><strong>' + verifyCalls.length + '</strong> verification call' + (verifyCalls.length === 1 ? '' : 's') + ' observed</li>' : '',
+      commits.length ? '<li><strong>' + commits.length + '</strong> correlated commit' + (commits.length === 1 ? '' : 's') + '</li>' : '',
+    ].filter(Boolean).join('');
+    const paths = editPaths.length
+      ? '<div class="session-outcome-paths"><span>Observed edit paths</span><div>' + editPaths.map(path => '<button type="button" ' + selectionAttrs({ type:'file', path, contextSessionId:session.sessionId }) + '>' + escape(path) + '</button>').join('') + '</div></div>'
+      : '';
+    const patchNotice = editCalls.length
+      ? '<p class="session-patch-unavailable">Session-scoped patch was not retained; the current worktree is not used as this Turn’s diff.</p>'
+      : '';
+    const response = turn.response
+      ? '<article class="session-event response" data-session-event="responses"><div class="session-response-label">Assistant response</div><div class="session-event-body session-markdown">' + renderSessionMarkdown(turn.response) + '</div></article>'
+      : '<article class="session-event response session-unavailable" data-session-event="responses"><div class="session-event-body"><p>' + (responseStatus === 'incomplete' ? 'A later tool call was observed after the last assistant message, so no terminal response is claimed.' : 'No terminal assistant response was retained after privacy filtering.') + '</p></div></article>';
+    return '<section class="session-outcome" aria-label="Turn ' + turn.index + ' outcome"><header><strong>Outcome</strong><span data-response-status="' + escape(responseStatus) + '">' + escape(statusLabel) + '</span></header>'
+      + (facts ? '<ul class="session-outcome-facts">' + facts + '</ul>' : '<p class="session-outcome-empty">No edit, verification, or commit evidence was attributed to this Turn.</p>')
+      + paths + patchNotice + response + commits.map(commit => commitEventMarkup(session,commit,'within this turn window')).join('') + '</section>';
   }
 
   function commitEventMarkup(session, commit, relation) {
@@ -783,15 +922,31 @@
     const placement = placeCommits(commits,turns,session);
     const turnEvents = turns.map(turn => {
       const anchor = turn.anchorId ?? ('turn-' + turn.index);
-      const prompt = '<button type="button" class="session-event prompt" data-session-event="prompts" ' + selectionAttrs({ type:'turn', sessionId:session.sessionId, turnIndex:turn.index }) + '><header class="session-event-head"><strong>User prompt ' + turn.index + '</strong><span>' + escape(turn.prompt?.timestamp ? formatClock(turn.prompt.timestamp) : '') + '</span></header><div class="session-event-body session-prose"><p>' + escape(turn.prompt?.text ?? 'Prompt unavailable after privacy filtering') + '</p></div></button>';
-      const notes = turn.steps.filter(step => step.kind === 'note').map((step,noteIndex) => '<article class="session-event intermediate" data-session-event="intermediate"><div class="session-note-label">Intermediate response ' + (noteIndex + 1) + '</div><p>' + escape(step.text) + '</p></article>').join('');
+      const prompt = '<article class="session-event prompt" data-session-event="prompts"><div class="session-event-body session-prose"><p>' + escape(turn.prompt?.text ?? 'Prompt unavailable after privacy filtering') + '</p></div></article>';
       const calls = turn.steps.filter(step => step.kind === 'tool').map(step => callsById.get(step.callId)).filter(Boolean);
-      const toolEvent = calls.length ? '<details class="session-event tools" data-session-event="tools"><summary class="session-event-head"><strong>' + calls.length + ' tool call' + (calls.length === 1 ? '' : 's') + '</strong><span>' + turn.toolCallCount + ' observed in turn</span></summary>' + toolListMarkup(session,calls) + '</details>' : '';
-      const response = '<article class="session-event response' + (turn.response ? '' : ' session-unavailable') + '" data-session-event="responses"><header class="session-event-head"><strong>Assistant response</strong><span>' + (turn.response ? 'retained' : 'unavailable') + '</span></header><div class="session-event-body session-prose"><p>' + escape(turn.response ?? 'Response body was unavailable or removed by privacy filtering.') + '</p></div></article>';
+      const turnToolNames = [...new Set(calls.map(call => call.toolName).filter(Boolean))];
+      const observedCallTimes = calls.map(call => call.startedAt).filter(Number.isFinite);
+      const observedCallWindow = observedCallTimes.length
+        ? formatShortClock(Math.min(...observedCallTimes)) + '–' + formatShortClock(Math.max(...observedCallTimes)) + ' UTC'
+        : 'timing unavailable';
+      // One plain fact line instead of a bordered sub-grid: the same retained
+      // counts, tools, and observed window without adding a nested frame.
+      const processEvidence = calls.length ? '<p class="session-process-facts">' + calls.length + ' retained calls · ' + escape(turnToolNames.slice(0,3).join(' · ') || 'tools unavailable') + (turnToolNames.length > 3 ? ' +' + (turnToolNames.length - 3) : '') + ' · ' + escape(observedCallWindow) + '</p>' : '';
+      const processTimeline = calls.length ? '<section class="session-turn-activity" aria-label="Turn ' + turn.index + ' activity timeline"><div data-activity-chart="' + escape(session.sessionId) + '" data-activity-turn="' + turn.index + '"></div></section>' : '';
       const clock = Number.isFinite(turn.startMs) ? formatShortClock(turn.startMs) + (Number.isFinite(turn.endMs) ? '–' + formatShortClock(turn.endMs) : '') + ' UTC · ' : '';
-      const summary = clock + turn.messageCount + ' intermediate events · ' + turn.toolCallCount + ' tool calls' + (Number.isFinite(turn.durationMs) ? ' · ' + formatDuration(turn.durationMs) : '');
-      const turnCommits = (placement.inTurn.get(turn.index) ?? []).map(commit => commitEventMarkup(session,commit,'within this turn window')).join('');
-      return '<section class="session-turn" id="session-' + escape(anchor) + '" data-turn-index="' + turn.index + '"><header class="session-turn-head"><button type="button" class="turn-select" ' + selectionAttrs({ type:'turn', sessionId:session.sessionId, turnIndex:turn.index }) + '>Turn ' + turn.index + '</button><span>' + escape(summary) + '</span></header>' + prompt + notes + toolEvent + response + turnCommits + '</section>';
+      const intermediateCount = Number.isInteger(turn.intermediateCount) ? turn.intermediateCount : turn.steps.filter(step => step.kind === 'note').length;
+      const eventCount = Number.isInteger(turn.eventCount) ? turn.eventCount : intermediateCount + turn.toolCallCount;
+      const shownEventCount = Number.isInteger(turn.shownEventCount) ? turn.shownEventCount : turn.steps.length;
+      const truncationSummary = turn.processTruncated ? shownEventCount + ' of ' + eventCount + ' process events retained · ' : eventCount + ' process events · ';
+      const kindSummary = intermediateCount + ' intermediate response' + (intermediateCount === 1 ? '' : 's') + ' · ' + turn.toolCallCount + ' tool calls' + (turn.processTruncated ? ' observed' : '');
+      const summary = clock + truncationSummary + kindSummary + (Number.isFinite(turn.durationMs) ? ' · ' + formatDuration(turn.durationMs) : '');
+      const turnCommits = placement.inTurn.get(turn.index) ?? [];
+      const processStream = processStreamMarkup(session,turn,callsById);
+      const process = processStream
+        ? '<details class="session-process"><summary><span>Process trace</span><em>' + shownEventCount + (turn.processTruncated ? ' of ' + eventCount : '') + ' retained events · observed order</em></summary><div class="session-process-body">' + processEvidence + processTimeline + '<div class="session-process-stream">' + processStream + '</div></div></details>'
+        : '<div class="session-process session-process-empty"><span>Process</span><em>No retained process evidence</em></div>';
+      const outcome = turnOutcomeMarkup(session,turn,calls,turnCommits);
+      return '<section class="session-cell" data-session-cell="run"><header class="session-turn-head"><strong>Turn ' + turn.index + '</strong><span>' + escape(summary) + '</span></header><section class="session-turn" id="session-' + escape(anchor) + '" data-turn-index="' + turn.index + '"><div class="session-row-marker session-input-marker"><button type="button" class="turn-select" ' + selectionAttrs({ type:'turn', sessionId:session.sessionId, turnIndex:turn.index }) + '>In [' + turn.index + ']</button></div>' + prompt + '<div class="session-row-marker session-process-marker" aria-hidden="true"></div>' + process + '<div class="session-row-marker session-output-marker"><span>Out [' + turn.index + ']</span></div><div class="session-cell-output">' + outcome + '</div></section></section>';
     }).join('');
 
     const placedCallIds = new Set(turns.flatMap(turn => turn.steps.filter(step => step.kind === 'tool').map(step => step.callId)));
@@ -810,14 +965,19 @@
     const unplacedFileEvent = unplacedFiles.length
       ? '<article class="session-event files"><header class="session-event-head"><strong>' + unplacedFiles.length + ' attributed file path' + (unplacedFiles.length === 1 ? '' : 's') + '</strong><span>observed tool evidence</span></header><div class="session-file-list">' + unplacedFiles.map(file => '<button type="button" ' + selectionAttrs({ type:'file', path:file.path, contextSessionId:session.sessionId }) + '>' + escape(file.path) + '</button>').join('') + '</div></article>'
       : '';
+    const unplacedToolSummary = (() => {
+      const grouped = new Map();
+      unplacedCalls.forEach(call => grouped.set(call.toolName, (grouped.get(call.toolName) ?? 0) + 1));
+      return [...grouped.entries()].sort((a,b) => b[1] - a[1]).map(([name,count]) => escape(name) + ' ×' + count).join(' · ');
+    })();
     const unplacedToolEvent = unplacedCalls.length
-      ? '<details class="session-event tools" data-session-event="tools" open><summary class="session-event-head"><strong>' + unplacedCalls.length + ' tool call' + (unplacedCalls.length === 1 ? '' : 's') + ' not tied to a Turn</strong><span>ordered by observed time</span></summary>' + toolListMarkup(session,unplacedCalls) + '</details>'
+      ? '<details class="session-event tools" data-session-event="tools"><summary class="session-event-head"><strong>' + unplacedCalls.length + ' tool call' + (unplacedCalls.length === 1 ? '' : 's') + '</strong><span>' + escape(unplacedToolSummary) + '</span></summary>' + toolListMarkup(session,unplacedCalls) + '</details>'
       : '';
     const unplacedMarkup = unplacedToolEvent || unplacedFileEvent
-      ? '<section class="session-turn session-unplaced" id="session-unplaced"><header class="session-turn-head"><strong>Unplaced evidence</strong><span>observed evidence retained outside dialogue</span></header>' + unplacedToolEvent + unplacedFileEvent + '</section>'
+      ? '<section class="session-cell session-unplaced" id="session-unplaced" data-session-cell="unplaced"><header class="session-turn-head"><strong>Unplaced evidence</strong><span>' + unplacedCalls.length + ' calls · ' + unplacedFiles.length + ' files</span></header><div class="session-cell-marker"><span>[ ]</span></div><section class="session-turn">' + unplacedToolEvent + unplacedFileEvent + '</section></section>'
       : '';
     const outsideMarkup = placement.outside.length
-      ? '<section class="session-turn session-outside" id="session-outside-commits"><header class="session-turn-head"><strong>Commits outside the observed turn windows</strong><span>' + placement.outside.length + ' commit' + (placement.outside.length === 1 ? '' : 's') + '</span></header><div class="session-outside-note">These commits are in scope for this Story or date, but their timestamps fall outside every observed Turn window. They are held here on purpose: no Turn is claimed to have produced them.</div>' + placement.outside.map(entry => commitEventMarkup(session,entry.commit,entry.relation)).join('') + '</section>'
+      ? '<section class="session-cell session-outside" id="session-outside-commits" data-session-cell="outside"><header class="session-turn-head"><strong>Commits outside turn windows</strong><span>' + placement.outside.length + ' commit' + (placement.outside.length === 1 ? '' : 's') + '</span></header><div class="session-cell-marker"><span>[ ]</span></div><section class="session-turn"><div class="session-outside-note">Timestamps fall outside every observed Turn window.</div>' + placement.outside.map(entry => commitEventMarkup(session,entry.commit,entry.relation)).join('') + '</section></section>'
       : '';
 
     const filters = rankedTools.slice(0,8).map(([toolName,count]) => '<label class="session-filter subtype"><input type="checkbox" checked data-session-tool-filter="' + escape(toolName) + '"><span>' + escape(toolName) + '</span><em>' + count + '</em></label>').join('');
@@ -826,19 +986,20 @@
     const responseCount = session.dialogue?.responseCount ?? turns.filter(turn => turn.response).length;
     const noteCount = session.dialogue?.noteCount ?? turns.reduce((sum,turn) => sum + turn.steps.filter(step => step.kind === 'note').length,0);
     const truncatedNote = session.dialogue?.truncated ? '<span class="session-warning">Turn projection truncated</span>' : '';
-    const jumpOptions = turns.map(turn => '<option value="session-' + escape(turn.anchorId ?? ('turn-' + turn.index)) + '">Turn ' + turn.index + (Number.isFinite(turn.startMs) ? ' · ' + formatShortClock(turn.startMs) : '') + '</option>').join('')
+    const jumpOptions = turns.map(turn => '<option value="session-' + escape(turn.anchorId ?? ('turn-' + turn.index)) + '">In [' + turn.index + ']' + (Number.isFinite(turn.startMs) ? ' · ' + formatShortClock(turn.startMs) : '') + '</option>').join('')
       + (unplacedMarkup ? '<option value="session-unplaced">Unplaced evidence</option>' : '')
       + (outsideMarkup ? '<option value="session-outside-commits">Commits outside turn windows</option>' : '');
     const timeline = turnEvents + unplacedMarkup + outsideMarkup || '<div class="empty-state">No retained dialogue or observed evidence exists for this session.</div>';
+    const sessionOutline = '<aside class="session-sidebar" aria-label="Session outline"><header><div><strong>Session outline</strong><span>Read-only</span></div></header><section><h3>Cells</h3><select class="jump-select" data-session-jump>' + jumpOptions + '</select><div class="session-bulk"><button type="button" data-expand-tools="open">Expand process</button><button type="button" data-expand-tools="close">Collapse process</button></div></section><details class="session-filter-disclosure"><summary><span>Evidence filters</span><em>' + session.toolActivity.totalCalls + ' calls</em></summary><div class="session-filter-list"><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="prompts"><span>Prompts</span><em>' + turns.length + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="responses"><span>Results</span><em>' + responseCount + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="intermediate"><span>Intermediate</span><em>' + noteCount + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="commits"><span>Commits</span><em>' + commits.length + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="tools"><span>Tool calls</span><em>' + session.toolActivity.totalCalls + '</em></label>' + filters + '<label class="session-filter subtype"><input type="checkbox" checked data-session-file-filter><span>File paths</span><em>' + session.toolActivity.files.length + '</em></label></div></details><section class="session-outline-facts"><h3>Session</h3><dl><div><dt>Source</dt><dd>' + escape(sourceLabel) + '</dd></div><div><dt>Runtime</dt><dd>' + escape(session.platform) + '</dd></div><div><dt>Model</dt><dd>' + escape(session.models.join(', ') || 'unavailable') + '</dd></div><div><dt>Turns</dt><dd>' + coverage.turnCount + '</dd></div><div><dt>Evidence</dt><dd>' + session.toolActivity.totalCalls + ' calls</dd></div></dl></section></aside>';
+    const overallActivity = session.toolActivity.totalCalls ? '<section class="session-overall-activity"><details class="session-axis-panel" data-session-axis><summary><span>Overall session activity <em>' + session.toolActivity.totalCalls + ' calls</em></span><small>All retained Turns and unplaced calls</small></summary><div class="session-axis" data-activity-chart="' + escape(session.sessionId) + '"></div></details></section>' : '';
     const tracePanel = '<section class="session-mode-panel" id="session-panel-trace" role="tabpanel" aria-labelledby="session-tab-trace" data-session-mode-panel="trace">'
-      + (session.toolActivity.totalCalls ? '<details class="session-axis-panel" data-session-axis open><summary><span>Activity timeline <em>' + session.toolActivity.totalCalls + ' calls</em></span><small>click a bar to jump · drag to zoom</small></summary><div class="session-axis" data-activity-chart="' + escape(session.sessionId) + '"></div></details>' : '')
-      + '<div class="session-layout"><main class="session-timeline">' + timeline + '</main><aside class="session-sidebar"><section><h3>Jump to</h3><select class="jump-select" data-session-jump>' + jumpOptions + '</select><div class="session-bulk"><button type="button" data-expand-tools="open">Expand all calls</button><button type="button" data-expand-tools="close">Collapse all</button></div></section><section><h3>Filters</h3><div class="session-filter-list"><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="prompts"><span>Prompts</span><em>' + turns.length + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="responses"><span>Responses</span><em>' + responseCount + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="intermediate"><span>Intermediate</span><em>' + noteCount + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="commits"><span>Commits</span><em>' + commits.length + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="tools"><span>Tool calls</span><em>' + session.toolActivity.totalCalls + '</em></label>' + filters + '<label class="session-filter subtype"><input type="checkbox" checked data-session-file-filter><span>File paths</span><em>' + session.toolActivity.files.length + '</em></label></div></section><section><h3>Source</h3><div class="session-meta"><span>' + sourceLabel + '</span></div></section></aside></div></section>';
+      + '<div class="session-layout"><main class="session-notebook-main"><div class="session-timeline" aria-label="Session run cells">' + timeline + overallActivity + '</div></main>' + sessionOutline + '</div></section>';
     const replayPanel = '<section class="session-mode-panel replay-shell" id="session-panel-replay" role="tabpanel" aria-labelledby="session-tab-replay" data-session-mode-panel="replay" hidden>'
       + '<div class="replay-boundary"><strong>Read-only evidence playback</strong><span>Replay advances through retained evidence. It never reruns tools, resumes the host session, or invents missing time.</span></div>'
       + '<div class="replay-layout"><main class="replay-stage" tabindex="0" aria-label="Current replay event; J and L move between events, Space toggles playback" data-replay-stage aria-live="polite"></main><aside class="replay-index"><div class="replay-index-tabs" role="tablist" aria-label="Replay index"><button type="button" id="replay-index-tab-events" role="tab" aria-controls="replay-index-body" aria-selected="true" tabindex="0" data-replay-index-tab="events">Events <span>' + session.replay.eventCount + '</span></button><button type="button" id="replay-index-tab-files" role="tab" aria-controls="replay-index-body" aria-selected="false" tabindex="-1" data-replay-index-tab="files">Files <span>' + session.replay.files.length + '</span></button></div><div class="replay-index-body" id="replay-index-body" role="tabpanel" aria-labelledby="replay-index-tab-events" data-replay-index-body></div></aside></div>'
       + '<section class="replay-transport" aria-label="Replay controls"><div class="replay-rail-head"><strong>Session timeline</strong><span data-replay-range></span></div><div class="replay-rail" data-replay-rail></div><div class="replay-rail-legend">' + replayLegendMarkup(session.replay) + '</div><div class="replay-controls"><button type="button" data-replay-step="-1">Previous event <kbd>J</kbd></button><button type="button" class="replay-play" data-replay-play>Play <kbd>Space</kbd></button><button type="button" data-replay-step="1">Next event <kbd>L</kbd></button><span class="replay-position" data-replay-position></span><div class="replay-speeds" aria-label="Replay speed">' + [1,2,4,8].map(speed => '<button type="button" data-replay-speed="' + speed + '" aria-pressed="' + String(speed === state.replaySpeed) + '">' + speed + 'x</button>').join('') + '</div></div></section></section>';
     const modeTabs = '<div class="session-mode-tabs" role="tablist" aria-label="Session view mode"><button type="button" id="session-tab-trace" role="tab" aria-controls="session-panel-trace" aria-selected="true" tabindex="0" data-session-mode="trace">Trace</button><button type="button" id="session-tab-replay" role="tab" aria-controls="session-panel-replay" aria-selected="false" tabindex="-1" data-session-mode="replay">Replay</button></div>';
-    return { title, html:'<div class="session-shell"><header class="session-titlebar"><div><h2>' + escape(title) + '</h2><div class="session-meta"><span class="session-platform">' + escape(session.platform) + '</span><span>' + escape(session.models.join(', ') || 'model unavailable') + '</span><span>' + formatDuration(session.durationMs) + '</span><span title="' + escape(coverageTitle(session)) + '">' + coverage.turnCount + ' turns</span><span>' + session.toolActivity.totalCalls + ' tool calls</span><span>' + session.fileEditCount + ' file edits</span><span>' + escape(formatTokens(session.tokenUsage)) + '</span>' + truncatedNote + '</div></div><button class="session-context-button" data-session-context>Continuation packet</button></header>' + modeTabs + tracePanel + replayPanel + '</div>' };
+    return { title, html:'<div class="session-shell"><header class="session-titlebar"><div class="session-notebook-brand"><strong>Harness Inspector</strong><span>Session Notebook</span></div><div class="session-title-copy"><h2>' + escape(title) + '</h2><div class="session-meta"><span class="session-platform">' + escape(session.platform) + '</span><span>' + escape(session.models.join(', ') || 'model unavailable') + '</span><span>' + formatDuration(session.durationMs) + '</span><span title="' + escape(coverageTitle(session)) + '">' + coverage.turnCount + ' turns</span><span>' + session.toolActivity.totalCalls + ' tool calls</span><span>' + session.fileEditCount + ' file edits</span><span>' + escape(formatTokens(session.tokenUsage)) + '</span>' + truncatedNote + '</div></div><div class="session-title-actions">' + modeTabs + '<button class="session-context-button" data-session-context aria-label="Continuation packet"><span class="session-context-wide" aria-hidden="true">Continuation packet</span><span class="session-context-short" aria-hidden="true">Packet</span></button></div></header>' + tracePanel + replayPanel + '</div>' };
   }
 
   function replayModel() {
@@ -1143,6 +1304,8 @@
     }
     const tools = target.closest('details.session-event.tools');
     if (tools) tools.open = true;
+    const process = target.closest('details.session-process');
+    if (process) process.open = true;
     target.scrollIntoView({ block:'center' });
   }
 
@@ -1165,6 +1328,7 @@
     document.body.classList.add('session-open');
     document.getElementById('session-view-close').focus();
     setSessionMode(state.sessionMode,{ updateHistory:false });
+    if (state.sessionMode === 'trace' && (!selection || selection.type === 'session')) state.evidenceDrawerSuppressed = true;
     if (updateHistory) {
       state.sessionPushed = true;
       updateUrl({ push:true });
@@ -1377,8 +1541,8 @@
         : null;
       return { ...base,
         title:'Turn ' + selection.turnIndex, source:'session-dialogue',
-        facts:[(turn?.toolCallCount ?? 0) + ' Tool Calls are observed in this Turn.',(turn?.messageCount ?? 0) + ' intermediate events sit between its retained prompt and response.',observedWindow].filter(Boolean),
-        limitations:['Turn membership places activity in dialogue order; it does not prove which later Commit contains the result.'],
+        facts:[(turn?.toolCallCount ?? 0) + ' Tool Calls are observed in this Turn.',(turn?.intermediateCount ?? turn?.messageCount ?? 0) + ' intermediate assistant responses are retained.',(turn?.eventCount ?? 0) + ' ordered process events are retained.',observedWindow].filter(Boolean),
+        limitations:[turn?.responseStatus === 'incomplete' ? 'A later Tool Call was observed, so no terminal assistant response is claimed.' : 'Turn membership places activity in dialogue order; it does not prove which later Commit contains the result.'],
         path:[session?.locator ?? selection.sessionId,'observed-in','Turn ' + selection.turnIndex],
       };
     }
@@ -1678,6 +1842,7 @@
       // list to the calls under it, and a multi-call bar zooms in as well.
       const inSession = event.target.closest('#session-view');
       const locate = () => inSession && revealSelectionTarget(sessionSelectionTarget({ type:'tool-call', sessionId, callId:bin.dataset.callId },state.sessionItem));
+      if (bin.closest('.session-turn-activity')) { setSelection({ type:'tool-call', sessionId, callId:bin.dataset.callId }); locate(); return; }
       if (Number(bin.dataset.binCount) === 1) { setSelection({ type:'tool-call', sessionId, callId:bin.dataset.callId }); locate(); return; }
       const surface = bin.ownerSVGElement?.querySelector('[data-chart-surface]');
       const fullMin = Number(surface?.dataset.fullMin);
@@ -1759,6 +1924,7 @@
     const bulk = event.target.closest('[data-expand-tools]');
     if (bulk) {
       const open = bulk.dataset.expandTools === 'open';
+      document.querySelectorAll('#session-view details.session-process').forEach(details => { details.open = open; });
       document.querySelectorAll('#session-view details.session-event.tools').forEach(details => { details.open = open; });
       if (!open) document.querySelectorAll('#session-view details.session-tool-run').forEach(details => { details.open = false; });
       return;
@@ -1840,6 +2006,16 @@
   });
 
   document.addEventListener('toggle', event => {
+    const process = event.target.closest?.('details.session-process');
+    if (process) {
+      if (!process.open) return;
+      const processAxis = process.querySelector('[data-activity-turn][data-activity-chart]');
+      if (processAxis && !processAxis.childElementCount) {
+        renderActivityChart(processAxis);
+        chartObserver?.observe(processAxis);
+      }
+      return;
+    }
     const axisPanel = event.target.closest?.('[data-session-axis]');
     if (axisPanel) {
       if (!axisPanel.open) return;
@@ -1881,6 +2057,7 @@
   document.addEventListener('pointerdown', event => {
     const surface = event.target.closest('[data-chart-surface]');
     if (surface) {
+      if (surface.closest('.session-turn-activity')) return;
       const svg = surface.ownerSVGElement;
       const rect = svg.getBoundingClientRect();
       const scale = (Number(svg.getAttribute('width')) || rect.width) / (rect.width || 1);

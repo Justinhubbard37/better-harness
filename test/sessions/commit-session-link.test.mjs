@@ -679,8 +679,30 @@ test("buildSessionTurns folds prompts, steps, and responses into turns (AC-7)", 
   assert.deepEqual(turns[0].steps[0], { kind: "tool", toolName: "Bash", detail: "npm test" });
   assert.equal(turns[0].steps[1].kind, "note");
   assert.match(turns[0].response, /## Done/u);
+  assert.equal(turns[0].responseStatus, "retained");
+  assert.equal(turns[0].intermediateCount, 1);
+  assert.equal(turns[0].eventCount, 2);
   assert.equal(turns[0].durationMs, 3 * 60_000);
   assert.equal(turns[1].response, "Committed.");
+});
+
+test("buildSessionTurns preserves interleaved assistant and tool evidence and marks an unfinished Turn", () => {
+  const { turns } = buildSessionTurns([
+    { type: "user", userPrompt: true, userText: "refactor it", timestamp: "2026-08-02T10:00:00Z" },
+    { type: "tool.requested", toolName: "Read", filePath: "src/app.mjs", toolInvocationId: "read-1", timestamp: "2026-08-02T10:01:00Z" },
+    { type: "assistant", content: "I found the owner.", timestamp: "2026-08-02T10:02:00Z" },
+    { type: "tool.requested", toolName: "apply_patch", filePath: "src/app.mjs", toolInvocationId: "patch-1", timestamp: "2026-08-02T10:03:00Z" },
+  ]);
+
+  assert.deepEqual(turns[0].steps.map((step) => step.kind), ["tool", "note", "tool"]);
+  assert.equal(turns[0].steps[1].text, "I found the owner.");
+  assert.equal(turns[0].response, null);
+  assert.equal(turns[0].responseStatus, "incomplete");
+  assert.equal(turns[0].intermediateCount, 1);
+  assert.equal(turns[0].eventCount, 3);
+  assert.equal(turns[0].shownEventCount, 3);
+  assert.equal(turns[0].processTruncated, false);
+  assert.equal(turns[0].messageCount, 1);
 });
 
 test("buildSessionTurns skips meta and injected-only prompts and unwraps JSON payloads (AC-7)", () => {

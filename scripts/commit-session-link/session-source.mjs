@@ -118,7 +118,14 @@ function summarizeDialogue(events) {
       }).filter((step) => step.kind === "tool" || step.text),
       toolCallCount: Number(turn.toolCallCount) || 0,
       messageCount: Number(turn.messageCount) || 0,
+      intermediateCount: Number(turn.intermediateCount) || 0,
+      eventCount: Number(turn.eventCount) || 0,
+      shownEventCount: Number(turn.shownEventCount) || 0,
+      processTruncated: turn.processTruncated === true,
       response: safeDialogueText(turn.response, 6_000),
+      responseStatus: ["retained", "incomplete", "unavailable"].includes(turn.responseStatus)
+        ? turn.responseStatus
+        : (turn.response ? "retained" : "unavailable"),
       durationMs: Number.isFinite(turn.durationMs) ? turn.durationMs : null,
       startMs: Number.isFinite(turn.startMs) ? turn.startMs : null,
       endMs: Number.isFinite(turn.endMs) ? turn.endMs : null,
@@ -218,6 +225,7 @@ export function summarizeSessionEvents(session, events = [], {
   return {
     sessionId: session.sessionId,
     platform: platform ?? session.platform ?? null,
+    ...(session.revisionId ? { revisionId: session.revisionId } : {}),
     firstSeen: firstSeen === null ? null : new Date(firstSeen).toISOString(),
     lastSeen: lastSeen === null ? null : new Date(lastSeen).toISOString(),
     durationMs: firstSeen !== null && lastSeen !== null ? lastSeen - firstSeen : null,

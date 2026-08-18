@@ -277,6 +277,12 @@ function projectDialogue(dialogue, toolActivity) {
     }).filter(Boolean);
     const promptText = safeText(turn?.prompt?.text, 1_500, "Prompt unavailable after privacy filtering");
     const response = safeText(turn?.response, 6_000);
+    const responseStatus = ["retained", "incomplete", "unavailable"].includes(turn?.responseStatus)
+      ? turn.responseStatus
+      : (response ? "retained" : "unavailable");
+    const intermediateCount = Number.isInteger(turn?.intermediateCount)
+      ? turn.intermediateCount
+      : steps.filter((step) => step.kind === "note").length;
     return {
       index: Number(turn?.index) || index + 1,
       anchorId: `turn-${Number(turn?.index) || index + 1}`,
@@ -284,7 +290,14 @@ function projectDialogue(dialogue, toolActivity) {
       steps,
       toolCallCount: Number(turn?.toolCallCount) || steps.filter((step) => step.kind === "tool").length,
       messageCount: Number(turn?.messageCount) || 0,
+      intermediateCount,
+      eventCount: Number.isInteger(turn?.eventCount)
+        ? turn.eventCount
+        : intermediateCount + steps.filter((step) => step.kind === "tool").length,
+      shownEventCount: Number.isInteger(turn?.shownEventCount) ? turn.shownEventCount : steps.length,
+      processTruncated: turn?.processTruncated === true,
       response,
+      responseStatus,
       durationMs: Number.isFinite(turn?.durationMs) ? turn.durationMs : null,
       startMs: Number.isFinite(turn?.startMs) ? turn.startMs : null,
       endMs: Number.isFinite(turn?.endMs) ? turn.endMs : null,

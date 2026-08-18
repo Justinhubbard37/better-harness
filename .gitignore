@@ -18,4 +18,6 @@ skills/**/.plugin-eval/
 assets/wasm
 dev/terminal-demo/*.cast
 /.codex/better-harness/
+/harness-readme-compare-evidence/
+/harness-qoder-profile-evidence/
 design-qa.md

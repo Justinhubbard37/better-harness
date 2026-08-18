@@ -15,7 +15,7 @@ import {
   DEFAULT_COMMIT_LIMIT,
   DEFAULT_MAX_SESSIONS,
 } from "../commit-session-link/index.mjs";
-import { SUPPORTED_SESSION_PLATFORMS } from "../session-analysis/index.mjs";
+import { SUPPORTED_SESSION_PROVIDERS } from "../session-analysis/index.mjs";
 import { emptyFeatureTree, FeatureTreeParseError, parseFeatureTreeMarkdown } from "./feature-tree.mjs";
 import { openRenderedReport } from "./open-report.mjs";
 import { renderHarnessInspectorHtml } from "./render-html.mjs";
@@ -159,10 +159,10 @@ async function loadFeatureTree(repoRoot, requestedPath) {
 // without echoing unrecognized values into error output.
 function parsePlatforms(value) {
   const text = String(value ?? "all").trim().toLowerCase();
-  if (text === "all") return [...SUPPORTED_SESSION_PLATFORMS];
+  if (text === "all") return [...SUPPORTED_SESSION_PROVIDERS];
   const requested = [...new Set(text.split(",").map((item) => item.trim()).filter(Boolean))];
-  if (requested.length === 0 || requested.some((platform) => !SUPPORTED_SESSION_PLATFORMS.includes(platform))) {
-    throw new UsageError(`--platform expects all or a comma list of ${SUPPORTED_SESSION_PLATFORMS.join(", ")}`);
+  if (requested.length === 0 || requested.some((platform) => !SUPPORTED_SESSION_PROVIDERS.includes(platform))) {
+    throw new UsageError(`--platform expects all or a comma list of ${SUPPORTED_SESSION_PROVIDERS.join(", ")}`);
   }
   return requested;
 }

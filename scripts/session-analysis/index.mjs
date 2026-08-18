@@ -2,7 +2,14 @@
 // Other scripts/<capability>/ modules must import from this file instead of
 // reaching into capability-private modules (see docs/ARCHITECTURE.md).
 
-export { createAnalyzer, main, SessionAnalyzer, SESSION_ANALYSIS_HELP, SUPPORTED_SESSION_PLATFORMS } from "./analyzer.mjs";
+export {
+  createAnalyzer,
+  main,
+  SessionAnalyzer,
+  SESSION_ANALYSIS_HELP,
+  SUPPORTED_SESSION_PLATFORMS,
+  SUPPORTED_SESSION_PROVIDERS,
+} from "./analyzer.mjs";
 export { parseArgs, parseBooleanFlag } from "./cli.mjs";
 export { buildTaskEpisodes, stableFingerprint } from "./episode-contract.mjs";
 export { isDirectory, pathExists, pathStat, readJson, walkFiles } from "./fs.mjs";
