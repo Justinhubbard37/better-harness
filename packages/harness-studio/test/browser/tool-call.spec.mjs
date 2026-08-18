@@ -320,6 +320,55 @@ test("contains narrow experiment scrolling inside the comparison regions", async
   expect(expandedWidth).toBe(390);
 });
 
+test("navigates recorded session evidence as a debugger notebook", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const browserErrors = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") browserErrors.push(`console: ${message.text()}`);
+  });
+  page.on("pageerror", (error) => browserErrors.push(`page: ${error.message}`));
+
+  await page.goto(studio.url);
+  await expect(page.getByRole("main", { name: "Session Notebook" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Execution Tree" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "State Inspector" })).toBeVisible();
+  await expect(page.locator('[aria-label="Session Timeline Minimap"]')).toBeVisible();
+  await expect(page.locator('[data-notebook-event="change-workbench"]')).toHaveClass(/selected/);
+  await expect(page.locator('.timeline-segment[aria-current="true"]')).toHaveAttribute("aria-label", "Change: Edit workbench.js");
+  await expect(page.getByText("Restore", { exact: true })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("session-debugger-1440x900.png") });
+
+  await page.locator(".tree-node").filter({ hasText: "Explore" }).click();
+  await expect(page.getByRole("button", { name: "Step Into" })).toBeEnabled();
+  await page.getByRole("button", { name: "Step Into" }).click();
+  await expect(page.locator(".explore-tool-list button.selected")).toContainText("Read workbench.js");
+  await expect(page.locator(".state-inspector > header > span")).toHaveText("Tool Call Cursor");
+  await expect(page.locator('.timeline-segment[aria-current="true"]')).toHaveAttribute("aria-label", "Explore: Inspect the current UI");
+
+  await page.getByRole("button", { name: "Step Out" }).click();
+  await page.getByRole("checkbox", { name: "Changes" }).uncheck();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.locator('[data-notebook-event="test-failed"]')).toHaveClass(/selected/);
+  await page.getByRole("tab", { name: "Raw ACP" }).click();
+  await expect(page.locator(".raw-acp")).toContainText("session/update");
+  await expect(page.locator(".raw-acp")).toContainText("tool_test_failed");
+
+  await page.getByRole("tab", { name: "Diff view" }).click();
+  await expect(page.locator(".notebook-diff-view .debugger-event")).toHaveCount(2);
+  await page.getByRole("tab", { name: "Notebook" }).click();
+
+  const dimensions = await page.evaluate(() => ({
+    innerWidth: window.innerWidth,
+    documentWidth: document.documentElement.scrollWidth,
+    shellHeight: document.querySelector(".debugger-shell")?.getBoundingClientRect().height,
+    timelineVisible: document.querySelector(".timeline-minimap")?.getBoundingClientRect().bottom === window.innerHeight,
+  }));
+  expect(dimensions.documentWidth).toBe(dimensions.innerWidth);
+  expect(dimensions.shellHeight).toBe(900);
+  expect(dimensions.timelineVisible).toBe(true);
+  expect(browserErrors).toEqual([]);
+});
+
 test("renders a keyboard-expandable failed and truncated Tool Call at 390px", async ({ page }, testInfo) => {
   const browserErrors = [];
   page.on("console", (message) => {
@@ -328,6 +377,7 @@ test("renders a keyboard-expandable failed and truncated Tool Call at 390px", as
   page.on("pageerror", (error) => browserErrors.push(`page: ${error.message}`));
 
   await page.goto(studio.url);
+  await page.getByRole("button", { name: "New live run" }).click();
   await page.getByPlaceholder("Task prompt for the harness run…").fill("Run the scripted browser fixture");
   await page.getByRole("button", { name: "Run harness" }).click();
 

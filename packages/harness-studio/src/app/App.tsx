@@ -55,24 +55,26 @@ export function App(): React.JSX.Element {
   if (tab === "experiment") {
     return <main className="experiment-mode"><ExperimentView navigation={navigation} /></main>;
   }
+  if (tab === "run") {
+    return config.aguiEnabled ? (
+      <div className="debugger-mode"><RunView aguiEndpoint="agui" navigation={navigation} /></div>
+    ) : (
+      <main>
+        <header><h1>Harness Studio</h1>{navigation}</header>
+        <p className="warning">
+          No harness loaded. Start the studio with <code>--harness &lt;file.harness&gt;</code> to
+          enable live runs.
+        </p>
+      </main>
+    );
+  }
   return (
     <main>
       <header>
         <h1>Harness Studio</h1>
         {navigation}
       </header>
-      {tab === "run" ? (
-        config.aguiEnabled ? (
-          <RunView aguiEndpoint="agui" />
-        ) : (
-          <p className="warning">
-            No harness loaded. Start the studio with <code>--harness &lt;file.harness&gt;</code> to
-            enable live runs.
-          </p>
-        )
-      ) : (
-        <CompareView />
-      )}
+      <CompareView />
     </main>
   );
 }
