@@ -105,29 +105,44 @@ function newTurn(index, promptEvent, promptText) {
     steps: [],
     toolCallCount: 0,
     messageCount: 0,
+    intermediateCount: 0,
+    eventCount: 0,
     response: null,
+    responseStatus: "unavailable",
     startMs: timestampMillis(promptEvent.timestamp),
     endMs: timestampMillis(promptEvent.timestamp),
     commits: [],
-    _assistantTexts: [],
+    _assistantMessageCount: 0,
+    _lastAssistantText: null,
+    _lastObservedKind: null,
+    _terminalAssistantText: null,
+    _terminalAssistantStepRetained: false,
   };
 }
 
 function closeTurn(turn) {
-  const texts = turn._assistantTexts;
-  if (texts.length > 0) {
-    turn.response = redactTranscriptText(texts.at(-1), { limit: RESPONSE_TEXT_LIMIT });
-    for (const text of texts.slice(0, -1)) {
-      if (turn.steps.length >= MAX_STEPS_PER_TURN) break;
-      const note = redactTranscriptText(text, { limit: NOTE_TEXT_LIMIT });
-      if (note) turn.steps.push({ kind: "note", text: note });
-    }
+  const hasTerminalResponse = turn._lastObservedKind === "assistant"
+    && turn._terminalAssistantText;
+  if (hasTerminalResponse) {
+    turn.response = redactTranscriptText(turn._terminalAssistantText, { limit: RESPONSE_TEXT_LIMIT });
+    turn.responseStatus = turn.response ? "retained" : "unavailable";
+    if (turn._terminalAssistantStepRetained && turn.steps.at(-1)?.kind === "note") turn.steps.pop();
+  } else if (turn._assistantMessageCount > 0) {
+    turn.responseStatus = "incomplete";
   }
-  turn.messageCount = texts.length > 0 ? texts.length - 1 + turn.toolCallCount : turn.toolCallCount;
+  turn.intermediateCount = turn._assistantMessageCount - (turn.responseStatus === "retained" ? 1 : 0);
+  turn.messageCount = turn.intermediateCount;
+  turn.eventCount = turn.intermediateCount + turn.toolCallCount;
+  turn.shownEventCount = turn.steps.length;
+  turn.processTruncated = turn.shownEventCount < turn.eventCount;
   turn.durationMs = turn.startMs !== null && turn.endMs !== null && turn.endMs >= turn.startMs
     ? turn.endMs - turn.startMs
     : null;
-  delete turn._assistantTexts;
+  delete turn._assistantMessageCount;
+  delete turn._lastAssistantText;
+  delete turn._lastObservedKind;
+  delete turn._terminalAssistantText;
+  delete turn._terminalAssistantStepRetained;
   return turn;
 }
 
@@ -184,6 +199,9 @@ export function buildSessionTurns(events = [], options = {}) {
       if (seenToolInvocations.has(invocationKey)) continue;
       seenToolInvocations.add(invocationKey);
       current.toolCallCount += 1;
+      current._lastObservedKind = "tool";
+      current._lastAssistantText = null;
+      current._terminalAssistantStepRetained = false;
       if (current.steps.length < MAX_STEPS_PER_TURN) {
         current.steps.push({
           kind: "tool",
@@ -194,7 +212,20 @@ export function buildSessionTurns(events = [], options = {}) {
       continue;
     }
     const text = assistantText(event);
-    if (text && current._assistantTexts.at(-1) !== text) current._assistantTexts.push(text);
+    if (text && current._lastAssistantText !== text) {
+      current._assistantMessageCount += 1;
+      current._lastAssistantText = text;
+      current._lastObservedKind = "assistant";
+      current._terminalAssistantText = text;
+      current._terminalAssistantStepRetained = false;
+      if (current.steps.length < MAX_STEPS_PER_TURN) {
+        const note = redactTranscriptText(text, { limit: NOTE_TEXT_LIMIT });
+        if (note) {
+          current.steps.push({ kind: "note", text: note });
+          current._terminalAssistantStepRetained = true;
+        }
+      }
+    }
   }
   if (current) turns.push(closeTurn(current));
 

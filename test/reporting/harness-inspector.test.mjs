@@ -761,6 +761,40 @@ test("one turn vocabulary is projected and retained prompts resolve to their rea
   });
 });
 
+test("dialogue projection preserves ordered process steps and explicit response availability", () => {
+  const base = fixtureSession();
+  const sourceTurn = base.dialogue.turns[0];
+  const report = buildHarnessInspectorReport({
+    repoRoot: "/workspace/repo",
+    featureTree: parseFeatureTreeMarkdown(FEATURE_TREE),
+    sessions: [{
+      ...base,
+      dialogue: {
+        truncated: false,
+        turns: [{
+          ...sourceTurn,
+          response: null,
+          responseStatus: "incomplete",
+          intermediateCount: 1,
+          eventCount: 3,
+          shownEventCount: 3,
+          processTruncated: false,
+        }],
+      },
+    }],
+    correlation: fixtureCorrelation(),
+  });
+
+  const turn = report.sessions[0].dialogue.turns[0];
+  assert.deepEqual(turn.steps.map((step) => step.kind), ["tool", "note", "tool"]);
+  assert.equal(turn.response, null);
+  assert.equal(turn.responseStatus, "incomplete");
+  assert.equal(turn.intermediateCount, 1);
+  assert.equal(turn.eventCount, 3);
+  assert.equal(turn.shownEventCount, 3);
+  assert.equal(turn.processTruncated, false);
+});
+
 test("Harness Inspector help is workspace-independent and sanitizes bad argv (AC-2, AC-8)", () => {
   const help = spawnSync(process.execPath, [CLI_PATH, "--help"], { cwd: os.tmpdir(), encoding: "utf8" });
   assert.equal(help.status, 0, help.stderr);

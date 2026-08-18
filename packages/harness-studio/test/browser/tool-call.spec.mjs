@@ -199,7 +199,15 @@ test("compares a focused ACP pair across roles, views, filters, and evidence", a
   await expect(page.locator(".variant-row")).toHaveCount(4);
   await expect(page.getByRole("button", { name: "Lock and compare" })).toBeEnabled();
   await page.getByRole("button", { name: "Lock and compare" }).click();
-  await expect(page.getByRole("heading", { name: "Compare traces" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Comparison notebook" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Context" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Run comparison" })).toBeVisible();
+  await expect(page.locator(".notebook-cell")).toHaveCount(2);
+  await expect(page.locator(".notebook-context-grid")).toContainText("Starting checkpoint");
+  await expect(page.locator(".run-process-summary")).not.toHaveAttribute("open", "");
+  await page.locator(".run-process-summary > summary").click();
+  await expect(page.locator(".run-process-summary li")).toHaveCount(3);
+  await page.locator(".run-process-summary > summary").click();
   await expect(page.locator(".object-card")).toHaveCount(3);
   await expect(page.locator(".object-card").nth(0)).toContainText("Reference");
   await expect(page.locator(".object-card").nth(1)).toContainText("Baseline");
@@ -237,7 +245,7 @@ test("compares a focused ACP pair across roles, views, filters, and evidence", a
   await page.getByRole("tab", { name: "Trace" }).click();
   await page.getByRole("button", { name: "Resources" }).click();
   await expect(page.locator(".changes-view")).toContainText("shared resources");
-  await page.getByRole("button", { name: "Calls" }).click();
+  await page.getByRole("button", { name: "Calls", exact: true }).click();
   await page.getByRole("tab", { name: "Evidence" }).click();
   await expect(page.locator(".evidence-view")).toContainText("No global verdict");
   await expect(page.locator(".status-accept")).toContainText("accept");
@@ -249,7 +257,7 @@ test("compares a focused ACP pair across roles, views, filters, and evidence", a
   const layout = await page.evaluate(() => {
     const shell = document.querySelector(".experiment-shell");
     const rail = document.querySelector(".experiment-rail");
-    const workspaceHeader = document.querySelector(".experiment-workspace-header");
+    const workspaceHeader = document.querySelector(".experiment-notebook-bar");
     const surface = document.querySelector(".compare-surface");
     const header = document.querySelector(".call-lane-head");
     const toolList = document.querySelector(".call-lane:first-child .call-tree");
@@ -272,10 +280,10 @@ test("compares a focused ACP pair across roles, views, filters, and evidence", a
   });
   expect(layout.document).toBe(layout.inner);
   expect(layout.shellWidth).toBe(layout.inner);
-  expect(layout.railWidth).toBeGreaterThanOrEqual(220);
-  expect(layout.railWidth).toBeLessThanOrEqual(240);
-  expect(layout.workspaceHeaderHeight).toBe(42);
-  expect(layout.surfaceTop).toBeLessThanOrEqual(52);
+  expect(layout.railWidth).toBeGreaterThanOrEqual(310);
+  expect(layout.railWidth).toBeLessThanOrEqual(330);
+  expect(layout.workspaceHeaderHeight).toBe(68);
+  expect(layout.surfaceTop).toBeLessThanOrEqual(100);
   expect(layout.laneHeaderHeight).toBeLessThanOrEqual(52);
   expect(layout.toolRowHeight).toBeLessThanOrEqual(30);
   expect(layout.rowFontSize).toBeGreaterThanOrEqual(11);
@@ -291,9 +299,9 @@ test("contains narrow experiment scrolling inside the comparison regions", async
   await page.getByRole("button", { name: "Lock and compare" }).click();
   await expect(page.locator(".object-card")).toHaveCount(3);
   await expect(page.locator(".call-lane")).toHaveCount(2);
-  await expect(page.locator(".experiment-rail")).toHaveCSS("width", "230px");
+  await expect(page.locator(".experiment-rail")).toHaveCSS("width", "320px");
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator(".experiment-rail")).toHaveCSS("width", "46px");
+  await expect(page.locator(".experiment-rail")).not.toBeVisible();
   const dimensions = await page.evaluate(() => ({
     inner: window.innerWidth,
     document: document.documentElement.scrollWidth,
@@ -302,11 +310,12 @@ test("contains narrow experiment scrolling inside the comparison regions", async
     boardScroll: document.querySelector(".experiment-workspace-scroll")?.scrollWidth,
   }));
   expect(dimensions.document).toBe(dimensions.inner);
-  expect(dimensions.rail).toBe(46);
-  expect(dimensions.boardScroll).toBeGreaterThan(dimensions.boardClient);
+  expect(dimensions.rail).toBe(0);
+  expect(dimensions.boardScroll).toBeGreaterThanOrEqual(dimensions.boardClient);
 
-  await page.getByRole("button", { name: "Show comparison context" }).click();
-  await expect(page.locator(".experiment-rail")).toHaveCSS("width", "230px");
+  await page.getByRole("button", { name: "Show checkpoints" }).click();
+  await expect(page.locator(".experiment-rail")).toBeVisible();
+  await expect(page.locator(".experiment-rail")).toHaveCSS("width", "335px");
   const expandedWidth = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(expandedWidth).toBe(390);
 });

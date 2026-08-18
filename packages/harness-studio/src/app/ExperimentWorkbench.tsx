@@ -10,6 +10,7 @@ import {
 } from "./experiment-trace-model.js";
 import {
   deriveComparability,
+  deriveTreatmentSummary,
   emptyLane,
   exactSelected,
   filterCalls,
@@ -83,48 +84,82 @@ export function ExperimentWorkbench(props: {
   const focusedResult = resultForPair(resultRows, props.baselineId, props.candidateId);
   const comparability = deriveComparability(props.preview, baselineDefinition, candidateDefinition, baseline, candidate);
   const totalCalls = Object.values(props.lanes).reduce((count, lane) => count + lane.calls.length, 0);
+  const treatment = deriveTreatmentSummary(props.preview);
+  const freshDefinitions = props.preview.manifest.lanes.filter((lane) => lane.origin === "execute");
+  const harnesses = [...new Set(freshDefinitions.map((lane) => lane.harnessId ?? "unknown"))].join(" · ");
+  const runtimes = [...new Set(freshDefinitions.map((lane) => laneIdentityLabel(lane)))].join(" ↔ ");
 
   return <section className={`experiment-shell${props.railCollapsed ? " rail-collapsed" : ""}`}>
+    <header className="experiment-notebook-bar">
+      <div className="notebook-brand"><strong>Harness Studio</strong><span>Experiment Notebook</span></div>
+      <div className="notebook-navigation">{props.navigation}</div>
+      <div className="notebook-document"><strong>Comparison workbench</strong><span>{treatment.value}</span></div>
+      <div className="notebook-bar-actions"><span className={`notebook-save-state${props.running ? " running" : ""}`}>{props.running ? "Running" : "Saved"}</span><button type="button" onClick={props.onSetup}>Setup</button><button className="rail-toggle" type="button" aria-label={props.railCollapsed ? "Show checkpoints" : "Hide checkpoints"} aria-expanded={!props.railCollapsed} onClick={() => props.onRailCollapsed(!props.railCollapsed)}>{props.railCollapsed ? "Checkpoints" : "Hide rail"}</button></div>
+    </header>
+
+    <div className="experiment-workspace">
+      <div className="experiment-workspace-scroll"><section className="compare-surface comparison-notebook" aria-label="Comparison notebook">
+        <section className="notebook-context" aria-labelledby="notebook-context-title">
+          <header><div><h1 id="notebook-context-title">Context</h1></div><span>{props.preview.lock ? "Locked" : "Loaded definition"}</span></header>
+          <div className="notebook-context-grid">
+            <article className="notebook-request"><small>Request</small><p>{compactPrompt(props.preview.setup.request.prompt)}</p><span>{requestProvenanceLabel(props.preview.setup.request.provenance)}</span></article>
+            <article><small>Starting checkpoint</small><code title={props.preview.checkpoint.digest}>{shortDigest(props.preview.checkpoint.digest)}</code><span>{props.preview.setup.checkpointSource.revision.value}</span></article>
+            <article><small>Harness</small><strong>{harnesses || "unverified"}</strong><span>{runtimes || "runtime unavailable"}</span></article>
+            <article><small>{treatment.label}</small><strong>{treatment.value}</strong><span>{treatment.controlled ? "Single setting changed" : "Descriptive comparison"}</span></article>
+          </div>
+        </section>
+
+        <section className="notebook-cell notebook-run-cell" aria-labelledby="run-cell-title">
+          <div className="notebook-cell-marker"><span>In [1]</span></div>
+          <div className="notebook-cell-card">
+            <header className="compare-titlebar"><div><h2 id="run-cell-title">Run comparison</h2><p>Fresh runs execute from the shared checkpoint; the recorded run remains Reference evidence.</p></div><div className="compare-actions"><span className={`live-state${props.running ? " running" : ""}`}>{props.running ? "Streaming" : "Ready"}</span>{props.running ? <button className="secondary" onClick={props.onCancel}>Cancel comparison</button> : <button onClick={props.onRun}>Run comparison</button>}</div></header>
+            <section className="run-prompt"><small>Prompt</small><p>{compactPrompt(props.preview.setup.request.prompt)}</p></section>
+            <details className="run-process-summary"><summary><span>Process</span><em>{totalCalls} canonical tool calls across {props.preview.manifest.lanes.length} runs</em></summary><ol>{props.preview.manifest.lanes.map((definition) => {
+              const run = props.lanes[definition.id] ?? emptyLane();
+              return <li key={definition.id}><strong>{roleFor(definition, props.baselineId, props.candidateId)} · {definition.id}</strong><span>{run.status}</span><em>{run.eventCount} events</em></li>;
+            })}</ol></details>
+            <div className="run-output-label"><strong>Outputs</strong><span>Reference, Baseline, and Candidate stay evidence-distinct.</span></div>
+            <div className="object-bar" aria-label="Comparison runs">{props.preview.manifest.lanes.map((definition) => {
+              const run = props.lanes[definition.id] ?? emptyLane();
+              const role = roleFor(definition, props.baselineId, props.candidateId);
+              const content = <><div><small>{role}</small><strong>{definition.id}</strong><span>{laneIdentityLabel(definition)} · {run.status}</span></div><code>{run.calls.length}</code></>;
+              return definition.origin === "observed"
+                ? <article key={definition.id} className="object-card role-reference">{content}</article>
+                : <button key={definition.id} type="button" className={`object-card role-${role.toLowerCase()}`} aria-pressed={definition.id === props.baselineId || definition.id === props.candidateId} onClick={() => props.onSelectRun(definition.id)}>{content}</button>;
+            })}</div>
+          </div>
+        </section>
+
+        <section className="notebook-cell notebook-result-cell" aria-labelledby="result-cell-title">
+          <div className="notebook-cell-marker output"><span>Out [1]</span></div>
+          <div className="notebook-cell-card">
+            <header className="compare-result-head"><div><h2 id="result-cell-title">Compare · {props.baselineId} vs {props.candidateId}</h2></div><div className={`comparability level-${comparability.level.toLowerCase()}`} role="status"><strong>{comparability.level}</strong><span>{comparability.detail}</span>{comparability.axis && <code>{comparability.axis}</code>}</div></header>
+            <nav className="compare-tabs" role="tablist" aria-label="Comparison views">{COMPARE_VIEWS.map((view) => <button key={view.id} type="button" role="tab" aria-selected={props.activeView === view.id} onClick={() => props.onActiveView(view.id)}>{view.label}</button>)}</nav>
+            <div className="compare-view" role="tabpanel">
+              {props.activeView === "summary" && <SummaryView baseline={baseline} candidate={candidate} result={focusedResult} comparability={comparability} />}
+              {props.activeView === "trace" && <TraceView lens={props.traceLens} onLens={props.onTraceLens} baseline={baseline} candidate={candidate} baselineDefinition={baselineDefinition} candidateDefinition={candidateDefinition} selectedCall={selectedCall} relations={relations} filter={props.filter} diffOnly={props.diffOnly} syncSelection={props.syncSelection} onFilter={props.onFilter} onDiffOnly={props.onDiffOnly} onSyncSelection={props.onSyncSelection} onSelect={(call) => props.onSelectCall({ laneId: call.laneId, callId: call.id })} />}
+              {props.activeView === "evidence" && <EvidenceView baseline={baseline} candidate={candidate} resultRows={resultRows} comparability={comparability} focusedResult={focusedResult} />}
+            </div>
+          </div>
+        </section>
+        <footer className="notebook-footer" aria-label="Notebook actions"><button type="button" onClick={props.onSetup}>Edit setup</button><button type="button" onClick={props.onRun} disabled={props.running}>Run again</button><button type="button" onClick={() => props.onActiveView("summary")}>Open summary</button></footer>
+      </section></div>
+    </div>
+
     <aside className="experiment-rail" aria-label="Comparison context">
-      <div className="experiment-brand">
-        <div className="brand-copy"><strong>Harness Studio</strong><span>Checkpoint-backed compare</span></div>
-        <button className="rail-toggle" type="button" aria-label={props.railCollapsed ? "Show comparison context" : "Hide comparison context"} aria-expanded={!props.railCollapsed} onClick={() => props.onRailCollapsed(!props.railCollapsed)}><span className="hide-label">Hide</span><span className="show-label">Show setup</span></button>
-      </div>
+      <header className="checkpoint-rail-head"><div><strong>Checkpoints</strong><span>{props.preview.manifest.lanes.length + 1} states</span></div><button className="rail-toggle" type="button" aria-label="Hide checkpoints" onClick={() => props.onRailCollapsed(true)}>Hide</button></header>
       <div className="rail-content">
-        {props.navigation}
-        <section className="rail-section checkpoint-section"><div className="rail-heading"><strong>{props.preview.setup.checkpointSource.resource.label}</strong><span>shared start</span></div><code title={props.preview.setup.checkpointSource.resource.detail}>{props.preview.setup.checkpointSource.resource.value}</code><p title={props.preview.setup.checkpointSource.revision.detail}>{props.preview.setup.checkpointSource.revision.label} · {props.preview.setup.checkpointSource.revision.value}</p></section>
-        <section className="rail-section task-section"><div className="rail-heading"><strong>Request</strong><span>{requestProvenanceLabel(props.preview.setup.request.provenance)}</span></div><p title={props.preview.setup.request.prompt}>{compactPrompt(props.preview.setup.request.prompt)}</p></section>
-        <section className="rail-section"><div className="rail-heading"><strong>Runs</strong><span>{props.preview.manifest.lanes.length}</span></div><ol className="rail-lanes">{props.preview.manifest.lanes.map((definition) => {
+        <section className="checkpoint-start"><span className="checkpoint-dot status-history" /><div><strong>Start</strong><code title={props.preview.setup.checkpointSource.resource.detail}>{props.preview.setup.checkpointSource.resource.value}</code><small>{props.preview.setup.checkpointSource.revision.value}</small></div></section>
+        <ol className="rail-lanes">{props.preview.manifest.lanes.map((definition) => {
           const run = props.lanes[definition.id] ?? emptyLane();
           const role = roleFor(definition, props.baselineId, props.candidateId);
-          return <li key={definition.id}><span className={`rail-lane-dot status-${run.status}`} /><span><strong>{definition.id}</strong><small>{role} · {run.status}</small></span><em>{run.calls.length}</em></li>;
-        })}</ol></section>
-        <section className="rail-section"><div className="rail-heading"><strong>Comparisons</strong><span>{props.preview.contrasts.length}</span></div><div className="contrast-preview" aria-label="Comparison attribution preview">{props.preview.contrasts.map((contrast) => <span key={contrast.id} className={`contrast-chip mode-${contrast.attribution.mode}`} title={contrast.attribution.detail}><b>{contrast.id}</b><small>{contrast.attribution.mode === "attributable" ? contrast.attribution.axis : "descriptive"}</small></span>)}</div></section>
+          const content = <><span className={`rail-lane-dot status-${run.status}`} /><span><strong>{definition.id}</strong><small>{role} · {run.status}</small><em>{run.calls.length} calls · {run.eventCount} events</em></span></>;
+          return <li key={definition.id}>{definition.origin === "observed" ? <article className="checkpoint-run">{content}</article> : <button type="button" className="checkpoint-run" aria-pressed={definition.id === props.baselineId || definition.id === props.candidateId} onClick={() => props.onSelectRun(definition.id)}>{content}</button>}</li>;
+        })}</ol>
+        <section className="checkpoint-detail"><header><strong>{props.candidateId}</strong><span>Candidate</span></header><dl><div><dt>Harness</dt><dd>{candidateDefinition?.harnessId ?? "unverified"}</dd></div><div><dt>Runtime</dt><dd>{candidateDefinition ? laneIdentityLabel(candidateDefinition) : "unavailable"}</dd></div><div><dt>Status</dt><dd>{candidate.status}</dd></div><div><dt>Evidence</dt><dd>{candidate.calls.length} calls</dd></div></dl><footer><button type="button" onClick={() => props.onActiveView("evidence")}>View evidence</button><button type="button" onClick={() => props.onActiveView("trace")}>Inspect trace</button></footer></section>
       </div>
       <footer className="rail-footer"><div><strong>{props.running ? "Comparison running" : `${totalCalls} tool calls`}</strong><span>{props.experimentId ? shortDigest(props.experimentId) : "ready"}</span></div><button className="secondary" onClick={props.onSetup}>Setup</button></footer>
     </aside>
-
-    <div className="experiment-workspace">
-      <header className="experiment-workspace-header"><nav className="workspace-breadcrumb" aria-label="Comparison breadcrumb"><button type="button" onClick={props.onSetup}>Compare setup</button><i>/</i><strong>Workbench</strong></nav><div className="workspace-header-meta"><div className="scope-metrics" aria-label="Comparison metrics"><span className="metric"><strong>{totalCalls}</strong><span>calls</span></span><span className="metric"><strong>{props.preview.manifest.lanes.length}</strong><span>runs</span></span><span className="metric"><strong>{props.preview.manifest.contrasts.length}</strong><span>comparisons</span></span></div></div></header>
-      <div className="experiment-workspace-scroll"><section className="compare-surface">
-        <header className="compare-titlebar"><div><h1>Compare traces</h1><p>Canonical tool evidence updates while fresh runs execute.</p></div><div className="compare-actions"><span className={`live-state${props.running ? " running" : ""}`}><i />{props.running ? "streaming" : "ready"}</span>{props.running ? <button className="secondary" onClick={props.onCancel}>Cancel comparison</button> : <button onClick={props.onRun}>Run comparison</button>}</div></header>
-        <div className="object-bar" aria-label="Comparison runs">{props.preview.manifest.lanes.map((definition) => {
-          const run = props.lanes[definition.id] ?? emptyLane();
-          const role = roleFor(definition, props.baselineId, props.candidateId);
-          const content = <><div><small>{role}</small><strong>{definition.id}</strong><span>{laneIdentityLabel(definition)}</span></div><code>{run.calls.length}</code></>;
-          return definition.origin === "observed"
-            ? <article key={definition.id} className="object-card role-reference">{content}</article>
-            : <button key={definition.id} type="button" className={`object-card role-${role.toLowerCase()}`} aria-pressed={definition.id === props.baselineId || definition.id === props.candidateId} onClick={() => props.onSelectRun(definition.id)}>{content}</button>;
-        })}</div>
-        <div className={`comparability level-${comparability.level.toLowerCase()}`} role="status"><strong>{comparability.level}</strong><span>{comparability.detail}</span>{comparability.axis && <code>{comparability.axis}</code>}</div>
-        <nav className="compare-tabs" role="tablist" aria-label="Comparison views">{COMPARE_VIEWS.map((view) => <button key={view.id} type="button" role="tab" aria-selected={props.activeView === view.id} onClick={() => props.onActiveView(view.id)}>{view.label}</button>)}</nav>
-        <div className="compare-view" role="tabpanel">
-          {props.activeView === "summary" && <SummaryView baseline={baseline} candidate={candidate} result={focusedResult} comparability={comparability} />}
-          {props.activeView === "trace" && <TraceView lens={props.traceLens} onLens={props.onTraceLens} baseline={baseline} candidate={candidate} baselineDefinition={baselineDefinition} candidateDefinition={candidateDefinition} selectedCall={selectedCall} relations={relations} filter={props.filter} diffOnly={props.diffOnly} syncSelection={props.syncSelection} onFilter={props.onFilter} onDiffOnly={props.onDiffOnly} onSyncSelection={props.onSyncSelection} onSelect={(call) => props.onSelectCall({ laneId: call.laneId, callId: call.id })} />}
-          {props.activeView === "evidence" && <EvidenceView baseline={baseline} candidate={candidate} resultRows={resultRows} comparability={comparability} focusedResult={focusedResult} />}
-        </div>
-      </section></div>
-    </div>
   </section>;
 }
 
