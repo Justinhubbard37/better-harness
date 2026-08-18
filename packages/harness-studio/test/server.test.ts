@@ -331,7 +331,7 @@ describe("harness-studio server", () => {
     const invalidPage = await fetch(`${started.url}/api/experiment/observed-calls?laneId=../history`);
     expect(invalidPage.status).toBe(400);
 
-    const stream = await fetch(`${started.url}/api/experiment`, {
+    const stream = await fetch(`${started.url}/api/experiment/runs`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ experimentId: "exp_server_test" }),
@@ -353,7 +353,7 @@ describe("harness-studio server", () => {
       experimentRunner: async () => ({} as never),
     });
 
-    const response = await fetch(`${started.url}/api/experiment`, {
+    const response = await fetch(`${started.url}/api/experiment/runs`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Origin: "https://hostile.example" },
       body: "{}",
@@ -371,13 +371,13 @@ describe("harness-studio server", () => {
         options.signal?.addEventListener("abort", () => reject(options.signal?.reason), { once: true });
       }),
     });
-    const stream = await fetch(`${started.url}/api/experiment`, {
+    const stream = await fetch(`${started.url}/api/experiment/runs`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ experimentId: "exp_cancel_test" }),
     });
 
-    const cancellation = await fetch(`${started.url}/api/experiment/exp_cancel_test`, { method: "DELETE" });
+    const cancellation = await fetch(`${started.url}/api/experiment/runs/exp_cancel_test`, { method: "DELETE" });
 
     expect(cancellation.status).toBe(202);
     expect(await cancellation.json()).toMatchObject({ status: "cancelling" });

@@ -213,7 +213,7 @@ export function ExperimentView(props: { navigation?: ReactNode } = {}): React.JS
       lane.status === "history" ? lane : emptyLane(),
     ])));
     try {
-      const response = await fetch("api/experiment", {
+      const response = await fetch("api/experiment/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ experimentId: nextId }),
@@ -250,7 +250,7 @@ export function ExperimentView(props: { navigation?: ReactNode } = {}): React.JS
 
   async function cancelExperiment(): Promise<void> {
     if (experimentId === null) return;
-    await fetch(`api/experiment/${encodeURIComponent(experimentId)}`, { method: "DELETE" });
+    await fetch(`api/experiment/runs/${encodeURIComponent(experimentId)}`, { method: "DELETE" });
     abortRef.current?.abort();
     setRunning(false);
     setLanes((current) => Object.fromEntries(Object.entries(current).map(([laneId, lane]) => [

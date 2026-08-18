@@ -155,25 +155,23 @@ async function route(
     await serveObservedCalls(response, url, state);
     return;
   }
-  if (url.pathname === "/api/experiment") {
-    if (request.method === "GET") {
-      await serveExperiment(response, options, state);
-      return;
-    }
-    if (request.method === "POST") {
-      await streamExperiment(request, response, options, state, experimentRuns);
-      return;
-    }
+  if (request.method === "GET" && url.pathname === "/api/experiment") {
+    await serveExperiment(response, options, state);
+    return;
   }
-  const cancellation = url.pathname.match(/^\/api\/experiment\/([^/]+)$/);
+  if (request.method === "POST" && url.pathname === "/api/experiment/runs") {
+    await streamExperiment(request, response, options, state, experimentRuns);
+    return;
+  }
+  const cancellation = url.pathname.match(/^\/api\/experiment\/runs\/([^/]+)$/);
   if (request.method === "DELETE" && cancellation !== null) {
-    const experimentId = decodeURIComponent(cancellation[1]!);
-    const controller = experimentRuns.get(experimentId);
+    const runId = decodeURIComponent(cancellation[1]!);
+    const controller = experimentRuns.get(runId);
     if (controller === undefined) {
-      respondJson(response, 404, { error: `Experiment '${experimentId}' is not running.` });
+      respondJson(response, 404, { error: `Experiment run '${runId}' is not running.` });
     } else {
       controller.abort(new Error("Cancelled from Harness Studio."));
-      respondJson(response, 202, { experimentId, status: "cancelling" });
+      respondJson(response, 202, { runId, status: "cancelling" });
     }
     return;
   }
