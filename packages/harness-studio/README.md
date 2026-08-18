@@ -1,7 +1,13 @@
 # @qoder-ai/harness-studio
 
-A local React studio for [`@qoder-ai/harness`](../harness/README.md): one UI
-over the evidence and experiment surfaces the Harness toolchain produces.
+A local React control plane for [`@qoder-ai/harness`](../harness/README.md):
+durable Harness objects organize the evidence, inspection, live-run, and
+experiment surfaces the Harness toolchain produces.
+
+- **Harness control plane** — organizes work as `Overview`, `Inspector`,
+  `Harnesses`, `Task Suites`, `Experiments`, and `Registry`. Unimplemented
+  source, suite, and promotion capabilities stay visibly marked as foundations
+  instead of appearing as working controls.
 
 - **Inspector workspace** — embeds an explicitly supplied, self-contained
   Harness Inspector report behind a sandboxed, read-only document boundary.
@@ -32,7 +38,7 @@ npx @qoder-ai/harness-studio --evidence ./harness-readme-compare-evidence
 # Live runs only
 npx @qoder-ai/harness-studio --harness my-agent.harness
 
-# Both surfaces on one port
+# Combined control plane on one port
 npx @qoder-ai/harness-studio \
   --inspector ./harness-inspector.html \
   --harness my-agent.harness \
@@ -73,6 +79,8 @@ src/app/         components plus pure state modules:
                    agui-store.ts     AG-UI event → run view state reducer
                    compare-model.ts  verdict.json → table model
                    sse-client.ts     incremental SSE frame parser
+                   studio-shell-model.ts
+                                        config → IA/readiness projection
 src/server/      static host + /api/config + /api/evidence + embedded /agui
                  read-only /inspector + checkpoint history list/resolve
                  + durable experiment lock
@@ -94,4 +102,5 @@ GitHub Actions `Publish npm` workflow. Local commands only build, test, pack,
 or dry-run; do not publish this workspace from a developer machine.
 
 See the spec:
-[Harness UI and Studio](https://github.com/QoderAI/better-harness/blob/main/docs/specs/2026-08-15-harness-ui-studio.md).
+[Harness UI and Studio](https://github.com/QoderAI/better-harness/blob/main/docs/specs/2026-08-15-harness-ui-studio.md)
+and [Harness Studio information architecture](../../docs/specs/2026-08-18-harness-studio-information-architecture.md).

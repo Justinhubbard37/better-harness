@@ -2,7 +2,6 @@ import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState
 import type { Icon } from "@phosphor-icons/react";
 import { ArrowBendDownRight } from "@phosphor-icons/react/ArrowBendDownRight";
 import { ArrowBendUpLeft } from "@phosphor-icons/react/ArrowBendUpLeft";
-import { ArrowLeft } from "@phosphor-icons/react/ArrowLeft";
 import { ArrowRight } from "@phosphor-icons/react/ArrowRight";
 import { Binoculars } from "@phosphor-icons/react/Binoculars";
 import { BracketsCurly } from "@phosphor-icons/react/BracketsCurly";
@@ -222,7 +221,7 @@ function stopConditionLabel(enabled: StopConditionState): string {
 export function RunView({
   aguiEndpoint,
   navigation,
-  initialMode = "recorded",
+  initialMode = "live",
 }: {
   aguiEndpoint: string;
   navigation?: ReactNode;
@@ -236,7 +235,7 @@ export function RunView({
   const [stopConditions, setStopConditions] = useState<StopConditionState>(DEFAULT_STOP_CONDITIONS);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => new Set(["session", "turn"]));
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("changes");
-  const [composerOpen, setComposerOpen] = useState(initialMode === "live");
+  const [composerOpen, setComposerOpen] = useState(false);
   const [treeCollapsed, setTreeCollapsed] = useState(() => globalThis.matchMedia?.("(max-width: 900px)").matches ?? false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(() => globalThis.matchMedia?.("(max-width: 900px)").matches ?? false);
   const busy = useRef(false);
@@ -319,10 +318,10 @@ export function RunView({
 
   return <section className={`debugger-shell${treeCollapsed ? " tree-collapsed" : ""}${inspectorCollapsed ? " inspector-collapsed" : ""}`}>
     <header className="debugger-topbar">
-      <div className="debugger-brand"><span className="debugger-mark"><BugBeetle size={18} weight="fill" /></span><strong>Inspector</strong><span>Session Debugger</span></div>
+      <div className="debugger-brand"><span className="debugger-mark"><BugBeetle size={18} weight="fill" /></span><strong>{live ? "Harness Run" : "Inspector"}</strong><span>{live ? "Live Trial" : "Session Debugger · Demo"}</span></div>
       <div className="debugger-session-meta"><span>Session</span><strong title={sessionName}>{sessionName}</strong><em className={live ? "live" : "recorded"}>{runMode}</em></div>
       <div className="debugger-runtime-meta"><span className={`connection-dot status-${connectionState}`} /><strong>{connectionState}</strong><i /><span>Agent</span><strong>{live ? "local harness" : SAMPLE_DEBUGGER_SESSION.agent}</strong><i /><span>Protocol</span><strong>{live ? "AG-UI / ACP evidence" : SAMPLE_DEBUGGER_SESSION.protocol}</strong></div>
-      <div className="debugger-top-actions">{navigation}<button type="button" onClick={() => setTreeCollapsed((value) => !value)} aria-pressed={!treeCollapsed} title="Toggle Execution Tree"><TreeStructure size={15} /></button><button type="button" onClick={() => setInspectorCollapsed((value) => !value)} aria-pressed={!inspectorCollapsed} title="Toggle State Inspector"><SidebarSimple size={15} /></button>{live ? <button type="button" onClick={() => { setSurfaceMode("recorded"); setComposerOpen(false); }}><ArrowLeft size={14} />Recorded sample</button> : <button type="button" className="new-run" onClick={() => setComposerOpen(true)}><Plus size={14} weight="bold" />New live run</button>}</div>
+      <div className="debugger-top-actions">{navigation}<button type="button" onClick={() => setTreeCollapsed((value) => !value)} aria-pressed={!treeCollapsed} title="Toggle Execution Tree"><TreeStructure size={15} /></button><button type="button" onClick={() => setInspectorCollapsed((value) => !value)} aria-pressed={!inspectorCollapsed} title="Toggle State Inspector"><SidebarSimple size={15} /></button><button type="button" className="new-run" onClick={() => setComposerOpen(true)}><Plus size={14} weight="bold" />New live run</button></div>
     </header>
 
     {!live ? <nav className="debugger-toolbar" aria-label="Session debugger controls">

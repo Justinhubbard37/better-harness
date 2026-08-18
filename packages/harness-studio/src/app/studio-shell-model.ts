@@ -7,7 +7,7 @@ export type StudioArea =
   | "registry";
 
 export type StudioExperimentSurface = "experiment" | "live-run" | "results";
-export type StudioInspectorSurface = "workbench" | "session";
+export type StudioInspectorSurface = "workbench";
 
 export interface StudioConfig {
   aguiEnabled: boolean;
@@ -28,7 +28,7 @@ export interface StudioDestination {
 }
 
 export function studioDestinations(config: StudioConfig): readonly StudioDestination[] {
-  const inspectorAvailable = config.inspectorEnabled || config.aguiEnabled;
+  const inspectorAvailable = config.inspectorEnabled;
   const experimentAvailable = config.experimentEnabled || config.aguiEnabled || config.evidenceEnabled;
   return [
     { id: "overview", label: "Overview", group: "Control", availability: "ready", status: "Control plane" },
@@ -37,7 +37,7 @@ export function studioDestinations(config: StudioConfig): readonly StudioDestina
       label: "Inspector",
       group: "Observe",
       availability: inspectorAvailable ? "ready" : "foundation",
-      status: config.inspectorEnabled ? "Evidence workbench" : config.aguiEnabled ? "Session debugger" : "Report required",
+      status: config.inspectorEnabled ? "Evidence workbench" : "Report required",
     },
     {
       id: "harnesses",
@@ -79,10 +79,7 @@ export function experimentSurfaces(config: StudioConfig): readonly StudioExperim
 }
 
 export function inspectorSurfaces(config: StudioConfig): readonly StudioInspectorSurface[] {
-  return [
-    ...(config.inspectorEnabled ? ["workbench" as const] : []),
-    ...(config.aguiEnabled ? ["session" as const] : []),
-  ];
+  return config.inspectorEnabled ? ["workbench"] : [];
 }
 
 export function capabilitySummary(config: StudioConfig): { ready: number; partial: number; foundation: number } {

@@ -3,7 +3,7 @@
 ## Traceability
 
 - Spec ID: harness-studio-information-architecture
-- Status: Draft
+- Status: Implemented
 
 ## Intent
 
@@ -18,6 +18,42 @@ Existing experiment, live-run, verdict, Session Debugger, and Inspector
 Workbench behavior remains authoritative. Studio may organize and embed those
 surfaces, but it must not merge their data models, turn observed associations
 into causal claims, or present roadmap capabilities as implemented.
+
+The supplied research report is treated as a product-direction brief, not as a
+source-backed competitor benchmark. Its useful organizing unit is retained:
+`Harness Revision x Task Suite x Runtime Envelope`; statistical evaluation,
+promotion, collaboration, and registry maturity remain unproven roadmap scope.
+
+## Information Architecture
+
+```mermaid
+flowchart TD
+  Studio["Harness Studio · local control plane"] --> Overview["Overview · operating model and loaded inputs"]
+  Studio --> Inspector["Inspector · Observe"]
+  Studio --> Harnesses["Harnesses · Compose · foundation"]
+  Studio --> Suites["Task Suites · Compose · foundation"]
+  Studio --> Experiments["Experiments · Validate"]
+  Studio --> Registry["Registry · Govern · foundation"]
+
+  Inspector --> Delivery["Delivery Workbench"]
+  Delivery --> Evidence["Capability or Date → Session → Commit or File"]
+  Delivery -. "sandboxed read-only document" .-> Report["HarnessInspectorReportV1 HTML"]
+
+  Experiments --> Bench["Harness Bench · design and comparison notebook"]
+  Experiments --> Live["Live trial · AG-UI observation"]
+  Experiments --> Results["Frozen evidence results"]
+
+  Harnesses -. "future contract" .-> Revision["Harness Revision"]
+  Suites -. "future contract" .-> TaskSuite["Task Suite"]
+  Revision -. "analysis unit" .-> Bench
+  TaskSuite -. "analysis unit" .-> Bench
+  Bench -. "fixed runtime envelope" .-> Runtime["Runtime Envelope"]
+  Results -. "future evidence bundle" .-> Registry
+```
+
+The navigation order follows the operating loop `Observe -> Compose ->
+Experiment -> Explain -> Promote`. `Builder`, `Run`, `Compare`, `Results`, and
+`Workbench` are modes within those durable objects, not peer applications.
 
 ## Acceptance Scenarios
 
@@ -34,12 +70,14 @@ into causal claims, or present roadmap capabilities as implemented.
   explicit CLI option and opened inside the `Inspector` workspace. The report
   remains read-only and authoritative behind a sandboxed document boundary;
   Studio does not duplicate its report model or rewrite its Workbench in React.
-  When no report is supplied, the UI names the missing input and preserves any
-  available Session Debugger entry.
+  When no report is supplied, the UI names the missing retained-evidence input.
+  A live AG-UI endpoint remains under `Experiments`; it must not make the
+  hard-coded Session Debugger fixture appear to be real Inspector evidence.
 - AC-4: Existing experiment Builder, checkpoint lock, Run/Cancel, synchronized
   comparison selection, Trace, Evidence, live AG-UI run, and frozen verdict
   behavior remain reachable. Their current request, reducer, comparison, and
-  evidence contracts are unchanged.
+  evidence contracts are unchanged; the recorded Session Debugger sample is
+  no longer a default Studio destination.
 - AC-5: `Harnesses`, `Task Suites`, and `Registry` pages expose the intended
   object hierarchy and the current implementation boundary. Unsupported source
   editing, suite curation, promotion, rollback, and revalidation controls are
@@ -94,9 +132,9 @@ into causal claims, or present roadmap capabilities as implemented.
 - AC-3/AC-8: server tests for `/api/config`, `/inspector`, missing-report 404,
   and CLI parsing; browser checks confirm the iframe loads the self-contained
   Workbench and remains sandboxed.
-- AC-4: existing Harness Studio Vitest and Playwright suites remain green,
-  including experiment locking/running, comparison selection, Session Debugger,
-  live AG-UI, and evidence rendering.
+- AC-4: existing Harness Studio model/server coverage remains green; built-app
+  browser checks cover experiment locking/running, comparison selection, live
+  AG-UI, Inspector drill-down, and evidence rendering.
 - AC-6: browser screenshots and measured document widths at 1440 by 900 and
   390 by 844, with console/page errors inspected.
 - Risk: primary navigation can imply unsupported products. Mitigation: every
@@ -109,3 +147,18 @@ into causal claims, or present roadmap capabilities as implemented.
 - Risk: the outer shell can reduce the space available to dense workbenches.
   Mitigation: use a compact rail on desktop, an overlay navigation on narrow
   screens, local scrolling, and direct desktop/narrow browser measurements.
+
+### Implementation evidence
+
+- `npm run build -w @qoder-ai/harness-studio` — passed.
+- `npm run typecheck -w @qoder-ai/harness-studio` — passed.
+- `npm test -w @qoder-ai/harness-studio` — 15 files / 79 tests passed.
+- `npx vitest run test/skills-docs/doc-link-graph.test.mjs` — 6 tests passed;
+  the routing graph was regenerated and remained unchanged.
+- `npm run test:browser -w @qoder-ai/harness-studio` — 4 Chromium flows passed,
+  including desktop and 390 px interaction and overflow checks.
+- In-app Playwright checks at 1440 x 900 and 390 x 844 exercised Overview,
+  primary navigation, Bench, the mobile Bench / Live trial switch, checkpoint
+  overlay, live-run composer, real Inspector Workbench, and Inspector session
+  drill-down. Measured document width matched viewport width and inspected
+  browser logs contained no errors or warnings.

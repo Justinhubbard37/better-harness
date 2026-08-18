@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Icon } from "@phosphor-icons/react";
 import { ArrowRight } from "@phosphor-icons/react/ArrowRight";
 import { Binoculars } from "@phosphor-icons/react/Binoculars";
@@ -21,7 +21,6 @@ import {
   type StudioConfig,
   type StudioDestination,
   type StudioExperimentSurface,
-  type StudioInspectorSurface,
 } from "./studio-shell-model.js";
 
 const NAV_ICONS: Record<StudioArea, Icon> = {
@@ -52,10 +51,11 @@ const EMPTY_CONFIG: StudioConfig = {
 
 export function App(): React.JSX.Element {
   const [config, setConfig] = useState<StudioConfig | undefined>(undefined);
+  const [configFailure, setConfigFailure] = useState<string | null>(null);
   const [area, setArea] = useState<StudioArea>(areaFromHash);
   const [experimentSurface, setExperimentSurface] = useState<StudioExperimentSurface>("experiment");
-  const [inspectorSurface, setInspectorSurface] = useState<StudioInspectorSurface>("workbench");
   const [navigationOpen, setNavigationOpen] = useState(false);
+  const navigationToggleRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,12 +65,15 @@ export function App(): React.JSX.Element {
         if (!response.ok) throw new Error(`Studio config failed (${response.status}).`);
         const loaded = { ...EMPTY_CONFIG, ...(await response.json() as Partial<StudioConfig>) };
         if (!cancelled) {
+          setConfigFailure(null);
           setConfig(loaded);
           setExperimentSurface(experimentSurfaces(loaded)[0] ?? "experiment");
-          setInspectorSurface(inspectorSurfaces(loaded)[0] ?? "workbench");
         }
-      } catch {
-        if (!cancelled) setConfig(EMPTY_CONFIG);
+      } catch (error) {
+        if (!cancelled) {
+          setConfigFailure(error instanceof Error ? error.message : "Studio configuration is unavailable.");
+          setConfig(EMPTY_CONFIG);
+        }
       }
     })();
     return () => {
@@ -81,17 +84,41 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     const onHashChange = (): void => setArea(areaFromHash());
     globalThis.addEventListener("hashchange", onHashChange);
-    return () => globalThis.removeEventListener("hashchange", onHashChange);
+    globalThis.addEventListener("popstate", onHashChange);
+    return () => {
+      globalThis.removeEventListener("hashchange", onHashChange);
+      globalThis.removeEventListener("popstate", onHashChange);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!navigationOpen) return undefined;
+    const focusFrame = globalThis.requestAnimationFrame(() => {
+      document.querySelector<HTMLButtonElement>(".studio-primary-nav nav button")?.focus();
+    });
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      setNavigationOpen(false);
+      navigationToggleRef.current?.focus();
+    };
+    globalThis.addEventListener("keydown", onKeyDown);
+    return () => {
+      globalThis.cancelAnimationFrame(focusFrame);
+      globalThis.removeEventListener("keydown", onKeyDown);
+    };
+  }, [navigationOpen]);
 
   function openArea(next: StudioArea): void {
     setArea(next);
     setNavigationOpen(false);
-    globalThis.history.replaceState(null, "", `#/${next}`);
+    if (area !== next) globalThis.history.pushState(null, "", `#/${next}`);
   }
 
   if (config === undefined) {
     return <main className="studio-loading"><span className="studio-loading-mark"><GitBranch size={18} weight="bold" /></span><p>Loading Harness control plane…</p></main>;
+  }
+  if (configFailure !== null) {
+    return <main className="studio-loading" role="alert"><span className="studio-loading-mark"><GitBranch size={18} weight="bold" /></span><strong>Cannot load Studio configuration.</strong><p>{configFailure}</p></main>;
   }
 
   const destinations = studioDestinations(config);
@@ -107,30 +134,23 @@ export function App(): React.JSX.Element {
       onSelect={setExperimentSurface}
     />
   );
-  const inspectorNavigation = (
-    <SurfaceNavigation
-      label="Inspector surfaces"
-      items={inspectorSurfaces(config).map((id) => ({
-        id,
-        label: id === "workbench" ? "Delivery" : "Session",
-      }))}
-      active={inspectorSurface}
-      onSelect={setInspectorSurface}
-    />
-  );
+  const contextNavigation = area === "experiments" && experimentSurfaces(config).length > 1
+    ? experimentNavigation
+    : null;
 
   return <div className={`studio-control-plane${navigationOpen ? " navigation-open" : ""}`}>
     <PrimaryNavigation destinations={destinations} current={area} onSelect={openArea} />
-    <button className="studio-nav-backdrop" type="button" aria-label="Close Studio navigation" onClick={() => setNavigationOpen(false)} />
+    <button className="studio-nav-backdrop" type="button" aria-label="Close Studio navigation" onClick={() => { setNavigationOpen(false); navigationToggleRef.current?.focus(); }} />
     <section className="studio-area">
-      <header className="studio-context-bar">
-        <button className="studio-nav-toggle" type="button" aria-label="Open Studio navigation" aria-expanded={navigationOpen} onClick={() => setNavigationOpen((value) => !value)}><SidebarSimple size={17} /></button>
-        <div className="studio-context-title"><small>{AREA_COPY[area].eyebrow}</small><strong>{AREA_COPY[area].title}</strong></div>
+      <header className={`studio-context-bar${contextNavigation ? " has-surface-navigation" : ""}`}>
+        <button ref={navigationToggleRef} className="studio-nav-toggle" type="button" aria-label={navigationOpen ? "Close Studio navigation" : "Open Studio navigation"} aria-expanded={navigationOpen} onClick={() => setNavigationOpen((value) => !value)}><SidebarSimple size={17} /></button>
+        <div className="studio-context-title"><small>{AREA_COPY[area].eyebrow}</small><h1>{AREA_COPY[area].title}</h1></div>
+        {contextNavigation && <div className="studio-context-navigation">{contextNavigation}</div>}
         <div className="studio-context-state"><span className={`availability-dot availability-${current.availability}`} /><strong>{current.status}</strong><span>Local control plane</span></div>
       </header>
       <div className={`studio-surface studio-surface-${area}`}>
         {area === "overview" && <Overview config={config} onOpen={openArea} />}
-        {area === "inspector" && <InspectorWorkspace config={config} surface={inspectorSurface} navigation={inspectorNavigation} />}
+        {area === "inspector" && <InspectorWorkspace config={config} />}
         {area === "harnesses" && <HarnessesWorkspace config={config} onOpen={openArea} />}
         {area === "task-suites" && <TaskSuitesWorkspace config={config} onOpen={openArea} />}
         {area === "experiments" && <ExperimentsWorkspace config={config} surface={experimentSurface} navigation={experimentNavigation} />}
@@ -166,8 +186,10 @@ function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => v
   const summary = capabilitySummary(props.config);
   const nextArea: StudioArea = props.config.experimentEnabled
     ? "experiments"
-    : props.config.inspectorEnabled || props.config.aguiEnabled
+    : props.config.inspectorEnabled
       ? "inspector"
+      : props.config.aguiEnabled || props.config.evidenceEnabled
+        ? "experiments"
       : "harnesses";
   const inputs = [
     ["Inspector report", props.config.inspectorEnabled],
@@ -177,7 +199,7 @@ function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => v
     ["History adapter", props.config.historyEnabled],
   ] as const;
   const loop = [
-    { step: "01", label: "Observe", detail: "Inspect retained delivery evidence", ready: props.config.inspectorEnabled || props.config.aguiEnabled },
+    { step: "01", label: "Observe", detail: "Inspect retained delivery evidence", ready: props.config.inspectorEnabled },
     { step: "02", label: "Compose", detail: "Name the Harness change", ready: props.config.aguiEnabled || props.config.experimentEnabled },
     { step: "03", label: "Experiment", detail: "Hold task and runtime constant", ready: props.config.experimentEnabled },
     { step: "04", label: "Explain", detail: "Compare outcome and trace evidence", ready: props.config.experimentEnabled || props.config.evidenceEnabled },
@@ -198,25 +220,18 @@ function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => v
   </main>;
 }
 
-function InspectorWorkspace(props: {
-  config: StudioConfig;
-  surface: StudioInspectorSurface;
-  navigation: ReactNode;
-}): React.JSX.Element {
+function InspectorWorkspace(props: { config: StudioConfig }): React.JSX.Element {
   const available = inspectorSurfaces(props.config);
   if (available.length === 0) {
-    return <EmptyWorkspace eyebrow="Observed delivery" title="Connect an Inspector report" detail="Render a privacy-filtered Harness Inspector HTML report, then start Studio with --inspector <report.html>. Session inspection becomes available when a Harness runtime is loaded." command="--inspector ./harness-inspector.html" />;
-  }
-  if (props.surface === "session" && props.config.aguiEnabled) {
-    return <div className="debugger-mode"><RunView aguiEndpoint="agui" navigation={props.navigation} /></div>;
+    return <EmptyWorkspace eyebrow="Observed delivery" title="Connect an Inspector report" detail="Render a privacy-filtered Harness Inspector HTML report, then start Studio with --inspector <report.html>. Live runs remain under Experiments until Studio has a retained-session contract." command="--inspector ./harness-inspector.html" />;
   }
   if (props.config.inspectorEnabled) {
     return <section className="inspector-workspace" aria-label="Inspector workspace">
-      <header><div><strong>Inspector Workbench</strong><span>Cross-delivery evidence · read-only</span></div>{props.navigation}<p>Capability / Date → Session → Commit / File</p></header>
+      <header><div><strong>Inspector Workbench</strong><span>Cross-delivery evidence · read-only</span></div><p>Capability / Date → Session → Commit / File</p></header>
       <iframe title="Harness Inspector Workbench" src="inspector" sandbox="allow-scripts" referrerPolicy="no-referrer" />
     </section>;
   }
-  return <div className="debugger-mode"><RunView aguiEndpoint="agui" navigation={props.navigation} /></div>;
+  return <EmptyWorkspace eyebrow="Observed delivery" title="Connect an Inspector report" detail="Inspector requires retained, privacy-filtered evidence. It never substitutes the recorded Session Debugger fixture for a real workspace." command="--inspector ./harness-inspector.html" />;
 }
 
 function ExperimentsWorkspace(props: {

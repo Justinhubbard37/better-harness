@@ -231,9 +231,9 @@ async function serveInspectorReport(response: ServerResponse, reportPath: string
       "X-Content-Type-Options": "nosniff",
     });
     response.end(html);
-  } catch (error) {
+  } catch {
     respondJson(response, 404, {
-      error: `Cannot read the configured Inspector report: ${error instanceof Error ? error.message : String(error)}`,
+      error: "Cannot read the configured Inspector report.",
     });
   }
 }

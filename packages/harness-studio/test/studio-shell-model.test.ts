@@ -45,11 +45,22 @@ describe("Studio control-plane navigation", () => {
     };
 
     expect(experimentSurfaces(config)).toEqual(["experiment", "live-run", "results"]);
-    expect(inspectorSurfaces(config)).toEqual(["workbench", "session"]);
+    expect(inspectorSurfaces(config)).toEqual(["workbench"]);
     expect(studioDestinations(config).find((destination) => destination.id === "task-suites")).toMatchObject({
       availability: "partial",
       status: "Single task bound",
     });
     expect(capabilitySummary(config)).toEqual({ ready: 3, partial: 2, foundation: 1 });
+  });
+
+  it("does not present a live AG-UI endpoint as retained Inspector evidence", () => {
+    const config: StudioConfig = { ...EMPTY, aguiEnabled: true };
+
+    expect(inspectorSurfaces(config)).toEqual([]);
+    expect(studioDestinations(config).find((destination) => destination.id === "inspector")).toMatchObject({
+      availability: "foundation",
+      status: "Report required",
+    });
+    expect(experimentSurfaces(config)).toEqual(["live-run"]);
   });
 });

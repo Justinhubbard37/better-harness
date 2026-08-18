@@ -32,7 +32,9 @@ const SOURCE = `
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 let studio;
 let experimentStudio;
+let inspectorStudio;
 let lockedFixtureDir;
+let inspectorFixtureDir;
 
 test.beforeAll(async () => {
   studio = await startHarnessStudioServer({
@@ -61,6 +63,13 @@ test.beforeAll(async () => {
         };
       },
     }),
+  });
+  inspectorFixtureDir = await mkdtemp(join(tmpdir(), "studio-browser-inspector-"));
+  const inspectorReportPath = join(inspectorFixtureDir, "inspector.html");
+  await writeFile(inspectorReportPath, "<!doctype html><title>Inspector fixture</title><main><h1>Delivery evidence workbench</h1><p>Read-only retained evidence.</p></main>", "utf8");
+  inspectorStudio = await startHarnessStudioServer({
+    appDir: resolve(packageRoot, "dist/app"),
+    inspectorReportPath,
   });
   lockedFixtureDir = await mkdtemp(join(tmpdir(), "studio-browser-lock-"));
   await cp(resolve(packageRoot, "../harness/examples/checkpoint-experiment"), lockedFixtureDir, { recursive: true });
@@ -99,6 +108,7 @@ test.beforeAll(async () => {
   };
   experimentStudio = await startHarnessStudioServer({
     appDir: resolve(packageRoot, "dist/app"),
+    harnessSource: SOURCE,
     experimentManifestPath: resolve(packageRoot, "../harness/examples/checkpoint-experiment/experiment.json"),
     checkpointSourcePreview: {
       status: "ready",
@@ -173,7 +183,24 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await studio?.close();
   await experimentStudio?.close();
+  await inspectorStudio?.close();
   if (lockedFixtureDir) await rm(lockedFixtureDir, { recursive: true, force: true });
+  if (inspectorFixtureDir) await rm(inspectorFixtureDir, { recursive: true, force: true });
+});
+
+test("organizes configured surfaces around the Harness control plane", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(inspectorStudio.url);
+
+  await expect(page.getByRole("heading", { name: "Harness Control Center" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Harnesses");
+  await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Task Suites");
+  await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Experiments");
+  await page.getByRole("button", { name: "Open Inspector" }).click();
+
+  const frame = page.frameLocator('iframe[title="Harness Inspector Workbench"]');
+  await expect(frame.getByRole("heading", { name: "Delivery evidence workbench" })).toBeVisible();
+  await expect(page.locator('iframe[title="Harness Inspector Workbench"]')).toHaveAttribute("sandbox", "allow-scripts");
 });
 
 test("compares a focused ACP pair across roles, views, filters, and evidence", async ({ page }, testInfo) => {
@@ -185,6 +212,7 @@ test("compares a focused ACP pair across roles, views, filters, and evidence", a
   page.on("pageerror", (error) => browserErrors.push(`page: ${error.message}`));
 
   await page.goto(experimentStudio.url);
+  await page.getByRole("button", { name: "Open Experiments · Harness Bench" }).click();
   await expect(page.getByRole("heading", { name: "Compare a past agent run" })).toBeVisible();
   await expect(page.locator(".setup-details")).not.toHaveAttribute("open", "");
   await expect(page.getByLabel("History checkpoint")).toHaveValue("episode_alpha");
@@ -295,6 +323,7 @@ test("compares a focused ACP pair across roles, views, filters, and evidence", a
 test("contains narrow experiment scrolling inside the comparison regions", async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 844 });
   await page.goto(experimentStudio.url);
+  await page.getByRole("button", { name: "Open Experiments · Harness Bench" }).click();
   await expect(page.getByRole("button", { name: "Lock and compare" })).toBeEnabled();
   await page.getByRole("button", { name: "Lock and compare" }).click();
   await expect(page.locator(".object-card")).toHaveCount(3);
@@ -318,67 +347,11 @@ test("contains narrow experiment scrolling inside the comparison regions", async
   await expect(page.locator(".experiment-rail")).toHaveCSS("width", "335px");
   const expandedWidth = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(expandedWidth).toBe(390);
-});
-
-test("navigates recorded session evidence as a debugger notebook", async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  const browserErrors = [];
-  page.on("console", (message) => {
-    if (message.type() === "error") browserErrors.push(`console: ${message.text()}`);
-  });
-  page.on("pageerror", (error) => browserErrors.push(`page: ${error.message}`));
-
-  await page.goto(studio.url);
-  await expect(page.getByRole("main", { name: "Session Notebook" })).toBeVisible();
-  await expect(page.getByRole("complementary", { name: "Execution Tree" })).toBeVisible();
-  await expect(page.getByRole("complementary", { name: "State Inspector" })).toBeVisible();
-  await expect(page.locator('[aria-label="Session Timeline Minimap"]')).toBeVisible();
-  await expect(page.locator('[data-notebook-event="change-workbench"]')).toHaveClass(/selected/);
-  await expect(page.locator('[data-code-diff="pierre"]').first()).toBeVisible();
-  await expect(page.locator('.timeline-segment[aria-current="true"]')).toHaveAttribute("aria-label", "Change: Edit workbench.js");
-  await expect(page.getByText("Restore", { exact: true })).toHaveCount(0);
-  const typography = await page.evaluate(() => ({
-    body: Number.parseFloat(getComputedStyle(document.querySelector(".prompt-cell p")).fontSize),
-    metadata: Number.parseFloat(getComputedStyle(document.querySelector(".debugger-event-card header span")).fontSize),
-    primary: Number.parseFloat(getComputedStyle(document.querySelector(".step-controls button.primary")).fontSize),
-  }));
-  expect(typography.body).toBeGreaterThanOrEqual(13);
-  expect(typography.metadata).toBeGreaterThanOrEqual(12);
-  expect(typography.primary).toBeGreaterThanOrEqual(14);
-  await page.screenshot({ path: testInfo.outputPath("session-debugger-1440x900.png") });
-
-  await page.locator(".tree-node").filter({ hasText: "Explore" }).click();
-  await expect(page.getByRole("button", { name: "Step Into" })).toBeEnabled();
-  await page.getByRole("button", { name: "Step Into" }).click();
-  await expect(page.locator(".explore-tool-list button.selected")).toContainText("Read workbench.js");
-  await expect(page.getByLabel("Tool call input")).toHaveAttribute("data-highlight-state", "highlighted");
-  await expect(page.locator(".state-inspector > header > span")).toHaveText("Tool Call Cursor");
-  await expect(page.locator('.timeline-segment[aria-current="true"]')).toHaveAttribute("aria-label", "Explore: Inspect the current UI");
-
-  await page.getByRole("button", { name: "Step Out" }).click();
-  await page.getByRole("checkbox", { name: "Changes" }).uncheck();
-  await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page.locator('[data-notebook-event="test-failed"]')).toHaveClass(/selected/);
-  await page.getByRole("tab", { name: "Raw ACP" }).click();
-  await expect(page.locator(".raw-acp")).toContainText("session/update");
-  await expect(page.locator(".raw-acp")).toContainText("tool_test_failed");
-  await expect(page.getByLabel("Raw ACP JSON")).toHaveAttribute("data-highlight-state", "highlighted");
-
-  await page.getByRole("tab", { name: "Diff view" }).click();
-  await expect(page.locator(".notebook-diff-view .debugger-event")).toHaveCount(2);
-  await expect(page.locator('.notebook-diff-view [data-code-diff="pierre"]')).toHaveCount(2);
-  await page.getByRole("tab", { name: "Notebook" }).click();
-
-  const dimensions = await page.evaluate(() => ({
-    innerWidth: window.innerWidth,
-    documentWidth: document.documentElement.scrollWidth,
-    shellHeight: document.querySelector(".debugger-shell")?.getBoundingClientRect().height,
-    timelineVisible: document.querySelector(".timeline-minimap")?.getBoundingClientRect().bottom === window.innerHeight,
-  }));
-  expect(dimensions.documentWidth).toBe(dimensions.innerWidth);
-  expect(dimensions.shellHeight).toBe(900);
-  expect(dimensions.timelineVisible).toBe(true);
-  expect(browserErrors).toEqual([]);
+  await expect(page.getByRole("navigation", { name: "Experiment surfaces" })).toBeVisible();
+  await page.getByRole("button", { name: "Live trial" }).click();
+  await expect(page.getByText("Live observation · no Evidence Cursor")).toBeVisible();
+  await page.getByRole("button", { name: "Bench" }).click();
+  await expect(page.getByRole("heading", { name: "Compare a past agent run" })).toBeVisible();
 });
 
 test("renders a keyboard-expandable failed and truncated Tool Call at 390px", async ({ page }, testInfo) => {
@@ -389,6 +362,7 @@ test("renders a keyboard-expandable failed and truncated Tool Call at 390px", as
   page.on("pageerror", (error) => browserErrors.push(`page: ${error.message}`));
 
   await page.goto(studio.url);
+  await page.getByRole("button", { name: "Open Experiments · Harness Bench" }).click();
   await page.getByRole("button", { name: "New live run" }).click();
   await page.getByPlaceholder("Task prompt for the harness run…").fill("Run the scripted browser fixture");
   await page.getByRole("button", { name: "Run harness" }).click();
