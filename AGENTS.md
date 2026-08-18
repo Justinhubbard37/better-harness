@@ -6,6 +6,21 @@ Architecture, directory routing, and template ownership live in
 Adding support for a new Coding Agent host starts with
 [docs/adapters/contributing-new-coding-agent.md](docs/adapters/contributing-new-coding-agent.md).
 
+## UI and Visual Design
+
+- [DESIGN.md](DESIGN.md) is the visual source of truth for Harness Studio and
+  interactive Better Harness reports unless a surface owns a narrower approved
+  contract. Read it before changing UI hierarchy, typography, color, density,
+  components, interaction states, or responsive behavior.
+- Keep `AGENTS.md` as the routing and enforcement layer; put reusable tokens,
+  visual rationale, component rules, and do/don't guidance in `DESIGN.md`.
+- Map Studio styles to shared semantic tokens. Do not introduce one-off colors,
+  font sizes, radii, shadows, an unbundled font family, or broad `!important`
+  overrides when the design contract already defines the role.
+- Visual review must prove the primary decision remains obvious at wide,
+  compact, and narrow layouts. Verify keyboard focus, bounded overflow, browser
+  console/page errors, and screenshots for every changed Studio surface.
+
 ## Plan & Spec
 
 - Write a plan or spec for new agents, hooks, or major features under
