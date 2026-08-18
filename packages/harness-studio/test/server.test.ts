@@ -7,7 +7,7 @@ import { HarnessRunEmitter, loadSkillDeliveries, type HarnessExecutor } from "@q
 import { decodeSseStream, type HarnessUiExecutorFactory } from "@qoder-ai/harness-ui";
 import { parseHarnessStudioArgs, resolveHarnessStudioSourceRoot, runHarnessStudioCli } from "../src/server/cli.js";
 import { startHarnessStudioServer, type StartedHarnessStudioServer } from "../src/server/server.js";
-import type { CheckpointHistoryAdapter } from "../src/server/checkpoint-history.js";
+import type { CheckpointHistoryAdapter } from "../src/server/query/checkpoint-history.js";
 import { FIXTURE_VERDICT } from "./compare-model.test.js";
 
 const EXPERIMENT_MANIFEST = resolve(

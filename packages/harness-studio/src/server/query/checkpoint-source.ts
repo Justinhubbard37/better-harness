@@ -5,7 +5,7 @@ import {
   validateSessionExecutionPlan,
   type SessionExecutionPlan,
 } from "@qoder-ai/harness/session-executor";
-import type { CheckpointSourcePreview } from "../experiment-setup.js";
+import type { CheckpointSourcePreview } from "../../experiment-setup.js";
 
 export async function loadCheckpointSourcePreview(input: {
   planPath: string;

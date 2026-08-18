@@ -1,9 +1,8 @@
 import { createReadStream } from "node:fs";
-import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { dirname, extname, normalize, resolve, sep } from "node:path";
 import {
   assertBindAddressAllowed,
   handleAguiRun,
@@ -11,23 +10,15 @@ import {
 } from "@qoder-ai/harness-ui";
 import { PiSdkExecutor, QoderSdkExecutor } from "@qoder-ai/harness/exec";
 import {
-  deriveContrastAttribution,
-  evaluateObservedLane,
-  isObservedLane,
   loadHarnessExperimentManifest,
   runHarnessExperiment,
   type ExperimentRunEvent,
   type HarnessExperimentCompareSet,
   type RunHarnessExperimentOptions,
 } from "@qoder-ai/harness/experiment";
-import {
-  canLockCompare,
-  countLaneMaterializations,
-  deriveCompareScenario,
-  deriveRequestProvenance,
-} from "../experiment-setup.js";
-import type { CheckpointSourcePreview } from "../experiment-setup.js";
+import { canLockCompare, countLaneMaterializations } from "../experiment-setup.js";
 import type {
+  CheckpointSourcePreview,
   ExperimentLockReceipt,
   ResolvedHistoryDraftPreview,
 } from "../experiment-setup.js";
@@ -35,11 +26,13 @@ import {
   createCheckpointHistoryCatalogAdapter,
   type CheckpointHistoryAdapter,
   type ResolvedCheckpointHistory,
-} from "./checkpoint-history.js";
-import { loadCheckpointSourcePreview } from "./checkpoint-source.js";
+} from "./query/checkpoint-history.js";
+import { buildExperimentPreview, readObservedCallsPage } from "./query/experiment-query.js";
+import { loadEvidenceVerdict } from "./query/evidence-query.js";
+import { loadInspectorReport } from "./query/inspector-query.js";
+import { ObservedCallIndex } from "./query/observed-call-index.js";
 import { lockHistoryExperiment } from "./experiment-lock.js";
-import { canonicalToolEvents, projectObservedCalls } from "./experiment-events.js";
-import { ObservedCallIndex, type ObservedCallPage } from "./observed-call-index.js";
+import { canonicalToolEvents } from "./experiment-events.js";
 
 const builtInExecutorFactory: HarnessUiExecutorFactory = (context) => {
   if (context.runtimeId === "qoder") {
@@ -224,7 +217,7 @@ async function serveInspectorReport(response: ServerResponse, reportPath: string
     return;
   }
   try {
-    const html = await readFile(reportPath, "utf8");
+    const html = await loadInspectorReport(reportPath);
     response.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
@@ -259,78 +252,6 @@ async function serveExperiment(
   } catch (error) {
     respondJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
   }
-}
-
-async function buildExperimentPreview(input: {
-  manifestPath: string;
-  trajectoryOverrides?: Record<string, string>;
-  checkpointSourcePreview?: CheckpointSourcePreview;
-  lockReceipt?: ExperimentLockReceipt;
-  observedIndexes: Map<string, ObservedCallIndex>;
-}): Promise<Record<string, unknown>> {
-  const loaded = await loadHarnessExperimentManifest(input.manifestPath);
-  const observedCalls: Record<string, ReturnType<typeof projectObservedCalls>> = {};
-  const observedCallPages: Record<string, { nextCursor?: string; complete: boolean; parsedLines: number; malformedLines: number }> = {};
-  for (const [laneId, trajectory] of Object.entries({
-    ...loaded.resolved.trajectories,
-    ...input.trajectoryOverrides,
-  })) {
-    const page: ObservedCallPage = await observedIndex(input.observedIndexes, trajectory, laneId).page(undefined, 100).catch(() => ({ calls: [], complete: true, parsedLines: 0, malformedLines: 0 }));
-    observedCalls[laneId] = page.calls;
-    observedCallPages[laneId] = {
-      ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
-      complete: page.complete,
-      parsedLines: page.parsedLines,
-      malformedLines: page.malformedLines,
-    };
-  }
-  const prompt = await readFile(loaded.resolved.prompt);
-  const promptText = prompt.toString("utf8");
-  const promptHash = `sha256:${createHash("sha256").update(prompt).digest("hex")}`;
-  const materializationCount = countLaneMaterializations(loaded.value.lanes);
-  const checkpointSource = input.checkpointSourcePreview ?? await loadCheckpointSourcePreview({
-    planPath: loaded.resolved.checkpointPlan,
-    expectedDigest: loaded.value.checkpointRef.digest,
-    materializationCount,
-  });
-  const attributionContext = {
-    taskPromptHash: promptHash,
-    completeness: { kind: "unverified" as const, reason: "preflight runs when the experiment starts" },
-  };
-  const requestProvenance = deriveRequestProvenance(loaded.value.lanes, promptHash);
-  return {
-    manifest: loaded.value,
-    checkpoint: {
-      digest: loaded.value.checkpointRef.digest,
-      plan: loaded.value.checkpointRef.plan,
-    },
-    contrasts: loaded.value.contrasts.map((contrast) => ({
-      id: contrast.id,
-      lanes: contrast.lanes,
-      attribution: deriveContrastAttribution(loaded.value, contrast, attributionContext),
-    })),
-    setup: {
-      scenario: deriveCompareScenario(loaded.value.lanes),
-      checkpointSource,
-      request: {
-        label: requestProvenance === "new" ? "New request" : "Imported request",
-        prompt: promptText,
-        promptHash,
-        provenance: requestProvenance,
-        ...(requestProvenance === "unverified-history"
-          ? { limitation: "The loaded request is not proven to be the exact request that produced the observed history." }
-          : {}),
-      },
-      historicalGaps: loaded.value.lanes
-        .filter(isObservedLane)
-        .map((lane) => evaluateObservedLane(lane, attributionContext))
-        .filter((eligibility) => !eligibility.matched)
-        .map(({ laneId, missing }) => ({ laneId, missing })),
-    },
-    observedCalls,
-    observedCallPages,
-    ...(input.lockReceipt === undefined ? {} : { lock: input.lockReceipt }),
-  };
 }
 
 async function serveCheckpointHistory(response: ServerResponse, state: HarnessStudioState): Promise<void> {
@@ -539,25 +460,18 @@ async function serveObservedCalls(response: ServerResponse, url: URL, state: Har
     const limit = Number(url.searchParams.get("limit") ?? "100");
     if (!/^[A-Za-z0-9_-]+$/.test(laneId)) throw new Error("laneId must be a portable opaque id.");
     if (!Number.isFinite(limit)) throw new Error("limit must be a finite number.");
-    const loaded = await loadHarnessExperimentManifest(state.activeManifestPath);
-    const trajectory = state.trajectoryOverrides?.[laneId] ?? loaded.resolved.trajectories[laneId];
-    if (trajectory === undefined) throw new Error(`Lane '${laneId}' has no observed trajectory.`);
-    const page = await observedIndex(state.observedIndexes, trajectory, laneId)
-      .page(url.searchParams.get("cursor") ?? undefined, limit);
+    const page = await readObservedCallsPage({
+      manifestPath: state.activeManifestPath,
+      trajectoryOverrides: state.trajectoryOverrides,
+      observedIndexes: state.observedIndexes,
+      laneId,
+      cursor: url.searchParams.get("cursor") ?? undefined,
+      limit,
+    });
     respondJson(response, 200, page);
   } catch (error) {
     respondJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
   }
-}
-
-function observedIndex(indexes: Map<string, ObservedCallIndex>, path: string, laneId: string): ObservedCallIndex {
-  const key = `${laneId}\0${path}`;
-  let index = indexes.get(key);
-  if (index === undefined) {
-    index = new ObservedCallIndex(path, laneId);
-    indexes.set(key, index);
-  }
-  return index;
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
@@ -589,7 +503,7 @@ async function serveEvidence(response: ServerResponse, evidenceDir: string | und
     return;
   }
   try {
-    const raw = await readFile(join(evidenceDir, "verdict.json"), "utf8");
+    const raw = await loadEvidenceVerdict(evidenceDir);
     response.writeHead(200, { "Content-Type": "application/json" });
     response.end(raw);
   } catch {

@@ -21,7 +21,7 @@ import {
   type HarnessExperimentManifest,
 } from "@qoder-ai/harness/experiment";
 import type { ExperimentLockReceipt } from "../experiment-setup.js";
-import type { ResolvedCheckpointHistory } from "./checkpoint-history.js";
+import type { ResolvedCheckpointHistory } from "./query/checkpoint-history.js";
 
 export interface LockedHistoryExperiment {
   manifestPath: string;

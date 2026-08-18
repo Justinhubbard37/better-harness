@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ObservedCallIndex } from "../src/server/observed-call-index.js";
+import { ObservedCallIndex } from "../../src/server/query/observed-call-index.js";
 
 const temporaryDirectories: string[] = [];
 
