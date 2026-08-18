@@ -61,6 +61,7 @@
     "!docs/build/",
     "!docs/.docusaurus/",
     "!docs/node_modules/",
+    "!docs/vendor/",
     "!docs/docusaurus.config.js",
     "!docs/sidebars.js",
     "!docs/package.json",
