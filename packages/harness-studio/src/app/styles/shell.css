@@ -215,14 +215,17 @@
 .studio-tabs button.active { border-bottom-color: var(--color-primary); color: var(--color-primary); background: var(--color-surface); font-weight: var(--weight-semibold); }
 .studio-secondary-tabs { min-width: 276px; }
 
-/* Overview is a flat control room: decision, operating model, then evidence. */
+/* Overview is a flat control room: decision, operating model, then evidence.
+   Rows are content-sized with extra height left as neutral canvas at the bottom
+   so a short evidence region does not strand a tall bordered empty pane. */
 .control-overview {
   width: 100%;
   min-height: 100%;
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto;
+  align-content: start;
 }
 
 .control-hero {

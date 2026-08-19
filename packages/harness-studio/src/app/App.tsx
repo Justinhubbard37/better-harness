@@ -12,7 +12,7 @@ import { TreeStructure } from "@phosphor-icons/react/TreeStructure";
 import { CompareView } from "./CompareView.js";
 import { ExperimentView } from "./ExperimentView.js";
 import { RunView } from "./RunView.js";
-import { useRovingTablist } from "./roving-tablist.js";
+import { useRovingFocus } from "./roving-tablist.js";
 import {
   capabilitySummary,
   experimentSurfaces,
@@ -323,15 +323,17 @@ function EmptyWorkspace(props: { eyebrow: string; title: string; detail: string;
   return <main className="empty-workspace"><span><GitBranch size={22} /></span><small>{props.eyebrow}</small><h1>{props.title}</h1><p>{props.detail}</p>{props.command && <code>{props.command}</code>}</main>;
 }
 
+// The surface switcher navigates between separate top-level views (each its own
+// <main>), so it is roving navigation with aria-current, not an ARIA tab widget.
 function SurfaceNavigation<T extends string>(props: {
   label: string;
   items: readonly { id: T; label: string }[];
   active: T;
   onSelect: (value: T) => void;
 }): React.JSX.Element | null {
-  const tablist = useRovingTablist({ ids: props.items.map((item) => item.id), active: props.active, onSelect: props.onSelect });
+  const roving = useRovingFocus({ ids: props.items.map((item) => item.id), active: props.active, onSelect: props.onSelect });
   if (props.items.length <= 1) return null;
-  return <nav className="studio-tabs studio-secondary-tabs" aria-label={props.label} {...tablist.tablistProps} style={{ gridTemplateColumns: `repeat(${props.items.length}, minmax(0, 1fr))` }}>{props.items.map((item) => <button key={item.id} type="button" {...tablist.getTabProps(item.id)} className={props.active === item.id ? "active" : ""} onClick={() => props.onSelect(item.id)}>{item.label}</button>)}</nav>;
+  return <nav className="studio-tabs studio-secondary-tabs" aria-label={props.label} onKeyDown={roving.onKeyDown} style={{ gridTemplateColumns: `repeat(${props.items.length}, minmax(0, 1fr))` }}>{props.items.map((item) => <button key={item.id} ref={roving.itemRef(item.id)} type="button" tabIndex={roving.tabIndexFor(item.id)} aria-current={props.active === item.id ? "page" : undefined} className={props.active === item.id ? "active" : ""} onClick={() => props.onSelect(item.id)}>{item.label}</button>)}</nav>;
 }
 
 function areaFromHash(): StudioArea {

@@ -74,7 +74,7 @@ async function assertRenderedContract(page) {
       bodyFont: getComputedStyle(document.body).fontFamily,
       belowFloor,
       dockedShadows,
-      visibleSurfaceSwitchers: [...document.querySelectorAll('[role="tablist"][aria-label="Experiment surfaces"]')].filter(visible).length,
+      visibleSurfaceSwitchers: [...document.querySelectorAll('[aria-label="Experiment surfaces"]')].filter(visible).length,
       ownedStyleSheets: [...document.styleSheets].filter((sheet) => sheet.href?.includes("/assets/") && sheet.href.endsWith(".css")).length,
     };
   });
@@ -408,10 +408,10 @@ test("contains narrow experiment scrolling inside the comparison regions", async
   await expect(page.locator(".experiment-rail")).toHaveCSS("width", "304px");
   const expandedWidth = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(expandedWidth).toBe(390);
-  await expect(page.getByRole("tablist", { name: "Experiment surfaces" })).toBeVisible();
-  await page.getByRole("tab", { name: "Live trial" }).click();
+  await expect(page.getByRole("navigation", { name: "Experiment surfaces" })).toBeVisible();
+  await page.getByRole("button", { name: "Live trial", exact: true }).click();
   await expect(page.getByText("Live observation · no Evidence Cursor")).toBeVisible();
-  await page.getByRole("tab", { name: "Bench" }).click();
+  await page.getByRole("button", { name: "Bench", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Compare a past agent run" })).toBeVisible();
 });
 
@@ -607,7 +607,7 @@ test("leads Evidence results with the decision at all layout modes", async ({ pa
     await page.setViewportSize({ width: layout.width, height: layout.height });
     await page.goto(experimentStudio.url);
     await openDestination(page, "Experiments");
-    await page.getByRole("tab", { name: "Evidence results" }).click();
+    await page.getByRole("button", { name: "Evidence results", exact: true }).click();
     const decision = page.locator(".decision-summary");
     await expect(decision).toContainText("Sufficient");
     await expect(decision).toContainText("Quality delta");
