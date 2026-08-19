@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
+import { useRovingTablist } from "./roving-tablist.js";
 import type { ExperimentToolCall } from "../experiment-stream-contract.js";
 import {
   activityPhaseSequence,
@@ -91,6 +92,7 @@ export function ExperimentWorkbench(props: {
   const freshDefinitions = props.preview.manifest.lanes.filter((lane) => lane.origin === "execute");
   const harnesses = [...new Set(freshDefinitions.map((lane) => lane.harnessId ?? "unknown"))].join(" · ");
   const runtimes = [...new Set(freshDefinitions.map((lane) => laneIdentityLabel(lane)))].join(" ↔ ");
+  const compareTablist = useRovingTablist({ ids: COMPARE_VIEWS.map((view) => view.id), active: props.activeView, onSelect: props.onActiveView, panelId: "compare-view-panel" });
 
   return <section className={`experiment-shell${props.railCollapsed ? " rail-collapsed" : ""}`}>
     <header className="experiment-notebook-bar">
@@ -137,8 +139,8 @@ export function ExperimentWorkbench(props: {
           <div className="notebook-cell-marker output"><span>Out [1]</span></div>
           <div className="notebook-cell-card">
             <header className="compare-result-head"><div><h2 id="result-cell-title">Compare · {props.baselineId} vs {props.candidateId}</h2></div><div className={`comparability level-${comparability.level.toLowerCase()}`} role="status"><strong>{comparability.level}</strong><span>{comparability.detail}</span>{comparability.axis && <code>{comparability.axis}</code>}</div></header>
-            <nav className="compare-tabs" role="tablist" aria-label="Comparison views">{COMPARE_VIEWS.map((view) => <button key={view.id} type="button" role="tab" aria-selected={props.activeView === view.id} onClick={() => props.onActiveView(view.id)}>{view.label}</button>)}</nav>
-            <div className="compare-view" role="tabpanel">
+            <nav className="compare-tabs" aria-label="Comparison views" {...compareTablist.tablistProps}>{COMPARE_VIEWS.map((view) => <button key={view.id} type="button" {...compareTablist.getTabProps(view.id)} onClick={() => props.onActiveView(view.id)}>{view.label}</button>)}</nav>
+            <div className="compare-view" id="compare-view-panel" role="tabpanel">
               {props.activeView === "summary" && <SummaryView baseline={baseline} candidate={candidate} result={focusedResult} comparability={comparability} />}
               {props.activeView === "trace" && <TraceView lens={props.traceLens} onLens={props.onTraceLens} baseline={baseline} candidate={candidate} baselineDefinition={baselineDefinition} candidateDefinition={candidateDefinition} selectedCall={selectedCall} relations={relations} filter={props.filter} diffOnly={props.diffOnly} syncSelection={props.syncSelection} onFilter={props.onFilter} onDiffOnly={props.onDiffOnly} onSyncSelection={props.onSyncSelection} onSelect={(call) => props.onSelectCall({ laneId: call.laneId, callId: call.id })} />}
               {props.activeView === "evidence" && <EvidenceView baseline={baseline} candidate={candidate} resultRows={resultRows} comparability={comparability} focusedResult={focusedResult} />}

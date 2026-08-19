@@ -330,6 +330,17 @@ test("compares a focused ACP pair across roles, views, filters, and evidence", a
   await expect(page.locator(".status-accept")).toContainText("accept");
   await page.locator("button.object-card.role-candidate").click();
   await expect(page.locator("button.object-card.role-baseline")).toContainText("fresh-minimal");
+
+  // Roving-tablist keyboard behaviour: exactly one Tab stop; arrows wrap and move focus with selection.
+  const compareTabs = page.locator(".compare-tabs");
+  await expect(compareTabs.locator('[role="tab"][tabindex="0"]')).toHaveCount(1);
+  await compareTabs.getByRole("tab", { name: "Evidence", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(compareTabs.getByRole("tab", { name: "Summary" })).toBeFocused();
+  await expect(compareTabs.getByRole("tab", { name: "Summary" })).toHaveAttribute("aria-selected", "true");
+  await expect(compareTabs.locator('[role="tab"][tabindex="0"]')).toHaveCount(1);
+  await page.keyboard.press("End");
+  await expect(compareTabs.getByRole("tab", { name: "Evidence", exact: true })).toBeFocused();
   await page.getByRole("tab", { name: "Trace" }).click();
 
   await page.screenshot({ path: testInfo.outputPath("experiment-tool-correlation.png") });

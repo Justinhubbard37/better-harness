@@ -12,6 +12,7 @@ import { TreeStructure } from "@phosphor-icons/react/TreeStructure";
 import { CompareView } from "./CompareView.js";
 import { ExperimentView } from "./ExperimentView.js";
 import { RunView } from "./RunView.js";
+import { useRovingTablist } from "./roving-tablist.js";
 import {
   capabilitySummary,
   experimentSurfaces,
@@ -328,25 +329,9 @@ function SurfaceNavigation<T extends string>(props: {
   active: T;
   onSelect: (value: T) => void;
 }): React.JSX.Element | null {
-  const buttonRefs = useRef(new Map<T, HTMLButtonElement>());
-
+  const tablist = useRovingTablist({ ids: props.items.map((item) => item.id), active: props.active, onSelect: props.onSelect });
   if (props.items.length <= 1) return null;
-  const onKeyDown = (event: ReactKeyboardEvent<HTMLElement>): void => {
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-    event.preventDefault();
-    const currentIndex = Math.max(0, props.items.findIndex((item) => item.id === props.active));
-    const nextIndex = event.key === "Home"
-      ? 0
-      : event.key === "End"
-        ? props.items.length - 1
-        : event.key === "ArrowRight"
-          ? (currentIndex + 1) % props.items.length
-          : (currentIndex - 1 + props.items.length) % props.items.length;
-    const next = props.items[nextIndex]!;
-    props.onSelect(next.id);
-    globalThis.requestAnimationFrame(() => buttonRefs.current.get(next.id)?.focus());
-  };
-  return <nav className="studio-tabs studio-secondary-tabs" role="tablist" aria-label={props.label} onKeyDown={onKeyDown} style={{ gridTemplateColumns: `repeat(${props.items.length}, minmax(0, 1fr))` }}>{props.items.map((item) => <button key={item.id} ref={(node) => { if (node) buttonRefs.current.set(item.id, node); else buttonRefs.current.delete(item.id); }} type="button" role="tab" tabIndex={props.active === item.id ? 0 : -1} className={props.active === item.id ? "active" : ""} aria-selected={props.active === item.id} onClick={() => props.onSelect(item.id)}>{item.label}</button>)}</nav>;
+  return <nav className="studio-tabs studio-secondary-tabs" aria-label={props.label} {...tablist.tablistProps} style={{ gridTemplateColumns: `repeat(${props.items.length}, minmax(0, 1fr))` }}>{props.items.map((item) => <button key={item.id} type="button" {...tablist.getTabProps(item.id)} className={props.active === item.id ? "active" : ""} onClick={() => props.onSelect(item.id)}>{item.label}</button>)}</nav>;
 }
 
 function areaFromHash(): StudioArea {

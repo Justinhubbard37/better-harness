@@ -45,6 +45,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { applyAguiEvent, initialRunState, timelineItems, type AguiRunState, type TimelineItem } from "./agui-store.js";
 import { HighlightedCode } from "./HighlightedCode.js";
 import { createSseParser } from "./sse-client.js";
+import { useRovingTablist } from "./roving-tablist.js";
 import {
   cumulativeFileChanges,
   cursorForNode,
@@ -397,9 +398,10 @@ function ExecutionTree(props: { cursor: DebuggerCursor; expanded: Set<string>; o
 
 function SessionNotebook(props: { cursor: DebuggerCursor; expanded: Set<string>; onSelect: (cursor: DebuggerCursor) => void; onToggle: (id: string) => void }): React.JSX.Element {
   const [view, setView] = useState<"notebook" | "events" | "diff">("notebook");
+  const tablist = useRovingTablist({ ids: ["notebook", "events", "diff"] as const, active: view, onSelect: setView, panelId: "session-notebook-panel" });
   return <main className="session-notebook" aria-label="Session Notebook">
-    <header className="notebook-viewbar"><nav aria-label="Notebook views" role="tablist"><button type="button" role="tab" aria-selected={view === "notebook"} className={view === "notebook" ? "active" : ""} onClick={() => setView("notebook")}><ClipboardText size={13} />Notebook</button><button type="button" role="tab" aria-selected={view === "events"} className={view === "events" ? "active" : ""} onClick={() => setView("events")}><Code size={13} />Events <span>21</span></button><button type="button" role="tab" aria-selected={view === "diff"} className={view === "diff" ? "active" : ""} onClick={() => setView("diff")}><GitDiff size={13} />Diff view</button></nav><span>Turn 1 · {SAMPLE_DEBUGGER_SESSION.startedAt}–{SAMPLE_DEBUGGER_SESSION.finishedAt}</span></header>
-    <div className="session-notebook-scroll" role="tabpanel">
+    <header className="notebook-viewbar"><nav aria-label="Notebook views" {...tablist.tablistProps}><button type="button" {...tablist.getTabProps("notebook")} className={view === "notebook" ? "active" : ""} onClick={() => setView("notebook")}><ClipboardText size={13} />Notebook</button><button type="button" {...tablist.getTabProps("events")} className={view === "events" ? "active" : ""} onClick={() => setView("events")}><Code size={13} />Events <span>21</span></button><button type="button" {...tablist.getTabProps("diff")} className={view === "diff" ? "active" : ""} onClick={() => setView("diff")}><GitDiff size={13} />Diff view</button></nav><span>Turn 1 · {SAMPLE_DEBUGGER_SESSION.startedAt}–{SAMPLE_DEBUGGER_SESSION.finishedAt}</span></header>
+    <div className="session-notebook-scroll" id="session-notebook-panel" role="tabpanel">
       {view === "notebook" && SAMPLE_DEBUGGER_SESSION.events.map((event) => <NotebookEvent key={event.id} event={event} cursor={props.cursor} expanded={props.expanded.has(event.id)} onSelect={props.onSelect} onToggle={props.onToggle} />)}
       {view === "events" && <EventsNotebookView cursor={props.cursor} onSelect={props.onSelect} />}
       {view === "diff" && <DiffNotebookView cursor={props.cursor} onSelect={props.onSelect} onToggle={props.onToggle} />}
@@ -468,10 +470,11 @@ function ValidationCell({ event }: { event: DebuggerEvent }): React.JSX.Element 
 function StateInspector(props: { cursor: DebuggerCursor; activeTab: InspectorTab; onTab: (tab: InspectorTab) => void; onPrevious: () => void }): React.JSX.Element {
   const event = eventForCursor(SAMPLE_DEBUGGER_SESSION, props.cursor);
   const previous = priorStopEvent(SAMPLE_DEBUGGER_SESSION, props.cursor);
+  const tablist = useRovingTablist({ ids: INSPECTOR_TABS.map((tab) => tab.id), active: props.activeTab, onSelect: props.onTab, panelId: "state-inspector-panel" });
   return <aside className="state-inspector" aria-label="State Inspector">
     <header><div><small>State Inspector</small><strong>{event.phase} · {event.timestamp}</strong></div><span>{props.cursor.toolCallId ? "Tool Call Cursor" : "Evidence Cursor"}</span></header>
-    <nav className="inspector-tabs" role="tablist" aria-label="State Inspector views">{INSPECTOR_TABS.map((tab) => { const TabIcon = tab.icon; return <button key={tab.id} type="button" role="tab" aria-selected={props.activeTab === tab.id} onClick={() => props.onTab(tab.id)}><TabIcon size={14} /><span>{tab.label}</span></button>; })}</nav>
-    <div className="inspector-scroll" role="tabpanel"><div className="inspector-comparison"><strong>{INSPECTOR_TABS.find((tab) => tab.id === props.activeTab)?.label} at {event.timestamp}</strong><span>Compared with {previous?.timestamp ?? "session start"}</span></div><InspectorContent tab={props.activeTab} cursor={props.cursor} /></div>
+    <nav className="inspector-tabs" aria-label="State Inspector views" {...tablist.tablistProps}>{INSPECTOR_TABS.map((tab) => { const TabIcon = tab.icon; return <button key={tab.id} type="button" {...tablist.getTabProps(tab.id)} onClick={() => props.onTab(tab.id)}><TabIcon size={14} /><span>{tab.label}</span></button>; })}</nav>
+    <div className="inspector-scroll" id="state-inspector-panel" role="tabpanel"><div className="inspector-comparison"><strong>{INSPECTOR_TABS.find((tab) => tab.id === props.activeTab)?.label} at {event.timestamp}</strong><span>Compared with {previous?.timestamp ?? "session start"}</span></div><InspectorContent tab={props.activeTab} cursor={props.cursor} /></div>
     <footer><button type="button" onClick={props.onPrevious}><ClockCounterClockwise size={13} />Previous State</button><button type="button"><Clock size={13} />View History</button></footer>
   </aside>;
 }
