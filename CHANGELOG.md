@@ -3,6 +3,36 @@
 This file records notable public changes to Better Harness. Entries describe
 observable behavior and compatibility, not every internal refactor.
 
+## 0.6.4 - 2026-08-19
+
+### Added
+
+- Session analysis now supports DeepSeek Harness evidence, including bounded
+  project discovery, normalized messages and tool lifecycles, workspace
+  matching, and Inspector/commit-session integration.
+
+- Harness Inspector can list sessions for the selected UTC day and present
+  session and experiment evidence in denser notebook-oriented views.
+
+### Changed
+
+- Inspector's Capability, Date, Trace, and Replay surfaces now share the
+  repository design contract for readable typography, semantic state and
+  categorical colours, keyboard navigation, responsive density, and bounded
+  overflow.
+
+- The public homepage and README make Harness Inspector easier to discover,
+  while the self-contained report uses a flatter workbench hierarchy and a
+  clearer date calendar and session detail flow.
+
+### Fixed
+
+- Tool-call details keep redaction visible in the Inspector instead of making
+  protected content look accidentally empty.
+
+- Cross-platform source and test paths are canonicalized so Windows short-path
+  aliases and line endings do not create false failures.
+
 ## 0.6.3 - 2026-08-14
 
 ### Added
