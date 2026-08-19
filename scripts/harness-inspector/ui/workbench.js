@@ -6,10 +6,6 @@
   const byCommit = new Map(report.commits.map(commit => [commit.hash,commit]));
   const defaultCompactCommitKinds = new Set(report.presentation?.defaultCompactCommitEvidenceKinds ?? []);
   const callsBySession = new Map(report.sessions.map(session => [session.sessionId,new Map(session.toolActivity.calls.map(call => [call.id,call]))]));
-  const retainedFilePaths = new Set([
-    ...report.sessions.flatMap(session => session.toolActivity.files.map(file => file.path)),
-    ...report.commits.flatMap(commit => commit.files.map(file => file.path)),
-  ]);
   const storyScore = story => story.sessionLinks.reduce((score, link) => {
     const session = bySession.get(link.sessionId);
     if (!session) return score;
@@ -35,10 +31,6 @@
   const state = {
     mode:initialMode,
     scope:validScope ? requestedScope : initialMode === 'feature' ? initialFeature : latestDay,
-    // One focused object drives explanation. A future CompareSet must remain a
-    // separate state owner and full-workspace mode rather than widening Drawer.
-    selection:null,
-    evidenceDrawerSuppressed:false,
     sessionTrigger:null,
     sessionItem:null,
     sessionOpen:false,
@@ -50,8 +42,7 @@
     replayPlaying:false,
     replaySpeed:2,
     replayTimer:null,
-    // Chart zoom is a per-session view concern, never part of the evidence
-    // model, so it stays out of the selection and out of the deep link.
+    // Chart zoom is a per-session view concern and stays out of the deep link.
     zoom:new Map(),
     collapsedCards:new Set(),
     items:[],
@@ -173,61 +164,6 @@
       + ' normalized user turns · ' + coverage.observationCount + ' raw prompt observations. Open Session View for every turn.';
   }
 
-  function selectionKey(selection) {
-    if (!selection) return '';
-    if (selection.type === 'story') return 'story:' + selection.id;
-    if (selection.type === 'session') return 'session:' + selection.sessionId;
-    if (selection.type === 'turn') return 'turn:' + selection.sessionId + ':' + selection.turnIndex;
-    if (selection.type === 'tool-call') return 'tool-call:' + selection.sessionId + ':' + selection.callId;
-    if (selection.type === 'file') return 'file:' + selection.path;
-    if (selection.type === 'commit') return 'commit:' + selection.hash;
-    return '';
-  }
-
-  function selectionAttrs(selection) {
-    const attrs = ['data-selectable','data-selection-type="' + escape(selection.type) + '"'];
-    if (selection.id) attrs.push('data-story-id="' + escape(selection.id) + '"');
-    if (selection.sessionId) attrs.push('data-session-id="' + escape(selection.sessionId) + '"');
-    if (selection.turnIndex) attrs.push('data-turn-index="' + escape(selection.turnIndex) + '"');
-    if (selection.callId) attrs.push('data-call-id="' + escape(selection.callId) + '"');
-    if (selection.path) attrs.push('data-file-path="' + escape(selection.path) + '"');
-    if (selection.hash) attrs.push('data-commit-hash="' + escape(selection.hash) + '"');
-    if (selection.contextSessionId) attrs.push('data-context-session-id="' + escape(selection.contextSessionId) + '"');
-    return attrs.join(' ');
-  }
-
-  function selectionFromUrl(params = new URLSearchParams(location.search)) {
-    const sessionId = params.get('session');
-    const session = bySession.get(sessionId);
-    const requestedContext = params.get('context-session') ?? sessionId;
-    const contextSessionId = bySession.has(requestedContext) ? requestedContext : null;
-    const callId = params.get('call');
-    if (callId && session?.toolActivity.calls.some(call => call.id === callId)) return { type:'tool-call', sessionId, callId };
-    const turnIndex = Number(params.get('turn'));
-    if (Number.isInteger(turnIndex) && session?.dialogue?.turns?.some(turn => turn.index === turnIndex)) return { type:'turn', sessionId, turnIndex };
-    const filePath = params.get('file');
-    if (filePath && retainedFilePaths.has(filePath)) return { type:'file', path:filePath, contextSessionId };
-    const commitHash = params.get('commit');
-    if (commitHash && byCommit.has(commitHash)) return { type:'commit', hash:commitHash, contextSessionId };
-    const storyId = params.get('story');
-    if (storyId && byStory.has(storyId)) return { type:'story', id:storyId };
-    if (session) return { type:'session', sessionId };
-    return null;
-  }
-
-  function descriptorFromElement(element) {
-    if (!element) return null;
-    const type = element.dataset.selectionType;
-    const sessionId = element.dataset.sessionId ?? element.closest('[data-activity-session]')?.dataset.activitySession;
-    if (type === 'story') return { type, id:element.dataset.storyId };
-    if (type === 'session') return { type, sessionId };
-    if (type === 'turn') return { type, sessionId, turnIndex:Number(element.dataset.turnIndex) };
-    if (type === 'tool-call') return { type, sessionId, callId:element.dataset.callId };
-    if (type === 'file') return { type, path:element.dataset.filePath, contextSessionId:element.dataset.contextSessionId ?? sessionId ?? null };
-    if (type === 'commit') return { type, hash:element.dataset.commitHash, contextSessionId:element.dataset.contextSessionId ?? sessionId ?? null };
-    return null;
-  }
-
   function descendantStories(nodeId) {
     const node = byNode.get(nodeId);
     if (!node) return [];
@@ -281,14 +217,13 @@
     const prompts = session?.prompts ?? [];
     const declaredPrompt = item.story?.refs?.prompts?.[0];
     const cards = [];
-    if (declaredPrompt) cards.push('<button type="button" class="intent-card declared-intent" ' + selectionAttrs({ type:'story', id:item.story.id }) + '><p>' + escape(declaredPrompt) + '</p><small>Feature Tree intent · ' + escape(item.story.evidence) + '</small></button>');
+    if (declaredPrompt) cards.push('<div class="intent-card declared-intent"><p>' + escape(declaredPrompt) + '</p><small>Feature Tree intent · ' + escape(item.story.evidence) + '</small></div>');
     prompts.forEach(prompt => {
       // Retained prompts are capped and de-duplicated upstream, so the card
       // links to the Turn the projection resolved, never to its array index.
       const turnIndex = Number.isInteger(prompt.turnIndex) ? prompt.turnIndex : null;
-      const attrs = turnIndex ? selectionAttrs({ type:'turn', sessionId:session.sessionId, turnIndex }) : selectionAttrs({ type:'session', sessionId:session.sessionId });
       const label = turnIndex ? 'User turn ' + turnIndex : 'Retained prompt';
-      cards.push('<button type="button" class="intent-card" ' + attrs + '><p>' + escape(prompt.text) + '</p><small>' + escape(label) + (prompt.timestamp ? ' · ' + escape(formatClock(prompt.timestamp)) : '') + '</small></button>');
+      cards.push('<div class="intent-card"><p>' + escape(prompt.text) + '</p><small>' + escape(label) + (prompt.timestamp ? ' · ' + escape(formatClock(prompt.timestamp)) : '') + '</small></div>');
     });
     const coverage = turnCoverageOf(session);
     const more = session && coverage.truncated
@@ -328,7 +263,7 @@
       : directCommits.length
         ? '<p class="commit-bridge">' + directCommits.length + ' commit' + (directCommits.length === 1 ? ' was' : 's were') + ' created in this session, but no Edit/Write path was observed before the commit. The files may have entered the session as existing workspace changes.</p>'
         : '';
-    return '<section class="lane activity-lane"><div class="lane-title"><strong>Checkpoint activity</strong><span>' + pathSummary + '</span></div><div class="activity-summary"><div class="activity-total"><strong>' + activity.totalCalls + '</strong><span>calls · ' + activity.failedCalls + ' failed' + escape(spanCopy) + '</span></div><div class="family-bars">' + bars + '</div></div>' + commitBridge + '<details class="activity-details" data-activity-session="' + escape(session.sessionId) + '"><summary><span>Expand ' + activity.totalCalls + ' normalized actions</span><small>focus view</small></summary><div class="activity-actions"><button type="button" class="activity-action" ' + selectionAttrs({ type:'session', sessionId:session.sessionId }) + '>Open detail</button><button type="button" class="activity-action primary" data-open-session-for="' + escape(session.sessionId) + '">Open session</button></div><div class="trace-target" data-activity-chart="' + escape(session.sessionId) + '"></div></details></section>';
+    return '<section class="lane activity-lane"><div class="lane-title"><strong>Checkpoint activity</strong><span>' + pathSummary + '</span></div><div class="activity-summary"><div class="activity-total"><strong>' + activity.totalCalls + '</strong><span>calls · ' + activity.failedCalls + ' failed' + escape(spanCopy) + '</span></div><div class="family-bars">' + bars + '</div></div>' + commitBridge + '<details class="activity-details" data-activity-session="' + escape(session.sessionId) + '"><summary><span>Expand ' + activity.totalCalls + ' normalized actions</span><small>focus view</small></summary><div class="activity-actions"><button type="button" class="activity-action primary" data-open-session-for="' + escape(session.sessionId) + '">Open session</button></div><div class="trace-target" data-activity-chart="' + escape(session.sessionId) + '"></div></details></section>';
   }
 
   function fileTree(commit, link) {
@@ -346,8 +281,7 @@
       const shared = overlap.has(file.path);
       const sharedKind = editedBeforeCommit ? 'observed-commit' : link?.evidenceKind === 'file-context' ? 'file-context' : 'observed-overlap';
       const sharedLabel = editedBeforeCommit ? 'edited before commit' : link?.evidenceKind === 'file-context' ? 'same path' : 'observed same-path';
-      const fileSelection = { type:'file', path:file.path, contextSessionId:link?.sessionId ?? null };
-      return '<button type="button" class="file-row" ' + selectionAttrs(fileSelection) + '><code title="' + escape(file.path) + '">' + escape(file.display) + '</code><span class="delta">' + (Number.isFinite(file.added) ? '+' + file.added : 'bin') + ' / ' + (Number.isFinite(file.removed) ? '-' + file.removed : 'bin') + ' ' + evidence(editedBeforeCommit || shared ? sharedKind : 'commit-change', editedBeforeCommit || shared ? sharedLabel : 'commit') + '</span></button>';
+      return '<div class="file-row"><code title="' + escape(file.path) + '">' + escape(file.display) + '</code><span class="delta">' + (Number.isFinite(file.added) ? '+' + file.added : 'bin') + ' / ' + (Number.isFinite(file.removed) ? '-' + file.removed : 'bin') + ' ' + evidence(editedBeforeCommit || shared ? sharedKind : 'commit-change', editedBeforeCommit || shared ? sharedLabel : 'commit') + '</span></div>';
     }).join('')).join('');
   }
 
@@ -368,9 +302,9 @@
       const stats = commit.fileCount + ' files · +' + commit.linesAdded + ' / -' + commit.linesRemoved + relation;
       const files = '<div class="file-tree">' + (fileTree(commit,linked) || '<div class="empty-state">No changed paths retained.</div>') + '</div>';
       if (compact) {
-        return '<details class="commit-card commit-card-compact"><summary class="commit-head" ' + selectionAttrs({ type:'commit', hash:commit.hash, contextSessionId }) + '><div class="commit-head-line compact"><span class="commit-chevron" aria-hidden="true">›</span><code>' + escape(commit.shortHash) + '</code><span class="commit-subject" title="' + escape(commit.subject) + '">' + escape(commit.subject) + '</span><span class="commit-stats">' + stats + '</span>' + evidence(kind,label) + '</div></summary>' + files + '</details>';
+        return '<details class="commit-card commit-card-compact"><summary class="commit-head"><div class="commit-head-line compact"><span class="commit-chevron" aria-hidden="true">›</span><code>' + escape(commit.shortHash) + '</code><span class="commit-subject" title="' + escape(commit.subject) + '">' + escape(commit.subject) + '</span><span class="commit-stats">' + stats + '</span>' + evidence(kind,label) + '</div></summary>' + files + '</details>';
       }
-      return '<details class="commit-card commit-card-expanded" open><summary class="commit-head" ' + selectionAttrs({ type:'commit', hash:commit.hash, contextSessionId }) + '><div class="commit-head-line"><span class="commit-id"><span class="commit-chevron" aria-hidden="true">›</span><code>' + escape(commit.shortHash) + '</code></span>' + evidence(kind,label) + '</div><p>' + escape(commit.subject) + '</p><div class="commit-stats">' + stats + '</div></summary>' + files + '</details>';
+      return '<details class="commit-card commit-card-expanded" open><summary class="commit-head"><div class="commit-head-line"><span class="commit-id"><span class="commit-chevron" aria-hidden="true">›</span><code>' + escape(commit.shortHash) + '</code></span>' + evidence(kind,label) + '</div><p>' + escape(commit.subject) + '</p><div class="commit-stats">' + stats + '</div></summary>' + files + '</details>';
     }).join('');
     if (!commits.length) return '<section class="lane delivery-lane lane-empty"><div class="lane-title"><div class="delivery-title-copy"><strong>Commits / files</strong><span>0 commits</span></div></div><div class="empty-state">No commit is linked to this session or Story.</div></section>';
     const compactLabel = compactCount ? ' · ' + compactCount + ' compact' : '';
@@ -390,18 +324,15 @@
     const commits = commitsFor(item);
     const session = item.session;
     const title = itemTitle(item);
-    const kicker = item.story?.featureTitle ?? (item.date ? (session ? 'Session · ' + formatClock(session.firstSeen) : 'Unlinked commits') : 'Unmapped');
-    const sessionMeta = session ? session.locator + ' · ' + formatDuration(session.durationMs) : 'No linked session';
+    const sessionMeta = session
+      ? '<span>' + escape(formatClock(session.firstSeen)) + '</span><span class="workbench-provider">' + escape(session.platform) + '</span><span>' + escape(formatDuration(session.durationMs)) + '</span>'
+      : '<span>' + (item.date ? 'Unlinked commits' : 'No linked session') + '</span>';
     const sessionAction = session ? '<button class="prepare-button" data-open-session="' + escape(session.sessionId) + '">Open session</button>' : '';
-    const headerSelection = session
-      ? { type:'session', sessionId:session.sessionId }
-      : item.story ? { type:'story', id:item.story.id } : null;
-    const header = headerSelection
-      ? '<button type="button" class="workbench-object-select" ' + selectionAttrs(headerSelection) + '><small>' + escape(kicker) + '</small><h3>' + escape(title) + '</h3><div class="meta">' + escape(sessionMeta) + '</div></button>'
-      : '<div><small>' + escape(kicker) + '</small><h3>' + escape(title) + '</h3><div class="meta">' + escape(sessionMeta) + '</div></div>';
+    // The title identifies the session; explicit commands own all navigation.
+    const header = '<div class="workbench-title-line"><h3 title="' + escape(title) + '">' + escape(title) + '</h3><div class="workbench-meta" title="' + escape(session?.locator ?? '') + '">' + sessionMeta + '</div></div>';
     const collapsed = state.collapsedCards.has(index);
     const collapseToggle = '<button class="card-collapse" type="button" data-toggle-card="' + index + '" aria-expanded="' + String(!collapsed) + '" aria-label="' + (collapsed ? 'Expand' : 'Collapse') + ' this workbench">' + (collapsed ? '+' : '−') + '</button>';
-    return '<article class="workbench' + (collapsed ? ' card-collapsed' : '') + '" id="workbench-card-' + index + '" data-workbench="' + index + '" data-session-context="' + escape(session?.sessionId ?? '') + '"><header class="workbench-head">' + header + '<div class="head-actions">' + evidence(item.link.evidenceKind) + sessionAction + collapseToggle + '</div></header><div class="workbench-grid">' + promptLane(item) + '<div class="lane-resizer prompt" data-resize-lane="prompt" role="separator" aria-orientation="vertical" aria-label="Resize prompt and activity lanes" tabindex="0"></div>' + activityLane(item) + '<div class="lane-resizer delivery" data-resize-lane="delivery" role="separator" aria-orientation="vertical" aria-label="Resize activity and delivery lanes" tabindex="0"></div>' + deliveryLane(item,commits) + '</div></article>';
+    return '<article class="workbench' + (collapsed ? ' card-collapsed' : '') + '" id="workbench-card-' + index + '" data-workbench="' + index + '" data-session-context="' + escape(session?.sessionId ?? '') + '"><header class="workbench-head">' + header + '<div class="head-actions">' + sessionAction + collapseToggle + '</div></header><div class="workbench-grid">' + promptLane(item) + '<div class="lane-resizer prompt" data-resize-lane="prompt" role="separator" aria-orientation="vertical" aria-label="Resize prompt and activity lanes" tabindex="0"></div>' + activityLane(item) + '<div class="lane-resizer delivery" data-resize-lane="delivery" role="separator" aria-orientation="vertical" aria-label="Resize activity and delivery lanes" tabindex="0"></div>' + deliveryLane(item,commits) + '</div></article>';
   }
 
   function continuationText(item) {
@@ -607,7 +538,7 @@
           + (stamp ? ' · ' + stamp + ' UTC' : '')
           + ' · ' + (timed ? formatLatency(call.durationMs) : 'timing unavailable')
           + (failed ? ' · failed' : '');
-        return '<rect class="chart-ribbon-block' + (failed ? ' failed' : '') + '" ' + selectionAttrs({ type:'tool-call', sessionId:session.sessionId, callId:call.id })
+        return '<rect class="chart-ribbon-block' + (failed ? ' failed' : '') + '" data-session-id="' + escape(session.sessionId) + '" data-call-id="' + escape(call.id) + '"'
           + ' data-chart-detail="' + escape(label) + '"'
           + ' x="' + left + '" y="' + ribbonTop + '" width="' + blockWidth + '" height="' + ribbonHeight + '"'
           + ' fill="' + (failed ? '#c34f4f' : familyColor(call.family)) + '"'
@@ -640,7 +571,7 @@
           + (call.detail ? ' · ' + call.detail : '')
           + (call.filePaths?.length ? ' · ' + call.filePaths.join(' · ') : '');
         const markHeight = compact ? 8 : 10;
-        return '<rect class="chart-mark' + (failed ? ' failed' : '') + '" ' + selectionAttrs({ type:'tool-call', sessionId:session.sessionId, callId:call.id })
+        return '<rect class="chart-mark' + (failed ? ' failed' : '') + '" data-session-id="' + escape(session.sessionId) + '" data-call-id="' + escape(call.id) + '"'
           + ' data-chart-detail="' + escape(label) + '"'
           + ' x="' + xFor(position) + '" y="' + (laneCenter(lane) - markHeight / 2) + '" width="' + markWidth + '" height="' + markHeight + '" rx="2"'
           + ' fill="' + (timed || failed ? tone : '#ffffff') + '" stroke="' + tone + '" stroke-width="' + (timed || failed ? 1 : 1.5) + '"'
@@ -671,7 +602,7 @@
       const x = xFor(position);
       const markerY = topPad + 7;
       return '<line class="chart-commit-line" x1="' + x + '" x2="' + x + '" y1="' + (markerY + 5) + '" y2="' + laneArea + '"></line>'
-        + '<path class="chart-commit chart-commit-marker" ' + selectionAttrs({ type:'commit', hash:commit.hash, contextSessionId:session.sessionId })
+        + '<path class="chart-commit chart-commit-marker" data-session-id="' + escape(session.sessionId) + '" data-commit-hash="' + escape(commit.hash) + '"'
         + ' data-chart-detail="' + escape(label) + '" d="M ' + x + ' ' + (markerY - 5) + ' L ' + (x + 5) + ' ' + markerY + ' L ' + x + ' ' + (markerY + 5) + ' L ' + (x - 5) + ' ' + markerY + ' Z"'
         + ' tabindex="0" role="button" aria-label="' + escape(label) + '"><title>' + escape(label) + '</title></path>';
     }).join('');
@@ -718,7 +649,6 @@
     const turnCallIds = turn ? new Set(turn.steps.filter(step => step.kind === 'tool').map(step => step.callId)) : null;
     const calls = turnCallIds ? session.toolActivity.calls.filter(call => turnCallIds.has(call.id)) : null;
     container.innerHTML = activityChartMarkup(session,container.clientWidth,{ compact:Boolean(container.closest('.session-axis-panel, .session-turn-activity')), calls });
-    applySelectionPresentation();
   }
 
   const chartObserver = typeof ResizeObserver === 'function'
@@ -730,7 +660,7 @@
   function showChartDetail(element) {
     const inspector = element.closest('.chart-card')?.querySelector('[data-chart-inspector]');
     if (!inspector || !element.dataset.chartDetail) return;
-    const hint = element.hasAttribute('data-chart-bin') ? 'Click to zoom into this slice.' : 'Click to explain it in the Evidence Drawer.';
+    const hint = element.hasAttribute('data-chart-bin') ? 'Click to zoom into this slice.' : 'Click to locate this event in Session View.';
     inspector.innerHTML = '<strong>' + escape(element.dataset.chartDetail) + '</strong><span>' + escape(hint) + '</span>';
   }
 
@@ -814,13 +744,13 @@
   function toolRowMarkup(session, call) {
     const stamp = formatStamp(call.startedAt);
     const dot = '<i class="family-dot" style="background:' + familyColor(call.family) + '" aria-hidden="true"></i>';
-    return '<button type="button" class="session-tool-row" data-session-tool-row data-tool="' + escape(call.toolName) + '" id="session-call-' + escape(call.id) + '" ' + selectionAttrs({ type:'tool-call', sessionId:session.sessionId, callId:call.id }) + '>'
+    return '<div class="session-tool-row" data-session-tool-row data-tool="' + escape(call.toolName) + '" id="session-call-' + escape(call.id) + '">'
       + '<span class="session-tool-id">' + escape(call.id) + '</span>'
       + '<span class="session-tool-copy">' + dot + '<strong>' + escape(call.actionLabel) + '</strong><code title="' + escape(call.toolName) + '">' + escape(call.toolName) + '</code>' + (call.status === 'failed' ? '<em class="session-tool-failed">failed</em>' : '') + '</span>'
       + '<span class="session-tool-time"><code>' + escape(stamp ?? '—') + '</code><small>' + escape(call.durationStatus === 'observed' ? formatLatency(call.durationMs) : '—') + '</small></span>'
       + (call.detail ? '<span class="session-tool-detail-row"><code class="session-tool-detail">' + escape(call.detail) + '</code>' + detailKindBadge(call) + '</span>' : '')
       + (call.filePaths?.length ? '<code class="session-tool-file">' + escape(call.filePaths.join(' · ')) + '</code>' : '')
-      + '</button>';
+      + '</div>';
   }
 
   function toolListMarkup(session, calls) {
@@ -887,7 +817,7 @@
       commits.length ? '<li><strong>' + commits.length + '</strong> correlated commit' + (commits.length === 1 ? '' : 's') + '</li>' : '',
     ].filter(Boolean).join('');
     const paths = editPaths.length
-      ? '<div class="session-outcome-paths"><span>Observed edit paths</span><div>' + editPaths.map(path => '<button type="button" ' + selectionAttrs({ type:'file', path, contextSessionId:session.sessionId }) + '>' + escape(path) + '</button>').join('') + '</div></div>'
+      ? '<div class="session-outcome-paths"><span>Observed edit paths</span><div>' + editPaths.map(path => '<code>' + escape(path) + '</code>').join('') + '</div></div>'
       : '';
     const patchNotice = editCalls.length
       ? '<p class="session-patch-unavailable">Session-scoped patch was not retained; the current worktree is not used as this Turn’s diff.</p>'
@@ -901,9 +831,9 @@
   }
 
   function commitEventMarkup(session, commit, relation) {
-    return '<article class="session-event commit" data-session-event="commits" id="session-commit-' + escape(commit.shortHash) + '"><button type="button" class="commit-head" ' + selectionAttrs({ type:'commit', hash:commit.hash, contextSessionId:session.sessionId }) + '>'
+    return '<article class="session-event commit" data-session-event="commits" id="session-commit-' + escape(commit.shortHash) + '"><div class="commit-head">'
       + '<header class="session-event-head"><strong>' + escape(commit.shortHash) + ' · ' + escape(commit.subject) + '</strong><span>' + commit.fileCount + ' files</span></header>'
-      + '<div class="session-event-body"><p>+' + commit.linesAdded + ' / -' + commit.linesRemoved + ' · ' + escape(formatClock(commit.committedAt ?? commit.authoredAt)) + ' · committed ' + escape(relation) + ' · shared paths remain contextual.</p></div></button></article>';
+      + '<div class="session-event-body"><p>+' + commit.linesAdded + ' / -' + commit.linesRemoved + ' · ' + escape(formatClock(commit.committedAt ?? commit.authoredAt)) + ' · committed ' + escape(relation) + ' · shared paths remain contextual.</p></div></div></article>';
   }
 
   function sessionViewMarkup(item) {
@@ -946,7 +876,7 @@
         ? '<details class="session-process"><summary><span>Process trace</span><em>' + shownEventCount + (turn.processTruncated ? ' of ' + eventCount : '') + ' retained events · observed order</em></summary><div class="session-process-body">' + processEvidence + processTimeline + '<div class="session-process-stream">' + processStream + '</div></div></details>'
         : '<div class="session-process session-process-empty"><span>Process</span><em>No retained process evidence</em></div>';
       const outcome = turnOutcomeMarkup(session,turn,calls,turnCommits);
-      return '<section class="session-cell" data-session-cell="run"><header class="session-turn-head"><strong>Turn ' + turn.index + '</strong><span>' + escape(summary) + '</span></header><section class="session-turn" id="session-' + escape(anchor) + '" data-turn-index="' + turn.index + '"><div class="session-row-marker session-input-marker"><button type="button" class="turn-select" ' + selectionAttrs({ type:'turn', sessionId:session.sessionId, turnIndex:turn.index }) + '>In [' + turn.index + ']</button></div>' + prompt + '<div class="session-row-marker session-process-marker" aria-hidden="true"></div>' + process + '<div class="session-row-marker session-output-marker"><span>Out [' + turn.index + ']</span></div><div class="session-cell-output">' + outcome + '</div></section></section>';
+      return '<section class="session-cell" data-session-cell="run"><header class="session-turn-head"><strong>Turn ' + turn.index + '</strong><span>' + escape(summary) + '</span></header><section class="session-turn" id="session-' + escape(anchor) + '" data-turn-index="' + turn.index + '"><div class="session-row-marker session-input-marker"><span class="turn-select">In [' + turn.index + ']</span></div>' + prompt + '<div class="session-row-marker session-process-marker" aria-hidden="true"></div>' + process + '<div class="session-row-marker session-output-marker"><span>Out [' + turn.index + ']</span></div><div class="session-cell-output">' + outcome + '</div></section></section>';
     }).join('');
 
     const placedCallIds = new Set(turns.flatMap(turn => turn.steps.filter(step => step.kind === 'tool').map(step => step.callId)));
@@ -963,7 +893,7 @@
       });
     const unplacedFiles = unplacedCalls.length || turns.length === 0 ? session.toolActivity.files : [];
     const unplacedFileEvent = unplacedFiles.length
-      ? '<article class="session-event files"><header class="session-event-head"><strong>' + unplacedFiles.length + ' attributed file path' + (unplacedFiles.length === 1 ? '' : 's') + '</strong><span>observed tool evidence</span></header><div class="session-file-list">' + unplacedFiles.map(file => '<button type="button" ' + selectionAttrs({ type:'file', path:file.path, contextSessionId:session.sessionId }) + '>' + escape(file.path) + '</button>').join('') + '</div></article>'
+      ? '<article class="session-event files"><header class="session-event-head"><strong>' + unplacedFiles.length + ' attributed file path' + (unplacedFiles.length === 1 ? '' : 's') + '</strong><span>observed tool evidence</span></header><div class="session-file-list">' + unplacedFiles.map(file => '<code>' + escape(file.path) + '</code>').join('') + '</div></article>'
       : '';
     const unplacedToolSummary = (() => {
       const grouped = new Map();
@@ -1036,11 +966,10 @@
     const unavailable = event.availability === 'unavailable' ? '<span class="replay-availability">Content unavailable</span>' : '';
     const excerpt = event.bodyExcerpt ? '<span class="replay-excerpt" title="The projection retained a bounded excerpt of this content.">Excerpt</span>' : '';
     const status = event.status === 'failed' ? '<span class="replay-status failed">Failed</span>' : '';
-    const explain = event.selection ? '<button type="button" class="replay-explain" data-replay-explain>Explain evidence</button>' : '';
     return '<article class="replay-event-card ' + escape(event.type) + '"><header><div><small>' + escape(event.label) + '</small><h3>' + escape(event.title) + '</h3></div><div class="replay-event-badges">' + status + unavailable + excerpt + '</div></header>'
       + '<div class="replay-event-meta"><span>' + escape(replayTiming(event)) + '</span>' + (event.meta ? '<code>' + escape(event.meta) + '</code>' : '') + (Number.isFinite(event.durationMs) ? '<span>' + escape(formatLatency(event.durationMs)) + '</span>' : '') + '</div>'
       + '<div class="replay-event-body"><p>' + escape(event.body) + '</p></div>' + files
-      + '<footer><span>' + (event.turnIndex ? 'Turn ' + event.turnIndex : 'Outside any observed Turn') + '</span>' + explain + '</footer></article>';
+      + '<footer><span>' + (event.turnIndex ? 'Turn ' + event.turnIndex : 'Outside any observed Turn') + '</span></footer></article>';
   }
 
   function renderReplayIndex() {
@@ -1144,8 +1073,7 @@
     const replay = replayModel();
     if (!replay) return;
     if (!replay.events.some(event => event.id === state.replayEventId)) {
-      const selectedKey = selectionKey(state.selection);
-      state.replayEventId = replay.events.find(event => selectionKey(event.selection) === selectedKey)?.id ?? replay.events[0]?.id ?? null;
+      state.replayEventId = replay.events[0]?.id ?? null;
     }
     renderReplayIndex();
     renderReplayRail();
@@ -1191,12 +1119,11 @@
     scheduleReplay();
   }
 
-  function setReplayEvent(eventId,{ syncSelection = true, updateHistory = true } = {}) {
+  function setReplayEvent(eventId,{ updateHistory = true } = {}) {
     const replay = replayModel();
     const event = replay?.events.find(candidate => candidate.id === eventId);
     if (!event) return;
     state.replayEventId = event.id;
-    if (syncSelection && event.selection) setSelection(event.selection,{ updateHistory:false, reveal:false });
     updateReplayPresentation();
     if (updateHistory) updateUrl();
   }
@@ -1214,10 +1141,6 @@
     const next = mode === 'replay' ? 'replay' : 'trace';
     state.sessionMode = next;
     if (next !== 'replay') stopReplay();
-    else {
-      state.evidenceDrawerSuppressed = true;
-      renderEvidenceDrawer();
-    }
     document.querySelectorAll('[data-session-mode]').forEach(tab => {
       const selected = tab.dataset.sessionMode === next;
       tab.setAttribute('aria-selected',String(selected));
@@ -1259,18 +1182,6 @@
     }
   }
 
-  function sessionSelectionTarget(selection,item) {
-    if (!selection || sessionForSelection(selection)?.sessionId !== item.session.sessionId) return null;
-    if (selection.type === 'turn') return document.getElementById('session-turn-' + selection.turnIndex);
-    if (selection.type === 'tool-call') return document.getElementById('session-call-' + selection.callId);
-    if (selection.type === 'commit') return document.getElementById('session-commit-' + (byCommit.get(selection.hash)?.shortHash ?? selection.hash.slice(0,7)));
-    if (selection.type === 'file') {
-      return document.querySelector('#session-view [data-selection-type="file"][data-file-path="' + CSS.escape(selection.path) + '"]')
-        ?? document.getElementById('session-unplaced');
-    }
-    return null;
-  }
-
   let jumpObserver = null;
 
   // Scroll-spy keeps "Jump to" reporting where the reader actually is; a static
@@ -1294,7 +1205,7 @@
     view.querySelectorAll('.session-turn').forEach(section => jumpObserver.observe(section));
   }
 
-  function revealSelectionTarget(target) {
+  function revealSessionTarget(target) {
     if (!target) return;
     target.closest('.session-call-overflow')?.removeAttribute('hidden');
     let run = target.closest('details.session-tool-run');
@@ -1309,7 +1220,7 @@
     target.scrollIntoView({ block:'center' });
   }
 
-  function openSessionView(item,selection = state.selection,trigger = document.activeElement,{ updateHistory = true } = {}) {
+  function openSessionView(item,trigger = document.activeElement,{ updateHistory = true } = {}) {
     const view = sessionViewMarkup(item);
     const params = new URLSearchParams(location.search);
     const restoringThisSession = params.get('session') === item.session.sessionId;
@@ -1328,21 +1239,17 @@
     document.body.classList.add('session-open');
     document.getElementById('session-view-close').focus();
     setSessionMode(state.sessionMode,{ updateHistory:false });
-    if (state.sessionMode === 'trace' && (!selection || selection.type === 'session')) state.evidenceDrawerSuppressed = true;
     if (updateHistory) {
       state.sessionPushed = true;
       updateUrl({ push:true });
     }
-    renderEvidenceDrawer();
     requestAnimationFrame(() => {
       const axis = document.querySelector('[data-session-mode-panel="trace"] [data-session-axis] [data-activity-chart]');
       if (axis && !axis.childElementCount) {
         renderActivityChart(axis);
         chartObserver?.observe(axis);
       }
-      revealSelectionTarget(sessionSelectionTarget(selection,item));
       observeTurnsForJump();
-      applySelectionPresentation();
     });
   }
 
@@ -1355,13 +1262,11 @@
     state.sessionMode = 'trace';
     state.replayEventId = null;
     state.replayIndexTab = 'events';
-    state.evidenceDrawerSuppressed = false;
     document.getElementById('session-view').hidden = true;
     document.getElementById('session-view-body').innerHTML = '';
     document.body.classList.remove('session-open');
     const trigger = state.sessionTrigger;
     state.sessionTrigger = null;
-    renderEvidenceDrawer();
     if (trigger?.isConnected) trigger.focus();
   }
 
@@ -1379,278 +1284,15 @@
   function itemForSession(session) {
     if (!session) return null;
     return state.items?.find(candidate => candidate.session?.sessionId === session.sessionId)
-      ?? { story:null, session, link:{ evidenceKind:'contextual', confidence:'drawer' }, date:null };
-  }
-
-  // ---------------------------------------------------------------- evidence
-
-  function sessionForSelection(selection) {
-    const sessionId = selection?.sessionId ?? selection?.contextSessionId;
-    if (sessionId && bySession.has(sessionId)) return bySession.get(sessionId);
-    if (selection?.type === 'file') return report.sessions.find(session => session.toolActivity.files.some(file => file.path === selection.path)) ?? null;
-    if (selection?.type === 'commit') return report.sessions.find(session => session.commitLinks.some(link => link.hash === selection.hash)) ?? null;
-    return null;
-  }
-
-  function callTurnIndex(session, callId) {
-    const turn = session?.dialogue?.turns?.find(item => item.steps.some(step => step.kind === 'tool' && step.callId === callId));
-    return turn?.index ?? null;
-  }
-
-  function descriptorLabel(selection) {
-    if (!selection) return 'Unknown evidence';
-    if (selection.type === 'story') return byStory.get(selection.id)?.title ?? selection.id;
-    const session = sessionForSelection(selection);
-    if (selection.type === 'session') return session?.locator ?? selection.sessionId;
-    if (selection.type === 'turn') return 'Turn ' + selection.turnIndex;
-    if (selection.type === 'tool-call') {
-      const call = session?.toolActivity.calls.find(item => item.id === selection.callId);
-      return call ? call.id + ' · ' + call.actionLabel : selection.callId;
-    }
-    if (selection.type === 'file') return selection.path;
-    if (selection.type === 'commit') return byCommit.get(selection.hash)?.shortHash ?? selection.hash.slice(0,7);
-    return selectionKey(selection);
-  }
-
-  function relatedSelections(selection) {
-    const related = new Map();
-    const add = descriptor => {
-      const key = selectionKey(descriptor);
-      if (key && key !== selectionKey(selection)) related.set(key,descriptor);
-    };
-    const addSessionGraph = session => {
-      if (!session) return;
-      add({ type:'session', sessionId:session.sessionId });
-      session.storyLinks.forEach(link => add({ type:'story', id:link.storyId }));
-      session.dialogue?.turns?.forEach(turn => add({ type:'turn', sessionId:session.sessionId, turnIndex:turn.index }));
-      session.toolActivity.calls.forEach(call => add({ type:'tool-call', sessionId:session.sessionId, callId:call.id }));
-      session.toolActivity.files.forEach(file => add({ type:'file', path:file.path, contextSessionId:session.sessionId }));
-      const directCommitLinks = session.commitLinks.filter(isDirectCommitLink);
-      (directCommitLinks.length ? directCommitLinks : session.commitLinks).forEach(link => add({ type:'commit', hash:link.hash, contextSessionId:session.sessionId }));
-    };
-    const session = sessionForSelection(selection);
-    if (selection.type === 'story') {
-      const story = byStory.get(selection.id);
-      story?.sessionLinks.forEach(link => addSessionGraph(bySession.get(link.sessionId)));
-      story?.commitHashes.forEach(hash => add({ type:'commit', hash }));
-      return related;
-    }
-    if (selection.type === 'session') {
-      addSessionGraph(session);
-      return related;
-    }
-    if (selection.type === 'turn') {
-      add({ type:'session', sessionId:selection.sessionId });
-      const turn = session?.dialogue?.turns?.find(item => item.index === selection.turnIndex);
-      const calls = turn?.steps.filter(step => step.kind === 'tool') ?? [];
-      calls.forEach(call => {
-        add({ type:'tool-call', sessionId:selection.sessionId, callId:call.callId });
-        call.filePaths?.forEach(path => add({ type:'file', path, contextSessionId:selection.sessionId }));
-      });
-      session?.storyLinks.forEach(link => add({ type:'story', id:link.storyId }));
-      const paths = new Set(calls.flatMap(call => call.filePaths ?? []));
-      const callIds = new Set(calls.map(call => call.callId));
-      session?.commitLinks.filter(link => isDirectCommitLink(link)
-        ? (link.commitCallId && callIds.has(link.commitCallId)) || link.linkedEditCallIds?.some(callId => callIds.has(callId))
-        : link.overlappingFiles.some(path => paths.has(path))).forEach(link => add({ type:'commit', hash:link.hash, contextSessionId:selection.sessionId }));
-      return related;
-    }
-    if (selection.type === 'tool-call') {
-      add({ type:'session', sessionId:selection.sessionId });
-      const call = session?.toolActivity.calls.find(item => item.id === selection.callId);
-      const turnIndex = callTurnIndex(session,selection.callId);
-      if (turnIndex) add({ type:'turn', sessionId:selection.sessionId, turnIndex });
-      const paths = new Set(call?.filePaths ?? []);
-      paths.forEach(path => add({ type:'file', path, contextSessionId:selection.sessionId }));
-      session?.commitLinks.filter(link => isDirectCommitLink(link)
-        ? link.commitCallId === selection.callId || link.linkedEditCallIds?.includes(selection.callId)
-        : link.overlappingFiles.some(path => paths.has(path))).forEach(link => add({ type:'commit', hash:link.hash, contextSessionId:selection.sessionId }));
-      return related;
-    }
-    if (selection.type === 'file') {
-      report.sessions.filter(item => item.toolActivity.files.some(file => file.path === selection.path)).forEach(item => {
-        add({ type:'session', sessionId:item.sessionId });
-        item.toolActivity.calls.filter(call => call.filePaths?.includes(selection.path)).forEach(call => add({ type:'tool-call', sessionId:item.sessionId, callId:call.id }));
-        item.storyLinks.forEach(link => add({ type:'story', id:link.storyId }));
-      });
-      report.commits.filter(commit => commit.files.some(file => file.path === selection.path)).forEach(commit => add({ type:'commit', hash:commit.hash, contextSessionId:session?.sessionId }));
-      return related;
-    }
-    if (selection.type === 'commit') {
-      const commit = byCommit.get(selection.hash);
-      commit?.files.forEach(file => add({ type:'file', path:file.path, contextSessionId:session?.sessionId }));
-      const linkedSessions = report.sessions.map(item => ({
-        item,
-        link:item.commitLinks.find(link => link.hash === selection.hash),
-      })).filter(entry => entry.link);
-      const directlyLinkedSessions = linkedSessions.filter(entry => isDirectCommitLink(entry.link));
-      (directlyLinkedSessions.length ? directlyLinkedSessions : linkedSessions).forEach(({ item, link }) => {
-        add({ type:'session', sessionId:item.sessionId });
-        const linkedCallIds = new Set([link.commitCallId,...(link.linkedEditCallIds ?? [])].filter(Boolean));
-        item.toolActivity.calls.filter(call => isDirectCommitLink(link)
-          ? linkedCallIds.has(call.id)
-          : call.filePaths?.some(path => link.overlappingFiles.includes(path))).forEach(call => add({ type:'tool-call', sessionId:item.sessionId, callId:call.id }));
-        item.storyLinks.forEach(storyLink => add({ type:'story', id:storyLink.storyId }));
-      });
-    }
-    return related;
-  }
-
-  function describeSelection(selection) {
-    const session = sessionForSelection(selection);
-    const base = {
-      title:descriptorLabel(selection),
-      locator:selectionKey(selection),
-      kind:'observed',
-      strength:'observed',
-      source:'HarnessInspectorReportV1',
-      facts:[],
-      limitations:['This view explains retained evidence only; it does not mutate mappings, Git, or native session state.'],
-      path:[],
-    };
-    if (selection.type === 'story') {
-      const story = byStory.get(selection.id);
-      const link = story?.sessionLinks[0];
-      const linkedSession = link ? bySession.get(link.sessionId) : null;
-      return { ...base,
-        kind:link?.evidenceKind ?? story?.evidence ?? 'unmapped',
-        strength:link?.strength ?? 'contextual',
-        source:link?.source ?? 'feature-tree',
-        facts:link?.facts ?? ['The Feature Tree defines this reviewed delivery scope.'],
-        limitations:link?.limitations ?? ['No retained Session relationship is available for this Story.'],
-        path:[story?.title ?? selection.id,link ? link.evidenceKind + '-for' : 'unmapped',linkedSession?.locator ?? 'No linked Session'],
-      };
-    }
-    if (selection.type === 'session') {
-      const link = session?.storyLinks[0] ?? session?.commitLinks[0];
-      const story = link?.storyId ? byStory.get(link.storyId) : null;
-      const commit = link?.hash ? byCommit.get(link.hash) : null;
-      const coverage = turnCoverageOf(session);
-      return { ...base,
-        title:session?.locator ?? selection.sessionId,
-        kind:link?.evidenceKind ?? 'unmapped', strength:link?.strength ?? 'contextual', source:link?.source ?? session?.source ?? 'native-session',
-        facts:link?.facts ?? [coverage.turnCount + ' dialogue Turns are retained.',session?.toolActivity.totalCalls + ' normalized Tool Calls are retained.',session?.toolActivity.files.length + ' repository paths are attributed.'],
-        limitations:link?.limitations ?? ['No reviewed Story or correlated Commit relationship is retained for this Session.'],
-        path:story ? [story.title,link.evidenceKind + '-for',session.locator] : commit ? [session.locator,link.evidenceKind,commit.shortHash] : [session?.locator ?? selection.sessionId,'unmapped','No delivery owner'],
-      };
-    }
-    if (selection.type === 'turn') {
-      const turn = session?.dialogue?.turns?.find(item => item.index === selection.turnIndex);
-      const observedWindow = Number.isFinite(turn?.startMs)
-        ? 'Observed window: ' + formatShortClock(turn.startMs) + (Number.isFinite(turn.endMs) ? '–' + formatShortClock(turn.endMs) : '') + ' UTC.'
-        : null;
-      return { ...base,
-        title:'Turn ' + selection.turnIndex, source:'session-dialogue',
-        facts:[(turn?.toolCallCount ?? 0) + ' Tool Calls are observed in this Turn.',(turn?.intermediateCount ?? turn?.messageCount ?? 0) + ' intermediate assistant responses are retained.',(turn?.eventCount ?? 0) + ' ordered process events are retained.',observedWindow].filter(Boolean),
-        limitations:[turn?.responseStatus === 'incomplete' ? 'A later Tool Call was observed, so no terminal assistant response is claimed.' : 'Turn membership places activity in dialogue order; it does not prove which later Commit contains the result.'],
-        path:[session?.locator ?? selection.sessionId,'observed-in','Turn ' + selection.turnIndex],
-      };
-    }
-    if (selection.type === 'tool-call') {
-      const call = session?.toolActivity.calls.find(item => item.id === selection.callId);
-      const linkedEditCommit = session?.commitLinks.find(link => link.linkedEditCallIds?.includes(selection.callId));
-      const createdCommit = session?.commitLinks.find(link => link.commitCallId === selection.callId);
-      const linkedCommit = linkedEditCommit ?? createdCommit;
-      const commit = linkedCommit ? byCommit.get(linkedCommit.hash) : null;
-      const turnIndex = callTurnIndex(session,selection.callId);
-      const path = [session?.locator ?? selection.sessionId];
-      if (turnIndex) path.push('observed-in','Turn ' + turnIndex);
-      path.push('observed',call?.id + ' · ' + call?.actionLabel);
-      if (call?.filePaths?.[0]) path.push(call.operation ?? 'touched',call.filePaths[0]);
-      if (commit) path.push(linkedEditCommit ? 'linked-before' : 'contains-commit-time',commit.shortHash);
-      const stamp = formatStamp(call?.startedAt);
-      return { ...base,
-        title:call ? call.id + ' · ' + call.actionLabel : selection.callId,
-        source:'NormalizedToolActivityV1',
-        facts:[call?.toolName ? 'Native tool: ' + call.toolName + '.' : null,
-          call?.detail ? (call.detailKind === 'redacted-input-summary'
-            ? 'Redacted summary (original arguments removed by privacy filtering): ' + call.detail
-            : 'Normalized summary: ' + call.detail) : null,
-          stamp ? 'Observed start: ' + stamp + ' UTC.' : 'Start time evidence is unavailable.',
-          call?.status ? 'Observed status: ' + call.status + '.' : null,
-          call?.durationStatus === 'observed' ? 'Observed duration: ' + formatLatency(call.durationMs) + '.' : 'Duration evidence is unavailable.',
-          linkedEditCommit ? 'This Edit/Write call precedes commit ' + commit.shortHash + ' and shares an exact changed path.' : null,
-          createdCommit ? 'Commit ' + commit.shortHash + ' was created during this observed call.' : null,
-          ...(call?.filePaths?.map(item => 'Attributed path: ' + item + '.') ?? [])].filter(Boolean),
-        limitations:[linkedEditCommit
-          ? 'Exact path overlap and event order link this call to the Commit; they do not prove the final committed contents came exclusively from this call.'
-          : createdCommit
-            ? 'The call contains the Commit time, but it does not prove when or by which event the committed files were edited.'
-          : 'A Tool Call observation proves retained activity metadata, not that a later Commit contains or was authored by that activity.'],
-        path,
-      };
-    }
-    if (selection.type === 'file') {
-      const calls = session?.toolActivity.calls.filter(call => call.filePaths?.includes(selection.path)) ?? [];
-      const commit = report.commits.find(item => item.files.some(file => file.path === selection.path));
-      const link = commit ? session?.commitLinks.find(item => item.hash === commit.hash && item.overlappingFiles.includes(selection.path)) : null;
-      const path = [];
-      if (calls[0]) path.push(calls[0].id + ' · ' + calls[0].actionLabel,calls[0].operation ?? 'touched');
-      path.push(selection.path);
-      if (commit) path.push('changed-in',commit.shortHash);
-      return { ...base,
-        kind:link?.evidenceKind ?? 'observed', strength:link?.strength ?? 'observed', source:link?.source ?? 'NormalizedToolActivityV1 + Git commit evidence',
-        facts:link?.facts ?? [calls.length + ' retained Tool Call(s) attribute this exact repository path.',commit ? 'The same exact path occurs in commit ' + commit.shortHash + '.' : 'No retained Commit changes this exact path.'],
-        limitations:link?.limitations ?? ['An attributed or shared path does not prove authorship or that the observed call produced the final file contents.'],
-        path,
-      };
-    }
-    if (selection.type === 'commit') {
-      const commit = byCommit.get(selection.hash);
-      const link = session?.commitLinks.find(item => item.hash === selection.hash);
-      return { ...base,
-        title:commit ? commit.shortHash + ' · ' + commit.subject : selection.hash.slice(0,7),
-        kind:link?.evidenceKind ?? 'contextual', strength:link?.strength ?? 'contextual', source:link?.source ?? 'git commit evidence',
-        facts:link?.facts ?? [commit?.fileCount + ' changed file(s) are retained for this Commit.'],
-        limitations:link?.limitations ?? ['The Commit is visible in the selected date or Story context, but no retained Session correlation is available.'],
-        path:session ? [session.locator,link?.evidenceKind ?? 'contextual',commit?.shortHash ?? selection.hash.slice(0,7)] : [commit?.shortHash ?? selection.hash.slice(0,7),'unmapped','No correlated Session'],
-      };
-    }
-    return base;
-  }
-
-  const RELATED_PRIORITY = {
-    story:{ session:0, commit:1, turn:2, file:3, 'tool-call':4 },
-    session:{ story:0, commit:1, turn:2, file:3, 'tool-call':4 },
-    turn:{ 'tool-call':0, file:1, commit:2, session:3, story:4 },
-    'tool-call':{ turn:0, file:1, commit:2, session:3, story:4 },
-    file:{ commit:0, session:1, 'tool-call':2, story:3, turn:4 },
-    commit:{ file:0, session:1, story:2, 'tool-call':3, turn:4 },
-  };
-
-  // Related objects are grouped and capped per type. A flat top-ten list let a
-  // commit-heavy Session bury every Turn and Tool Call it actually contains.
-  function relatedGroups(selection) {
-    const priority = RELATED_PRIORITY[selection.type] ?? {};
-    const byType = new Map();
-    for (const descriptor of relatedSelections(selection).values()) {
-      const bucket = byType.get(descriptor.type) ?? [];
-      bucket.push(descriptor);
-      byType.set(descriptor.type,bucket);
-    }
-    return [...byType.entries()]
-      .sort((left,right) => (priority[left[0]] ?? 9) - (priority[right[0]] ?? 9))
-      .map(([type,items]) => ({
-        type,
-        total:items.length,
-        items:items.sort((left,right) => descriptorLabel(left).localeCompare(descriptorLabel(right),undefined,{ numeric:true })).slice(0,5),
-      }));
+      ?? { story:null, session, link:{ evidenceKind:'contextual', confidence:'session-view' }, date:null };
   }
 
   function urlForState() {
     const url = new URL(location.href);
-    ['feature','date','story','session','context-session','turn','call','file','commit','view','session-mode','replay-event'].forEach(key => url.searchParams.delete(key));
+    ['feature','date','session','view','session-mode','replay-event'].forEach(key => url.searchParams.delete(key));
     url.searchParams.set('mode',state.mode);
     if (state.mode === 'feature' && state.scope) url.searchParams.set('feature',state.scope);
     if (state.mode === 'date' && state.scope) url.searchParams.set('date',state.scope);
-    const selection = state.selection;
-    if (selection?.type === 'story') url.searchParams.set('story',selection.id);
-    if (selection?.sessionId) url.searchParams.set('session',selection.sessionId);
-    if (selection?.contextSessionId) url.searchParams.set('context-session',selection.contextSessionId);
-    if (selection?.type === 'turn') url.searchParams.set('turn',selection.turnIndex);
-    if (selection?.type === 'tool-call') url.searchParams.set('call',selection.callId);
-    if (selection?.type === 'file') url.searchParams.set('file',selection.path);
-    if (selection?.type === 'commit') url.searchParams.set('commit',selection.hash);
     // Session View is a navigable state, so a copied link reopens the surface
     // the reviewer was reading rather than the workbench behind it.
     if (state.sessionOpen) {
@@ -1672,75 +1314,12 @@
     else history.replaceState(null,'',url);
   }
 
-  function applySelectionPresentation() {
-    const selectedKey = selectionKey(state.selection);
-    const related = state.selection ? relatedSelections(state.selection) : new Map();
-    document.body.classList.toggle('has-evidence-selection',Boolean(selectedKey));
-    // Emphasis is additive. De-emphasising every unrelated object used to fade
-    // the trace a reviewer was reading and forced a full-document repaint.
-    document.querySelectorAll('[data-selectable]').forEach(element => {
-      const key = selectionKey(descriptorFromElement(element));
-      element.classList.toggle('selection-selected',key === selectedKey);
-      element.classList.toggle('selection-related',Boolean(selectedKey) && related.has(key));
-      if (element.matches('button,[role="button"]')) element.setAttribute('aria-pressed',String(key === selectedKey));
-    });
-  }
-
-  function setPickerCollapsed(collapsed,{ automatic = false } = {}) {
+  function setPickerCollapsed(collapsed) {
     const app = document.querySelector('.app');
     const toggle = document.querySelector('[data-toggle-picker]');
     app.classList.toggle('picker-collapsed',collapsed);
-    if (automatic) app.dataset.drawerCollapsedPicker = 'true';
-    else delete app.dataset.drawerCollapsedPicker;
     toggle?.setAttribute('aria-expanded',String(!collapsed));
     toggle?.setAttribute('aria-label',collapsed ? 'Expand capability tree' : 'Collapse capability tree');
-  }
-
-  function renderEvidenceDrawer() {
-    const drawer = document.getElementById('evidence-drawer');
-    const app = document.querySelector('.app');
-    if (!state.selection || state.evidenceDrawerSuppressed) {
-      drawer.hidden = true;
-      document.body.classList.remove('drawer-open');
-      if (app.dataset.drawerCollapsedPicker === 'true') setPickerCollapsed(false);
-      return;
-    }
-    const description = describeSelection(state.selection);
-    const groups = relatedGroups(state.selection);
-    const path = description.path.map((label,index) => '<div class="evidence-path-row' + (index % 2 ? ' edge' : '') + '"><span>' + escape(label) + '</span></div>').join('');
-    const facts = description.facts.length ? '<ul>' + description.facts.map(fact => '<li>' + escape(fact) + '</li>').join('') + '</ul>' : '<div class="evidence-source">No additional retained facts.</div>';
-    const limitations = description.limitations.map(item => escape(item)).join(' ');
-    const relatedMarkup = groups.length
-      ? groups.map(group => '<div class="evidence-related-group"><h4>' + escape(group.type) + '<em>' + group.total + '</em></h4>'
-        + group.items.map(item => '<button type="button" class="evidence-related" ' + selectionAttrs(item) + '><span>' + escape(descriptorLabel(item)) + '</span></button>').join('')
-        + (group.total > group.items.length ? '<div class="evidence-related-more">' + (group.total - group.items.length) + ' more not listed; open Session View to browse them.</div>' : '')
-        + '</div>').join('')
-      : '<div class="evidence-source">No related retained objects.</div>';
-    document.getElementById('evidence-drawer-title').textContent = description.title;
-    document.getElementById('evidence-drawer-body').innerHTML = '<div class="evidence-overview">' + evidence(description.kind) + '<code>' + escape(description.locator) + '</code></div><section class="evidence-section"><h3>Evidence path</h3><div class="evidence-path">' + path + '</div></section><section class="evidence-section"><h3>Why linked · ' + escape(description.strength) + '</h3>' + facts + '</section><section class="evidence-section"><h3>Related objects</h3><div class="evidence-related-list">' + relatedMarkup + '</div></section><section class="evidence-section"><h3>Limitations</h3><div class="evidence-limitations">' + limitations + '</div></section><section class="evidence-section"><h3>Source</h3><div class="evidence-source">' + escape(description.source) + '</div><div class="evidence-copy-status" data-evidence-copy-status aria-live="polite"></div></section>';
-    const open = document.querySelector('[data-open-evidence-session]');
-    const session = sessionForSelection(state.selection);
-    open.hidden = !session || state.sessionOpen;
-    open.dataset.sessionId = session?.sessionId ?? '';
-    drawer.hidden = false;
-    document.body.classList.add('drawer-open');
-    if (!state.sessionOpen && innerWidth > 760 && innerWidth < 1200 && !app.classList.contains('picker-collapsed')) setPickerCollapsed(true,{ automatic:true });
-  }
-
-  function setSelection(selection,{ updateHistory = true, reveal = true } = {}) {
-    state.selection = selection;
-    state.evidenceDrawerSuppressed = !reveal;
-    renderEvidenceDrawer();
-    applySelectionPresentation();
-    if (updateHistory) updateUrl();
-  }
-
-  function clearSelection({ updateHistory = true } = {}) {
-    state.selection = null;
-    state.evidenceDrawerSuppressed = false;
-    renderEvidenceDrawer();
-    applySelectionPresentation();
-    if (updateHistory) updateUrl();
   }
 
   function renderScopeIndex(items) {
@@ -1783,19 +1362,17 @@
     document.getElementById('workbench-list').innerHTML = items.map(workbench).join('') || '<div class="empty-state">No provenance workbench exists in this scope.</div>';
     renderScopeIndex(items);
     document.querySelectorAll('[data-feature-id]').forEach(button => button.classList.toggle('active', state.mode === 'feature' && button.dataset.featureId === state.scope));
-    document.querySelectorAll('[data-date]').forEach(button => button.classList.toggle('active', state.mode === 'date' && button.dataset.date === state.scope));
-    if (state.selection?.type === 'tool-call') {
-      const details = document.querySelector('[data-activity-session="' + CSS.escape(state.selection.sessionId) + '"]');
-      if (details) details.open = true;
-    }
-    applySelectionPresentation();
+    document.querySelectorAll('[data-date]').forEach(button => {
+      const active = state.mode === 'date' && button.dataset.date === state.scope;
+      button.classList.toggle('active',active);
+      button.setAttribute('aria-current',active ? 'date' : 'false');
+    });
   }
 
-  function setMode(mode,{ preserveSelection = false, updateHistory = true } = {}) {
+  function setMode(mode,{ updateHistory = true } = {}) {
     state.mode = mode;
     if (mode === 'feature' && !byNode.has(state.scope)) state.scope = initialFeature;
     if (mode === 'date' && !report.days.some(day => day.date === state.scope)) state.scope = latestDay;
-    if (!preserveSelection) state.selection = null;
     state.collapsedCards.clear();
     document.querySelectorAll('[data-mode]').forEach(button => {
       const active = button.dataset.mode === mode;
@@ -1808,7 +1385,6 @@
       panel.hidden = !active;
     });
     renderScope();
-    renderEvidenceDrawer();
     if (updateHistory) updateUrl();
   }
 
@@ -1834,16 +1410,23 @@
     const chartReset = event.target.closest('[data-chart-reset]');
     if (chartReset) { setZoom(chartReset.dataset.chartReset,0,1); return; }
     const commitEvent = event.target.closest('.chart-commit');
-    if (commitEvent) { showChartDetail(commitEvent); setSelection(descriptorFromElement(commitEvent)); return; }
+    if (commitEvent) {
+      showChartDetail(commitEvent);
+      if (event.target.closest('#session-view')) {
+        const commit = byCommit.get(commitEvent.dataset.commitHash);
+        revealSessionTarget(document.getElementById('session-commit-' + (commit?.shortHash ?? '')));
+      }
+      return;
+    }
     const bin = event.target.closest('[data-chart-bin]');
     if (bin) {
       const sessionId = bin.dataset.sessionId;
       // Inside Session View the strip is a minimap: a bar always scrolls the
       // list to the calls under it, and a multi-call bar zooms in as well.
       const inSession = event.target.closest('#session-view');
-      const locate = () => inSession && revealSelectionTarget(sessionSelectionTarget({ type:'tool-call', sessionId, callId:bin.dataset.callId },state.sessionItem));
-      if (bin.closest('.session-turn-activity')) { setSelection({ type:'tool-call', sessionId, callId:bin.dataset.callId }); locate(); return; }
-      if (Number(bin.dataset.binCount) === 1) { setSelection({ type:'tool-call', sessionId, callId:bin.dataset.callId }); locate(); return; }
+      const locate = () => inSession && revealSessionTarget(document.getElementById('session-call-' + bin.dataset.callId));
+      if (bin.closest('.session-turn-activity')) { locate(); return; }
+      if (Number(bin.dataset.binCount) === 1) { locate(); return; }
       const surface = bin.ownerSVGElement?.querySelector('[data-chart-surface]');
       const fullMin = Number(surface?.dataset.fullMin);
       const fullWidth = Math.max(1,Number(surface?.dataset.fullMax) - fullMin);
@@ -1857,9 +1440,7 @@
     const mark = event.target.closest('.chart-mark, .chart-ribbon-block');
     if (mark) {
       showChartDetail(mark);
-      const descriptor = descriptorFromElement(mark);
-      setSelection(descriptor);
-      if (event.target.closest('#session-view')) revealSelectionTarget(sessionSelectionTarget(descriptor,state.sessionItem));
+      if (event.target.closest('#session-view')) revealSessionTarget(document.getElementById('session-call-' + mark.dataset.callId));
       return;
     }
     const mode = event.target.closest('[data-mode]');
@@ -1872,9 +1453,6 @@
     }
     const feature = event.target.closest('[data-feature-id]');
     if (feature) {
-      // Selecting a capability node only navigates scope. It must not set the
-      // evidence selection, so the detail header stays unhighlighted until the
-      // reviewer clicks an actual object inside the workbench.
       state.scope = feature.dataset.featureId;
       setTreeItemExpanded(feature.closest('[data-tree-item]'),true);
       setMode('feature');
@@ -1900,13 +1478,13 @@
     const openSession = event.target.closest('[data-open-session]');
     if (openSession) {
       const item = itemForSession(bySession.get(openSession.dataset.openSession));
-      if (item) openSessionView(item,state.selection,openSession);
+      if (item) openSessionView(item,openSession);
       return;
     }
     const openSessionFor = event.target.closest('[data-open-session-for]');
     if (openSessionFor) {
       const item = itemForSession(bySession.get(openSessionFor.dataset.openSessionFor));
-      if (item) openSessionView(item,state.selection,openSessionFor);
+      if (item) openSessionView(item,openSessionFor);
       return;
     }
     const deliveryToggle = event.target.closest('[data-toggle-delivery]');
@@ -1943,8 +1521,7 @@
     if (replayFile) {
       const filePath = replayFile.dataset.replayFile;
       const file = replayModel()?.files.find(candidate => candidate.path === filePath);
-      if (file?.eventIds[0]) setReplayEvent(file.eventIds[0],{ syncSelection:false, updateHistory:false });
-      setSelection({ type:'file', path:filePath, contextSessionId:state.sessionItem?.session?.sessionId ?? null },{ reveal:false });
+      if (file?.eventIds[0]) setReplayEvent(file.eventIds[0],{ updateHistory:false });
       return;
     }
     const replayStep = event.target.closest('[data-replay-step]');
@@ -1957,34 +1534,7 @@
       if (state.replayPlaying) scheduleReplay();
       return;
     }
-    if (event.target.closest('[data-replay-explain]')) {
-      const current = replayCurrentEvent();
-      if (current?.selection) setSelection(current.selection);
-      return;
-    }
-    const selectable = event.target.closest('[data-selectable]');
-    if (selectable) { setSelection(descriptorFromElement(selectable)); return; }
     if (event.target.closest('[data-close-session]')) { closeSessionView(); return; }
-    if (event.target.closest('[data-close-evidence]')) { clearSelection(); return; }
-    const openEvidenceSession = event.target.closest('[data-open-evidence-session]');
-    if (openEvidenceSession) {
-      const item = itemForSession(bySession.get(openEvidenceSession.dataset.sessionId));
-      if (item) openSessionView(item,state.selection,openEvidenceSession);
-      return;
-    }
-    if (event.target.closest('[data-copy-evidence-link]')) {
-      const status = document.querySelector('[data-evidence-copy-status]');
-      if (!navigator.clipboard?.writeText) {
-        if (status) status.textContent = 'Copy unavailable; use the current address.';
-        return;
-      }
-      navigator.clipboard.writeText(location.href).then(() => {
-        if (status) status.textContent = 'Evidence link copied.';
-      }).catch(() => {
-        if (status) status.textContent = 'Copy unavailable; use the current address.';
-      });
-      return;
-    }
     if (event.target.closest('[data-session-context]')) {
       if (!state.sessionItem) return;
       document.getElementById('continuation-context').textContent = continuationText(state.sessionItem);
@@ -2042,7 +1592,6 @@
     // empty, because an already-open Details never fires toggle again.
     renderActivityChart(target);
     chartObserver?.observe(target);
-    requestAnimationFrame(() => target.querySelector('.selection-selected')?.scrollIntoView({ block:'nearest', inline:'center' }));
   }, true);
 
   document.addEventListener('change', event => {
@@ -2168,12 +1717,6 @@
       event.preventDefault();
       return;
     }
-    const selectable = event.target.closest?.('[data-selectable]');
-    if (selectable && !selectable.matches('button') && (event.key === 'Enter' || event.key === ' ')) {
-      setSelection(descriptorFromElement(selectable));
-      event.preventDefault();
-      return;
-    }
     const modeTab = event.target.closest?.('[data-mode]');
     if (modeTab && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
       const nextMode = modeTab.dataset.mode === 'feature' ? 'date' : 'feature';
@@ -2201,7 +1744,6 @@
     if (event.key === 'Escape') {
       if (!document.getElementById('continuation-backdrop').hidden) document.getElementById('continuation-backdrop').hidden = true;
       else if (state.sessionOpen) closeSessionView();
-      else if (state.selection) clearSelection();
     }
   });
 
@@ -2213,30 +1755,25 @@
     const mode = params.get('mode') === 'date' ? 'date' : 'feature';
     const scope = mode === 'feature' ? params.get('feature') : params.get('date');
     if (mode === 'feature' ? byNode.has(scope) : report.days.some(day => day.date === scope)) state.scope = scope;
-    state.selection = selectionFromUrl(params);
-    setMode(mode,{ preserveSelection:true, updateHistory:false });
+    setMode(mode,{ updateHistory:false });
     const session = bySession.get(params.get('session'));
     if (params.get('view') === 'session' && session) {
       state.sessionMode = params.get('session-mode') === 'replay' ? 'replay' : 'trace';
       state.replayEventId = params.get('replay-event');
       const item = itemForSession(session);
-      if (item) openSessionView(item,state.selection,state.sessionTrigger,{ updateHistory:false });
+      if (item) openSessionView(item,state.sessionTrigger,{ updateHistory:false });
     } else if (state.sessionOpen) {
       state.sessionPushed = false;
       teardownSessionView();
     }
-    renderEvidenceDrawer();
-    applySelectionPresentation();
     state.syncingHistory = false;
   });
 
-  state.selection = selectionFromUrl();
   initializeTree();
-  setMode(state.mode,{ preserveSelection:true, updateHistory:false });
-  if (state.selection) setSelection(state.selection,{ updateHistory:false });
+  setMode(state.mode,{ updateHistory:false });
   if (initialParams.get('view') === 'session') {
     const item = itemForSession(bySession.get(initialParams.get('session')));
-    if (item) openSessionView(item,state.selection,null,{ updateHistory:false });
+    if (item) openSessionView(item,null,{ updateHistory:false });
   }
   updateUrl();
 })();

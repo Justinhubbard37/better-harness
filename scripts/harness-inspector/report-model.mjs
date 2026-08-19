@@ -672,7 +672,6 @@ function buildSessionReplay(session, commits) {
       body: safeText(turn.prompt?.text, 1_500, "Prompt unavailable after privacy filtering"),
       timeBasis: promptAt !== null ? "observed" : turnStart !== null ? "turn-boundary" : "sequence-only",
       ...(promptAt !== null || turnStart !== null ? { atMs: promptAt ?? turnStart } : {}),
-      selection: { type: "turn", sessionId: session.sessionId, turnIndex: turn.index },
       files: [],
     });
 
@@ -688,7 +687,6 @@ function buildSessionReplay(session, commits) {
           title: `Intermediate response ${noteIndex}`,
           body: safeText(step.text, 400, "Intermediate response unavailable"),
           timeBasis: "sequence-only",
-          selection: { type: "turn", sessionId: session.sessionId, turnIndex: turn.index },
           files: [],
         });
         continue;
@@ -711,7 +709,6 @@ function buildSessionReplay(session, commits) {
         timeBasis: atMs !== null ? "observed" : "sequence-only",
         ...(atMs !== null ? { atMs } : {}),
         ...(call.durationStatus === "observed" && Number.isFinite(call.durationMs) ? { durationMs: call.durationMs } : {}),
-        selection: { type: "tool-call", sessionId: session.sessionId, callId: call.id },
         files,
       });
     }
@@ -727,7 +724,6 @@ function buildSessionReplay(session, commits) {
       availability: turn.response ? "retained" : "unavailable",
       timeBasis: responseAt !== null ? "turn-boundary" : "sequence-only",
       ...(responseAt !== null ? { atMs: responseAt } : {}),
-      selection: { type: "turn", sessionId: session.sessionId, turnIndex: turn.index },
       files: [],
     });
   }
@@ -758,7 +754,6 @@ function buildSessionReplay(session, commits) {
       timeBasis: atMs !== null ? "observed" : "sequence-only",
       ...(atMs !== null ? { atMs } : {}),
       ...(call.durationStatus === "observed" && Number.isFinite(call.durationMs) ? { durationMs: call.durationMs } : {}),
-      selection: { type: "tool-call", sessionId: session.sessionId, callId: call.id },
       files,
     };
     if (atMs === null) events.push(event);
@@ -780,7 +775,6 @@ function buildSessionReplay(session, commits) {
       meta: link.evidenceKind,
       timeBasis: "observed",
       atMs,
-      selection: { type: "commit", hash: commit.hash, contextSessionId: session.sessionId },
       files: commit.files.map((file) => file.path),
     });
   }

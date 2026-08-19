@@ -14,6 +14,9 @@ Adding support for a new Coding Agent host starts with
   components, interaction states, or responsive behavior.
 - Keep `AGENTS.md` as the routing and enforcement layer; put reusable tokens,
   visual rationale, component rules, and do/don't guidance in `DESIGN.md`.
+- Treat Studio as a VS Code-inspired docked workbench: prefer panes, rows, tabs,
+  toolbars, and editor views over cards, and define pointer and keyboard behavior
+  before adding or changing an interaction.
 - Map Studio styles to shared semantic tokens. Do not introduce one-off colors,
   font sizes, radii, shadows, an unbundled font family, or broad `!important`
   overrides when the design contract already defines the role.

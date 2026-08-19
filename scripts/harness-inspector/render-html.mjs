@@ -58,10 +58,7 @@ function featurePicker(tree) {
       ? `<ul class="tree-children" role="group">${children.map(renderNode).join("")}</ul>`
       : "";
     const badge = node.evidence === "declared" ? "" : `<span class="evidence ${escapeHtml(node.evidence)}">${escapeHtml(node.evidence)}</span>`;
-    const selection = node.type === "story"
-      ? ` data-selectable data-selection-type="story" data-story-id="${escapeHtml(node.id)}"`
-      : "";
-    return `<li class="tree-item ${node.type}" role="treeitem" data-tree-item data-tree-node-id="${escapeHtml(node.id)}"${hasChildren ? ' aria-expanded="true"' : ""}><div class="tree-line">${toggle}<button class="tree-row ${node.type}" type="button" data-feature-id="${escapeHtml(node.id)}"${selection}><span class="tree-check ${status}" role="img" aria-label="${statusLabel}"><span aria-hidden="true">${status === "complete" ? "✓" : ""}</span></span><span class="tree-copy"><strong>${escapeHtml(node.title)}</strong><small>${escapeHtml(meta)}</small></span>${badge}</button></div>${group}</li>`;
+    return `<li class="tree-item ${node.type}" role="treeitem" data-tree-item data-tree-node-id="${escapeHtml(node.id)}"${hasChildren ? ' aria-expanded="true"' : ""}><div class="tree-line">${toggle}<button class="tree-row ${node.type}" type="button" data-feature-id="${escapeHtml(node.id)}"><span class="tree-check ${status}" role="img" aria-label="${statusLabel}"><span aria-hidden="true">${status === "complete" ? "✓" : ""}</span></span><span class="tree-copy"><strong>${escapeHtml(node.title)}</strong><small>${escapeHtml(meta)}</small></span>${badge}</button></div>${group}</li>`;
   };
   const roots = tree.roots.map((id) => byId.get(id)).filter(Boolean);
   return `<ul class="capability-tree" role="tree" aria-label="Capability tree">${roots.map(renderNode).join("")}</ul>`;
@@ -69,11 +66,34 @@ function featurePicker(tree) {
 
 function datePicker(days) {
   if (days.length === 0) return '<p class="picker-empty">No timestamped sessions or commits in this window.</p>';
-  return [...days].reverse().map((day) => {
-    const date = new Date(`${day.date}T00:00:00.000Z`);
-    const weekday = new Intl.DateTimeFormat("en", { weekday: "short", timeZone: "UTC" }).format(date);
-    return `<button class="date-cell" data-date="${day.date}"><span><small>${weekday}</small><strong>${date.getUTCDate()}</strong></span><em>${day.sessionIds.length} sessions</em><em>${day.commitHashes.length} commits</em></button>`;
-  }).join("");
+  const byDate = new Map(days.map((day) => [day.date, day]));
+  const first = new Date(`${days[0].date}T00:00:00.000Z`);
+  const last = new Date(`${days.at(-1).date}T00:00:00.000Z`);
+  const gridStart = new Date(first);
+  gridStart.setUTCDate(gridStart.getUTCDate() - ((gridStart.getUTCDay() + 6) % 7));
+  const gridEnd = new Date(last);
+  gridEnd.setUTCDate(gridEnd.getUTCDate() + ((7 - gridEnd.getUTCDay()) % 7));
+  const sameMonth = first.getUTCFullYear() === last.getUTCFullYear() && first.getUTCMonth() === last.getUTCMonth();
+  const calendarLabel = sameMonth
+    ? new Intl.DateTimeFormat("en", { month: "long", year: "numeric", timeZone: "UTC" }).format(first)
+    : `${new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" }).format(first)}–${new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(last)}`;
+  const cells = [];
+  for (const cursor = new Date(gridStart); cursor <= gridEnd; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    const date = cursor.toISOString().slice(0, 10);
+    const day = byDate.get(date);
+    const number = cursor.getUTCDate();
+    if (!day) {
+      cells.push(`<span class="date-cell empty" aria-hidden="true"><time datetime="${date}">${number}</time></span>`);
+      continue;
+    }
+    const sessions = day.sessionIds.length;
+    const commits = day.commitHashes.length;
+    const label = new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }).format(cursor)
+      + `, ${sessions} session${sessions === 1 ? "" : "s"}, ${commits} commit${commits === 1 ? "" : "s"}`;
+    cells.push(`<button class="date-cell" type="button" data-date="${date}" aria-label="${escapeHtml(label)}"><time datetime="${date}">${number}</time><small><span>${sessions}s</span><span>${commits}c</span></small></button>`);
+  }
+  const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => `<span>${day}</span>`).join("");
+  return `<div class="date-calendar"><header><strong>${escapeHtml(calendarLabel)}</strong><span>UTC</span></header><div class="date-weekdays" aria-hidden="true">${weekdays}</div><div class="date-grid">${cells.join("")}</div><div class="date-legend"><span>sessions</span><span>commits</span></div></div>`;
 }
 
 // Badge names the providers that contributed sessions; the requested filter
@@ -116,7 +136,6 @@ export function renderHarnessInspectorHtml(report, {
     FEATURE_NODE_COUNT: report.featureTree.nodes.length,
     FEATURE_PICKER: featurePicker(report.featureTree),
     DATE_PANEL_CLASS: initialMode === "date" ? "active" : "",
-    DAY_COUNT: report.days.length,
     DATE_PICKER: datePicker(report.days),
     PLATFORM: escapeHtml(platformBadge(report)),
     SESSION_COUNT: report.sessions.length,
