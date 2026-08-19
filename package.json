@@ -92,6 +92,7 @@
     "harness-studio:test:browser": "npm run test:browser -w @qoder-ai/harness-studio",
     "inspector": "node scripts/harness-inspector/cli.mjs render",
     "inspector:open": "node scripts/harness-inspector/cli.mjs render --open",
+    "inspector:visual-check": "node scripts/harness-inspector/visual-contract-check.mjs",
     "pack:verify": "node scripts/npm-package/verify-pack.mjs",
     "publish:dry-run": "npm publish --dry-run --access public --registry https://registry.npmjs.org",
     "prepublishOnly": "npm run check",

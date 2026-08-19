@@ -142,8 +142,11 @@
   };
   const evidence = (kind, label = kind) => '<span class="evidence ' + escape(kind) + '">' + escape(label) + '</span>';
   const isDirectCommitLink = link => link?.evidenceKind === 'explicit' || link?.evidenceKind === 'observed-commit';
-  const FAMILY_COLORS = { inspect:'#4f73b6', change:'#7658b5', execute:'#64748b', verify:'#258675', coordinate:'#b27627', deliver:'#628b37', other:'#8993a2' };
-  const familyColor = family => FAMILY_COLORS[family] ?? FAMILY_COLORS.other;
+  // Colour lives in workbench.css. The chart and the call list read the same
+  // family and state custom properties so nothing forks a second palette.
+  const FAMILY_KEYS = new Set(['inspect','change','execute','verify','coordinate','deliver','other']);
+  const familyColor = family => 'var(--family-' + (FAMILY_KEYS.has(family) ? family : 'other') + ')';
+  const FAILED_COLOR = 'var(--color-danger)';
 
   // Turn vocabulary comes from one projected object so the workbench lane, the
   // Session View titlebar, and the filter counts can never disagree.
@@ -528,7 +531,7 @@
         return '<rect class="chart-ribbon-block' + (failed ? ' failed' : '') + '" data-session-id="' + escape(session.sessionId) + '" data-call-id="' + escape(call.id) + '"'
           + ' data-chart-detail="' + escape(label) + '"'
           + ' x="' + left + '" y="' + ribbonTop + '" width="' + blockWidth + '" height="' + ribbonHeight + '"'
-          + ' fill="' + (failed ? '#c34f4f' : familyColor(call.family)) + '"'
+          + ' fill="' + (failed ? FAILED_COLOR : familyColor(call.family)) + '"'
           + ' tabindex="0" role="button" aria-label="' + escape(label) + '"><title>' + escape(label) + '</title></rect>';
       }).join('');
       const toolMs = inDomain.reduce((sum,call) => sum + (call.durationStatus === 'observed' && Number.isFinite(call.durationMs) ? call.durationMs : 0),0);
@@ -550,7 +553,7 @@
           ? Math.max(3,Math.min(plotWidth,timelineScale.durationWidth(position,call.durationMs)))
           : 4;
         const failed = call.status === 'failed';
-        const tone = failed ? '#c34f4f' : familyColor(call.family);
+        const tone = failed ? FAILED_COLOR : familyColor(call.family);
         const stamp = formatStamp(call.startedAt);
         const label = call.id + ' · ' + (call.actionLabel ?? call.toolName) + ' · ' + call.toolName
           + (stamp ? ' · ' + stamp + ' UTC' : '')
@@ -561,14 +564,14 @@
         return '<rect class="chart-mark' + (failed ? ' failed' : '') + '" data-session-id="' + escape(session.sessionId) + '" data-call-id="' + escape(call.id) + '"'
           + ' data-chart-detail="' + escape(label) + '"'
           + ' x="' + xFor(position) + '" y="' + (laneCenter(lane) - markHeight / 2) + '" width="' + markWidth + '" height="' + markHeight + '" rx="2"'
-          + ' fill="' + (timed || failed ? tone : '#ffffff') + '" stroke="' + tone + '" stroke-width="' + (timed || failed ? 1 : 1.5) + '"'
+          + ' fill="' + (timed || failed ? tone : 'var(--color-surface)') + '" stroke="' + tone + '" stroke-width="' + (timed || failed ? 1 : 1.5) + '"'
           + ' tabindex="0" role="button" aria-label="' + escape(label) + '"><title>' + escape(label) + '</title></rect>';
       }).join('');
     } else {
       marksMarkup = [...bins.values()].map(bin => {
         const barHeight = 4 + Math.sqrt(bin.count / maxBin) * (rowHeight - 11);
         const top = laneTop(bin.lane) + rowHeight - 3 - barHeight;
-        const tone = bin.failed > 0 ? '#c34f4f' : familyColor(bin.family);
+        const tone = bin.failed > 0 ? FAILED_COLOR : familyColor(bin.family);
         const slice = domain.timeBasis
           ? formatShortClock(bin.min) + '–' + formatShortClock(bin.max) + ' UTC'
           : 'calls ' + Math.round(bin.min) + '–' + Math.round(bin.max);
