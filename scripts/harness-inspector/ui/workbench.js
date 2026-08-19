@@ -325,27 +325,14 @@
     const session = item.session;
     const title = itemTitle(item);
     const sessionMeta = session
-      ? '<span>' + escape(formatClock(session.firstSeen)) + '</span><span class="workbench-provider">' + escape(session.platform) + '</span><span>' + escape(formatDuration(session.durationMs)) + '</span>'
+      ? '<span class="workbench-provider">' + escape(session.platform) + '</span><span>' + escape(formatClock(session.firstSeen)) + '</span><span>' + escape(formatDuration(session.durationMs)) + '</span>'
       : '<span>' + (item.date ? 'Unlinked commits' : 'No linked session') + '</span>';
     const sessionAction = session ? '<button class="prepare-button" data-open-session="' + escape(session.sessionId) + '">Open session</button>' : '';
     // The title identifies the session; explicit commands own all navigation.
-    const header = '<div class="workbench-title-line"><h3 title="' + escape(title) + '">' + escape(title) + '</h3><div class="workbench-meta" title="' + escape(session?.locator ?? '') + '">' + sessionMeta + '</div></div>';
+    const header = '<div class="workbench-title-line"><div class="workbench-meta" title="' + escape(session?.locator ?? '') + '">' + sessionMeta + '</div><h3 title="' + escape(title) + '">' + escape(title) + '</h3></div>';
     const collapsed = state.collapsedCards.has(index);
     const collapseToggle = '<button class="card-collapse" type="button" data-toggle-card="' + index + '" aria-expanded="' + String(!collapsed) + '" aria-label="' + (collapsed ? 'Expand' : 'Collapse') + ' this workbench">' + (collapsed ? '+' : '−') + '</button>';
-    return '<article class="workbench' + (collapsed ? ' card-collapsed' : '') + '" id="workbench-card-' + index + '" data-workbench="' + index + '" data-session-context="' + escape(session?.sessionId ?? '') + '"><header class="workbench-head">' + header + '<div class="head-actions">' + sessionAction + collapseToggle + '</div></header><div class="workbench-grid">' + promptLane(item) + '<div class="lane-resizer prompt" data-resize-lane="prompt" role="separator" aria-orientation="vertical" aria-label="Resize prompt and activity lanes" tabindex="0"></div>' + activityLane(item) + '<div class="lane-resizer delivery" data-resize-lane="delivery" role="separator" aria-orientation="vertical" aria-label="Resize activity and delivery lanes" tabindex="0"></div>' + deliveryLane(item,commits) + '</div></article>';
-  }
-
-  function continuationText(item) {
-    const commits = commitsFor(item);
-    const lines = ['Harness Inspector continuation context (read-only)',''];
-    if (item.story) lines.push('Story: ' + item.story.title + ' [' + item.story.id + ']','Story evidence: ' + item.story.evidence);
-    if (item.session) lines.push('Session locator: ' + item.session.locator,'Session window: ' + (item.session.firstSeen ?? 'unknown') + ' — ' + (item.session.lastSeen ?? 'unknown'),'Dialogue turns: ' + turnCoverageOf(item.session).turnCount,'Normalized tool calls: ' + item.session.toolActivity.totalCalls);
-    if (item.session?.prompts?.length) lines.push('','Retained user turns:',...item.session.prompts.map(prompt => '- ' + (prompt.turnIndex ? 'Turn ' + prompt.turnIndex : 'unplaced') + '. ' + prompt.text));
-    if (commits.length) lines.push('','Commits:',...commits.map(commit => '- ' + commit.shortHash + ' ' + commit.subject));
-    const overlaps = commits.flatMap(commit => item.session?.commitLinks?.find(link => link.hash === commit.hash)?.overlappingFiles ?? []);
-    if (overlaps.length) lines.push('','Exact shared paths (context only unless the commit link is explicit/correlated):',...[...new Set(overlaps)].map(file => '- ' + file));
-    lines.push('','Boundary: this context does not restore code, mutate Git/workspace state, or resume a native Codex session.');
-    return lines.join('\\n');
+    return '<article class="workbench' + (collapsed ? ' card-collapsed' : '') + '" id="workbench-card-' + index + '" data-workbench="' + index + '"><header class="workbench-head">' + header + '<div class="head-actions">' + sessionAction + collapseToggle + '</div></header><div class="workbench-grid">' + promptLane(item) + '<div class="lane-resizer prompt" data-resize-lane="prompt" role="separator" aria-orientation="vertical" aria-label="Resize prompt and activity lanes" tabindex="0"></div>' + activityLane(item) + '<div class="lane-resizer delivery" data-resize-lane="delivery" role="separator" aria-orientation="vertical" aria-label="Resize activity and delivery lanes" tabindex="0"></div>' + deliveryLane(item,commits) + '</div></article>';
   }
 
   // ---------------------------------------------------------------- activity chart
@@ -915,12 +902,21 @@
     const coverage = turnCoverageOf(session);
     const responseCount = session.dialogue?.responseCount ?? turns.filter(turn => turn.response).length;
     const noteCount = session.dialogue?.noteCount ?? turns.reduce((sum,turn) => sum + turn.steps.filter(step => step.kind === 'note').length,0);
-    const truncatedNote = session.dialogue?.truncated ? '<span class="session-warning">Turn projection truncated</span>' : '';
+    const projectionFact = session.dialogue?.truncated ? '<div><dt>Projection</dt><dd>Truncated</dd></div>' : '';
     const jumpOptions = turns.map(turn => '<option value="session-' + escape(turn.anchorId ?? ('turn-' + turn.index)) + '">In [' + turn.index + ']' + (Number.isFinite(turn.startMs) ? ' · ' + formatShortClock(turn.startMs) : '') + '</option>').join('')
       + (unplacedMarkup ? '<option value="session-unplaced">Unplaced evidence</option>' : '')
       + (outsideMarkup ? '<option value="session-outside-commits">Commits outside turn windows</option>' : '');
     const timeline = turnEvents + unplacedMarkup + outsideMarkup || '<div class="empty-state">No retained dialogue or observed evidence exists for this session.</div>';
-    const sessionOutline = '<aside class="session-sidebar" aria-label="Session outline"><header><div><strong>Session outline</strong><span>Read-only</span></div></header><section><h3>Cells</h3><select class="jump-select" data-session-jump>' + jumpOptions + '</select><div class="session-bulk"><button type="button" data-expand-tools="open">Expand process</button><button type="button" data-expand-tools="close">Collapse process</button></div></section><details class="session-filter-disclosure"><summary><span>Evidence filters</span><em>' + session.toolActivity.totalCalls + ' calls</em></summary><div class="session-filter-list"><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="prompts"><span>Prompts</span><em>' + turns.length + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="responses"><span>Results</span><em>' + responseCount + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="intermediate"><span>Intermediate</span><em>' + noteCount + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="commits"><span>Commits</span><em>' + commits.length + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="tools"><span>Tool calls</span><em>' + session.toolActivity.totalCalls + '</em></label>' + filters + '<label class="session-filter subtype"><input type="checkbox" checked data-session-file-filter><span>File paths</span><em>' + session.toolActivity.files.length + '</em></label></div></details><section class="session-outline-facts"><h3>Session</h3><dl><div><dt>Source</dt><dd>' + escape(sourceLabel) + '</dd></div><div><dt>Runtime</dt><dd>' + escape(session.platform) + '</dd></div><div><dt>Model</dt><dd>' + escape(session.models.join(', ') || 'unavailable') + '</dd></div><div><dt>Turns</dt><dd>' + coverage.turnCount + '</dd></div><div><dt>Evidence</dt><dd>' + session.toolActivity.totalCalls + ' calls</dd></div></dl></section></aside>';
+    const sessionFacts = '<div><dt>Source</dt><dd>' + escape(sourceLabel) + '</dd></div>'
+      + '<div><dt>Runtime</dt><dd>' + escape(session.platform) + '</dd></div>'
+      + '<div><dt>Model</dt><dd title="' + escape(session.models.join(', ') || 'unavailable') + '">' + escape(session.models.join(', ') || 'unavailable') + '</dd></div>'
+      + '<div><dt>Duration</dt><dd>' + escape(formatDuration(session.durationMs)) + '</dd></div>'
+      + '<div><dt>Turns</dt><dd title="' + escape(coverageTitle(session)) + '">' + coverage.turnCount + '</dd></div>'
+      + '<div><dt>Tool calls</dt><dd>' + session.toolActivity.totalCalls + '</dd></div>'
+      + '<div><dt>File edits</dt><dd>' + session.fileEditCount + '</dd></div>'
+      + '<div><dt>Token usage</dt><dd>' + escape(formatTokens(session.tokenUsage)) + '</dd></div>'
+      + projectionFact;
+    const sessionOutline = '<aside class="session-sidebar" aria-label="Session outline"><header><div><strong>Session outline</strong><span>Read-only</span></div></header><section><h3>Cells</h3><select class="jump-select" data-session-jump>' + jumpOptions + '</select><div class="session-bulk"><button type="button" data-expand-tools="open">Expand process</button><button type="button" data-expand-tools="close">Collapse process</button></div></section><details class="session-filter-disclosure"><summary><span>Evidence filters</span><em>' + session.toolActivity.totalCalls + ' calls</em></summary><div class="session-filter-list"><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="prompts"><span>Prompts</span><em>' + turns.length + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="responses"><span>Results</span><em>' + responseCount + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="intermediate"><span>Intermediate</span><em>' + noteCount + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="commits"><span>Commits</span><em>' + commits.length + '</em></label><label class="session-filter"><input type="checkbox" checked data-session-kind-filter="tools"><span>Tool calls</span><em>' + session.toolActivity.totalCalls + '</em></label>' + filters + '<label class="session-filter subtype"><input type="checkbox" checked data-session-file-filter><span>File paths</span><em>' + session.toolActivity.files.length + '</em></label></div></details><section class="session-outline-facts"><h3>Session</h3><dl>' + sessionFacts + '</dl></section></aside>';
     const overallActivity = session.toolActivity.totalCalls ? '<section class="session-overall-activity"><details class="session-axis-panel" data-session-axis><summary><span>Overall session activity <em>' + session.toolActivity.totalCalls + ' calls</em></span><small>All retained Turns and unplaced calls</small></summary><div class="session-axis" data-activity-chart="' + escape(session.sessionId) + '"></div></details></section>' : '';
     const tracePanel = '<section class="session-mode-panel" id="session-panel-trace" role="tabpanel" aria-labelledby="session-tab-trace" data-session-mode-panel="trace">'
       + '<div class="session-layout"><main class="session-notebook-main"><div class="session-timeline" aria-label="Session run cells">' + timeline + overallActivity + '</div></main>' + sessionOutline + '</div></section>';
@@ -929,7 +925,7 @@
       + '<div class="replay-layout"><main class="replay-stage" tabindex="0" aria-label="Current replay event; J and L move between events, Space toggles playback" data-replay-stage aria-live="polite"></main><aside class="replay-index"><div class="replay-index-tabs" role="tablist" aria-label="Replay index"><button type="button" id="replay-index-tab-events" role="tab" aria-controls="replay-index-body" aria-selected="true" tabindex="0" data-replay-index-tab="events">Events <span>' + session.replay.eventCount + '</span></button><button type="button" id="replay-index-tab-files" role="tab" aria-controls="replay-index-body" aria-selected="false" tabindex="-1" data-replay-index-tab="files">Files <span>' + session.replay.files.length + '</span></button></div><div class="replay-index-body" id="replay-index-body" role="tabpanel" aria-labelledby="replay-index-tab-events" data-replay-index-body></div></aside></div>'
       + '<section class="replay-transport" aria-label="Replay controls"><div class="replay-rail-head"><strong>Session timeline</strong><span data-replay-range></span></div><div class="replay-rail" data-replay-rail></div><div class="replay-rail-legend">' + replayLegendMarkup(session.replay) + '</div><div class="replay-controls"><button type="button" data-replay-step="-1">Previous event <kbd>J</kbd></button><button type="button" class="replay-play" data-replay-play>Play <kbd>Space</kbd></button><button type="button" data-replay-step="1">Next event <kbd>L</kbd></button><span class="replay-position" data-replay-position></span><div class="replay-speeds" aria-label="Replay speed">' + [1,2,4,8].map(speed => '<button type="button" data-replay-speed="' + speed + '" aria-pressed="' + String(speed === state.replaySpeed) + '">' + speed + 'x</button>').join('') + '</div></div></section></section>';
     const modeTabs = '<div class="session-mode-tabs" role="tablist" aria-label="Session view mode"><button type="button" id="session-tab-trace" role="tab" aria-controls="session-panel-trace" aria-selected="true" tabindex="0" data-session-mode="trace">Trace</button><button type="button" id="session-tab-replay" role="tab" aria-controls="session-panel-replay" aria-selected="false" tabindex="-1" data-session-mode="replay">Replay</button></div>';
-    return { title, html:'<div class="session-shell"><header class="session-titlebar"><div class="session-notebook-brand"><strong>Harness Inspector</strong><span>Session Notebook</span></div><div class="session-title-copy"><h2>' + escape(title) + '</h2><div class="session-meta"><span class="session-platform">' + escape(session.platform) + '</span><span>' + escape(session.models.join(', ') || 'model unavailable') + '</span><span>' + formatDuration(session.durationMs) + '</span><span title="' + escape(coverageTitle(session)) + '">' + coverage.turnCount + ' turns</span><span>' + session.toolActivity.totalCalls + ' tool calls</span><span>' + session.fileEditCount + ' file edits</span><span>' + escape(formatTokens(session.tokenUsage)) + '</span>' + truncatedNote + '</div></div><div class="session-title-actions">' + modeTabs + '<button class="session-context-button" data-session-context aria-label="Continuation packet"><span class="session-context-wide" aria-hidden="true">Continuation packet</span><span class="session-context-short" aria-hidden="true">Packet</span></button></div></header>' + tracePanel + replayPanel + '</div>' };
+    return { title, html:'<div class="session-shell"><header class="session-titlebar"><div class="session-notebook-brand"><strong>Harness Inspector</strong></div><div class="session-title-copy"><h2>' + escape(title) + '</h2></div><div class="session-title-actions">' + modeTabs + '</div></header>' + tracePanel + replayPanel + '</div>' };
   }
 
   function replayModel() {
@@ -1367,6 +1363,16 @@
       button.classList.toggle('active',active);
       button.setAttribute('aria-current',active ? 'date' : 'false');
     });
+    const activeDate = state.mode === 'date' ? document.querySelector('[data-date="' + state.scope + '"]') : null;
+    const dateSummaryLabel = document.querySelector('[data-date-summary-label]');
+    const dateSummaryMeta = document.querySelector('[data-date-summary-meta]');
+    if (activeDate && dateSummaryLabel && dateSummaryMeta) {
+      const selectedDate = new Date(activeDate.dataset.date + 'T00:00:00.000Z');
+      dateSummaryLabel.textContent = new Intl.DateTimeFormat('en',{ weekday:'short', month:'short', day:'numeric', timeZone:'UTC' }).format(selectedDate);
+      const sessions = Number(activeDate.dataset.sessionCount) || 0;
+      const commits = Number(activeDate.dataset.commitCount) || 0;
+      dateSummaryMeta.textContent = sessions + ' session' + (sessions === 1 ? '' : 's') + ' · ' + commits + ' commit' + (commits === 1 ? '' : 's');
+    }
   }
 
   function setMode(mode,{ updateHistory = true } = {}) {
@@ -1535,14 +1541,6 @@
       return;
     }
     if (event.target.closest('[data-close-session]')) { closeSessionView(); return; }
-    if (event.target.closest('[data-session-context]')) {
-      if (!state.sessionItem) return;
-      document.getElementById('continuation-context').textContent = continuationText(state.sessionItem);
-      document.getElementById('continuation-backdrop').hidden = false;
-      document.getElementById('continuation-close').focus();
-      return;
-    }
-    if (event.target.closest('[data-close-continuation]:not(#continuation-backdrop)') || event.target.id === 'continuation-backdrop') document.getElementById('continuation-backdrop').hidden = true;
   });
 
   document.addEventListener('mouseover', event => {
@@ -1742,8 +1740,7 @@
       return;
     }
     if (event.key === 'Escape') {
-      if (!document.getElementById('continuation-backdrop').hidden) document.getElementById('continuation-backdrop').hidden = true;
-      else if (state.sessionOpen) closeSessionView();
+      if (state.sessionOpen) closeSessionView();
     }
   });
 

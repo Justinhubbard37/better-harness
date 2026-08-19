@@ -384,8 +384,10 @@ occupy more attention than the active task.
 - Selection uses a filled or soft-blue state plus an `aria-current` or selected
   semantic. Availability uses a labelled status, not a colored dot alone.
 - Date scope uses a compact calendar grid with weekday alignment, a visible
-  month and time zone, and one active date. Activity counts are secondary
-  metadata inside the date cell; do not present dates as stacked metric cards.
+  month and time zone, and one active date. Follow meeting-calendar conventions:
+  keep date cells numeric, mark activity with a subtle dot, and show explicit
+  session and commit counts for the active day below the grid. Do not compress
+  counts into unexplained abbreviations such as `2s` or `9c`.
 
 ### Actions and forms
 
@@ -415,6 +417,11 @@ occupy more attention than the active task.
   reveals its detail in the workspace; the detail view owns the full prompt,
   activity, and commit panes. Do not expand a miniature three-column dashboard
   inside every session row.
+- In a Session row, put the provider and observed start time before the title;
+  they establish source and chronology before prose. In Session Detail, keep
+  the top bar to product identity, one-line title, view tabs, and Close. Put
+  runtime, model, duration, turns, calls, edits, and token availability in the
+  right-hand facts pane instead of repeating them under the title.
 - Inspector panes use definition-list alignment for stable facts and expandable
   sections for verbose payloads. Long identifiers use copy affordances and
   middle truncation; prose should wrap normally.
@@ -422,6 +429,8 @@ occupy more attention than the active task.
   evidence Drawer. Scope navigation, **Open session**, local disclosure, and
   chart inspection own their actions directly; clicking passive labels or rows
   must not create a second hidden selection model.
+- Harness Inspector is a read-only evidence viewer, not a session-resumption
+  surface. Do not generate or expose a continuation packet from Session Detail.
 - Empty states name what is missing, why it matters, and the single next action.
   They should not look like completed results.
 
