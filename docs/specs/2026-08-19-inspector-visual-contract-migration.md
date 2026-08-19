@@ -54,6 +54,11 @@ sub-floor type or unreachable text.
   1024×768, and 390×844, and reports console and page errors per surface.
 - **AC-6 (dead rules removed, not migrated):** stylesheet blocks whose markup no
   longer exists are deleted rather than brought up to the contract.
+- **AC-7 (categorical identity is not state):** tool family and replay event kind
+  are categorical dimensions and draw from the `categorical` scale that
+  [DESIGN.md](../../DESIGN.md) declares. No categorical value equals an
+  interaction or state token, every value clears 3:1 against the surface it is
+  drawn on, and no two categories in one legend share a colour.
 
 ## Non-goals
 
@@ -143,3 +148,28 @@ A code review of this change found three defects, all fixed before completion:
   `background:var(--color-surface)df9`, an invalid value left by an earlier token
   migration in `refactor(inspector): flatten the evidence workbench`. It was
   silently ignored by every browser.
+
+## Correction: categorical colour versus state colour
+
+The first pass of this migration mapped the tool-family palette onto the nearest
+semantic token, which made five of seven families byte-identical to
+`--color-primary`, `--color-success`, `--color-warning`, `--color-text-muted`,
+and `--color-text-subtle`. That traded one violation for a worse one: DESIGN.md
+reserves green, amber, and red as state colours, and the palette it replaced had
+deliberately kept the family hues offset from them. Chasing token purity removed
+a real semantic separation.
+
+The fix is a declared `categorical-1` … `categorical-7` scale in DESIGN.md, with
+a Color rule stating that categorical identity carries no judgement, never
+equals an interaction or state token, and is always redundant with a lane,
+label, or legend. Inspector maps `--family-*` and the replay rail onto that
+scale; only failure keeps `--color-danger`, drawn as a ring so the kind stays
+readable underneath.
+
+This also fixed a pre-existing defect: `.replay-rail-mark.response` and
+`.replay-rail-mark.commit` both painted `--color-success`, so the rail rendered
+as one colour what its own legend listed as two kinds.
+
+Scale properties verified numerically before adoption: minimum contrast 4.47:1
+against white (≥3:1 for non-text graphics), minimum perceptual distance 32 to
+any interaction or state token, and 79 between any two categorical values.

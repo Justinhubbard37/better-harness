@@ -30,6 +30,13 @@ colors:
   danger-surface: "#FDEBED"
   candidate: "#6D46B5"
   candidate-surface: "#F5F1FB"
+  categorical-1: "#2C6FA8"
+  categorical-2: "#7658B5"
+  categorical-3: "#4F6275"
+  categorical-4: "#1F7A6B"
+  categorical-5: "#A66A1E"
+  categorical-6: "#5E7F2E"
+  categorical-7: "#7A7385"
 
 typography:
   display:
@@ -328,6 +335,12 @@ occupy more attention than the active task.
   only signal.
 - Violet identifies the Candidate comparison lane. It is not a second primary
   action color.
+- The `categorical` scale identifies members of a data dimension that carries no
+  judgement, such as tool family or chart lane. It is a fixed ordered scale: a
+  surface maps its taxonomy onto it and does not invent hues. A categorical
+  color must never equal an interaction or state token, must stay perceptually
+  offset from the state hues, and is always redundant with a lane, label, or
+  legend. Do not read success, caution, or failure into a categorical color.
 - Use neutral borders and surface shifts for structure. Do not assign a new hue
   merely to distinguish another panel or hierarchy level.
 - Text and controls must meet WCAG 2.2 AA contrast against their actual surface.
@@ -522,8 +535,10 @@ occupy more attention than the active task.
 - Check keyboard order, focus visibility, landmark and heading order, accessible
   control names, state announcements, 200% zoom/reflow, and reduced motion.
 - For visual changes, use Playwright against the built preview, inspect browser
-  console and page errors, and save screenshots of Bench, Live trial, and
-  Evidence results in meaningful non-loading states.
+  console and page errors, and save screenshots of every changed surface in
+  meaningful non-loading states. For Studio that means Bench, Live trial, and
+  Evidence results; for an interactive report it means each view a reader can
+  reach without leaving the page.
 
 ## Do and do not
 
@@ -544,8 +559,8 @@ occupy more attention than the active task.
   its own rounded title block and embedded dashboard.
 - Make the whole row, its chevron, and its **Open** action perform the same or
   overlapping behavior.
-- Use 7–9px prototype text, broad `!important` readability overrides, or an
-  unbundled font name.
+- Render meaningful text below the `metadata` floor, use broad `!important`
+  readability overrides, or use an unbundled font name.
 - Give every nested region a border, radius, shadow, badge, and uppercase label.
 - Present a plain data dump as a decision screen or a decorative dashboard as
   evidence.
