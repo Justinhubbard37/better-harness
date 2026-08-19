@@ -3,6 +3,7 @@ import { access, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { startHarnessStudioServer } from "./server.js";
+import { readSourceCatalogFile } from "./source-catalog.js";
 
 const HELP = `harness-studio — local studio for harness runs and compare evidence
 
@@ -24,6 +25,8 @@ Options:
                       Durable root for content-addressed experiment locks
   --runs <dir>        Durable directory for saved Debugger runs
                       (default: .harness-studio-runs under --cwd)
+  --source-catalog <file>
+                      JSON catalog of bounded switchable Studio inputs
   --harness-id <id>   Harness to resolve (default: the file's only harness)
   --runtime <id>      Target runtime (default: the file's only target)
   --port <n>          Listen port (default: 3311)
@@ -72,6 +75,7 @@ interface ParsedArgs {
   harnessId?: string;
   runtime?: string;
   runs?: string;
+  sourceCatalog?: string;
   port: number;
   host: string;
   allowRemote: boolean;
@@ -124,6 +128,9 @@ export function parseHarnessStudioArgs(argv: string[]): ParsedArgs {
       case "--runs":
         parsed.runs = takeValue();
         break;
+      case "--source-catalog":
+        parsed.sourceCatalog = takeValue();
+        break;
       case "--host":
         parsed.host = takeValue() ?? parsed.host;
         break;
@@ -174,13 +181,15 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     ? await discoverDefaultInspectorReport(parsed.cwd ?? process.cwd())
     : undefined;
   const inspectorPath = parsed.inspector ?? discoveredInspector;
+  const sourceCatalog = parsed.sourceCatalog === undefined ? [] : await readSourceCatalogFile(parsed.sourceCatalog);
   if (
     inspectorPath === undefined
     && parsed.evidence === undefined
     && parsed.harness === undefined
     && parsed.experiment === undefined
+    && sourceCatalog.length === 0
   ) {
-    io.stderr("Nothing to show: pass --inspector, --experiment, --evidence, or --harness (see --help).\n");
+    io.stderr("Nothing to show: pass --inspector, --experiment, --evidence, --harness, or --source-catalog (see --help).\n");
     return 2;
   }
   const harnessSource = parsed.harness !== undefined ? await readFile(parsed.harness, "utf8") : undefined;
@@ -198,6 +207,7 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     ...(parsed.harnessId !== undefined ? { harnessId: parsed.harnessId } : {}),
     ...(parsed.runtime !== undefined ? { runtimeId: parsed.runtime } : {}),
     ...(parsed.runs !== undefined ? { runDirectory: resolve(parsed.runs) } : {}),
+    ...(sourceCatalog.length > 0 ? { sourceCatalog } : {}),
     ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
     ...(sourceRoot !== undefined ? { sourceRoot } : {}),
     ...(parsed.experiment !== undefined ? { experimentManifestPath: resolve(parsed.experiment) } : {}),

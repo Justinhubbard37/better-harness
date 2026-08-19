@@ -4,10 +4,12 @@ import {
   cursorForNode,
   DEFAULT_DEBUGGER_CURSOR,
   DEFAULT_STOP_CONDITIONS,
+  defaultCursorForSession,
   eventForCursor,
   nextStopCursor,
   previousStateCursor,
   SAMPLE_DEBUGGER_SESSION,
+  sessionFromRetainedRun,
   stepIntoCursor,
   stepOutCursor,
   stepOverCursor,
@@ -30,6 +32,33 @@ describe("session debugger model", () => {
     expect(SAMPLE_DEBUGGER_SESSION.events.filter((event) => event.diff !== undefined)).toHaveLength(2);
     expect(SAMPLE_DEBUGGER_SESSION.events.filter((event) => event.validation?.status === "failed")).toHaveLength(1);
     expect(SAMPLE_DEBUGGER_SESSION.events.filter((event) => event.validation?.status === "passed")).toHaveLength(1);
+  });
+
+  it("projects a saved run record into a real retained Evidence Cursor session", () => {
+    const session = sessionFromRetainedRun({
+      id: "run_fixture",
+      savedAt: "2026-08-19T10:00:00.000Z",
+      prompt: "Run the retained fixture",
+      status: "finished",
+      runId: "run_real",
+      threadId: "thread_real",
+      warnings: [],
+      timeline: [
+        { kind: "message", id: "m1", text: "I will inspect and test.", complete: true },
+        { kind: "tool-call", id: "read-1", name: "Read", argsText: '{"path":"README.md"}', status: "completed", resultText: "# fixture" },
+        { kind: "tool-call", id: "bash-1", name: "Bash", argsText: '{"command":"npm test"}', status: "failed", resultText: "1 failed" },
+      ],
+    });
+
+    expect(session).toMatchObject({ id: "run_real", name: "Run the retained fixture", mode: "Retained run" });
+    expect(session.events.map((event) => event.kind)).toEqual(["prompt", "response", "explore", "verify"]);
+    expect(defaultCursorForSession(session)).toEqual({ eventId: "tool_bash-1" });
+    expect(session.events[2]).toMatchObject({ title: "Read tool call", toolCalls: [expect.objectContaining({ resource: "README.md" })] });
+    expect(session.events[3]).toMatchObject({
+      title: "Bash tool call",
+      validation: { command: "npm test", status: "failed" },
+      stopConditions: ["tests", "failures"],
+    });
   });
 
   it("continues only to events enabled by stop conditions", () => {

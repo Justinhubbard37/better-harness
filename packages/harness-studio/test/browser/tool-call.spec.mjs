@@ -44,7 +44,12 @@ const LAYOUTS = [
 ];
 
 async function openDestination(page, label) {
-  const destination = page.getByRole("button", { name: new RegExp(`^${label}`) });
+  const quickAction = page.getByRole("button", { name: `Go to ${label}` });
+  if (await quickAction.isVisible().catch(() => false) && await quickAction.isEnabled()) {
+    await quickAction.click();
+    return;
+  }
+  const destination = page.getByRole("navigation", { name: "Harness control plane" }).getByRole("button", { name: new RegExp(`^${label}`) });
   const toggle = page.getByRole("button", { name: "Open Studio navigation" });
   if (await toggle.isVisible() && await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
   await destination.click();
@@ -119,10 +124,13 @@ test.beforeAll(async () => {
   });
   inspectorFixtureDir = await mkdtemp(join(tmpdir(), "studio-browser-inspector-"));
   const inspectorReportPath = join(inspectorFixtureDir, "inspector.html");
+  const alternateInspectorReportPath = join(inspectorFixtureDir, "alternate-inspector.html");
   await writeFile(inspectorReportPath, "<!doctype html><title>Inspector fixture</title><main><h1>Delivery evidence workbench</h1><p>Read-only retained evidence.</p></main>", "utf8");
+  await writeFile(alternateInspectorReportPath, "<!doctype html><title>Inspector fixture</title><main><h1>Alternate evidence workbench</h1><p>Switched retained evidence.</p></main>", "utf8");
   inspectorStudio = await startHarnessStudioServer({
     appDir: resolve(packageRoot, "dist/app"),
     inspectorReportPath,
+    sourceCatalog: [{ id: "inspector_alt", kind: "inspector", label: "Alternate Inspector", path: alternateInspectorReportPath }],
   });
   lockedFixtureDir = await mkdtemp(join(tmpdir(), "studio-browser-lock-"));
   await cp(resolve(packageRoot, "../harness/examples/checkpoint-experiment"), lockedFixtureDir, { recursive: true });
@@ -257,6 +265,10 @@ test("organizes configured surfaces around the Harness control plane", async ({ 
   const frame = page.frameLocator('iframe[title="Harness Inspector Workbench"]');
   await expect(frame.getByRole("heading", { name: "Delivery evidence workbench" })).toBeVisible();
   await expect(page.locator('iframe[title="Harness Inspector Workbench"]')).toHaveAttribute("sandbox", "allow-scripts");
+
+  await page.getByRole("button", { name: /Data sources/ }).click();
+  await page.getByRole("menuitemradio", { name: /Alternate Inspector/ }).click();
+  await expect(frame.getByRole("heading", { name: "Alternate evidence workbench" })).toBeVisible();
 });
 
 test("compares a focused ACP pair across roles, views, filters, and evidence", async ({ page }, testInfo) => {
@@ -483,12 +495,13 @@ test("renders a keyboard-expandable failed and truncated Tool Call at 390px", as
   }));
   expect(dimensions).toEqual({ innerWidth: 390, documentWidth: 390, bodyWidth: 390 });
 
-  // The finished run is retained in the catalog and replayable read-only.
+  // The finished run is retained in the catalog and replayable through the Evidence Cursor.
   await page.getByRole("button", { name: /Saved runs/ }).click();
   await page.getByRole("menuitem", { name: /Run the scripted browser fixture/ }).click();
-  await expect(page.getByText("Saved run · retained evidence")).toBeVisible();
-  await expect(page.locator("details.tool-card")).toHaveCount(1);
-  await expect(page.locator(".tool-status")).toHaveText("Failed");
+  await expect(page.getByRole("navigation", { name: "Session debugger controls" })).toBeVisible();
+  await expect(page.locator(".step-controls button")).toHaveCount(7);
+  await expect(page.locator(".debugger-event-card").filter({ hasText: "Bash tool call" })).toBeVisible();
+  await expect(page.locator(".event-status.failed")).toContainText("failed");
   expect(browserErrors).toEqual([]);
 });
 

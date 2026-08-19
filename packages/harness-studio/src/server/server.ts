@@ -34,6 +34,17 @@ import { ObservedCallIndex } from "./query/observed-call-index.js";
 import { lockHistoryExperiment } from "./experiment-lock.js";
 import { canonicalToolEvents } from "./experiment-events.js";
 import { listRunRecords, parseRunSnapshot, readRunRecord, saveRunRecord } from "./run-log.js";
+import {
+  activeSourcePath,
+  assertSourceSelection,
+  describeSources,
+  initialActiveSources,
+  mergeSourceCatalog,
+  startupSource,
+  type StudioSourceCandidate,
+  type StudioSourceKind,
+} from "./source-catalog.js";
+import { sessionFromRetainedRun } from "../app/session-debugger-model.js";
 
 const builtInExecutorFactory: HarnessUiExecutorFactory = (context) => {
   if (context.runtimeId === "qoder") {
@@ -70,6 +81,8 @@ export interface HarnessStudioServerOptions {
   sourceRoot?: string;
   /** Durable directory for saved Debugger run records (default: .harness-studio-runs under cwd). */
   runDirectory?: string;
+  /** Additional bounded source candidates selectable from inside Studio. */
+  sourceCatalog?: StudioSourceCandidate[];
   executorFactory?: HarnessUiExecutorFactory;
   /** `harness-experiment.v1` manifest; enables the live three-lane trace view. */
   experimentManifestPath?: string;
@@ -96,9 +109,23 @@ export interface HarnessStudioServerOptions {
  */
 export function createHarnessStudioServer(options: HarnessStudioServerOptions): Server {
   const experimentRuns = new Map<string, AbortController>();
+  const startupSources = [
+    startupSource("inspector", options.inspectorReportPath),
+    startupSource("evidence", options.evidenceDir),
+    startupSource("experiment", options.experimentManifestPath),
+  ];
+  const sourceCatalog = mergeSourceCatalog(startupSources, options.sourceCatalog);
+  const activeSources = initialActiveSources(sourceCatalog, {
+    inspector: options.inspectorReportPath === undefined ? undefined : "inspector_startup",
+    evidence: options.evidenceDir === undefined ? undefined : "evidence_startup",
+    experiment: options.experimentManifestPath === undefined ? undefined : "experiment_startup",
+  });
+  const activeManifestPath = activeSourcePath(sourceCatalog, activeSources, "experiment");
   const state: HarnessStudioState = {
-    activeManifestPath: options.experimentManifestPath,
-    templateManifestPath: options.experimentManifestPath,
+    sourceCatalog,
+    activeSources,
+    activeManifestPath,
+    templateManifestPath: activeManifestPath,
     trajectoryOverrides: options.experimentTrajectoryOverrides,
     historyAdapter: options.checkpointHistoryAdapter
       ?? (options.checkpointHistoryCatalogPath === undefined
@@ -112,6 +139,8 @@ export function createHarnessStudioServer(options: HarnessStudioServerOptions): 
 }
 
 interface HarnessStudioState {
+  sourceCatalog: StudioSourceCandidate[];
+  activeSources: Partial<Record<StudioSourceKind, string>>;
   activeManifestPath?: string;
   templateManifestPath?: string;
   trajectoryOverrides?: Record<string, string>;
@@ -131,24 +160,35 @@ async function route(
   if (request.method === "GET" && url.pathname === "/api/config") {
     respondJson(response, 200, {
       aguiEnabled: options.harnessSource !== undefined,
-      evidenceEnabled: options.evidenceDir !== undefined,
+      evidenceEnabled: activeSourcePath(state.sourceCatalog, state.activeSources, "evidence") !== undefined,
       experimentEnabled: state.activeManifestPath !== undefined,
       historyEnabled: state.historyAdapter !== undefined,
-      inspectorEnabled: options.inspectorReportPath !== undefined,
+      inspectorEnabled: activeSourcePath(state.sourceCatalog, state.activeSources, "inspector") !== undefined,
     });
     return;
   }
-  if (request.method === "GET" && url.pathname === "/api/inspector-report") {
-    await serveInspectorReportJson(response, options.inspectorReportPath);
+  if (request.method === "GET" && url.pathname === "/api/sources") {
+    respondJson(response, 200, {
+      sources: describeSources(state.sourceCatalog, state.activeSources),
+      active: state.activeSources,
+    });
     return;
   }
-  const runRead = url.pathname.match(/^\/api\/runs\/([^/]+)$/);
+  if (request.method === "POST" && url.pathname === "/api/sources/select") {
+    await selectSource(request, response, state);
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/inspector-report") {
+    await serveInspectorReportJson(response, activeSourcePath(state.sourceCatalog, state.activeSources, "inspector"));
+    return;
+  }
+  const runRead = url.pathname.match(/^\/api\/runs\/([^/]+)(?:\/(session))?$/);
   if (url.pathname === "/api/runs" || runRead !== null) {
-    await routeRuns(request, response, options, url, runRead === null ? undefined : decodeURIComponent(runRead[1]!));
+    await routeRuns(request, response, options, url, runRead === null ? undefined : decodeURIComponent(runRead[1]!), runRead?.[2] === "session");
     return;
   }
   if (request.method === "GET" && url.pathname === "/inspector") {
-    await serveInspectorReport(response, options.inspectorReportPath);
+    await serveInspectorReport(response, activeSourcePath(state.sourceCatalog, state.activeSources, "inspector"));
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/checkpoint-history") {
@@ -188,7 +228,7 @@ async function route(
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/evidence") {
-    await serveEvidence(response, options.evidenceDir);
+    await serveEvidence(response, activeSourcePath(state.sourceCatalog, state.activeSources, "evidence"));
     return;
   }
   if (url.pathname === "/agui" || url.pathname === "/healthz") {
@@ -517,6 +557,40 @@ async function serveObservedCalls(response: ServerResponse, url: URL, state: Har
   }
 }
 
+async function selectSource(
+  request: IncomingMessage,
+  response: ServerResponse,
+  state: HarnessStudioState,
+): Promise<void> {
+  if (!sameOriginRequest(request)) {
+    respondJson(response, 403, { error: "Cross-origin source switching is not allowed." });
+    return;
+  }
+  try {
+    const selection = assertSourceSelection(await readJsonBody(request));
+    const source = state.sourceCatalog.find((candidate) => candidate.kind === selection.kind && candidate.id === selection.sourceId);
+    if (source === undefined) {
+      respondJson(response, 404, { error: "The requested Studio source is not in the bounded source catalog." });
+      return;
+    }
+    state.activeSources[selection.kind] = source.id;
+    if (selection.kind === "experiment") {
+      for (const index of state.observedIndexes.values()) index.close();
+      state.observedIndexes = new Map();
+      state.activeManifestPath = source.path;
+      state.templateManifestPath = source.path;
+      state.trajectoryOverrides = undefined;
+      state.lockReceipt = undefined;
+    }
+    respondJson(response, 200, {
+      sources: describeSources(state.sourceCatalog, state.activeSources),
+      active: state.activeSources,
+    });
+  } catch (error) {
+    respondJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 async function readJsonBody(request: IncomingMessage, maxBytes = 32_768): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -537,6 +611,7 @@ async function routeRuns(
   options: HarnessStudioServerOptions,
   url: URL,
   runId: string | undefined,
+  sessionProjection = false,
 ): Promise<void> {
   if (options.harnessSource === undefined) {
     respondJson(response, 404, { error: "No harness loaded; saved runs require --harness <file.harness>." });
@@ -546,7 +621,8 @@ async function routeRuns(
   try {
     if (request.method === "GET" && runId !== undefined) {
       try {
-        respondJson(response, 200, await readRunRecord(directory, runId));
+        const record = await readRunRecord(directory, runId);
+        respondJson(response, 200, sessionProjection ? sessionFromRetainedRun(record) : record);
       } catch {
         respondJson(response, 404, { error: `Saved run '${runId}' is not available.` });
       }

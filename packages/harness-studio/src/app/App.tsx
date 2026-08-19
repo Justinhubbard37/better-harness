@@ -37,6 +37,15 @@ const AREA_COPY: Record<StudioArea, { eyebrow: string; title: string }> = {
   compare: { eyebrow: "Validate", title: "Compare" },
 };
 
+type StudioSourceKind = "inspector" | "evidence" | "experiment";
+
+interface StudioSourceOption {
+  id: string;
+  kind: StudioSourceKind;
+  label: string;
+  active: boolean;
+}
+
 const EMPTY_CONFIG: StudioConfig = {
   aguiEnabled: false,
   evidenceEnabled: false,
@@ -45,8 +54,24 @@ const EMPTY_CONFIG: StudioConfig = {
   inspectorEnabled: false,
 };
 
+async function fetchStudioState(): Promise<{ config: StudioConfig; sources: StudioSourceOption[] }> {
+  const [configResponse, sourcesResponse] = await Promise.all([
+    fetch("api/config"),
+    fetch("api/sources"),
+  ]);
+  if (!configResponse.ok) throw new Error(`Studio config failed (${configResponse.status}).`);
+  const loaded = { ...EMPTY_CONFIG, ...(await configResponse.json() as Partial<StudioConfig>) };
+  const sourcesPayload = sourcesResponse.ok ? await sourcesResponse.json() as { sources?: StudioSourceOption[] } : {};
+  return {
+    config: loaded,
+    sources: Array.isArray(sourcesPayload.sources) ? sourcesPayload.sources : [],
+  };
+}
+
 export function App(): React.JSX.Element {
   const [config, setConfig] = useState<StudioConfig | undefined>(undefined);
+  const [sources, setSources] = useState<StudioSourceOption[]>([]);
+  const [dataRevision, setDataRevision] = useState(0);
   const [configFailure, setConfigFailure] = useState<string | null>(null);
   const [area, setArea] = useState<StudioArea>(areaFromHash);
   const [compareSurface, setCompareSurface] = useState<StudioCompareSurface>("bench");
@@ -57,13 +82,12 @@ export function App(): React.JSX.Element {
     let cancelled = false;
     void (async () => {
       try {
-        const response = await fetch("api/config");
-        if (!response.ok) throw new Error(`Studio config failed (${response.status}).`);
-        const loaded = { ...EMPTY_CONFIG, ...(await response.json() as Partial<StudioConfig>) };
+        const loaded = await fetchStudioState();
         if (!cancelled) {
           setConfigFailure(null);
-          setConfig(loaded);
-          setCompareSurface(compareSurfaces(loaded)[0] ?? "bench");
+          setSources(loaded.sources);
+          setConfig(loaded.config);
+          setCompareSurface((currentSurface) => compareSurfaces(loaded.config).includes(currentSurface) ? currentSurface : compareSurfaces(loaded.config)[0] ?? "bench");
         }
       } catch (error) {
         if (!cancelled) {
@@ -110,6 +134,25 @@ export function App(): React.JSX.Element {
     if (area !== next) globalThis.history.pushState(null, "", `#/${next}`);
   }
 
+  async function selectSource(source: StudioSourceOption): Promise<void> {
+    try {
+      const response = await fetch("api/sources/select", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: source.kind, sourceId: source.id }),
+      });
+      if (!response.ok) throw new Error(`Studio source switch failed (${response.status}).`);
+      const loaded = await fetchStudioState();
+      setConfigFailure(null);
+      setSources(loaded.sources);
+      setConfig(loaded.config);
+      setCompareSurface((currentSurface) => compareSurfaces(loaded.config).includes(currentSurface) ? currentSurface : compareSurfaces(loaded.config)[0] ?? "bench");
+      setDataRevision((revision) => revision + 1);
+    } catch (error) {
+      setConfigFailure(error instanceof Error ? error.message : "Studio source switch failed.");
+    }
+  }
+
   if (config === undefined) {
     return <main className="studio-loading"><span className="studio-loading-mark"><GitBranch size={18} weight="bold" /></span><p>Loading Harness control plane…</p></main>;
   }
@@ -142,16 +185,45 @@ export function App(): React.JSX.Element {
         <button ref={navigationToggleRef} className="studio-nav-toggle" type="button" aria-label={navigationOpen ? "Close Studio navigation" : "Open Studio navigation"} aria-expanded={navigationOpen} onClick={() => setNavigationOpen((value) => !value)}><SidebarSimple size={17} /></button>
         <div className="studio-context-title"><small>{AREA_COPY[area].eyebrow}</small><h1>{AREA_COPY[area].title}</h1></div>
         {contextNavigation && <div className="studio-context-navigation">{contextNavigation}</div>}
+        {sources.length > 0 && <SourceSwitcher sources={sources} onSelect={(source) => void selectSource(source)} />}
         <div className="studio-context-state"><span className={`availability-dot availability-${current.availability}`} /><strong>{current.status}</strong><span>Local control plane</span></div>
       </header>
       <div className={`studio-surface studio-surface-${area}`}>
         {area === "overview" && <Overview config={config} onOpen={openArea} />}
-        {area === "inspector" && <InspectorWorkspace config={config} />}
+        {area === "inspector" && <InspectorWorkspace key={`inspector-${dataRevision}-${config.inspectorEnabled}`} config={config} />}
         {area === "debugger" && <DebuggerWorkspace config={config} />}
-        {area === "compare" && <CompareWorkspace config={config} surface={compareSurface} navigation={compareNavigation} />}
+        {area === "compare" && <CompareWorkspace key={`compare-${dataRevision}-${config.experimentEnabled}-${config.evidenceEnabled}`} config={config} surface={compareSurface} navigation={compareNavigation} />}
       </div>
     </section>
   </div>;
+}
+
+function SourceSwitcher(props: {
+  sources: StudioSourceOption[];
+  onSelect: (source: StudioSourceOption) => void;
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const active = props.sources.filter((source) => source.active);
+  const kinds: StudioSourceKind[] = ["inspector", "evidence", "experiment"];
+  return <div className="studio-source-switcher">
+    <button type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}><GitBranch size={14} /><span>Data sources</span><em>{active.length}</em></button>
+    {open && <div className="studio-source-menu" role="menu" aria-label="Studio data sources">
+      {kinds.map((kind) => {
+        const entries = props.sources.filter((source) => source.kind === kind);
+        if (entries.length === 0) return null;
+        return <section key={kind}>
+          <h2>{sourceKindLabel(kind)}</h2>
+          {entries.map((source) => <button key={source.id} type="button" role="menuitemradio" aria-checked={source.active} className={source.active ? "selected" : ""} onClick={() => { setOpen(false); if (!source.active) props.onSelect(source); }}><strong>{source.label}</strong><span>{source.active ? "Active" : "Switch"}</span></button>)}
+        </section>;
+      })}
+    </div>}
+  </div>;
+}
+
+function sourceKindLabel(kind: StudioSourceKind): string {
+  if (kind === "inspector") return "Inspector";
+  if (kind === "evidence") return "Evidence results";
+  return "Experiment bench";
 }
 
 function PrimaryNavigation(props: {

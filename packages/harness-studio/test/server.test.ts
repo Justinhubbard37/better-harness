@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { HarnessRunEmitter, loadSkillDeliveries, type HarnessExecutor } from "@qoder-ai/harness/exec";
 import { decodeSseStream, type HarnessUiExecutorFactory } from "@qoder-ai/harness-ui";
 import { parseHarnessStudioArgs, resolveHarnessStudioSourceRoot, runHarnessStudioCli, discoverDefaultInspectorReport } from "../src/server/cli.js";
+import { parseSourceCatalog } from "../src/server/source-catalog.js";
 import { startHarnessStudioServer, type StartedHarnessStudioServer } from "../src/server/server.js";
 import { extractInspectorReportJson } from "../src/server/query/inspector-query.js";
 import type { CheckpointHistoryAdapter } from "../src/server/query/checkpoint-history.js";
@@ -147,6 +148,52 @@ describe("harness-studio server", () => {
     const missing = await fetch(`${started.url}/inspector`);
     expect(missing.status).toBe(404);
     expect((await missing.json()).error).toMatch(/--inspector/);
+  });
+
+  it("switches bounded Studio sources without exposing browser file paths", async () => {
+    const appDir = await makeAppDir();
+    const reportDir = await makeTempDir("studio-source-switch-");
+    const primaryReport = join(reportDir, "primary.html");
+    const alternateReport = join(reportDir, "alternate.html");
+    await writeFile(primaryReport, "<!doctype html><h1>Primary Evidence</h1>", "utf8");
+    await writeFile(alternateReport, "<!doctype html><h1>Alternate Evidence</h1>", "utf8");
+    started = await startHarnessStudioServer({
+      appDir,
+      inspectorReportPath: primaryReport,
+      sourceCatalog: [{ id: "inspector_alt", kind: "inspector", label: "Alternate Inspector", path: alternateReport }],
+    });
+
+    const listed = await (await fetch(`${started.url}/api/sources`)).json();
+    expect(listed.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "inspector_startup", kind: "inspector", active: true }),
+      expect.objectContaining({ id: "inspector_alt", kind: "inspector", label: "Alternate Inspector", active: false }),
+    ]));
+    expect(JSON.stringify(listed)).not.toContain(reportDir);
+    expect(await (await fetch(`${started.url}/inspector`)).text()).toContain("Primary Evidence");
+
+    const hostile = await fetch(`${started.url}/api/sources/select`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "https://hostile.example" },
+      body: JSON.stringify({ kind: "inspector", sourceId: "inspector_alt" }),
+    });
+    expect(hostile.status).toBe(403);
+
+    const switched = await fetch(`${started.url}/api/sources/select`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "inspector", sourceId: "inspector_alt" }),
+    });
+    expect(switched.status).toBe(200);
+    expect((await switched.json()).sources).toContainEqual(expect.objectContaining({ id: "inspector_alt", active: true }));
+    expect((await (await fetch(`${started.url}/api/config`)).json()).inspectorEnabled).toBe(true);
+    expect(await (await fetch(`${started.url}/inspector`)).text()).toContain("Alternate Evidence");
+
+    const unknown = await fetch(`${started.url}/api/sources/select`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "inspector", sourceId: "unknown_source" }),
+    });
+    expect(unknown.status).toBe(404);
   });
 
   it("serves structured Inspector report JSON for the native Studio workbench", async () => {
@@ -560,6 +607,7 @@ describe("harness-studio server", () => {
       timeline: [
         { kind: "message", id: "m1", text: "echo: catalog", complete: true },
         { kind: "tool-call", id: "tu_1", name: "Read", argsText: '{"path":"README.md"}', status: "completed", resultText: '{"bytes":42}' },
+        { kind: "tool-call", id: "tu_2", name: "Bash", argsText: '{"command":"npm test"}', status: "failed", resultText: "1 failed" },
       ],
     };
 
@@ -581,7 +629,7 @@ describe("harness-studio server", () => {
 
     const listed = await (await fetch(`${started.url}/api/runs`)).json();
     expect(listed.runs).toEqual([
-      expect.objectContaining({ id: saved.id, prompt: "Verify saved run catalog", status: "finished", toolCallCount: 1 }),
+      expect.objectContaining({ id: saved.id, prompt: "Verify saved run catalog", status: "finished", toolCallCount: 2 }),
     ]);
 
     const record = await (await fetch(`${started.url}/api/runs/${saved.id}`)).json();
@@ -591,8 +639,22 @@ describe("harness-studio server", () => {
       warnings: ["one warning"],
       result: { exitCode: 0 },
     });
-    expect(record.timeline).toHaveLength(2);
+    expect(record.timeline).toHaveLength(3);
     expect(record.timeline[1]).toMatchObject({ kind: "tool-call", name: "Read", status: "completed" });
+
+    const session = await (await fetch(`${started.url}/api/runs/${saved.id}/session`)).json();
+    expect(session).toMatchObject({
+      id: "r_catalog",
+      name: "Verify saved run catalog",
+      mode: "Retained run",
+      protocol: "AG-UI retained evidence",
+    });
+    expect(session.events.map((event: { kind: string }) => event.kind)).toEqual(["prompt", "response", "explore", "verify"]);
+    expect(session.events.find((event: { phase: string }) => event.phase === "Verify")).toMatchObject({
+      title: "Bash tool call",
+      validation: { command: "npm test", status: "failed" },
+      stopConditions: ["tests", "failures"],
+    });
 
     const missing = await fetch(`${started.url}/api/runs/run_does_not_exist`);
     expect(missing.status).toBe(404);
@@ -638,7 +700,7 @@ describe("harness-studio CLI", () => {
     });
 
     expect(code).toBe(2);
-    expect(errors.join("")).toMatch(/--inspector, --experiment, --evidence, or --harness/);
+    expect(errors.join("")).toMatch(/--source-catalog/);
   });
 
   it("resolves the default source root from the harness file and honors an override", () => {
@@ -651,20 +713,26 @@ describe("harness-studio CLI", () => {
     expect(resolveHarnessStudioSourceRoot(undefined)).toBeUndefined();
   });
 
-  it("parses Inspector, history catalog, runs, and lock directory options", () => {
+  it("parses Inspector, history catalog, runs, source catalog, and lock directory options", () => {
     expect(parseHarnessStudioArgs([
       "--inspector", "inspector.html",
       "--experiment", "experiment.json",
       "--history-catalog", "history.json",
       "--experiment-locks", ".locks",
       "--runs", ".runs",
+      "--source-catalog", "sources.json",
     ])).toMatchObject({
       inspector: "inspector.html",
       experiment: "experiment.json",
       historyCatalog: "history.json",
       experimentLocks: ".locks",
       runs: ".runs",
+      sourceCatalog: "sources.json",
     });
+
+    expect(parseSourceCatalog({ sources: [{ kind: "evidence", id: "ev_local", label: "Local evidence", path: "evidence" }] }, "/workspace")).toEqual([
+      { kind: "evidence", id: "ev_local", label: "Local evidence", path: resolve("/workspace/evidence") },
+    ]);
   });
 
   it("discovers the conventional Inspector report only at its fixed path", async () => {

@@ -52,6 +52,7 @@ import {
   cursorNodeId,
   DEFAULT_DEBUGGER_CURSOR,
   DEFAULT_STOP_CONDITIONS,
+  defaultCursorForSession,
   eventForCursor,
   nextStopCursor,
   previousStateCursor,
@@ -66,8 +67,10 @@ import {
   type DebuggerEvent,
   type DebuggerEventKind,
   type DebuggerFileChange,
+  type DebuggerSession,
   type DebuggerToolCall,
   type EvidenceLevel,
+  type RetainedRunRecord,
   type StopCondition,
   type StopConditionState,
 } from "./session-debugger-model.js";
@@ -134,31 +137,9 @@ interface SavedRunSummary {
   toolCallCount: number;
 }
 
-interface SavedRunRecord extends SavedRunSummary {
-  runId?: string;
-  threadId?: string;
-  warnings: string[];
-  error?: string;
-  result?: unknown;
+type SavedRunRecord = RetainedRunRecord & {
   timeline: TimelineItem[];
-}
-
-/** Rehydrates one saved run into the same read-only shape the live components render. */
-function runStateFromRecord(record: SavedRunRecord): AguiRunState {
-  const timelineByKey = new Map(record.timeline.map((item) => [`${item.kind}:${item.id}`, item]));
-  return {
-    status: record.status,
-    ...(record.runId !== undefined ? { runId: record.runId } : {}),
-    ...(record.threadId !== undefined ? { threadId: record.threadId } : {}),
-    timelineKeys: [...timelineByKey.keys()],
-    timelineByKey,
-    timelineRevision: 0,
-    toolCallCount: record.toolCallCount,
-    warnings: record.warnings,
-    ...(record.error !== undefined ? { error: record.error } : {}),
-    ...(record.result !== undefined ? { result: record.result } : {}),
-  };
-}
+};
 
 const EVENT_ICONS: Record<DebuggerEventKind, Icon> = {
   prompt: UserCircle,
@@ -274,16 +255,16 @@ export function RunView({
   const [savedRuns, setSavedRuns] = useState<SavedRunSummary[]>([]);
   const [runsPanelOpen, setRunsPanelOpen] = useState(false);
   const [savedRun, setSavedRun] = useState<SavedRunRecord | null>(null);
+  const [retainedSession, setRetainedSession] = useState<DebuggerSession>(SAMPLE_DEBUGGER_SESSION);
   const [treeCollapsed, setTreeCollapsed] = useState(() => globalThis.matchMedia?.("(max-width: 900px)").matches ?? false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(() => globalThis.matchMedia?.("(max-width: 900px)").matches ?? false);
   const busy = useRef(false);
   const firstCursorRender = useRef(true);
   const liveStateRef = useRef<AguiRunState>(initialRunState());
 
-  const selectedEvent = eventForCursor(SAMPLE_DEBUGGER_SESSION, cursor);
-  const savedState = useMemo(() => (savedRun === null ? null : runStateFromRecord(savedRun)), [savedRun]);
-  const viewState = savedState ?? state;
-  const viewPrompt = savedRun === null ? submittedPrompt : savedRun.prompt;
+  const selectedEvent = eventForCursor(retainedSession, cursor);
+  const viewState = state;
+  const viewPrompt = submittedPrompt;
   const liveTimeline = useMemo(() => timelineItems(viewState), [viewState, viewState.timelineRevision]);
   const liveGroups = useMemo(() => groupLiveTimeline(liveTimeline), [liveTimeline]);
   const liveBins = useMemo(
@@ -317,9 +298,9 @@ export function RunView({
   }, []);
 
   const selectNode = useCallback((nodeId: string): void => {
-    const next = cursorForNode(SAMPLE_DEBUGGER_SESSION, nodeId);
+    const next = cursorForNode(retainedSession, nodeId);
     if (next !== undefined) selectCursor(next);
-  }, [selectCursor]);
+  }, [retainedSession, selectCursor]);
 
   const toggleExpanded = useCallback((nodeId: string): void => {
     setExpandedNodes((previous) => {
@@ -346,9 +327,18 @@ export function RunView({
 
   const openSavedRun = useCallback(async (id: string): Promise<void> => {
     try {
-      const response = await fetch(`api/runs/${encodeURIComponent(id)}`);
-      if (!response.ok) return;
-      setSavedRun(await response.json() as SavedRunRecord);
+      const [recordResponse, sessionResponse] = await Promise.all([
+        fetch(`api/runs/${encodeURIComponent(id)}`),
+        fetch(`api/runs/${encodeURIComponent(id)}/session`),
+      ]);
+      if (!recordResponse.ok || !sessionResponse.ok) return;
+      const record = await recordResponse.json() as SavedRunRecord;
+      const session = await sessionResponse.json() as DebuggerSession;
+      setSavedRun(record);
+      setRetainedSession(session);
+      setCursor(defaultCursorForSession(session));
+      setExpandedNodes(new Set(["session", "turn"]));
+      setSurfaceMode("recorded");
       setRunsPanelOpen(false);
     } catch {
       // Leave the current view untouched when the record cannot be read.
@@ -362,6 +352,7 @@ export function RunView({
     setSubmittedPrompt(promptText);
     setSurfaceMode("live");
     setSavedRun(null);
+    setRetainedSession(SAMPLE_DEBUGGER_SESSION);
     setRunsPanelOpen(false);
     setComposerOpen(false);
     const fresh: AguiRunState = { ...initialRunState(), status: "running" };
@@ -406,40 +397,40 @@ export function RunView({
 
   const live = surfaceMode === "live";
   const saved = savedRun !== null;
-  const sessionName = live ? (viewPrompt || "New harness run") : SAMPLE_DEBUGGER_SESSION.name;
-  const connectionState = live ? viewState.status : SAMPLE_DEBUGGER_SESSION.connection;
-  const runMode = saved ? "Saved run · read-only" : live ? (state.status === "running" ? "Live · Following" : "Live · Soft paused") : "Recorded sample";
+  const sessionName = live ? (viewPrompt || "New harness run") : retainedSession.name;
+  const connectionState = live ? viewState.status : retainedSession.connection;
+  const runMode = saved ? "Saved run · Evidence Cursor" : live ? (state.status === "running" ? "Live · Following" : "Live · Soft paused") : retainedSession.mode;
 
   return <section className={`debugger-shell${treeCollapsed ? " tree-collapsed" : ""}${inspectorCollapsed ? " inspector-collapsed" : ""}`}>
     <header className="debugger-topbar">
-      <div className="debugger-brand"><span className="debugger-mark"><BugBeetle size={18} weight="fill" /></span><strong>{live ? "Harness Run" : "Inspector"}</strong><span>{live ? "Live Trial" : "Session Debugger · Demo"}</span></div>
+      <div className="debugger-brand"><span className="debugger-mark"><BugBeetle size={18} weight="fill" /></span><strong>{live ? "Harness Run" : "Inspector"}</strong><span>{live ? "Live Trial" : saved ? "Retained Session Debugger" : "Session Debugger · Demo"}</span></div>
       <div className="debugger-session-meta"><span>Session</span><strong title={sessionName}>{sessionName}</strong><em className={live ? "live" : "recorded"}>{runMode}</em></div>
-      <div className="debugger-runtime-meta"><span className={`connection-dot status-${connectionState}`} /><strong>{connectionState}</strong><i /><span>Agent</span><strong>{live ? "local harness" : SAMPLE_DEBUGGER_SESSION.agent}</strong><i /><span>Protocol</span><strong>{live ? "AG-UI / ACP evidence" : SAMPLE_DEBUGGER_SESSION.protocol}</strong></div>
-      <div className="debugger-top-actions">{navigation}<div className="saved-runs"><button type="button" onClick={() => { setRunsPanelOpen((value) => !value); void refreshRuns(); }} aria-expanded={runsPanelOpen} aria-haspopup="true"><ClockCounterClockwise size={15} /><span>Saved runs{savedRuns.length > 0 ? ` (${savedRuns.length})` : ""}</span></button>{runsPanelOpen && <div className="saved-runs-panel" role="menu" aria-label="Saved runs">{saved && <button type="button" role="menuitem" className="saved-runs-live" onClick={() => { setSavedRun(null); setRunsPanelOpen(false); }}>Back to live view</button>}{savedRuns.length === 0 ? <p className="saved-runs-empty">No saved runs yet. Finished runs are saved automatically.</p> : savedRuns.map((run) => <button type="button" role="menuitem" key={run.id} className={savedRun?.id === run.id ? "selected" : ""} onClick={() => void openSavedRun(run.id)}><strong title={run.prompt}>{run.prompt}</strong><span><em className={`run-badge status-${run.status}`}>{run.status}</em>{run.toolCallCount} call{run.toolCallCount === 1 ? "" : "s"} · {run.savedAt.slice(0, 19).replace("T", " ")}</span></button>)}</div>}</div><button type="button" onClick={() => setTreeCollapsed((value) => !value)} aria-pressed={!treeCollapsed} title="Toggle Execution Tree"><TreeStructure size={15} /></button><button type="button" onClick={() => setInspectorCollapsed((value) => !value)} aria-pressed={!inspectorCollapsed} title="Toggle State Inspector"><SidebarSimple size={15} /></button><button type="button" className="new-run" onClick={() => setComposerOpen(true)}><Plus size={14} weight="bold" />New live run</button></div>
+      <div className="debugger-runtime-meta"><span className={`connection-dot status-${connectionState}`} /><strong>{connectionState}</strong><i /><span>Agent</span><strong>{live ? "local harness" : retainedSession.agent}</strong><i /><span>Protocol</span><strong>{live ? "AG-UI / ACP evidence" : retainedSession.protocol}</strong></div>
+      <div className="debugger-top-actions">{navigation}<div className="saved-runs"><button type="button" onClick={() => { setRunsPanelOpen((value) => !value); void refreshRuns(); }} aria-expanded={runsPanelOpen} aria-haspopup="true"><ClockCounterClockwise size={15} /><span>Saved runs{savedRuns.length > 0 ? ` (${savedRuns.length})` : ""}</span></button>{runsPanelOpen && <div className="saved-runs-panel" role="menu" aria-label="Saved runs">{saved && <button type="button" role="menuitem" className="saved-runs-live" onClick={() => { setSavedRun(null); setRetainedSession(SAMPLE_DEBUGGER_SESSION); setSurfaceMode("live"); setRunsPanelOpen(false); }}>Back to live view</button>}{savedRuns.length === 0 ? <p className="saved-runs-empty">No saved runs yet. Finished runs are saved automatically.</p> : savedRuns.map((run) => <button type="button" role="menuitem" key={run.id} className={savedRun?.id === run.id ? "selected" : ""} onClick={() => void openSavedRun(run.id)}><strong title={run.prompt}>{run.prompt}</strong><span><em className={`run-badge status-${run.status}`}>{run.status}</em>{run.toolCallCount} call{run.toolCallCount === 1 ? "" : "s"} · {run.savedAt.slice(0, 19).replace("T", " ")}</span></button>)}</div>}</div><button type="button" onClick={() => setTreeCollapsed((value) => !value)} aria-pressed={!treeCollapsed} title="Toggle Execution Tree"><TreeStructure size={15} /></button><button type="button" onClick={() => setInspectorCollapsed((value) => !value)} aria-pressed={!inspectorCollapsed} title="Toggle State Inspector"><SidebarSimple size={15} /></button><button type="button" className="new-run" onClick={() => setComposerOpen(true)}><Plus size={14} weight="bold" />New live run</button></div>
     </header>
 
     {!live ? <nav className="debugger-toolbar" aria-label="Session debugger controls">
       <div className="step-controls">
-        <ControlButton label="Previous Stop" icon={CaretLeft} onClick={() => selectCursor(nextStopCursor(SAMPLE_DEBUGGER_SESSION, cursor, stopConditions, -1))} />
-        <ControlButton label="Continue" icon={Play} primary onClick={() => selectCursor(nextStopCursor(SAMPLE_DEBUGGER_SESSION, cursor, stopConditions))} />
-        <ControlButton label="Next Stop" icon={SkipForward} onClick={() => selectCursor(nextStopCursor(SAMPLE_DEBUGGER_SESSION, cursor, stopConditions))} />
+        <ControlButton label="Previous Stop" icon={CaretLeft} onClick={() => selectCursor(nextStopCursor(retainedSession, cursor, stopConditions, -1))} />
+        <ControlButton label="Continue" icon={Play} primary onClick={() => selectCursor(nextStopCursor(retainedSession, cursor, stopConditions))} />
+        <ControlButton label="Next Stop" icon={SkipForward} onClick={() => selectCursor(nextStopCursor(retainedSession, cursor, stopConditions))} />
         <span className="toolbar-divider" />
-        <ControlButton label="Step Into" icon={ArrowBendDownRight} disabled={selectedEvent.toolCalls === undefined} onClick={() => selectCursor(stepIntoCursor(SAMPLE_DEBUGGER_SESSION, cursor))} />
-        <ControlButton label="Step Over" icon={ArrowRight} onClick={() => selectCursor(stepOverCursor(SAMPLE_DEBUGGER_SESSION, cursor))} />
+        <ControlButton label="Step Into" icon={ArrowBendDownRight} disabled={selectedEvent.toolCalls === undefined} onClick={() => selectCursor(stepIntoCursor(retainedSession, cursor))} />
+        <ControlButton label="Step Over" icon={ArrowRight} onClick={() => selectCursor(stepOverCursor(retainedSession, cursor))} />
         <ControlButton label="Step Out" icon={ArrowBendUpLeft} disabled={cursor.toolCallId === undefined} onClick={() => selectCursor(stepOutCursor(cursor))} />
-        <ControlButton label="Previous State" icon={ClockCounterClockwise} onClick={() => selectCursor(previousStateCursor(SAMPLE_DEBUGGER_SESSION, cursor))} />
+        <ControlButton label="Previous State" icon={ClockCounterClockwise} onClick={() => selectCursor(previousStateCursor(retainedSession, cursor))} />
       </div>
       <fieldset className="stop-conditions" aria-label={stopConditionLabel(stopConditions)}><legend>Stop on</legend>{STOP_CONDITIONS.map((condition) => <label key={condition}><input type="checkbox" checked={stopConditions[condition]} onChange={(event) => setStopConditions((previous) => ({ ...previous, [condition]: event.target.checked }))} /><span>{STOP_LABELS[condition]}</span></label>)}</fieldset>
       <div className="pause-boundary"><Pause size={13} weight="fill" /><span>Evidence Cursor</span></div>
-    </nav> : saved ? <div className="live-observation-bar" role="status"><span><Eye size={13} weight="fill" />Saved run · retained evidence</span><strong>Read-only replay of a finished run</strong></div> : <div className="live-observation-bar" role="status"><span><Pause size={13} weight="fill" />Live observation · no Evidence Cursor</span><strong>Step controls unavailable until a recorded checkpoint exists</strong></div>}
+    </nav> : <div className="live-observation-bar" role="status"><span><Pause size={13} weight="fill" />Live observation · no Evidence Cursor</span><strong>Step controls become available after selecting a saved retained run.</strong></div>}
 
     <div className="debugger-grid">
-      {live ? <LiveExecutionTree state={viewState} prompt={viewPrompt} /> : <ExecutionTree cursor={cursor} expanded={expandedNodes} onToggle={toggleExpanded} onSelect={selectNode} />}
-      {live ? <LiveNotebook state={viewState} prompt={viewPrompt} groups={liveGroups} /> : <SessionNotebook cursor={cursor} expanded={expandedNodes} onSelect={selectCursor} onToggle={toggleExpanded} />}
-      {live ? <LiveInspector state={viewState} /> : <StateInspector cursor={cursor} activeTab={inspectorTab} onTab={setInspectorTab} onPrevious={() => selectCursor(previousStateCursor(SAMPLE_DEBUGGER_SESSION, cursor))} />}
+      {live ? <LiveExecutionTree state={viewState} prompt={viewPrompt} /> : <ExecutionTree session={retainedSession} cursor={cursor} expanded={expandedNodes} onToggle={toggleExpanded} onSelect={selectNode} />}
+      {live ? <LiveNotebook state={viewState} prompt={viewPrompt} groups={liveGroups} /> : <SessionNotebook session={retainedSession} cursor={cursor} expanded={expandedNodes} onSelect={selectCursor} onToggle={toggleExpanded} />}
+      {live ? <LiveInspector state={viewState} /> : <StateInspector session={retainedSession} cursor={cursor} activeTab={inspectorTab} onTab={setInspectorTab} onPrevious={() => selectCursor(previousStateCursor(retainedSession, cursor))} />}
     </div>
 
-    {live ? <LiveTimeline state={viewState} bins={liveBins} eventCount={liveTimeline.length} /> : <TimelineMinimap cursor={cursor} onSelect={selectCursor} />}
+    {live ? <LiveTimeline state={viewState} bins={liveBins} eventCount={liveTimeline.length} /> : <TimelineMinimap session={retainedSession} cursor={cursor} onSelect={selectCursor} />}
 
     {composerOpen && <div className="live-composer-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setComposerOpen(false); }}><section className="live-composer" role="dialog" aria-modal="true" aria-labelledby="live-composer-title"><header><div><small>Existing local runner</small><h2 id="live-composer-title">Start a live harness session</h2></div><button type="button" onClick={() => setComposerOpen(false)} aria-label="Close live run dialog"><XCircle size={19} /></button></header><p>Live events use the current AG-UI endpoint. Pausing this view only stops auto-follow; it does not stop the Agent unless a real gate is reported.</p><textarea value={prompt} placeholder="Task prompt for the harness run…" onChange={(event) => setPrompt(event.target.value)} rows={5} autoFocus /><footer><button type="button" onClick={() => setComposerOpen(false)}>Cancel</button><button type="button" className="primary" onClick={() => void start()} disabled={state.status === "running" || prompt.trim().length === 0}><Play size={14} weight="fill" />Run harness</button></footer></section></div>}
   </section>;
@@ -465,17 +456,17 @@ function TreeRow(props: {
   </div>;
 }
 
-function ExecutionTree(props: { cursor: DebuggerCursor; expanded: Set<string>; onToggle: (id: string) => void; onSelect: (id: string) => void }): React.JSX.Element {
+function ExecutionTree(props: { session: DebuggerSession; cursor: DebuggerCursor; expanded: Set<string>; onToggle: (id: string) => void; onSelect: (id: string) => void }): React.JSX.Element {
   const selectedNode = cursorNodeId(props.cursor);
   const sessionOpen = props.expanded.has("session");
   const turnOpen = props.expanded.has("turn");
   return <aside className="execution-tree" aria-label="Execution Tree">
-    <header><div><small>Execution Tree</small><strong>Observed stages</strong></div><span>8 events</span></header>
+    <header><div><small>Execution Tree</small><strong>Observed stages</strong></div><span>{props.session.events.length} events</span></header>
     <div className="execution-tree-scroll" role="tree">
-      <TreeRow nodeId="session" label="Session" detail="优化 Replay UI" icon={Database} selected={false} depth={0} expandable expanded={sessionOpen} onSelect={() => props.onToggle("session")} onToggle={props.onToggle} />
+      <TreeRow nodeId="session" label="Session" detail={props.session.name} icon={Database} selected={false} depth={0} expandable expanded={sessionOpen} onSelect={() => props.onToggle("session")} onToggle={props.onToggle} />
       {sessionOpen && <div role="group">
-        <TreeRow nodeId="turn" label="Turn 1" detail="4m 41s observed" icon={GitBranch} selected={false} depth={1} expandable expanded={turnOpen} onSelect={() => props.onToggle("turn")} onToggle={props.onToggle} />
-        {turnOpen && SAMPLE_DEBUGGER_SESSION.events.map((event) => {
+        <TreeRow nodeId="turn" label="Turn 1" detail={`${props.session.startedAt}–${props.session.finishedAt}`} icon={GitBranch} selected={false} depth={1} expandable expanded={turnOpen} onSelect={() => props.onToggle("turn")} onToggle={props.onToggle} />
+        {turnOpen && props.session.events.map((event) => {
           const EventIcon = EVENT_ICONS[event.kind];
           const eventExpanded = props.expanded.has(event.id);
           return <div key={event.id} role="treeitem" aria-selected={selectedNode === event.id}>
@@ -485,30 +476,30 @@ function ExecutionTree(props: { cursor: DebuggerCursor; expanded: Set<string>; o
         })}
       </div>}
     </div>
-    <footer><span><Eye size={12} />Recorded evidence</span><strong>21 RPC frames</strong></footer>
+    <footer><span><Eye size={12} />Recorded evidence</span><strong>{props.session.events.length} semantic events</strong></footer>
   </aside>;
 }
 
-function SessionNotebook(props: { cursor: DebuggerCursor; expanded: Set<string>; onSelect: (cursor: DebuggerCursor) => void; onToggle: (id: string) => void }): React.JSX.Element {
+function SessionNotebook(props: { session: DebuggerSession; cursor: DebuggerCursor; expanded: Set<string>; onSelect: (cursor: DebuggerCursor) => void; onToggle: (id: string) => void }): React.JSX.Element {
   const [view, setView] = useState<"notebook" | "events" | "diff">("notebook");
   const tablist = useRovingTablist({ ids: ["notebook", "events", "diff"] as const, active: view, onSelect: setView, panelId: "session-notebook-panel" });
   return <main className="session-notebook" aria-label="Session Notebook">
-    <header className="notebook-viewbar"><nav aria-label="Notebook views" {...tablist.tablistProps}><button type="button" {...tablist.getTabProps("notebook")} className={view === "notebook" ? "active" : ""} onClick={() => setView("notebook")}><ClipboardText size={13} />Notebook</button><button type="button" {...tablist.getTabProps("events")} className={view === "events" ? "active" : ""} onClick={() => setView("events")}><Code size={13} />Events <span>21</span></button><button type="button" {...tablist.getTabProps("diff")} className={view === "diff" ? "active" : ""} onClick={() => setView("diff")}><GitDiff size={13} />Diff view</button></nav><span>Turn 1 · {SAMPLE_DEBUGGER_SESSION.startedAt}–{SAMPLE_DEBUGGER_SESSION.finishedAt}</span></header>
+    <header className="notebook-viewbar"><nav aria-label="Notebook views" {...tablist.tablistProps}><button type="button" {...tablist.getTabProps("notebook")} className={view === "notebook" ? "active" : ""} onClick={() => setView("notebook")}><ClipboardText size={13} />Notebook</button><button type="button" {...tablist.getTabProps("events")} className={view === "events" ? "active" : ""} onClick={() => setView("events")}><Code size={13} />Events <span>{props.session.events.length}</span></button><button type="button" {...tablist.getTabProps("diff")} className={view === "diff" ? "active" : ""} onClick={() => setView("diff")}><GitDiff size={13} />Diff view</button></nav><span>Turn 1 · {props.session.startedAt}–{props.session.finishedAt}</span></header>
     <div className="session-notebook-scroll" id="session-notebook-panel" role="tabpanel">
-      {view === "notebook" && SAMPLE_DEBUGGER_SESSION.events.map((event) => <NotebookEvent key={event.id} event={event} cursor={props.cursor} expanded={props.expanded.has(event.id)} onSelect={props.onSelect} onToggle={props.onToggle} />)}
-      {view === "events" && <EventsNotebookView cursor={props.cursor} onSelect={props.onSelect} />}
-      {view === "diff" && <DiffNotebookView cursor={props.cursor} onSelect={props.onSelect} onToggle={props.onToggle} />}
+      {view === "notebook" && props.session.events.map((event) => <NotebookEvent key={event.id} event={event} cursor={props.cursor} expanded={props.expanded.has(event.id)} onSelect={props.onSelect} onToggle={props.onToggle} />)}
+      {view === "events" && <EventsNotebookView session={props.session} cursor={props.cursor} onSelect={props.onSelect} />}
+      {view === "diff" && <DiffNotebookView session={props.session} cursor={props.cursor} onSelect={props.onSelect} onToggle={props.onToggle} />}
     </div>
   </main>;
 }
 
-function EventsNotebookView(props: { cursor: DebuggerCursor; onSelect: (cursor: DebuggerCursor) => void }): React.JSX.Element {
-  return <section className="notebook-events-table" aria-label="Retained ACP events"><header><strong>Retained semantic events</strong><span>21 RPC frames projected to 8 stages</span></header><ol>{SAMPLE_DEBUGGER_SESSION.events.map((event, index) => <li key={event.id}><button type="button" className={props.cursor.eventId === event.id ? "selected" : ""} onClick={() => props.onSelect({ eventId: event.id })}><span>{String(index + 1).padStart(2, "0")}</span><time>{event.timestamp}</time><strong>{event.phase}</strong><code>{event.rawAcp.method}</code><em>{event.rawAcp.direction}</em></button></li>)}</ol></section>;
+function EventsNotebookView(props: { session: DebuggerSession; cursor: DebuggerCursor; onSelect: (cursor: DebuggerCursor) => void }): React.JSX.Element {
+  return <section className="notebook-events-table" aria-label="Retained ACP events"><header><strong>Retained semantic events</strong><span>{props.session.events.length} retained events projected to stages</span></header><ol>{props.session.events.map((event, index) => <li key={event.id}><button type="button" className={props.cursor.eventId === event.id ? "selected" : ""} onClick={() => props.onSelect({ eventId: event.id })}><span>{String(index + 1).padStart(2, "0")}</span><time>{event.timestamp}</time><strong>{event.phase}</strong><code>{event.rawAcp.method}</code><em>{event.rawAcp.direction}</em></button></li>)}</ol></section>;
 }
 
-function DiffNotebookView(props: { cursor: DebuggerCursor; onSelect: (cursor: DebuggerCursor) => void; onToggle: (id: string) => void }): React.JSX.Element {
-  const changed = SAMPLE_DEBUGGER_SESSION.events.filter((event) => event.diff !== undefined);
-  return <section className="notebook-diff-view"><header><strong>Observed file changes</strong><span>2 bounded diffs · no workspace restore state</span></header>{changed.map((event) => <NotebookEvent key={event.id} event={event} cursor={props.cursor} expanded={false} onSelect={props.onSelect} onToggle={props.onToggle} />)}</section>;
+function DiffNotebookView(props: { session: DebuggerSession; cursor: DebuggerCursor; onSelect: (cursor: DebuggerCursor) => void; onToggle: (id: string) => void }): React.JSX.Element {
+  const changed = props.session.events.filter((event) => event.diff !== undefined);
+  return <section className="notebook-diff-view"><header><strong>Observed file changes</strong><span>{changed.length} bounded diff{changed.length === 1 ? "" : "s"} · no workspace restore state</span></header>{changed.length === 0 ? <p className="inspector-empty">No retained file diffs in this session.</p> : changed.map((event) => <NotebookEvent key={event.id} event={event} cursor={props.cursor} expanded={false} onSelect={props.onSelect} onToggle={props.onToggle} />)}</section>;
 }
 
 function NotebookEvent(props: { event: DebuggerEvent; cursor: DebuggerCursor; expanded: boolean; onSelect: (cursor: DebuggerCursor) => void; onToggle: (id: string) => void }): React.JSX.Element {
@@ -560,26 +551,26 @@ function ValidationCell({ event }: { event: DebuggerEvent }): React.JSX.Element 
   return <section className={`validation-cell ${validation.status}`}><header><span><StatusIcon size={15} weight="fill" /><strong>{validation.command}</strong></span><time>{validation.duration}</time></header><p>{validation.summary}</p><ul>{validation.output.map((line) => <li key={line}>{line}</li>)}</ul></section>;
 }
 
-function StateInspector(props: { cursor: DebuggerCursor; activeTab: InspectorTab; onTab: (tab: InspectorTab) => void; onPrevious: () => void }): React.JSX.Element {
-  const event = eventForCursor(SAMPLE_DEBUGGER_SESSION, props.cursor);
-  const previous = priorStopEvent(SAMPLE_DEBUGGER_SESSION, props.cursor);
+function StateInspector(props: { session: DebuggerSession; cursor: DebuggerCursor; activeTab: InspectorTab; onTab: (tab: InspectorTab) => void; onPrevious: () => void }): React.JSX.Element {
+  const event = eventForCursor(props.session, props.cursor);
+  const previous = priorStopEvent(props.session, props.cursor);
   const tablist = useRovingTablist({ ids: INSPECTOR_TABS.map((tab) => tab.id), active: props.activeTab, onSelect: props.onTab, panelId: "state-inspector-panel" });
   return <aside className="state-inspector" aria-label="State Inspector">
     <header><div><small>State Inspector</small><strong>{event.phase} · {event.timestamp}</strong></div><span>{props.cursor.toolCallId ? "Tool Call Cursor" : "Evidence Cursor"}</span></header>
     <nav className="inspector-tabs" aria-label="State Inspector views" {...tablist.tablistProps}>{INSPECTOR_TABS.map((tab) => { const TabIcon = tab.icon; return <button key={tab.id} type="button" {...tablist.getTabProps(tab.id)} onClick={() => props.onTab(tab.id)}><TabIcon size={14} /><span>{tab.label}</span></button>; })}</nav>
-    <div className="inspector-scroll" id="state-inspector-panel" role="tabpanel"><div className="inspector-comparison"><strong>{INSPECTOR_TABS.find((tab) => tab.id === props.activeTab)?.label} at {event.timestamp}</strong><span>Compared with {previous?.timestamp ?? "session start"}</span></div><InspectorContent tab={props.activeTab} cursor={props.cursor} /></div>
+    <div className="inspector-scroll" id="state-inspector-panel" role="tabpanel"><div className="inspector-comparison"><strong>{INSPECTOR_TABS.find((tab) => tab.id === props.activeTab)?.label} at {event.timestamp}</strong><span>Compared with {previous?.timestamp ?? "session start"}</span></div><InspectorContent session={props.session} tab={props.activeTab} cursor={props.cursor} /></div>
     <footer><button type="button" onClick={props.onPrevious}><ClockCounterClockwise size={13} />Previous State</button><button type="button"><Clock size={13} />View History</button></footer>
   </aside>;
 }
 
-function InspectorContent({ tab, cursor }: { tab: InspectorTab; cursor: DebuggerCursor }): React.JSX.Element {
-  const event = eventForCursor(SAMPLE_DEBUGGER_SESSION, cursor);
-  const tool = toolForCursor(SAMPLE_DEBUGGER_SESSION, cursor);
-  const cumulative = cumulativeFileChanges(SAMPLE_DEBUGGER_SESSION, cursor);
+function InspectorContent({ session, tab, cursor }: { session: DebuggerSession; tab: InspectorTab; cursor: DebuggerCursor }): React.JSX.Element {
+  const event = eventForCursor(session, cursor);
+  const tool = toolForCursor(session, cursor);
+  const cumulative = cumulativeFileChanges(session, cursor);
   if (tab === "changes") return <ChangesInspector event={event} cumulative={cumulative} />;
-  if (tab === "files") return <FilesInspector files={cumulative} />;
+  if (tab === "files") return <FilesInspector session={session} files={cumulative} />;
   if (tab === "artifacts") return <ArtifactsInspector event={event} />;
-  if (tab === "tests") return <TestsInspector event={event} />;
+  if (tab === "tests") return <TestsInspector session={session} event={event} />;
   if (tab === "terminal") return <TerminalInspector event={event} />;
   if (tab === "plan") return <PlanInspector event={event} />;
   if (tab === "evidence") return <EvidenceInspector event={event} />;
@@ -597,16 +588,18 @@ function ChangesInspector({ event, cumulative }: { event: DebuggerEvent; cumulat
   </>;
 }
 
-function FilesInspector({ files }: { files: DebuggerFileChange[] }): React.JSX.Element {
-  return <><InspectorSection title="Observed files" count={files.length}>{files.length > 0 ? <FileRows files={files} /> : <p className="inspector-empty">No modified file observed before this cursor.</p>}</InspectorSection><InspectorSection title="Exploration ledger" count={5}><ul className="simple-rows">{["scripts/harness-inspector/ui/workbench.js", "packages/harness-studio/src/app/index.html", "scripts/harness-inspector/ui/workbench.js · Replay boundary", "packages/harness-studio/src/app/experiment-trace-model.ts", "packages/harness-studio/src/app/App.tsx"].map((file) => <li key={file}><FileText size={13} /><code>{file}</code><span>Read</span></li>)}</ul></InspectorSection></>;
+function FilesInspector({ session, files }: { session: DebuggerSession; files: DebuggerFileChange[] }): React.JSX.Element {
+  const resources = session.events.flatMap((event) => event.toolCalls ?? []).flatMap((tool) => tool.resource === undefined ? [] : [tool.resource]);
+  return <><InspectorSection title="Observed files" count={files.length}>{files.length > 0 ? <FileRows files={files} /> : <p className="inspector-empty">No modified file observed before this cursor.</p>}</InspectorSection><InspectorSection title="Exploration ledger" count={resources.length}>{resources.length === 0 ? <p className="inspector-empty">No retained file resources in this session.</p> : <ul className="simple-rows">{resources.map((file, index) => <li key={`${file}:${index}`}><FileText size={13} /><code>{file}</code><span>Retained</span></li>)}</ul>}</InspectorSection></>;
 }
 
 function ArtifactsInspector({ event }: { event: DebuggerEvent }): React.JSX.Element {
   return <><InspectorSection title="Retained artifacts"><ul className="simple-rows"><li><ImageSquare size={13} /><span>acp-debugger-reference.png</span><em>Input</em></li><li><BracketsCurly size={13} /><span>session-debugger-state.json</span><em>{event.timestamp}</em></li></ul></InspectorSection><InspectorSection title="Boundary"><p className="inspector-note">Artifact rows belong to this recorded sample. They are not a restorable workspace snapshot.</p></InspectorSection></>;
 }
 
-function TestsInspector({ event }: { event: DebuggerEvent }): React.JSX.Element {
-  return <InspectorSection title="Validation history" count={2}><ul className="test-history"><li className={event.id === "test-failed" ? "selected failed" : "failed"}><XCircle size={14} weight="fill" /><span><strong>Focused browser flow</strong><small>1 failed · 2 passed</small></span><time>3.2 s</time></li><li className={event.id === "test-passed" ? "selected passed" : "passed"}><CheckCircle size={14} weight="fill" /><span><strong>Focused browser flow</strong><small>3 passed · no page errors</small></span><time>4.8 s</time></li></ul></InspectorSection>;
+function TestsInspector({ session, event }: { session: DebuggerSession; event: DebuggerEvent }): React.JSX.Element {
+  const validations = session.events.filter((candidate) => candidate.validation !== undefined);
+  return <InspectorSection title="Validation history" count={validations.length}>{validations.length === 0 ? <p className="inspector-empty">No retained validation event in this session.</p> : <ul className="test-history">{validations.map((candidate) => { const validation = candidate.validation!; const StatusIcon = validation.status === "passed" ? CheckCircle : XCircle; return <li key={candidate.id} className={`${event.id === candidate.id ? "selected " : ""}${validation.status}`}><StatusIcon size={14} weight="fill" /><span><strong>{validation.command}</strong><small>{validation.summary}</small></span><time>{validation.duration}</time></li>; })}</ul>}</InspectorSection>;
 }
 
 function TerminalInspector({ event }: { event: DebuggerEvent }): React.JSX.Element {
@@ -635,9 +628,9 @@ function FileRows({ files }: { files: DebuggerFileChange[] }): React.JSX.Element
   return <ul className="file-rows">{files.map((file) => <li key={file.path}><FileText size={13} /><code title={file.path}>{file.path}</code><span>+{file.additions}</span><em>−{file.deletions}</em><CaretRight size={11} /></li>)}</ul>;
 }
 
-function TimelineMinimap(props: { cursor: DebuggerCursor; onSelect: (cursor: DebuggerCursor) => void }): React.JSX.Element {
-  const selectedIndex = SAMPLE_DEBUGGER_SESSION.events.findIndex((event) => event.id === props.cursor.eventId);
-  return <footer className="timeline-minimap" aria-label="Session Timeline Minimap"><div className="timeline-range"><span>{SAMPLE_DEBUGGER_SESSION.startedAt}</span><strong>Semantic timeline · call sequence</strong><span>{SAMPLE_DEBUGGER_SESSION.finishedAt}</span></div><div className="timeline-track">{SAMPLE_DEBUGGER_SESSION.events.map((event) => <button key={event.id} type="button" className={`timeline-segment kind-${event.kind}${event.id === props.cursor.eventId ? " selected" : ""}`} aria-label={`${event.phase}: ${event.title}`} aria-current={event.id === props.cursor.eventId ? "true" : undefined} onClick={() => props.onSelect({ eventId: event.id })}><span>{event.phase}</span></button>)}</div><div className="timeline-footer"><div className="timeline-legend">{(["prompt", "plan", "explore", "change", "verify", "response"] as DebuggerEventKind[]).map((kind) => <span key={kind}><i className={`kind-${kind}`} />{kind}</span>)}</div><div><span>Cursor {selectedIndex + 1} / {SAMPLE_DEBUGGER_SESSION.events.length}</span><strong>Read-only history</strong></div></div></footer>;
+function TimelineMinimap(props: { session: DebuggerSession; cursor: DebuggerCursor; onSelect: (cursor: DebuggerCursor) => void }): React.JSX.Element {
+  const selectedIndex = props.session.events.findIndex((event) => event.id === props.cursor.eventId);
+  return <footer className="timeline-minimap" aria-label="Session Timeline Minimap"><div className="timeline-range"><span>{props.session.startedAt}</span><strong>Semantic timeline · call sequence</strong><span>{props.session.finishedAt}</span></div><div className="timeline-track">{props.session.events.map((event) => <button key={event.id} type="button" className={`timeline-segment kind-${event.kind}${event.id === props.cursor.eventId ? " selected" : ""}`} aria-label={`${event.phase}: ${event.title}`} aria-current={event.id === props.cursor.eventId ? "true" : undefined} onClick={() => props.onSelect({ eventId: event.id })}><span>{event.phase}</span></button>)}</div><div className="timeline-footer"><div className="timeline-legend">{(["prompt", "plan", "explore", "change", "verify", "response"] as DebuggerEventKind[]).map((kind) => <span key={kind}><i className={`kind-${kind}`} />{kind}</span>)}</div><div><span>Cursor {selectedIndex + 1} / {props.session.events.length}</span><strong>Read-only history</strong></div></div></footer>;
 }
 
 function LiveExecutionTree({ state, prompt }: { state: AguiRunState; prompt: string }): React.JSX.Element {

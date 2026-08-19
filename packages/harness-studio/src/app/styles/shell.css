@@ -179,6 +179,65 @@
 }
 
 .studio-context-navigation { min-width: 0; flex: 1; display: none; }
+.studio-source-switcher { position: relative; flex: none; }
+.studio-source-switcher > button {
+  min-height: var(--control-height);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0 var(--space-sm);
+  color: var(--color-text);
+}
+.studio-source-switcher > button em {
+  min-width: var(--space-md);
+  min-height: var(--space-md);
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  color: var(--color-on-primary);
+  background: var(--color-primary);
+  font-style: normal;
+  font-size: var(--type-meta-size);
+}
+.studio-source-menu {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  z-index: 50;
+  width: min(360px, calc(100vw - var(--space-lg)));
+  max-height: min(70vh, 420px);
+  overflow: auto;
+  display: grid;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+.studio-source-menu section + section { border-top: 1px solid var(--color-border); }
+.studio-source-menu h2 {
+  margin: 0;
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--color-text-muted);
+  font-size: var(--type-meta-size);
+  line-height: var(--type-meta-line);
+}
+.studio-source-menu button {
+  width: 100%;
+  min-height: var(--row-height);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-sm);
+  align-items: center;
+  border: 0;
+  border-radius: var(--radius-none);
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+}
+.studio-source-menu button:hover,
+.studio-source-menu button.selected { background: var(--color-surface-selected); }
+.studio-source-menu strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-meta-size); }
+.studio-source-menu span { color: var(--color-text-muted); font-size: var(--type-meta-size); }
 .studio-context-state { display: flex; align-items: center; gap: var(--space-sm); color: var(--color-text-muted); font-size: var(--type-meta-size); }
 .studio-context-state strong { color: var(--color-text); font-size: var(--type-meta-size); }
 .studio-context-state > span:last-child { padding-left: var(--space-sm); border-left: 1px solid var(--color-border); }
