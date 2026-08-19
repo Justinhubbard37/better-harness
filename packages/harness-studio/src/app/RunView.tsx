@@ -126,6 +126,40 @@ type ToolCallTimelineItem = Extract<TimelineItem, { kind: "tool-call" }>;
 type InspectorTab = "changes" | "files" | "artifacts" | "tests" | "terminal" | "plan" | "evidence" | "raw";
 type SurfaceMode = "recorded" | "live";
 
+interface SavedRunSummary {
+  id: string;
+  savedAt: string;
+  prompt: string;
+  status: "finished" | "error";
+  toolCallCount: number;
+}
+
+interface SavedRunRecord extends SavedRunSummary {
+  runId?: string;
+  threadId?: string;
+  warnings: string[];
+  error?: string;
+  result?: unknown;
+  timeline: TimelineItem[];
+}
+
+/** Rehydrates one saved run into the same read-only shape the live components render. */
+function runStateFromRecord(record: SavedRunRecord): AguiRunState {
+  const timelineByKey = new Map(record.timeline.map((item) => [`${item.kind}:${item.id}`, item]));
+  return {
+    status: record.status,
+    ...(record.runId !== undefined ? { runId: record.runId } : {}),
+    ...(record.threadId !== undefined ? { threadId: record.threadId } : {}),
+    timelineKeys: [...timelineByKey.keys()],
+    timelineByKey,
+    timelineRevision: 0,
+    toolCallCount: record.toolCallCount,
+    warnings: record.warnings,
+    ...(record.error !== undefined ? { error: record.error } : {}),
+    ...(record.result !== undefined ? { result: record.result } : {}),
+  };
+}
+
 const EVENT_ICONS: Record<DebuggerEventKind, Icon> = {
   prompt: UserCircle,
   plan: ListChecks,
@@ -237,6 +271,9 @@ export function RunView({
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => new Set(["session", "turn"]));
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("changes");
   const [composerOpen, setComposerOpen] = useState(false);
+  const [savedRuns, setSavedRuns] = useState<SavedRunSummary[]>([]);
+  const [runsPanelOpen, setRunsPanelOpen] = useState(false);
+  const [savedRun, setSavedRun] = useState<SavedRunRecord | null>(null);
   const [treeCollapsed, setTreeCollapsed] = useState(() => globalThis.matchMedia?.("(max-width: 900px)").matches ?? false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(() => globalThis.matchMedia?.("(max-width: 900px)").matches ?? false);
   const busy = useRef(false);
@@ -244,7 +281,10 @@ export function RunView({
   const liveStateRef = useRef<AguiRunState>(initialRunState());
 
   const selectedEvent = eventForCursor(SAMPLE_DEBUGGER_SESSION, cursor);
-  const liveTimeline = useMemo(() => timelineItems(state), [state.timelineRevision]);
+  const savedState = useMemo(() => (savedRun === null ? null : runStateFromRecord(savedRun)), [savedRun]);
+  const viewState = savedState ?? state;
+  const viewPrompt = savedRun === null ? submittedPrompt : savedRun.prompt;
+  const liveTimeline = useMemo(() => timelineItems(viewState), [viewState, viewState.timelineRevision]);
   const liveGroups = useMemo(() => groupLiveTimeline(liveTimeline), [liveTimeline]);
   const liveBins = useMemo(
     () => buildTimelineBins(liveTimeline, 64, (item) => item.kind === "message" ? "response" : semanticToolKind(item)),
@@ -289,40 +329,93 @@ export function RunView({
     });
   }, []);
 
+  const refreshRuns = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch("api/runs");
+      if (!response.ok) return;
+      const payload = await response.json() as { runs?: SavedRunSummary[] };
+      setSavedRuns(Array.isArray(payload.runs) ? payload.runs : []);
+    } catch {
+      // Saved runs stay optional; a fetch failure never blocks the live view.
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshRuns();
+  }, [refreshRuns]);
+
+  const openSavedRun = useCallback(async (id: string): Promise<void> => {
+    try {
+      const response = await fetch(`api/runs/${encodeURIComponent(id)}`);
+      if (!response.ok) return;
+      setSavedRun(await response.json() as SavedRunRecord);
+      setRunsPanelOpen(false);
+    } catch {
+      // Leave the current view untouched when the record cannot be read.
+    }
+  }, []);
+
   const start = useCallback(async () => {
     if (busy.current || prompt.trim().length === 0) return;
     busy.current = true;
-    setSubmittedPrompt(prompt.trim());
+    const promptText = prompt.trim();
+    setSubmittedPrompt(promptText);
     setSurfaceMode("live");
+    setSavedRun(null);
+    setRunsPanelOpen(false);
     setComposerOpen(false);
     const fresh: AguiRunState = { ...initialRunState(), status: "running" };
     liveStateRef.current = fresh;
     setState(fresh);
     try {
-      await streamRun(aguiEndpoint, prompt.trim(), (events) => {
+      await streamRun(aguiEndpoint, promptText, (events) => {
         // Fold outside any React updater: applyAguiEvent mutates the keyed
         // map for O(1) deltas and each batch must be applied exactly once.
         liveStateRef.current = events.reduce(applyAguiEvent, liveStateRef.current);
         setState(liveStateRef.current);
       });
     } catch (error) {
-      setState((previous) => ({ ...previous, status: "error", error: error instanceof Error ? error.message : String(error) }));
+      liveStateRef.current = { ...liveStateRef.current, status: "error", error: error instanceof Error ? error.message : String(error) };
+      setState(liveStateRef.current);
     } finally {
       busy.current = false;
     }
-  }, [aguiEndpoint, prompt]);
+    const final = liveStateRef.current;
+    if (final.status === "finished" || final.status === "error") {
+      try {
+        await fetch("api/runs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: promptText,
+            status: final.status,
+            runId: final.runId,
+            threadId: final.threadId,
+            warnings: final.warnings,
+            error: final.error,
+            result: final.result,
+            timeline: timelineItems(final),
+          }),
+        });
+        void refreshRuns();
+      } catch {
+        // Saving is best-effort evidence retention; the live view already holds the run.
+      }
+    }
+  }, [aguiEndpoint, prompt, refreshRuns]);
 
   const live = surfaceMode === "live";
-  const sessionName = live ? (submittedPrompt || "New harness run") : SAMPLE_DEBUGGER_SESSION.name;
-  const connectionState = live ? state.status : SAMPLE_DEBUGGER_SESSION.connection;
-  const runMode = live ? (state.status === "running" ? "Live · Following" : "Live · Soft paused") : "Recorded sample";
+  const saved = savedRun !== null;
+  const sessionName = live ? (viewPrompt || "New harness run") : SAMPLE_DEBUGGER_SESSION.name;
+  const connectionState = live ? viewState.status : SAMPLE_DEBUGGER_SESSION.connection;
+  const runMode = saved ? "Saved run · read-only" : live ? (state.status === "running" ? "Live · Following" : "Live · Soft paused") : "Recorded sample";
 
   return <section className={`debugger-shell${treeCollapsed ? " tree-collapsed" : ""}${inspectorCollapsed ? " inspector-collapsed" : ""}`}>
     <header className="debugger-topbar">
       <div className="debugger-brand"><span className="debugger-mark"><BugBeetle size={18} weight="fill" /></span><strong>{live ? "Harness Run" : "Inspector"}</strong><span>{live ? "Live Trial" : "Session Debugger · Demo"}</span></div>
       <div className="debugger-session-meta"><span>Session</span><strong title={sessionName}>{sessionName}</strong><em className={live ? "live" : "recorded"}>{runMode}</em></div>
       <div className="debugger-runtime-meta"><span className={`connection-dot status-${connectionState}`} /><strong>{connectionState}</strong><i /><span>Agent</span><strong>{live ? "local harness" : SAMPLE_DEBUGGER_SESSION.agent}</strong><i /><span>Protocol</span><strong>{live ? "AG-UI / ACP evidence" : SAMPLE_DEBUGGER_SESSION.protocol}</strong></div>
-      <div className="debugger-top-actions">{navigation}<button type="button" onClick={() => setTreeCollapsed((value) => !value)} aria-pressed={!treeCollapsed} title="Toggle Execution Tree"><TreeStructure size={15} /></button><button type="button" onClick={() => setInspectorCollapsed((value) => !value)} aria-pressed={!inspectorCollapsed} title="Toggle State Inspector"><SidebarSimple size={15} /></button><button type="button" className="new-run" onClick={() => setComposerOpen(true)}><Plus size={14} weight="bold" />New live run</button></div>
+      <div className="debugger-top-actions">{navigation}<div className="saved-runs"><button type="button" onClick={() => { setRunsPanelOpen((value) => !value); void refreshRuns(); }} aria-expanded={runsPanelOpen} aria-haspopup="true"><ClockCounterClockwise size={15} /><span>Saved runs{savedRuns.length > 0 ? ` (${savedRuns.length})` : ""}</span></button>{runsPanelOpen && <div className="saved-runs-panel" role="menu" aria-label="Saved runs">{saved && <button type="button" role="menuitem" className="saved-runs-live" onClick={() => { setSavedRun(null); setRunsPanelOpen(false); }}>Back to live view</button>}{savedRuns.length === 0 ? <p className="saved-runs-empty">No saved runs yet. Finished runs are saved automatically.</p> : savedRuns.map((run) => <button type="button" role="menuitem" key={run.id} className={savedRun?.id === run.id ? "selected" : ""} onClick={() => void openSavedRun(run.id)}><strong title={run.prompt}>{run.prompt}</strong><span><em className={`run-badge status-${run.status}`}>{run.status}</em>{run.toolCallCount} call{run.toolCallCount === 1 ? "" : "s"} · {run.savedAt.slice(0, 19).replace("T", " ")}</span></button>)}</div>}</div><button type="button" onClick={() => setTreeCollapsed((value) => !value)} aria-pressed={!treeCollapsed} title="Toggle Execution Tree"><TreeStructure size={15} /></button><button type="button" onClick={() => setInspectorCollapsed((value) => !value)} aria-pressed={!inspectorCollapsed} title="Toggle State Inspector"><SidebarSimple size={15} /></button><button type="button" className="new-run" onClick={() => setComposerOpen(true)}><Plus size={14} weight="bold" />New live run</button></div>
     </header>
 
     {!live ? <nav className="debugger-toolbar" aria-label="Session debugger controls">
@@ -338,15 +431,15 @@ export function RunView({
       </div>
       <fieldset className="stop-conditions" aria-label={stopConditionLabel(stopConditions)}><legend>Stop on</legend>{STOP_CONDITIONS.map((condition) => <label key={condition}><input type="checkbox" checked={stopConditions[condition]} onChange={(event) => setStopConditions((previous) => ({ ...previous, [condition]: event.target.checked }))} /><span>{STOP_LABELS[condition]}</span></label>)}</fieldset>
       <div className="pause-boundary"><Pause size={13} weight="fill" /><span>Evidence Cursor</span></div>
-    </nav> : <div className="live-observation-bar" role="status"><span><Pause size={13} weight="fill" />Live observation · no Evidence Cursor</span><strong>Step controls unavailable until a recorded checkpoint exists</strong></div>}
+    </nav> : saved ? <div className="live-observation-bar" role="status"><span><Eye size={13} weight="fill" />Saved run · retained evidence</span><strong>Read-only replay of a finished run</strong></div> : <div className="live-observation-bar" role="status"><span><Pause size={13} weight="fill" />Live observation · no Evidence Cursor</span><strong>Step controls unavailable until a recorded checkpoint exists</strong></div>}
 
     <div className="debugger-grid">
-      {live ? <LiveExecutionTree state={state} prompt={submittedPrompt} /> : <ExecutionTree cursor={cursor} expanded={expandedNodes} onToggle={toggleExpanded} onSelect={selectNode} />}
-      {live ? <LiveNotebook state={state} prompt={submittedPrompt} groups={liveGroups} /> : <SessionNotebook cursor={cursor} expanded={expandedNodes} onSelect={selectCursor} onToggle={toggleExpanded} />}
-      {live ? <LiveInspector state={state} /> : <StateInspector cursor={cursor} activeTab={inspectorTab} onTab={setInspectorTab} onPrevious={() => selectCursor(previousStateCursor(SAMPLE_DEBUGGER_SESSION, cursor))} />}
+      {live ? <LiveExecutionTree state={viewState} prompt={viewPrompt} /> : <ExecutionTree cursor={cursor} expanded={expandedNodes} onToggle={toggleExpanded} onSelect={selectNode} />}
+      {live ? <LiveNotebook state={viewState} prompt={viewPrompt} groups={liveGroups} /> : <SessionNotebook cursor={cursor} expanded={expandedNodes} onSelect={selectCursor} onToggle={toggleExpanded} />}
+      {live ? <LiveInspector state={viewState} /> : <StateInspector cursor={cursor} activeTab={inspectorTab} onTab={setInspectorTab} onPrevious={() => selectCursor(previousStateCursor(SAMPLE_DEBUGGER_SESSION, cursor))} />}
     </div>
 
-    {live ? <LiveTimeline state={state} bins={liveBins} eventCount={liveTimeline.length} /> : <TimelineMinimap cursor={cursor} onSelect={selectCursor} />}
+    {live ? <LiveTimeline state={viewState} bins={liveBins} eventCount={liveTimeline.length} /> : <TimelineMinimap cursor={cursor} onSelect={selectCursor} />}
 
     {composerOpen && <div className="live-composer-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setComposerOpen(false); }}><section className="live-composer" role="dialog" aria-modal="true" aria-labelledby="live-composer-title"><header><div><small>Existing local runner</small><h2 id="live-composer-title">Start a live harness session</h2></div><button type="button" onClick={() => setComposerOpen(false)} aria-label="Close live run dialog"><XCircle size={19} /></button></header><p>Live events use the current AG-UI endpoint. Pausing this view only stops auto-follow; it does not stop the Agent unless a real gate is reported.</p><textarea value={prompt} placeholder="Task prompt for the harness run…" onChange={(event) => setPrompt(event.target.value)} rows={5} autoFocus /><footer><button type="button" onClick={() => setComposerOpen(false)}>Cancel</button><button type="button" className="primary" onClick={() => void start()} disabled={state.status === "running" || prompt.trim().length === 0}><Play size={14} weight="fill" />Run harness</button></footer></section></div>}
   </section>;

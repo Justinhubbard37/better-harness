@@ -1,12 +1,10 @@
 export type StudioArea =
   | "overview"
   | "inspector"
-  | "harnesses"
-  | "task-suites"
-  | "experiments"
-  | "registry";
+  | "debugger"
+  | "compare";
 
-export type StudioExperimentSurface = "experiment" | "live-run" | "results";
+export type StudioCompareSurface = "bench" | "results";
 export type StudioInspectorSurface = "workbench";
 
 export interface StudioConfig {
@@ -22,58 +20,42 @@ export type StudioAvailability = "ready" | "partial" | "foundation";
 export interface StudioDestination {
   id: StudioArea;
   label: string;
-  group: "Control" | "Observe" | "Compose" | "Validate" | "Govern";
+  group: "Control" | "Observe" | "Run" | "Validate";
   availability: StudioAvailability;
   status: string;
 }
 
 export function studioDestinations(config: StudioConfig): readonly StudioDestination[] {
-  const inspectorAvailable = config.inspectorEnabled;
-  const experimentAvailable = config.experimentEnabled || config.aguiEnabled || config.evidenceEnabled;
+  const compareAvailable = config.experimentEnabled || config.evidenceEnabled;
   return [
     { id: "overview", label: "Overview", group: "Control", availability: "ready", status: "Control plane" },
     {
       id: "inspector",
       label: "Inspector",
       group: "Observe",
-      availability: inspectorAvailable ? "ready" : "foundation",
+      availability: config.inspectorEnabled ? "ready" : "foundation",
       status: config.inspectorEnabled ? "Evidence workbench" : "Report required",
     },
     {
-      id: "harnesses",
-      label: "Harnesses",
-      group: "Compose",
-      availability: config.aguiEnabled || config.experimentEnabled ? "partial" : "foundation",
-      status: config.aguiEnabled || config.experimentEnabled ? "Loaded context" : "Source required",
+      id: "debugger",
+      label: "Debugger",
+      group: "Run",
+      availability: config.aguiEnabled ? "ready" : "foundation",
+      status: config.aguiEnabled ? "Live runs" : "Harness required",
     },
     {
-      id: "task-suites",
-      label: "Task Suites",
-      group: "Compose",
-      availability: config.experimentEnabled ? "partial" : "foundation",
-      status: config.experimentEnabled ? "Single task bound" : "Foundation",
-    },
-    {
-      id: "experiments",
-      label: "Experiments",
+      id: "compare",
+      label: "Compare",
       group: "Validate",
-      availability: experimentAvailable ? "ready" : "foundation",
-      status: config.experimentEnabled ? "Harness Bench" : config.aguiEnabled ? "Live run" : config.evidenceEnabled ? "Frozen results" : "Input required",
-    },
-    {
-      id: "registry",
-      label: "Registry",
-      group: "Govern",
-      availability: "foundation",
-      status: "Not implemented",
+      availability: compareAvailable ? "ready" : "foundation",
+      status: config.experimentEnabled ? "Harness Bench" : config.evidenceEnabled ? "Frozen results" : "Input required",
     },
   ];
 }
 
-export function experimentSurfaces(config: StudioConfig): readonly StudioExperimentSurface[] {
+export function compareSurfaces(config: StudioConfig): readonly StudioCompareSurface[] {
   return [
-    ...(config.experimentEnabled ? ["experiment" as const] : []),
-    ...(config.aguiEnabled ? ["live-run" as const] : []),
+    ...(config.experimentEnabled ? ["bench" as const] : []),
     ...(config.evidenceEnabled ? ["results" as const] : []),
   ];
 }

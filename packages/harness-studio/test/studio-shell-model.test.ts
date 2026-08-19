@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   capabilitySummary,
-  experimentSurfaces,
+  compareSurfaces,
   inspectorSurfaces,
   studioDestinations,
   type StudioConfig,
@@ -16,26 +16,28 @@ const EMPTY: StudioConfig = {
 };
 
 describe("Studio control-plane navigation", () => {
-  it("keeps product objects stable while deriving honest availability", () => {
+  it("offers exactly the four MVP workbenches with honest availability", () => {
     const destinations = studioDestinations(EMPTY);
 
     expect(destinations.map((destination) => destination.id)).toEqual([
       "overview",
       "inspector",
-      "harnesses",
-      "task-suites",
-      "experiments",
-      "registry",
+      "debugger",
+      "compare",
     ]);
     expect(destinations.find((destination) => destination.id === "overview")).toMatchObject({ availability: "ready" });
-    expect(destinations.find((destination) => destination.id === "registry")).toMatchObject({
+    expect(destinations.find((destination) => destination.id === "debugger")).toMatchObject({
       availability: "foundation",
-      status: "Not implemented",
+      status: "Harness required",
     });
-    expect(capabilitySummary(EMPTY)).toEqual({ ready: 1, partial: 0, foundation: 5 });
+    expect(destinations.find((destination) => destination.id === "compare")).toMatchObject({
+      availability: "foundation",
+      status: "Input required",
+    });
+    expect(capabilitySummary(EMPTY)).toEqual({ ready: 1, partial: 0, foundation: 3 });
   });
 
-  it("routes configured artifacts to contextual experiment and Inspector surfaces", () => {
+  it("routes configured artifacts to Debugger, Compare, and Inspector surfaces", () => {
     const config: StudioConfig = {
       aguiEnabled: true,
       evidenceEnabled: true,
@@ -44,23 +46,36 @@ describe("Studio control-plane navigation", () => {
       inspectorEnabled: true,
     };
 
-    expect(experimentSurfaces(config)).toEqual(["experiment", "live-run", "results"]);
+    expect(compareSurfaces(config)).toEqual(["bench", "results"]);
     expect(inspectorSurfaces(config)).toEqual(["workbench"]);
-    expect(studioDestinations(config).find((destination) => destination.id === "task-suites")).toMatchObject({
-      availability: "partial",
-      status: "Single task bound",
+    expect(studioDestinations(config).find((destination) => destination.id === "debugger")).toMatchObject({
+      availability: "ready",
+      status: "Live runs",
     });
-    expect(capabilitySummary(config)).toEqual({ ready: 3, partial: 2, foundation: 1 });
+    expect(capabilitySummary(config)).toEqual({ ready: 4, partial: 0, foundation: 0 });
   });
 
-  it("does not present a live AG-UI endpoint as retained Inspector evidence", () => {
+  it("does not present a live AG-UI endpoint as retained Inspector evidence or a Compare input", () => {
     const config: StudioConfig = { ...EMPTY, aguiEnabled: true };
 
     expect(inspectorSurfaces(config)).toEqual([]);
+    expect(compareSurfaces(config)).toEqual([]);
     expect(studioDestinations(config).find((destination) => destination.id === "inspector")).toMatchObject({
       availability: "foundation",
       status: "Report required",
     });
-    expect(experimentSurfaces(config)).toEqual(["live-run"]);
+    expect(studioDestinations(config).find((destination) => destination.id === "compare")).toMatchObject({
+      availability: "foundation",
+    });
+  });
+
+  it("enables Compare from frozen evidence alone", () => {
+    const config: StudioConfig = { ...EMPTY, evidenceEnabled: true };
+
+    expect(compareSurfaces(config)).toEqual(["results"]);
+    expect(studioDestinations(config).find((destination) => destination.id === "compare")).toMatchObject({
+      availability: "ready",
+      status: "Frozen results",
+    });
   });
 });

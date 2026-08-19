@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { HarnessRunEmitter, loadSkillDeliveries, type HarnessExecutor } from "@qoder-ai/harness/exec";
 import { decodeSseStream, type HarnessUiExecutorFactory } from "@qoder-ai/harness-ui";
-import { parseHarnessStudioArgs, resolveHarnessStudioSourceRoot, runHarnessStudioCli } from "../src/server/cli.js";
+import { parseHarnessStudioArgs, resolveHarnessStudioSourceRoot, runHarnessStudioCli, discoverDefaultInspectorReport } from "../src/server/cli.js";
 import { startHarnessStudioServer, type StartedHarnessStudioServer } from "../src/server/server.js";
 import { extractInspectorReportJson } from "../src/server/query/inspector-query.js";
 import type { CheckpointHistoryAdapter } from "../src/server/query/checkpoint-history.js";
@@ -539,6 +539,81 @@ describe("harness-studio server", () => {
     expect(response.status).toBe(404);
     expect((await response.json()).error).toMatch(/--harness/);
   });
+
+  it("saves, lists, and replays Debugger runs behind the harness and same-origin boundary", async () => {
+    const appDir = await makeAppDir();
+    const runDirectory = join(await makeTempDir("studio-runs-"), "runs");
+    started = await startHarnessStudioServer({
+      appDir,
+      harnessSource: SOURCE,
+      executorFactory: scriptedExecutorFactory,
+      runDirectory,
+    });
+
+    const snapshot = {
+      prompt: "Verify saved run catalog",
+      status: "finished",
+      runId: "r_catalog",
+      threadId: "t_catalog",
+      warnings: ["one warning"],
+      result: { exitCode: 0 },
+      timeline: [
+        { kind: "message", id: "m1", text: "echo: catalog", complete: true },
+        { kind: "tool-call", id: "tu_1", name: "Read", argsText: '{"path":"README.md"}', status: "completed", resultText: '{"bytes":42}' },
+      ],
+    };
+
+    const hostile = await fetch(`${started.url}/api/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "https://hostile.example" },
+      body: JSON.stringify(snapshot),
+    });
+    expect(hostile.status).toBe(403);
+
+    const savedResponse = await fetch(`${started.url}/api/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(snapshot),
+    });
+    expect(savedResponse.status).toBe(201);
+    const saved = await savedResponse.json();
+    expect(saved.id).toMatch(/^run_/);
+
+    const listed = await (await fetch(`${started.url}/api/runs`)).json();
+    expect(listed.runs).toEqual([
+      expect.objectContaining({ id: saved.id, prompt: "Verify saved run catalog", status: "finished", toolCallCount: 1 }),
+    ]);
+
+    const record = await (await fetch(`${started.url}/api/runs/${saved.id}`)).json();
+    expect(record).toMatchObject({
+      id: saved.id,
+      prompt: "Verify saved run catalog",
+      warnings: ["one warning"],
+      result: { exitCode: 0 },
+    });
+    expect(record.timeline).toHaveLength(2);
+    expect(record.timeline[1]).toMatchObject({ kind: "tool-call", name: "Read", status: "completed" });
+
+    const missing = await fetch(`${started.url}/api/runs/run_does_not_exist`);
+    expect(missing.status).toBe(404);
+
+    const invalid = await fetch(`${started.url}/api/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "finished", timeline: [] }),
+    });
+    expect(invalid.status).toBe(400);
+  });
+
+  it("keeps the run catalog closed when no harness is loaded", async () => {
+    const appDir = await makeAppDir();
+    started = await startHarnessStudioServer({ appDir });
+
+    const response = await fetch(`${started.url}/api/runs`);
+
+    expect(response.status).toBe(404);
+    expect((await response.json()).error).toMatch(/--harness/);
+  });
 });
 
 describe("harness-studio CLI", () => {
@@ -576,17 +651,30 @@ describe("harness-studio CLI", () => {
     expect(resolveHarnessStudioSourceRoot(undefined)).toBeUndefined();
   });
 
-  it("parses Inspector, history catalog, and lock directory options", () => {
+  it("parses Inspector, history catalog, runs, and lock directory options", () => {
     expect(parseHarnessStudioArgs([
       "--inspector", "inspector.html",
       "--experiment", "experiment.json",
       "--history-catalog", "history.json",
       "--experiment-locks", ".locks",
+      "--runs", ".runs",
     ])).toMatchObject({
       inspector: "inspector.html",
       experiment: "experiment.json",
       historyCatalog: "history.json",
       experimentLocks: ".locks",
+      runs: ".runs",
     });
+  });
+
+  it("discovers the conventional Inspector report only at its fixed path", async () => {
+    const cwd = await makeTempDir("studio-discover-");
+    expect(await discoverDefaultInspectorReport(cwd)).toBeUndefined();
+
+    const reportDir = join(cwd, ".qoder", "better-harness-runs", "harness-inspector");
+    await mkdir(reportDir, { recursive: true });
+    await writeFile(join(reportDir, "inspector.html"), "<!doctype html><title>local report</title>", "utf8");
+
+    expect(await discoverDefaultInspectorReport(cwd)).toBe(join(reportDir, "inspector.html"));
   });
 });

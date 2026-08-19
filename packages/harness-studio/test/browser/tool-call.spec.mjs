@@ -35,6 +35,7 @@ let experimentStudio;
 let inspectorStudio;
 let lockedFixtureDir;
 let inspectorFixtureDir;
+let runsFixtureDir;
 
 const LAYOUTS = [
   { name: "wide", width: 1440, height: 900 },
@@ -74,7 +75,7 @@ async function assertRenderedContract(page) {
       bodyFont: getComputedStyle(document.body).fontFamily,
       belowFloor,
       dockedShadows,
-      visibleSurfaceSwitchers: [...document.querySelectorAll('[aria-label="Experiment surfaces"]')].filter(visible).length,
+      visibleSurfaceSwitchers: [...document.querySelectorAll('[aria-label="Compare surfaces"]')].filter(visible).length,
       ownedStyleSheets: [...document.styleSheets].filter((sheet) => sheet.href?.includes("/assets/") && sheet.href.endsWith(".css")).length,
     };
   });
@@ -87,9 +88,11 @@ async function assertRenderedContract(page) {
 }
 
 test.beforeAll(async () => {
+  runsFixtureDir = await mkdtemp(join(tmpdir(), "studio-browser-runs-"));
   studio = await startHarnessStudioServer({
     appDir: resolve(packageRoot, "dist/app"),
     harnessSource: SOURCE,
+    runDirectory: join(runsFixtureDir, "live"),
     executorFactory: (context) => ({
       host: "qoder",
       async execute(revision) {
@@ -159,6 +162,7 @@ test.beforeAll(async () => {
   experimentStudio = await startHarnessStudioServer({
     appDir: resolve(packageRoot, "dist/app"),
     harnessSource: SOURCE,
+    runDirectory: join(runsFixtureDir, "experiment"),
     evidenceDir: resolve(packageRoot, "test/fixtures"),
     experimentManifestPath: resolve(packageRoot, "../harness/examples/checkpoint-experiment/experiment.json"),
     checkpointSourcePreview: {
@@ -237,6 +241,7 @@ test.afterAll(async () => {
   await inspectorStudio?.close();
   if (lockedFixtureDir) await rm(lockedFixtureDir, { recursive: true, force: true });
   if (inspectorFixtureDir) await rm(inspectorFixtureDir, { recursive: true, force: true });
+  if (runsFixtureDir) await rm(runsFixtureDir, { recursive: true, force: true });
 });
 
 test("organizes configured surfaces around the Harness control plane", async ({ page }) => {
@@ -244,9 +249,9 @@ test("organizes configured surfaces around the Harness control plane", async ({ 
   await page.goto(inspectorStudio.url);
 
   await expect(page.getByRole("heading", { name: "Harness Control Center" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Harnesses");
-  await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Task Suites");
-  await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Experiments");
+  await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Inspector");
+  await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Debugger");
+  await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Compare");
   await page.getByRole("button", { name: "Open Inspector" }).click();
 
   const frame = page.frameLocator('iframe[title="Harness Inspector Workbench"]');
@@ -263,7 +268,7 @@ test("compares a focused ACP pair across roles, views, filters, and evidence", a
   page.on("pageerror", (error) => browserErrors.push(`page: ${error.message}`));
 
   await page.goto(experimentStudio.url);
-  await page.getByRole("button", { name: "Open Experiments · Harness Bench" }).click();
+  await openDestination(page, "Compare");
   await expect(page.getByRole("heading", { name: "Compare a past agent run" })).toBeVisible();
   await expect(page.locator(".setup-details")).not.toHaveAttribute("open", "");
   await expect(page.getByLabel("History checkpoint")).toHaveValue("episode_alpha");
@@ -384,7 +389,7 @@ test("compares a focused ACP pair across roles, views, filters, and evidence", a
 test("contains narrow experiment scrolling inside the comparison regions", async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 844 });
   await page.goto(experimentStudio.url);
-  await page.getByRole("button", { name: "Open Experiments · Harness Bench" }).click();
+  await openDestination(page, "Compare");
   await expect(page.getByRole("button", { name: "Lock and compare" })).toBeEnabled();
   await page.getByRole("button", { name: "Lock and compare" }).click();
   await expect(page.locator(".object-card")).toHaveCount(3);
@@ -408,9 +413,9 @@ test("contains narrow experiment scrolling inside the comparison regions", async
   await expect(page.locator(".experiment-rail")).toHaveCSS("width", "304px");
   const expandedWidth = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(expandedWidth).toBe(390);
-  await expect(page.getByRole("navigation", { name: "Experiment surfaces" })).toBeVisible();
-  await page.getByRole("button", { name: "Live trial", exact: true }).click();
-  await expect(page.getByText("Live observation · no Evidence Cursor")).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Compare surfaces" })).toBeVisible();
+  await page.getByRole("button", { name: "Evidence results", exact: true }).click();
+  await expect(page.locator(".decision-summary")).toContainText("Sufficient");
   await page.getByRole("button", { name: "Bench", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Compare a past agent run" })).toBeVisible();
 });
@@ -423,7 +428,7 @@ test("renders a keyboard-expandable failed and truncated Tool Call at 390px", as
   page.on("pageerror", (error) => browserErrors.push(`page: ${error.message}`));
 
   await page.goto(studio.url);
-  await page.getByRole("button", { name: "Open Experiments · Harness Bench" }).click();
+  await page.getByRole("button", { name: "Open Debugger" }).click();
   await page.getByRole("button", { name: "New live run" }).click();
   await page.getByPlaceholder("Task prompt for the harness run…").fill("Run the scripted browser fixture");
   await page.getByRole("button", { name: "Run harness" }).click();
@@ -477,6 +482,13 @@ test("renders a keyboard-expandable failed and truncated Tool Call at 390px", as
     bodyWidth: document.body.scrollWidth,
   }));
   expect(dimensions).toEqual({ innerWidth: 390, documentWidth: 390, bodyWidth: 390 });
+
+  // The finished run is retained in the catalog and replayable read-only.
+  await page.getByRole("button", { name: /Saved runs/ }).click();
+  await page.getByRole("menuitem", { name: /Run the scripted browser fixture/ }).click();
+  await expect(page.getByText("Saved run · retained evidence")).toBeVisible();
+  await expect(page.locator("details.tool-card")).toHaveCount(1);
+  await expect(page.locator(".tool-status")).toHaveText("Failed");
   expect(browserErrors).toEqual([]);
 });
 
@@ -525,13 +537,13 @@ test("renders the shell, foundation, empty, and Inspector surfaces at all layout
       await expect(toggle).toBeFocused();
     }
 
-    await openDestination(page, "Harnesses");
-    await expect(page.getByRole("heading", { name: /Harness editing unavailable/ })).toBeVisible();
+    await openDestination(page, "Inspector");
+    await expect(page.getByRole("heading", { name: "Connect an Inspector report" })).toBeVisible();
     await assertRenderedContract(page);
     await page.screenshot({ path: testInfo.outputPath(`foundation-${layout.name}.png`) });
 
     await page.goto(inspectorStudio.url);
-    await openDestination(page, "Experiments");
+    await openDestination(page, "Compare");
     await expect(page.getByRole("heading", { name: "Load an experiment or evidence bundle" })).toBeVisible();
     await assertRenderedContract(page);
     await page.screenshot({ path: testInfo.outputPath(`empty-${layout.name}.png`) });
@@ -552,7 +564,7 @@ test("keeps Bench decision workspaces primary at all layout modes", async ({ pag
   for (const layout of LAYOUTS) {
     await page.setViewportSize({ width: layout.width, height: layout.height });
     await page.goto(experimentStudio.url);
-    await openDestination(page, "Experiments");
+    await openDestination(page, "Compare");
     const action = page.getByRole("button", { name: /^(Lock and compare|Open workbench)$/ });
     await expect(action).toBeEnabled();
     await action.click();
@@ -580,7 +592,7 @@ test("renders meaningful Live trial evidence at all layout modes", async ({ page
   for (const layout of LAYOUTS) {
     await page.setViewportSize({ width: layout.width, height: layout.height });
     await page.goto(studio.url);
-    await openDestination(page, "Experiments");
+    await openDestination(page, "Debugger");
     await page.getByRole("button", { name: "New live run" }).click();
     await page.getByPlaceholder("Task prompt for the harness run…").fill(`Verify ${layout.name} live evidence`);
     await page.getByRole("button", { name: "Run harness" }).click();
@@ -606,7 +618,7 @@ test("leads Evidence results with the decision at all layout modes", async ({ pa
   for (const layout of LAYOUTS) {
     await page.setViewportSize({ width: layout.width, height: layout.height });
     await page.goto(experimentStudio.url);
-    await openDestination(page, "Experiments");
+    await openDestination(page, "Compare");
     await page.getByRole("button", { name: "Evidence results", exact: true }).click();
     const decision = page.locator(".decision-summary");
     await expect(decision).toContainText("Sufficient");

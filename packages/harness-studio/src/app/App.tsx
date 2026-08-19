@@ -2,13 +2,11 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, 
 import type { Icon } from "@phosphor-icons/react";
 import { ArrowRight } from "@phosphor-icons/react/ArrowRight";
 import { Binoculars } from "@phosphor-icons/react/Binoculars";
-import { Database } from "@phosphor-icons/react/Database";
+import { BugBeetle } from "@phosphor-icons/react/BugBeetle";
 import { Flask } from "@phosphor-icons/react/Flask";
 import { GitBranch } from "@phosphor-icons/react/GitBranch";
-import { ListChecks } from "@phosphor-icons/react/ListChecks";
 import { SidebarSimple } from "@phosphor-icons/react/SidebarSimple";
 import { SquaresFour } from "@phosphor-icons/react/SquaresFour";
-import { TreeStructure } from "@phosphor-icons/react/TreeStructure";
 import { CompareView } from "./CompareView.js";
 import { ExperimentView } from "./ExperimentView.js";
 import { InspectorWorkbench } from "./InspectorWorkbench.js";
@@ -16,31 +14,27 @@ import { RunView } from "./RunView.js";
 import { useRovingFocus } from "./roving-tablist.js";
 import {
   capabilitySummary,
-  experimentSurfaces,
+  compareSurfaces,
   inspectorSurfaces,
   studioDestinations,
   type StudioArea,
+  type StudioCompareSurface,
   type StudioConfig,
   type StudioDestination,
-  type StudioExperimentSurface,
 } from "./studio-shell-model.js";
 
 const NAV_ICONS: Record<StudioArea, Icon> = {
   overview: SquaresFour,
   inspector: Binoculars,
-  harnesses: TreeStructure,
-  "task-suites": ListChecks,
-  experiments: Flask,
-  registry: Database,
+  debugger: BugBeetle,
+  compare: Flask,
 };
 
 const AREA_COPY: Record<StudioArea, { eyebrow: string; title: string }> = {
   overview: { eyebrow: "Control", title: "Harness Control Center" },
   inspector: { eyebrow: "Observe", title: "Inspector" },
-  harnesses: { eyebrow: "Compose", title: "Harnesses" },
-  "task-suites": { eyebrow: "Compose", title: "Task Suites" },
-  experiments: { eyebrow: "Validate", title: "Experiments · Harness Bench" },
-  registry: { eyebrow: "Govern", title: "Registry" },
+  debugger: { eyebrow: "Run", title: "Debugger" },
+  compare: { eyebrow: "Validate", title: "Compare" },
 };
 
 const EMPTY_CONFIG: StudioConfig = {
@@ -55,7 +49,7 @@ export function App(): React.JSX.Element {
   const [config, setConfig] = useState<StudioConfig | undefined>(undefined);
   const [configFailure, setConfigFailure] = useState<string | null>(null);
   const [area, setArea] = useState<StudioArea>(areaFromHash);
-  const [experimentSurface, setExperimentSurface] = useState<StudioExperimentSurface>("experiment");
+  const [compareSurface, setCompareSurface] = useState<StudioCompareSurface>("bench");
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationToggleRef = useRef<HTMLButtonElement>(null);
 
@@ -69,7 +63,7 @@ export function App(): React.JSX.Element {
         if (!cancelled) {
           setConfigFailure(null);
           setConfig(loaded);
-          setExperimentSurface(experimentSurfaces(loaded)[0] ?? "experiment");
+          setCompareSurface(compareSurfaces(loaded)[0] ?? "bench");
         }
       } catch (error) {
         if (!cancelled) {
@@ -125,19 +119,19 @@ export function App(): React.JSX.Element {
 
   const destinations = studioDestinations(config);
   const current = destinations.find((destination) => destination.id === area) ?? destinations[0]!;
-  const experimentNavigation = (
+  const compareNavigation = (
     <SurfaceNavigation
-      label="Experiment surfaces"
-      items={experimentSurfaces(config).map((id) => ({
+      label="Compare surfaces"
+      items={compareSurfaces(config).map((id) => ({
         id,
-        label: id === "experiment" ? "Bench" : id === "live-run" ? "Live trial" : "Evidence results",
+        label: id === "bench" ? "Bench" : "Evidence results",
       }))}
-      active={experimentSurface}
-      onSelect={setExperimentSurface}
+      active={compareSurface}
+      onSelect={setCompareSurface}
     />
   );
-  const contextNavigation = area === "experiments" && experimentSurfaces(config).length > 1
-    ? experimentNavigation
+  const contextNavigation = area === "compare" && compareSurfaces(config).length > 1
+    ? compareNavigation
     : null;
 
   return <div className={`studio-control-plane${navigationOpen ? " navigation-open" : ""}`}>
@@ -153,10 +147,8 @@ export function App(): React.JSX.Element {
       <div className={`studio-surface studio-surface-${area}`}>
         {area === "overview" && <Overview config={config} onOpen={openArea} />}
         {area === "inspector" && <InspectorWorkspace config={config} />}
-        {area === "harnesses" && <HarnessesWorkspace config={config} onOpen={openArea} />}
-        {area === "task-suites" && <TaskSuitesWorkspace config={config} onOpen={openArea} />}
-        {area === "experiments" && <ExperimentsWorkspace config={config} surface={experimentSurface} navigation={experimentNavigation} />}
-        {area === "registry" && <RegistryWorkspace />}
+        {area === "debugger" && <DebuggerWorkspace config={config} />}
+        {area === "compare" && <CompareWorkspace config={config} surface={compareSurface} navigation={compareNavigation} />}
       </div>
     </section>
   </div>;
@@ -204,13 +196,13 @@ function PrimaryNavigation(props: {
 
 function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => void }): React.JSX.Element {
   const summary = capabilitySummary(props.config);
-  const nextArea: StudioArea = props.config.experimentEnabled
-    ? "experiments"
-    : props.config.inspectorEnabled
-      ? "inspector"
-      : props.config.aguiEnabled || props.config.evidenceEnabled
-        ? "experiments"
-      : "harnesses";
+  const nextArea: StudioArea = props.config.inspectorEnabled
+    ? "inspector"
+    : props.config.aguiEnabled
+      ? "debugger"
+      : props.config.experimentEnabled || props.config.evidenceEnabled
+        ? "compare"
+        : "inspector";
   const inputs = [
     ["Inspector report", props.config.inspectorEnabled],
     ["Harness runtime", props.config.aguiEnabled],
@@ -221,8 +213,8 @@ function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => v
   const missingInputs = inputs.filter(([, enabled]) => !enabled);
   const actions = [
     { label: "Go to Inspector", area: "inspector" as const, enabled: props.config.inspectorEnabled, detail: "Retained sessions" },
-    { label: "Go to Experiments", area: "experiments" as const, enabled: experimentSurfaces(props.config).length > 0, detail: "Run or compare" },
-    { label: "Go to Harnesses", area: "harnesses" as const, enabled: props.config.aguiEnabled || props.config.experimentEnabled, detail: "Loaded context" },
+    { label: "Go to Debugger", area: "debugger" as const, enabled: props.config.aguiEnabled, detail: "Live runs" },
+    { label: "Go to Compare", area: "compare" as const, enabled: props.config.experimentEnabled || props.config.evidenceEnabled, detail: "Bench and results" },
   ];
   return <main className="control-overview">
     <section className="control-hero">
@@ -251,66 +243,30 @@ function InspectorWorkspace(props: { config: StudioConfig }): React.JSX.Element 
   return <EmptyWorkspace eyebrow="Observed delivery" title="Connect an Inspector report" detail="Inspector requires retained, privacy-filtered evidence. It never substitutes the recorded Session Debugger fixture for a real workspace." command="--inspector ./harness-inspector.html" />;
 }
 
-function ExperimentsWorkspace(props: {
+function DebuggerWorkspace(props: { config: StudioConfig }): React.JSX.Element {
+  if (!props.config.aguiEnabled) {
+    return <EmptyWorkspace eyebrow="Live runs" title="Load a harness for live runs" detail="The Debugger drives a live harness run over the embedded AG-UI endpoint and saves finished runs for replay." command="--harness ./my-agent.harness" />;
+  }
+  return <div className="debugger-mode"><RunView aguiEndpoint="agui" /></div>;
+}
+
+function CompareWorkspace(props: {
   config: StudioConfig;
-  surface: StudioExperimentSurface;
+  surface: StudioCompareSurface;
   navigation: ReactNode;
 }): React.JSX.Element {
-  const available = experimentSurfaces(props.config);
+  const available = compareSurfaces(props.config);
   if (available.length === 0) {
-    return <EmptyWorkspace eyebrow="Controlled validation" title="Load an experiment or evidence bundle" detail="Harness Bench needs a locked experiment manifest, a live Harness, or frozen compare evidence. It does not infer an experiment from an Inspector association." command="--experiment ./experiment.json" />;
+    return <EmptyWorkspace eyebrow="Controlled validation" title="Load an experiment or evidence bundle" detail="Compare needs a locked experiment manifest or frozen compare evidence. It does not infer an experiment from an Inspector association." command="--experiment ./experiment.json" />;
   }
-  if (props.surface === "experiment" && props.config.experimentEnabled) {
+  if (props.surface === "bench" && props.config.experimentEnabled) {
     return <main className="experiment-mode"><ExperimentView navigation={props.navigation} /></main>;
-  }
-  if (props.surface === "live-run" && props.config.aguiEnabled) {
-    return <div className="debugger-mode"><RunView aguiEndpoint="agui" navigation={props.navigation} initialMode="live" /></div>;
   }
   if (props.surface === "results" && props.config.evidenceEnabled) {
     return <main className="evidence-results"><header><div><small>Frozen comparison</small><h1>Evidence results</h1></div>{props.navigation}</header><CompareView /></main>;
   }
   const fallback = available[0]!;
-  return <EmptyWorkspace eyebrow="Surface unavailable" title="Choose a configured experiment surface" detail={`The requested surface is not connected. Available now: ${fallback}.`} />;
-}
-
-function HarnessesWorkspace(props: { config: StudioConfig; onOpen: (area: StudioArea) => void }): React.JSX.Element {
-  const loaded = props.config.aguiEnabled || props.config.experimentEnabled;
-  return <FoundationWorkspace
-    eyebrow="Harness Revision"
-    title={loaded ? "Harness editing unavailable" : "Load a Harness source"}
-    current={loaded ? "Run and experiment context are loaded; source editing is not connected." : "No Harness or experiment context was supplied."}
-    capabilities={["Source editor", "Revision catalog", "Compatibility checks"]}
-    action={props.config.experimentEnabled ? { label: "Open Harness Bench", onClick: () => props.onOpen("experiments") } : undefined}
-  />;
-}
-
-function TaskSuitesWorkspace(props: { config: StudioConfig; onOpen: (area: StudioArea) => void }): React.JSX.Element {
-  return <FoundationWorkspace
-    eyebrow="Repository task assets"
-    title={props.config.experimentEnabled ? "Single task loaded" : "Task Suite unavailable"}
-    current={props.config.experimentEnabled ? "The experiment supplies one task boundary, not a Suite dashboard." : "No task or grader contract is connected."}
-    capabilities={["Task catalog", "Grader contract", "Coverage splits"]}
-    action={props.config.experimentEnabled ? { label: "Inspect current experiment", onClick: () => props.onOpen("experiments") } : undefined}
-  />;
-}
-
-function RegistryWorkspace(): React.JSX.Element {
-  return <FoundationWorkspace
-    eyebrow="Evidence-backed governance"
-    title="Registry unavailable"
-    current="No promotion policy or Evidence Bundle registry is connected."
-    capabilities={["Candidate records", "Promotion policy", "Revalidation"]}
-  />;
-}
-
-function FoundationWorkspace(props: {
-  eyebrow: string;
-  title: string;
-  current: string;
-  capabilities: readonly string[];
-  action?: { label: string; onClick: () => void };
-}): React.JSX.Element {
-  return <main className="foundation-workspace"><section className="foundation-intro"><small>{props.eyebrow}</small><h1>{props.title}</h1><p>{props.current}</p>{props.action && <button type="button" onClick={props.action.onClick}>{props.action.label}<ArrowRight size={14} /></button>}</section><section className="foundation-status"><header><div><small>Needed next</small><h2>Foundation only</h2></div><span>Not connected</span></header><ul>{props.capabilities.map((capability) => <li key={capability}><span className="availability-dot availability-foundation" />{capability}</li>)}</ul></section></main>;
+  return <EmptyWorkspace eyebrow="Surface unavailable" title="Choose a configured compare surface" detail={`The requested surface is not connected. Available now: ${fallback}.`} />;
 }
 
 function EmptyWorkspace(props: { eyebrow: string; title: string; detail: string; command?: string }): React.JSX.Element {

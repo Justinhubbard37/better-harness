@@ -7,6 +7,7 @@ outputs/
 test-results/
 .qoder-cache/
 .harness/state/
+.harness-studio-runs/
 .codex-plugin/skills/
 skills/**/.plugin-eval/
 .codex-plugin/hooks/

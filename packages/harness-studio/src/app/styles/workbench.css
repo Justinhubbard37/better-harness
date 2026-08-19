@@ -434,6 +434,43 @@
 .connection-dot.status-error { background: var(--color-danger); }
 .debugger-top-actions { display: flex; align-items: center; gap: var(--space-xs); }
 .debugger-top-actions > button { min-width: var(--toolbar-target); padding-inline: var(--space-sm); display: inline-flex; align-items: center; gap: var(--space-xs); }
+.saved-runs { position: relative; }
+.saved-runs > button { min-width: var(--toolbar-target); padding-inline: var(--space-sm); display: inline-flex; align-items: center; gap: var(--space-xs); }
+.saved-runs-panel {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  z-index: 40;
+  width: 320px;
+  max-height: 320px;
+  overflow: auto;
+  display: grid;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-overlay);
+}
+.saved-runs-panel > button {
+  min-height: var(--row-height);
+  padding: var(--space-xs) var(--space-sm);
+  display: grid;
+  gap: 0;
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: var(--radius-none);
+  background: transparent;
+  text-align: left;
+}
+.saved-runs-panel > button:last-child { border-bottom: 0; }
+.saved-runs-panel > button:hover { background: var(--color-surface-hover); }
+.saved-runs-panel > button.selected { background: var(--color-surface-selected); }
+.saved-runs-panel > button strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-label-size); }
+.saved-runs-panel > button > span { display: flex; align-items: center; gap: var(--space-xs); color: var(--color-text-muted); font-size: var(--type-meta-size); }
+.saved-runs-panel .run-badge { font-style: normal; font-weight: var(--weight-semibold); }
+.saved-runs-panel .run-badge.status-finished { color: var(--color-success); }
+.saved-runs-panel .run-badge.status-error { color: var(--color-danger); }
+.saved-runs-live { color: var(--color-primary); font-weight: var(--weight-semibold); }
+.saved-runs-empty { margin: 0; padding: var(--space-sm); color: var(--color-text-muted); font-size: var(--type-meta-size); }
 
 .debugger-toolbar,
 .live-observation-bar { min-width: 0; padding: 0 var(--space-sm); display: flex; align-items: center; gap: var(--space-md); border-bottom: 1px solid var(--color-border); background: var(--color-surface-subtle); }

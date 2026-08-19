@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { startHarnessStudioServer } from "./server.js";
@@ -12,15 +12,18 @@ Usage:
 
 Options:
   --inspector <file>  self-contained Harness Inspector HTML (enables Inspector)
-  --evidence <dir>    harness-compare evidence directory (enables Compare view)
-  --harness <file>    .harness file to serve for live runs (enables Run view)
-  --experiment <file> harness-experiment.v1 manifest (enables Experiment view)
+                      (default: .qoder/better-harness-runs/harness-inspector/inspector.html when present)
+  --evidence <dir>    harness-compare evidence directory (enables Compare results)
+  --harness <file>    .harness file to serve for live runs (enables Debugger)
+  --experiment <file> harness-experiment.v1 manifest (enables Compare bench)
   --experiment-out <dir>
                       Evidence root for experiment runs
   --history-catalog <file>
                       checkpoint-history.v1 source for the Builder picker
   --experiment-locks <dir>
                       Durable root for content-addressed experiment locks
+  --runs <dir>        Durable directory for saved Debugger runs
+                      (default: .harness-studio-runs under --cwd)
   --harness-id <id>   Harness to resolve (default: the file's only harness)
   --runtime <id>      Target runtime (default: the file's only target)
   --port <n>          Listen port (default: 3311)
@@ -47,6 +50,17 @@ export function resolveHarnessStudioSourceRoot(
   return explicitRoot ?? (harness !== undefined ? dirname(resolve(harness)) : undefined);
 }
 
+/** The Inspector CLI's conventional local output path, discovered only under this fixed location. */
+export async function discoverDefaultInspectorReport(cwd: string): Promise<string | undefined> {
+  const candidate = join(cwd, ".qoder", "better-harness-runs", "harness-inspector", "inspector.html");
+  try {
+    await access(candidate);
+    return candidate;
+  } catch {
+    return undefined;
+  }
+}
+
 interface ParsedArgs {
   inspector?: string;
   evidence?: string;
@@ -57,6 +71,7 @@ interface ParsedArgs {
   experimentLocks?: string;
   harnessId?: string;
   runtime?: string;
+  runs?: string;
   port: number;
   host: string;
   allowRemote: boolean;
@@ -106,6 +121,9 @@ export function parseHarnessStudioArgs(argv: string[]): ParsedArgs {
       case "--runtime":
         parsed.runtime = takeValue();
         break;
+      case "--runs":
+        parsed.runs = takeValue();
+        break;
       case "--host":
         parsed.host = takeValue() ?? parsed.host;
         break;
@@ -150,8 +168,14 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     io.stderr(`${parsed.error}\n`);
     return 2;
   }
+  // The Inspector CLI writes to one conventional local path; discovering it
+  // keeps `harness-studio` usable in a repository without restating flags.
+  const discoveredInspector = parsed.inspector === undefined
+    ? await discoverDefaultInspectorReport(parsed.cwd ?? process.cwd())
+    : undefined;
+  const inspectorPath = parsed.inspector ?? discoveredInspector;
   if (
-    parsed.inspector === undefined
+    inspectorPath === undefined
     && parsed.evidence === undefined
     && parsed.harness === undefined
     && parsed.experiment === undefined
@@ -168,11 +192,12 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     port: parsed.port,
     host: parsed.host,
     allowRemote: parsed.allowRemote,
-    ...(parsed.inspector !== undefined ? { inspectorReportPath: resolve(parsed.inspector) } : {}),
+    ...(inspectorPath !== undefined ? { inspectorReportPath: resolve(inspectorPath) } : {}),
     ...(parsed.evidence !== undefined ? { evidenceDir: resolve(parsed.evidence) } : {}),
     ...(harnessSource !== undefined ? { harnessSource } : {}),
     ...(parsed.harnessId !== undefined ? { harnessId: parsed.harnessId } : {}),
     ...(parsed.runtime !== undefined ? { runtimeId: parsed.runtime } : {}),
+    ...(parsed.runs !== undefined ? { runDirectory: resolve(parsed.runs) } : {}),
     ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
     ...(sourceRoot !== undefined ? { sourceRoot } : {}),
     ...(parsed.experiment !== undefined ? { experimentManifestPath: resolve(parsed.experiment) } : {}),
@@ -185,6 +210,9 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
       `Warning: ${started.url} is reachable beyond loopback and has no authentication. ` +
         `Anyone who can route to it can run a coding agent in ${parsed.cwd ?? process.cwd()}.\n`,
     );
+  }
+  if (discoveredInspector !== undefined) {
+    io.stdout(`Inspector report: ${discoveredInspector} (auto-discovered)\n`);
   }
   io.stdout(`Harness Studio: ${started.url}\n`);
   return 0;

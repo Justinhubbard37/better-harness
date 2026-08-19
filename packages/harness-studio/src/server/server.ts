@@ -33,6 +33,7 @@ import { extractInspectorReportJson, loadInspectorReport } from "./query/inspect
 import { ObservedCallIndex } from "./query/observed-call-index.js";
 import { lockHistoryExperiment } from "./experiment-lock.js";
 import { canonicalToolEvents } from "./experiment-events.js";
+import { listRunRecords, parseRunSnapshot, readRunRecord, saveRunRecord } from "./run-log.js";
 
 const builtInExecutorFactory: HarnessUiExecutorFactory = (context) => {
   if (context.runtimeId === "qoder") {
@@ -67,6 +68,8 @@ export interface HarnessStudioServerOptions {
   cwd?: string;
   /** Root a `source`-backed skill's path is locked and delivered against. */
   sourceRoot?: string;
+  /** Durable directory for saved Debugger run records (default: .harness-studio-runs under cwd). */
+  runDirectory?: string;
   executorFactory?: HarnessUiExecutorFactory;
   /** `harness-experiment.v1` manifest; enables the live three-lane trace view. */
   experimentManifestPath?: string;
@@ -137,6 +140,11 @@ async function route(
   }
   if (request.method === "GET" && url.pathname === "/api/inspector-report") {
     await serveInspectorReportJson(response, options.inspectorReportPath);
+    return;
+  }
+  const runRead = url.pathname.match(/^\/api\/runs\/([^/]+)$/);
+  if (url.pathname === "/api/runs" || runRead !== null) {
+    await routeRuns(request, response, options, url, runRead === null ? undefined : decodeURIComponent(runRead[1]!));
     return;
   }
   if (request.method === "GET" && url.pathname === "/inspector") {
@@ -509,17 +517,58 @@ async function serveObservedCalls(response: ServerResponse, url: URL, state: Har
   }
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+async function readJsonBody(request: IncomingMessage, maxBytes = 32_768): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += bytes.length;
-    if (size > 32_768) throw new Error("Request body is too large.");
+    if (size > maxBytes) throw new Error("Request body is too large.");
     chunks.push(bytes);
   }
   if (chunks.length === 0) return {};
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+/** Saved Debugger runs: retained browser-observed AG-UI evidence, one JSON file per run. */
+async function routeRuns(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: HarnessStudioServerOptions,
+  url: URL,
+  runId: string | undefined,
+): Promise<void> {
+  if (options.harnessSource === undefined) {
+    respondJson(response, 404, { error: "No harness loaded; saved runs require --harness <file.harness>." });
+    return;
+  }
+  const directory = options.runDirectory ?? resolve(options.cwd ?? process.cwd(), ".harness-studio-runs");
+  try {
+    if (request.method === "GET" && runId !== undefined) {
+      try {
+        respondJson(response, 200, await readRunRecord(directory, runId));
+      } catch {
+        respondJson(response, 404, { error: `Saved run '${runId}' is not available.` });
+      }
+      return;
+    }
+    if (request.method === "GET") {
+      respondJson(response, 200, { runs: await listRunRecords(directory) });
+      return;
+    }
+    if (request.method === "POST" && runId === undefined) {
+      if (!sameOriginRequest(request)) {
+        respondJson(response, 403, { error: "Cross-origin run saving is not allowed." });
+        return;
+      }
+      const snapshot = parseRunSnapshot(await readJsonBody(request, 2_000_000));
+      respondJson(response, 201, await saveRunRecord(directory, snapshot));
+      return;
+    }
+    respondJson(response, 405, { error: `Use GET or POST for ${url.pathname}.` });
+  } catch (error) {
+    respondJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 function sameOriginRequest(request: IncomingMessage): boolean {
