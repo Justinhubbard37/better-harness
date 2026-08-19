@@ -8,7 +8,7 @@ import { test } from "vitest";
 
 import { evaluateHtmlReport, renderHtml } from "../../scripts/harness-analysis/renderers/html.mjs";
 import { RENDER_REPORT_PLATFORMS, renderReport } from "../../scripts/harness-analysis/render-report.mjs";
-import { SUPPORTED_SESSION_PLATFORMS } from "../../scripts/session-analysis/analyzer.mjs";
+import { HOST_CAPABILITIES, hostIdsFor } from "../../scripts/host-support/index.mjs";
 import { renderCanvasTsx } from "../../scripts/harness-analysis/renderers/qoder-canvas.mjs";
 import { buildTaskLoopSourceCandidate } from "../../scripts/harness-analysis/task-loop-source.mjs";
 import { applyEpisodeReviews } from "../../scripts/harness-analysis/episode-evidence-review.mjs";
@@ -869,6 +869,13 @@ test("render routes html output by host id and fails closed on unknown platforms
     assert.equal(rejected.status, 1);
     assert.match(rejected.stderr, /unsupported render platform: grock/u);
 
+    const sessionOnly = runNode(
+      [renderPath, "--findings", findingsPath, "--mode", "html", "--platform", "dsh", "--target", root, "--json"],
+      { cwd: root },
+    );
+    assert.equal(sessionOnly.status, 1);
+    assert.match(sessionOnly.stderr, /unsupported render platform: dsh/u);
+
     // Help must stay usable even with an invalid platform so agents can self-correct.
     const help = runNode([renderPath, "--help", "--platform", "grock"], { cwd: root });
     assert.equal(help.status, 0, help.stderr);
@@ -876,8 +883,9 @@ test("render routes html output by host id and fails closed on unknown platforms
   });
 });
 
-test("render platform allowlist matches the session platform registry", () => {
-  assert.deepEqual([...RENDER_REPORT_PLATFORMS].sort(), [...SUPPORTED_SESSION_PLATFORMS].sort());
+test("render platform allowlist follows report-rendering capability rather than session support", () => {
+  assert.deepEqual([...RENDER_REPORT_PLATFORMS], hostIdsFor(HOST_CAPABILITIES.REPORT_RENDERING));
+  assert.equal(RENDER_REPORT_PLATFORMS.includes("dsh"), false);
 });
 
 test("HTML relative action metadata carries the finding's current repair revision", () => {

@@ -44,6 +44,7 @@ import {
   parseWorkspaceDescriptor,
 } from "../../scripts/session-analysis/platforms/copilot.mjs";
 import { KimiSessionAnalyzer } from "../../scripts/session-analysis/platforms/kimi.mjs";
+import { DshSessionAnalyzer } from "../../scripts/session-analysis/platforms/dsh.mjs";
 import { measureLongSessionRows } from "../../scripts/session-analysis/long-sessions.mjs";
 
 async function fixtureRoot(prefix) {
@@ -66,6 +67,7 @@ test("root dispatcher creates Claude and Cursor provider analyzers", async () =>
   assert.ok(await createAnalyzer("pi") instanceof PiSessionAnalyzer);
   assert.ok(await createAnalyzer("workbuddy") instanceof WorkbuddySessionAnalyzer);
   assert.ok(await createAnalyzer("grok") instanceof GrokSessionAnalyzer);
+  assert.ok(await createAnalyzer("dsh") instanceof DshSessionAnalyzer);
   assert.ok(await createCapabilityAnalyzer("claude") instanceof ClaudeSessionAnalyzer);
   assert.ok(await createCapabilityAnalyzer("cursor") instanceof CursorSessionAnalyzer);
   assert.ok(await createCapabilityAnalyzer("qwen") instanceof QwenSessionAnalyzer);
@@ -73,6 +75,8 @@ test("root dispatcher creates Claude and Cursor provider analyzers", async () =>
   assert.ok(await createCapabilityAnalyzer("pi") instanceof PiSessionAnalyzer);
   assert.ok(await createCapabilityAnalyzer("workbuddy") instanceof WorkbuddySessionAnalyzer);
   assert.ok(await createCapabilityAnalyzer("grok") instanceof GrokSessionAnalyzer);
+  assert.ok(await createCapabilityAnalyzer("dsh") instanceof DshSessionAnalyzer);
+  await assert.rejects(() => createAnalyzer("unknown-host"), /Unsupported session provider: unknown-host/u);
 });
 
 test("public session-analysis main preserves the bare help alias", async () => {
@@ -87,6 +91,8 @@ test("public session-analysis main preserves the bare help alias", async () => {
 
   assert.equal(result, 0);
   assert.equal(output, SESSION_ANALYSIS_HELP);
+  assert.match(output, /\|dsh>/u);
+  assert.match(output, /--dsh-home <dir>\s+DeepSeek Harness data root \(default: ~\/\.dsh or \$DSH_HOME\)/u);
 });
 
 test("Claude, Cursor, and Qwen workspace slugs cover Unix and Windows layouts", () => {
