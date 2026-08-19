@@ -53,6 +53,7 @@
   .mode-tabs button.active { color:var(--color-text); border-bottom-color:var(--color-primary); background:var(--color-surface); font-weight:700; box-shadow:none; }
   .picker-panel { display:none; min-height:0; overflow:auto; padding:10px 0 18px; }
   .picker-panel.active { display:block; }
+  #panel-date.active { flex:1; display:flex; overflow:hidden; padding-bottom:0; flex-direction:column; }
   .picker-heading { min-height:30px; margin:0; padding:5px 14px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.08em; }
   .capability-tree, .tree-children { margin:0; padding:0; list-style:none; }
   .capability-tree { padding-bottom:4px; }
@@ -106,6 +107,19 @@
   .date-selection-summary { min-height:43px; margin-top:8px; padding:8px 2px 0; display:flex; align-items:baseline; justify-content:space-between; gap:8px; border-top:1px solid var(--line); }
   .date-selection-summary strong { color:var(--ink); font-size:12px; white-space:nowrap; }
   .date-selection-summary span { overflow:hidden; color:var(--muted); text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+  .date-session-navigator { min-height:0; flex:1; display:flex; flex-direction:column; border-top:1px solid var(--line); background:var(--color-surface-subtle); }
+  .date-session-heading { min-height:31px; flex:none; padding:7px 14px 6px; display:flex; align-items:center; justify-content:space-between; gap:8px; border-bottom:1px solid var(--line); color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
+  .date-session-heading strong { color:var(--ink); font-size:11px; }
+  .date-session-list { min-height:0; overflow:auto; padding-bottom:12px; }
+  .date-session-row { width:100%; min-height:53px; padding:7px 12px 8px 14px; display:block; border:0; border-bottom:1px solid #e5eaf0; border-radius:0; color:var(--ink); background:transparent; cursor:pointer; text-align:left; }
+  .date-session-row:hover { background:var(--color-surface-hover,#EEF1F5); }
+  .date-session-row.active { box-shadow:inset 2px 0 0 var(--color-primary); background:var(--color-primary-soft); }
+  .date-session-row-top { min-width:0; display:flex; align-items:baseline; justify-content:space-between; gap:8px; color:var(--muted); font-size:10px; }
+  .date-session-row-meta { min-width:0; display:flex; align-items:baseline; gap:5px; overflow:hidden; white-space:nowrap; }
+  .date-session-row-meta strong { color:var(--ink); font-size:10px; text-transform:uppercase; letter-spacing:.04em; }
+  .date-session-row-meta time { overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums; }
+  .date-session-row-stat { flex:none; }
+  .date-session-title { margin-top:2px; display:block; overflow:hidden; color:var(--ink); text-overflow:ellipsis; white-space:nowrap; font-size:12px; font-weight:600; }
   .picker-empty { margin:14px 8px; color:var(--muted); font-size:12px; }
   .workspace { min-width:0; }
   .workspace-header { min-height:42px; position:sticky; top:0; z-index:3; padding:5px 14px; display:flex; align-items:center; justify-content:space-between; gap:12px; border-bottom:1px solid var(--line); background:var(--color-surface); }
@@ -526,6 +540,8 @@
   }
   @media (max-width:760px) {
     .date-cell { min-height:42px; }
+    #panel-date.active { display:block; overflow:auto; }
+    .date-session-navigator { max-height:190px; }
     .session-cell { grid-template-columns:46px minmax(0,1fr); gap:6px; }
     .session-cell-marker .turn-select, .session-cell-marker > span { margin-right:5px; padding-inline:2px; font-size:12px; }
     .session-unplaced, .session-outside { margin-left:52px; }

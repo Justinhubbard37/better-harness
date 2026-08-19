@@ -388,6 +388,10 @@ occupy more attention than the active task.
   keep date cells numeric, mark activity with a subtle dot, and show explicit
   session and commit counts for the active day below the grid. Do not compress
   counts into unexplained abbreviations such as `2s` or `9c`.
+- In Date mode, keep the calendar at the top of the sidebar and use the remaining
+  sidebar space for flat Session navigator rows from the selected day. A row
+  locates its Session in the workspace; do not duplicate the calendar or turn
+  the workspace into a second schedule view.
 
 ### Actions and forms
 

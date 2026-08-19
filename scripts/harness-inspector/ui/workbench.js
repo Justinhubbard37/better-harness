@@ -1322,11 +1322,26 @@
     const wrapper = document.querySelector('.scope-index');
     const select = document.getElementById('scope-index');
     if (!wrapper || !select) return;
-    wrapper.hidden = items.length < 4;
+    wrapper.hidden = state.mode === 'date' || items.length < 4;
     select.innerHTML = '<option value="">Jump to workbench…</option>' + items.map((item,index) => {
       const label = itemTitle(item);
       return '<option value="workbench-card-' + index + '">' + escape([...label].length > 46 ? [...label].slice(0,45).join('') + '…' : label) + '</option>';
     }).join('');
+  }
+
+  function renderDateSessionNavigator(items) {
+    const list = document.querySelector('[data-date-session-list]');
+    const count = document.querySelector('[data-date-session-count]');
+    if (!list || !count) return;
+    const sessions = items.map((item,index) => ({ item,index })).filter(entry => entry.item.session);
+    count.textContent = String(sessions.length);
+    list.innerHTML = sessions.map(({ item,index }) => {
+      const session = item.session;
+      const title = itemTitle(item);
+      const calls = session.toolActivity.totalCalls;
+      const label = 'Locate ' + session.platform + ' Session at ' + formatClock(session.firstSeen) + ': ' + title;
+      return '<button class="date-session-row" type="button" data-date-session-target="workbench-card-' + index + '" aria-label="' + escape(label) + '"><span class="date-session-row-top"><span class="date-session-row-meta"><strong>' + escape(session.platform) + '</strong><time>' + escape(formatClock(session.firstSeen)) + '</time><span>' + escape(formatDuration(session.durationMs)) + '</span></span><span class="date-session-row-stat">' + calls + ' call' + (calls === 1 ? '' : 's') + '</span></span><span class="date-session-title" title="' + escape(title) + '">' + escape(title) + '</span></button>';
+    }).join('') || '<p class="picker-empty">No Sessions were observed on this date.</p>';
   }
 
   function renderScope() {
@@ -1357,6 +1372,7 @@
     state.items = items;
     document.getElementById('workbench-list').innerHTML = items.map(workbench).join('') || '<div class="empty-state">No provenance workbench exists in this scope.</div>';
     renderScopeIndex(items);
+    renderDateSessionNavigator(items);
     document.querySelectorAll('[data-feature-id]').forEach(button => button.classList.toggle('active', state.mode === 'feature' && button.dataset.featureId === state.scope));
     document.querySelectorAll('[data-date]').forEach(button => {
       const active = state.mode === 'date' && button.dataset.date === state.scope;
@@ -1471,6 +1487,17 @@
     }
     const date = event.target.closest('[data-date]');
     if (date) { state.scope = date.dataset.date; setMode('date'); return; }
+    const sessionTarget = event.target.closest('[data-date-session-target]');
+    if (sessionTarget) {
+      const target = document.getElementById(sessionTarget.dataset.dateSessionTarget);
+      if (target) target.scrollIntoView({ behavior:'smooth', block:'start' });
+      document.querySelectorAll('[data-date-session-target]').forEach(row => {
+        const active = row === sessionTarget;
+        row.classList.toggle('active',active);
+        row.setAttribute('aria-current',active ? 'true' : 'false');
+      });
+      return;
+    }
     const cardToggle = event.target.closest('[data-toggle-card]');
     if (cardToggle) {
       const index = Number(cardToggle.dataset.toggleCard);

@@ -93,7 +93,7 @@ function datePicker(days) {
     cells.push(`<button class="date-cell" type="button" data-date="${date}" data-session-count="${sessions}" data-commit-count="${commits}" aria-label="${escapeHtml(label)}"><time datetime="${date}">${number}</time><span class="date-activity" aria-hidden="true"></span></button>`);
   }
   const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => `<span>${day}</span>`).join("");
-  return `<div class="date-calendar"><header><strong>${escapeHtml(calendarLabel)}</strong><span>UTC</span></header><div class="date-weekdays" aria-hidden="true">${weekdays}</div><div class="date-grid">${cells.join("")}</div><div class="date-selection-summary" aria-live="polite"><strong data-date-summary-label>Select a date</strong><span data-date-summary-meta></span></div></div>`;
+  return `<div class="date-calendar"><header><strong>${escapeHtml(calendarLabel)}</strong><span>UTC</span></header><div class="date-weekdays" aria-hidden="true">${weekdays}</div><div class="date-grid">${cells.join("")}</div><div class="date-selection-summary" aria-live="polite"><strong data-date-summary-label>Select a date</strong><span data-date-summary-meta></span></div></div><nav class="date-session-navigator" aria-label="Sessions on selected date"><div class="date-session-heading"><strong>Sessions</strong><span data-date-session-count>0</span></div><div class="date-session-list" data-date-session-list><p class="picker-empty">Select a date to browse its Sessions.</p></div></nav>`;
 }
 
 // Badge names the providers that contributed sessions; the requested filter
