@@ -13,10 +13,12 @@ host-neutral.
 
 ## Support levels
 
-Better Harness currently declares ten capability-level host adapters. Six
-have verified public Quickstart paths. Pi, Kimi Code, WorkBuddy, and Grok are visible as adapter
+Better Harness currently declares ten more complete capability-level host
+adapters plus one DSH session-only partial slice. Six have verified public
+Quickstart paths. Pi, Kimi Code, WorkBuddy, and Grok are visible as adapter
 support because their installation and end-to-end evidence boundaries differ
-from that six-host set. The [canonical adapter matrix](https://github.com/QoderAI/better-harness/blob/main/docs/adapters/README.md)
+from that six-host set. DSH is visible only as a developer-preview session
+evidence contract, not as a runnable report adapter. The [canonical adapter matrix](https://github.com/QoderAI/better-harness/blob/main/docs/adapters/README.md)
 remains the complete capability-level source of truth.
 
 ## Supported host adapters
@@ -33,6 +35,7 @@ remains the complete capability-level source of truth.
 | Kimi Code | Adapter support | Analysis-capable source-local host | `.kimi-plugin/plugin.json` | Workspace-matching Kimi wire transcripts | Self-contained HTML + Markdown |
 | WorkBuddy | Adapter support | Analysis-capable source-local host | None; skills use WorkBuddy-owned paths | Workspace-matching WorkBuddy JSONL transcripts | Self-contained HTML + Markdown |
 | Grok | Adapter support | Analysis-capable source-local host | None; skills use Grok-owned paths | Workspace-matching Grok session dirs (`updates.jsonl`) | Self-contained HTML + Markdown |
+| DeepSeek Harness (DSH) | Session analysis only | Partial, developer-preview contract | None | DSH JSONL backend session format `0`: raw `.jsonl` and feature-detected `.jsonl.zstd` | Unavailable |
 
 The `@qoder-ai/better-harness` npm package includes all seven plugin metadata
 roots. Pi reuses install metadata in the existing `package.json`, so it does
@@ -58,7 +61,9 @@ contract is stale, persistent Pi operations without native evidence stay
 unavailable, transient Pi update/remove are not applicable, and WorkBuddy
 returns `PLUGIN_LIFECYCLE_UNSUPPORTED`. Kimi Code and Grok have no validated
 native lifecycle contract yet, so lifecycle targets reject them with
-`UNKNOWN_HOST` while their adapter evidence stays available. The shadow host
+`UNKNOWN_HOST` while their adapter evidence stays available. DSH likewise has
+no lifecycle profile: lifecycle targets reject it with `UNKNOWN_HOST`, and only
+its partial session evidence remains available. The shadow host
 profiles do not replace the canonical adapter matrix while ADR-0002 remains
 proposed.
 
@@ -72,6 +77,9 @@ proposed.
   covering `findings.json`, `report.md`, and a self-contained `report.html`
   (see the [sample report](pathname:///demo/better-harness-report/)).
 - **Markdown-only** — no visual companion.
+
+DSH is not an output-mode host. Session-analysis evidence does not grant HTML,
+Canvas, Markdown, or any report route.
 
 ## Adapter support boundaries
 
@@ -109,6 +117,41 @@ npm-packaged host artifact; installation is a manual skill symlink into
 `~/.grok/skills/better-harness` (or project `.grok/skills`). Grok remains
 outside the verified Quickstart set until a complete interactive report-loop
 smoke is observed.
+
+### DeepSeek Harness (DSH) {#deepseek-harness-dsh}
+
+DSH coverage is a developer-preview, JSONL-only session slice, with Better
+Harness adapter metadata `dsh-v1` and native session format `0` pinned to DSH
+`dsh-v0.1.0-rc.7`. Home resolution is strictly `--dsh-home` over `DSH_HOME`
+over `~/.dsh`; the only source root is `<home>/sessions`. The adapter reads the
+fixed nested `session.jsonl` or `session.jsonl.zstd` layout without writing or
+repairing artifacts, and it qualifies a workspace only from the header's
+absolute `cwd`. DSH is registered only for the `sessionAnalysis` capability.
+
+Compressed artifacts are concatenated independently checksummed Zstandard
+frames and are validated and decompressed one complete frame at a time. The
+public API available in supported Node.js 22.20 and 24 runtimes is
+feature-detected. When it is unavailable, including Node.js 23.0 through 23.7,
+compressed evidence is reported unavailable while independent raw JSONL
+evidence remains readable; no fallback dependency is installed.
+Known-but-unsupported and unknown ignorable events are accounted
+for, while unknown required events, malformed data, identity drift, and
+unsupported versions fail closed. Open trailing turns remain incomplete, and
+the adapter does not infer plugin ownership, causality, or faults.
+
+The implemented source-checkout smoke boundary is read-only:
+
+```bash
+node scripts/session-analysis.mjs sources --platform dsh --workspace <path> [--dsh-home <dir>]
+```
+
+This is not evidence of native DSH installation or invocation. DSH has no live
+PTY/process integration, configured-asset or Skill discovery, plugin lifecycle,
+shell, manifest, package integration, report/output route, README Quickstart or
+Installation path, SQLite or custom persistence support, automatic
+optimization, plugin-fault attribution, or artifact mutation/recovery. See the
+[canonical source matrix](https://github.com/QoderAI/better-harness/blob/main/docs/adapters/README.md)
+and [Story #93](https://github.com/QoderAI/better-harness/issues/93).
 
 ## Capability coverage
 

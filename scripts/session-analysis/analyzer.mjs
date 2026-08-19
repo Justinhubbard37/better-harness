@@ -56,6 +56,7 @@ Options:
   --kimi-home <dir>         Kimi Code data root (default: ~/.kimi-code)
   --workbuddy-home <dir>    WorkBuddy data root (default: ~/.workbuddy)
   --grok-home <dir>         Grok CLI data root (default: ~/.grok or $GROK_HOME)
+  --dsh-home <dir>          DeepSeek Harness data root (default: ~/.dsh or $DSH_HOME)
   --include-cache           Include optional Qoder cache evidence
   --include-global-capabilities
                             Include optional user-global Qoder evidence
@@ -251,6 +252,7 @@ const PLATFORM_MODULES = Object.freeze({
   kimi: { specifier: "./platforms/kimi.mjs", analyzer: "KimiSessionAnalyzer" },
   workbuddy: { specifier: "./platforms/workbuddy.mjs", analyzer: "WorkbuddySessionAnalyzer" },
   grok: { specifier: "./platforms/grok.mjs", analyzer: "GrokSessionAnalyzer" },
+  dsh: { specifier: "./platforms/dsh.mjs", analyzer: "DshSessionAnalyzer" },
   "harness-run": { specifier: "./platforms/harness-run.mjs", analyzer: "HarnessRunSessionAnalyzer" },
 });
 
@@ -330,7 +332,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
       ...eventOptions,
       ...claudeOptions,
       "",
-      "Options: --kimi-home <dir> overrides the Kimi Code data root (default: ~/.kimi-code); --workbuddy-home <dir> overrides the WorkBuddy data root (default: ~/.workbuddy); --grok-home <dir> overrides the Grok data root (default: ~/.grok or $GROK_HOME).",
+      "Options: --kimi-home <dir> overrides the Kimi Code data root (default: ~/.kimi-code); --workbuddy-home <dir> overrides the WorkBuddy data root (default: ~/.workbuddy); --grok-home <dir> overrides the Grok data root (default: ~/.grok or $GROK_HOME); --dsh-home <dir> overrides the DeepSeek Harness data root (default: ~/.dsh or $DSH_HOME).",
       "",
       "Use facts --debug only for local diagnosis; it exposes raw session ids and must not be passed to report agents.",
     ].join("\n") + "\n");

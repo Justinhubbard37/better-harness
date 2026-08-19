@@ -1,7 +1,8 @@
 # Host Adapter Matrix
 
 This is the single entry point for Claude Code, Codex, Qoder, Cursor, Qwen,
-GitHub Copilot, Pi, Kimi Code, WorkBuddy, and Grok host boundaries. Do not
+GitHub Copilot, Pi, Kimi Code, WorkBuddy, and Grok host boundaries, plus the
+DeepSeek Harness (DSH) developer-preview session-only slice. Do not
 create `docs/adapters/claude-code.md`, `docs/adapters/codex.md`,
 `docs/adapters/qoder.md`, `docs/adapters/cursor.md`, `docs/adapters/qwen.md`,
 `docs/adapters/copilot.md`, `docs/adapters/pi.md`,
@@ -43,6 +44,7 @@ project `.kimi-code/skills/`), then runs `/skill:better-harness`.
 | Kimi Code | Analysis-capable source-local host | `.kimi-plugin/plugin.json` | `scripts/agent-customize/providers/kimi.mjs` | `scripts/session-analysis/platforms/kimi.mjs` | self-contained HTML + Markdown | `AGENTS.md` + `~/.kimi-code/skills` + project `.kimi-code/skills`/`.kimi/skills` + `~/.kimi-code/mcp.json` | `harness evidence-bundle --platform kimi` -> validated `html` render |
 | WorkBuddy | Analysis-capable source-local host | none (skills install into `~/.workbuddy/skills`) | `scripts/agent-customize/providers/workbuddy.mjs` | `scripts/session-analysis/platforms/workbuddy.mjs` | self-contained HTML + Markdown | `~/.workbuddy` `AGENTS.md` + identity files + `.agents` + `AGENTS.md` | `session-analysis --platform workbuddy sources` -> validated `html` render |
 | Grok | Analysis-capable source-local host | none (skills install into `~/.grok/skills`) | `scripts/agent-customize/providers/grok.mjs` | `scripts/session-analysis/platforms/grok.mjs` | self-contained HTML + Markdown | `~/.grok` + `.grok` + `.agents` + `AGENTS.md` | `session-analysis --platform grok sources` -> skill symlink -> validated `html` render |
+| DeepSeek Harness (DSH) | Partial session-evidence adapter (developer preview) | none / unavailable | unavailable | `scripts/session-analysis/platforms/dsh.mjs`; `dsh-v1` for DSH `dsh-v0.1.0-rc.7` session format `0`, raw `.jsonl` and feature-detected `.jsonl.zstd` | unavailable; no report route | unavailable | read-only `node scripts/session-analysis.mjs sources --platform dsh --workspace <path> [--dsh-home <dir>]` or `node scripts/session-analysis.mjs facts --platform dsh --workspace <path> [--dsh-home <dir>]` |
 
 ## Read-only Plugin Lifecycle
 
@@ -79,10 +81,12 @@ Plans never execute and always preserve native surface differences:
 | Pi CLI / CLI session | Persistent user/project install guidance and inventory; separate `pi -e` session-only activation whose update/remove operations are not applicable |
 | WorkBuddy | `PLUGIN_LIFECYCLE_UNSUPPORTED`; adapter evidence remains available |
 
-Kimi Code and Grok are absent from this table on purpose: neither host has a
+Kimi Code, Grok, and DSH are absent from this table on purpose: none has a
 validated native lifecycle contract yet, so lifecycle targets reject them with
-`UNKNOWN_HOST` instead of borrowing another host's install route. Their adapter,
-configured-asset, and session evidence remain available through the matrix above.
+`UNKNOWN_HOST` instead of borrowing another host's install route. Kimi Code and
+Grok retain their configured-asset and session evidence. DSH retains only its
+partial session-evidence slice and has no lifecycle profile or native lifecycle
+claim.
 
 The lifecycle commands do not read raw session transcripts, contact a registry,
 edit host settings, or register an `apply` path.
@@ -188,6 +192,33 @@ edit host settings, or register an `apply` path.
   `signals.json`). The adapter honors `GROK_HOME`. Grok has no install shell in
   this repository; skills install manually into `~/.grok/skills` (symlink is
   enough for `/better-harness`).
+- DeepSeek Harness has a developer-preview, JSONL-only session adapter at
+  `scripts/session-analysis/platforms/dsh.mjs`. Home resolution is strictly
+  `--dsh-home` over `DSH_HOME` over `~/.dsh`, and the only source root is
+  `<home>/sessions`. Discovery is read-only and accepts only the fixed nested
+  `session.jsonl` or `session.jsonl.zstd` layout. Workspace qualification uses
+  only the format-0 header's absolute `cwd`; the lossy project directory is not
+  workspace evidence. Better Harness reports adapter metadata `dsh-v1` and
+  supports native DSH session format `0` pinned to `dsh-v0.1.0-rc.7`. The host
+  is registered only for the `sessionAnalysis` capability.
+  Known-but-unsupported events and unknown ignorable events are explicitly
+  accounted for. Unknown required events, malformed records, identity drift,
+  and unsupported versions fail closed; an open trailing turn remains
+  incomplete. Bounded source distinctions are retained without copying
+  arbitrary plugin data or inferring plugin ownership, causality, or faults.
+  Compressed artifacts are concatenated independently checksummed Zstandard
+  frames and are scanned and decompressed one complete frame at a time. The
+  public API available in supported Node.js 22.20 and 24 runtimes is
+  feature-detected; where it is absent, including Node.js 23.0 through 23.7,
+  compressed evidence is unavailable while independent raw JSONL evidence
+  remains readable. There is no fallback dependency or shell.
+  This slice does not provide native DSH installation or invocation, live PTY
+  or process state, configured assets or Skills, plugin lifecycle, a shell,
+  manifest or package integration, report/output routing, README Quickstart or
+  Installation placement, SQLite or custom persistence, automatic
+  optimization, plugin fault or causality attribution, or artifact repair or
+  writes. See [Story #93](https://github.com/QoderAI/better-harness/issues/93)
+  and the [dated support specification](../specs/2026-08-18-93-deepseek-harness-session-evidence.md).
 
 ## Output Modes
 
@@ -200,6 +231,10 @@ Canonical templates live under `templates/reporting/`.
 - `html-visual.md`: portable Claude Code/Codex/Qwen/Copilot/Pi/Kimi Code/WorkBuddy/Grok visual output contract, covering
   `findings.json`, `report.md`, and `report.html`.
 - Markdown-only output has no visual companion.
+
+DSH is intentionally absent from these output-mode host lists. Its
+`sessionAnalysis` capability does not grant report routing, HTML, Canvas, or
+Markdown output support.
 
 ## Split Triggers
 

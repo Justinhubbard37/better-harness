@@ -35,11 +35,27 @@ test("capability projections are immutable, ordered, and independently addressed
   for (const capability of Object.values(HOST_CAPABILITIES)) {
     const hostIds = hostIdsFor(capability);
     assert.ok(Object.isFrozen(hostIds));
-    if (capability === HOST_CAPABILITIES.CHECKUP) {
-      assert.deepEqual(hostIds, HOST_IDS.filter((hostId) => !new Set(["kimi", "grok"]).has(hostId)));
-    } else {
-      assert.deepEqual(hostIds, HOST_IDS);
+    assert.deepEqual(hostIds, HOST_DESCRIPTORS
+      .filter((host) => host.capabilities.includes(capability))
+      .map((host) => host.id));
+    for (const host of HOST_DESCRIPTORS) {
+      assert.equal(hostIds.includes(host.id), host.capabilities.includes(capability),
+        `${host.id}:${capability}`);
     }
+  }
+  const dsh = getHostDescriptor("dsh");
+  assert.ok(Object.isFrozen(dsh.capabilities));
+  assert.deepEqual(dsh.capabilities, [HOST_CAPABILITIES.SESSION_ANALYSIS]);
+  assert.equal(hostIdsFor(HOST_CAPABILITIES.SESSION_ANALYSIS).includes("dsh"), true);
+  for (const capability of [
+    HOST_CAPABILITIES.AGENT_CUSTOMIZE,
+    HOST_CAPABILITIES.ASSET_PRACTICES,
+    HOST_CAPABILITIES.HARNESS_REPORT,
+    HOST_CAPABILITIES.REPORT_RENDERING,
+    HOST_CAPABILITIES.EVIDENCE_BUNDLE,
+    HOST_CAPABILITIES.CHECKUP,
+  ]) {
+    assert.equal(hostIdsFor(capability).includes("dsh"), false, capability);
   }
   assert.throws(() => hostIdsFor("unknown"), /Unknown host capability/u);
 });
