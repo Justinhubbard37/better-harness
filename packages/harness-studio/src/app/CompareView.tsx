@@ -34,11 +34,11 @@ export function CompareView(): React.JSX.Element {
   }, []);
 
   if (state.phase === "loading") {
-    return <p>Loading compare evidence…</p>;
+    return <p className="evidence-loading" role="status">Loading compare evidence…</p>;
   }
   if (state.phase === "missing") {
     return (
-      <section>
+      <section className="evidence-empty" role="alert">
         <p className="warning">No compare evidence loaded: {state.detail}</p>
         <p>
           Produce one with <code>harness-compare run &lt;experiment.json&gt; --out &lt;dir&gt;</code>{" "}
@@ -48,17 +48,21 @@ export function CompareView(): React.JSX.Element {
     );
   }
   const { summary } = state;
+  const sufficient = summary.evidence.pairs >= summary.evidence.minimumMatchedPairs;
+  const withinGuardrail = summary.evidence.costWithinGuardrail;
   return (
-    <section>
-      <p className="status-line">
-        <strong className={`verdict-${summary.status}`}>{summary.status}</strong>: {summary.reason}
-      </p>
-      <p className="muted">
-        Treatment axis {summary.treatmentAxis} · {summary.evidence.pairs} matched pair
-        {summary.evidence.pairs === 1 ? "" : "s"} (min {summary.evidence.minimumMatchedPairs}) ·
-        candidate {summary.evidence.candidateWins} / baseline {summary.evidence.baselineWins} /
-        tied {summary.evidence.ties} · mean score delta {summary.evidence.meanScoreDelta}
-      </p>
+    <section className="evidence-report">
+      <section className="decision-summary" aria-labelledby="decision-summary-title">
+        <header><div><small>Decision</small><h2 id="decision-summary-title">{summary.reason}</h2></div><strong className={`verdict-${summary.status}`}>{summary.status.replaceAll("_", " ")}</strong></header>
+        <dl>
+          <div><dt>Evidence</dt><dd className={sufficient ? "status-success" : "status-warning"}>{sufficient ? "Sufficient" : "More pairs required"}</dd><small>{summary.evidence.pairs} matched · minimum {summary.evidence.minimumMatchedPairs}</small></div>
+          <div><dt>Quality delta</dt><dd>{summary.evidence.meanScoreDelta >= 0 ? "+" : ""}{summary.evidence.meanScoreDelta}</dd><small>{summary.evidence.candidateWins} candidate · {summary.evidence.baselineWins} baseline · {summary.evidence.ties} tied</small></div>
+          <div><dt>Cost guardrail</dt><dd className={withinGuardrail ? "status-success" : "status-danger"}>{summary.evidence.costRatio === null ? (withinGuardrail ? "No spend" : "Unavailable") : `${summary.evidence.costRatio.toFixed(2)}×`}</dd><small>Maximum {summary.evidence.maxCostRatio.toFixed(2)}× per completed trial</small></div>
+          <div><dt>Treatment</dt><dd>{summary.treatmentAxis}</dd><small>Single declared comparison axis</small></div>
+        </dl>
+      </section>
+      <section className="evidence-table-pane" aria-labelledby="variant-table-title">
+      <header><h2 id="variant-table-title">Variant aggregates</h2><span>Supporting evidence</span></header>
       <div className="table-scroll" role="region" aria-label="Variant comparison" tabIndex={0}>
         <table>
           <thead>
@@ -89,7 +93,9 @@ export function CompareView(): React.JSX.Element {
           </tbody>
         </table>
       </div>
-      <h3>Trials</h3>
+      </section>
+      <section className="evidence-table-pane" aria-labelledby="trial-table-title">
+      <header><h2 id="trial-table-title">Trials</h2><span>{summary.trials.length} recorded rows</span></header>
       <div className="table-scroll" role="region" aria-label="Trial details" tabIndex={0}>
         <table>
           <thead>
@@ -118,7 +124,8 @@ export function CompareView(): React.JSX.Element {
           </tbody>
         </table>
       </div>
-      <p className="muted">Manifest {summary.manifestHash}</p>
+      </section>
+      <p className="evidence-manifest"><span>Manifest</span><code>{summary.manifestHash}</code></p>
     </section>
   );
 }

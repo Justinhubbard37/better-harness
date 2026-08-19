@@ -24,6 +24,11 @@ await build({
   define: { "process.env.NODE_ENV": '"production"' },
   logLevel: "warning",
 });
-await copyFile(join(packageRoot, "src", "app", "index.html"), join(appDir, "index.html"));
+await Promise.all([
+  copyFile(join(packageRoot, "src", "app", "index.html"), join(appDir, "index.html")),
+  ...["tokens.css", "shell.css", "workbench.css"].map((file) =>
+    copyFile(join(packageRoot, "src", "app", "styles", file), join(appDir, "assets", file)),
+  ),
+]);
 process.stdout.write(`Built studio app into ${appDir}\n`);
 process.exit(0);

@@ -103,6 +103,20 @@ describe("summarizeVerdict", () => {
       ties: 0,
       meanScoreDelta: 48,
       minimumMatchedPairs: 2,
+      costRatio: 0.007 / 0.0055,
+      costWithinGuardrail: true,
+      maxCostRatio: 1.3,
     });
+  });
+
+  it("preserves the verdict cost guardrail when both variants have zero cost", () => {
+    const summary = summarizeVerdict({
+      ...FIXTURE_VERDICT,
+      baseline: { ...FIXTURE_VERDICT.baseline, costPerCompletedTrialUsd: 0 },
+      candidate: { ...FIXTURE_VERDICT.candidate, costPerCompletedTrialUsd: 0 },
+    });
+
+    expect(summary.evidence.costRatio).toBeNull();
+    expect(summary.evidence.costWithinGuardrail).toBe(true);
   });
 });

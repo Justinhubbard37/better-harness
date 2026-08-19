@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import type { Icon } from "@phosphor-icons/react";
 import { ArrowRight } from "@phosphor-icons/react/ArrowRight";
 import { Binoculars } from "@phosphor-icons/react/Binoculars";
@@ -166,12 +166,30 @@ function PrimaryNavigation(props: {
   onSelect: (area: StudioArea) => void;
 }): React.JSX.Element {
   const groups = [...new Set(props.destinations.map((destination) => destination.group))];
+  const buttonRefs = useRef(new Map<StudioArea, HTMLButtonElement>());
+
+  function onNavigationKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const destinations = props.destinations.map((destination) => destination.id);
+    const focused = [...buttonRefs.current.entries()].find(([, button]) => button === document.activeElement)?.[0];
+    const currentIndex = Math.max(0, destinations.indexOf(focused ?? props.current));
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? destinations.length - 1
+        : event.key === "ArrowDown"
+          ? (currentIndex + 1) % destinations.length
+          : (currentIndex - 1 + destinations.length) % destinations.length;
+    buttonRefs.current.get(destinations[nextIndex]!)?.focus();
+  }
+
   return <aside className="studio-primary-nav" aria-label="Studio navigation">
     <header className="studio-product-brand"><span><GitBranch size={18} weight="bold" /></span><div><strong>Better Harness</strong><small>Studio</small></div></header>
-    <nav aria-label="Harness control plane">
+    <nav aria-label="Harness control plane" onKeyDown={onNavigationKeyDown}>
       {groups.map((group) => <section className="studio-nav-group" key={group}><h2>{group}</h2>{props.destinations.filter((destination) => destination.group === group).map((destination) => {
         const NavIcon = NAV_ICONS[destination.id];
-        return <button key={destination.id} type="button" aria-current={props.current === destination.id ? "page" : undefined} onClick={() => props.onSelect(destination.id)}>
+        return <button key={destination.id} ref={(node) => { if (node) buttonRefs.current.set(destination.id, node); else buttonRefs.current.delete(destination.id); }} type="button" tabIndex={props.current === destination.id ? 0 : -1} aria-current={props.current === destination.id ? "page" : undefined} onClick={() => props.onSelect(destination.id)}>
           <NavIcon size={16} weight={props.current === destination.id ? "fill" : "regular"} />
           <span><strong>{destination.label}</strong><small>{destination.status}</small></span>
           <i className={`availability-dot availability-${destination.availability}`} aria-label={destination.availability} />
@@ -310,8 +328,25 @@ function SurfaceNavigation<T extends string>(props: {
   active: T;
   onSelect: (value: T) => void;
 }): React.JSX.Element | null {
+  const buttonRefs = useRef(new Map<T, HTMLButtonElement>());
+
   if (props.items.length <= 1) return null;
-  return <nav className="studio-tabs studio-secondary-tabs" aria-label={props.label} style={{ gridTemplateColumns: `repeat(${props.items.length}, minmax(0, 1fr))` }}>{props.items.map((item) => <button key={item.id} type="button" className={props.active === item.id ? "active" : ""} aria-current={props.active === item.id ? "page" : undefined} onClick={() => props.onSelect(item.id)}>{item.label}</button>)}</nav>;
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLElement>): void => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const currentIndex = Math.max(0, props.items.findIndex((item) => item.id === props.active));
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? props.items.length - 1
+        : event.key === "ArrowRight"
+          ? (currentIndex + 1) % props.items.length
+          : (currentIndex - 1 + props.items.length) % props.items.length;
+    const next = props.items[nextIndex]!;
+    props.onSelect(next.id);
+    globalThis.requestAnimationFrame(() => buttonRefs.current.get(next.id)?.focus());
+  };
+  return <nav className="studio-tabs studio-secondary-tabs" role="tablist" aria-label={props.label} onKeyDown={onKeyDown} style={{ gridTemplateColumns: `repeat(${props.items.length}, minmax(0, 1fr))` }}>{props.items.map((item) => <button key={item.id} ref={(node) => { if (node) buttonRefs.current.set(item.id, node); else buttonRefs.current.delete(item.id); }} type="button" role="tab" tabIndex={props.active === item.id ? 0 : -1} className={props.active === item.id ? "active" : ""} aria-selected={props.active === item.id} onClick={() => props.onSelect(item.id)}>{item.label}</button>)}</nav>;
 }
 
 function areaFromHash(): StudioArea {

@@ -42,6 +42,10 @@ export interface CompareSummary {
     ties: number;
     meanScoreDelta: number;
     minimumMatchedPairs: number;
+    /** Null when a zero-cost baseline makes a ratio undefined. */
+    costRatio: number | null;
+    costWithinGuardrail: boolean;
+    maxCostRatio: number;
   };
   rows: CompareRow[];
   trials: CompareTrialRow[];
@@ -90,6 +94,12 @@ export function summarizeVerdict(verdict: HarnessCompareVerdict): CompareSummary
       ties: verdict.matchedPairs.ties,
       meanScoreDelta: verdict.matchedPairs.meanScoreDelta,
       minimumMatchedPairs: verdict.policy.minimumMatchedPairs,
+      costRatio: verdict.baseline.costPerCompletedTrialUsd === 0
+        ? null
+        : verdict.candidate.costPerCompletedTrialUsd / verdict.baseline.costPerCompletedTrialUsd,
+      costWithinGuardrail: verdict.candidate.costPerCompletedTrialUsd
+        <= verdict.baseline.costPerCompletedTrialUsd * verdict.policy.maxCostRatio,
+      maxCostRatio: verdict.policy.maxCostRatio,
     },
     rows: [
       row("baseline", "Baseline", verdict.baseline),

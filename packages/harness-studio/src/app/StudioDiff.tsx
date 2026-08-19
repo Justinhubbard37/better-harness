@@ -40,17 +40,17 @@ function parseFileDiff(diff: DebuggerDiff): FileDiffMetadata | undefined {
 
 const pierreStudioCss = `
 :host {
-  --diffs-font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  --diffs-header-font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --diffs-font-size: 13px;
-  --diffs-bg: #ffffff;
-  --diffs-light-bg: #ffffff;
-  --diffs-bg-context: #ffffff;
-  --diffs-bg-context-number: #f7f9fc;
-  --diffs-bg-addition: #ecf8f1;
-  --diffs-bg-addition-number: #dff2e7;
-  --diffs-bg-deletion: #fff0f0;
-  --diffs-bg-deletion-number: #f8dede;
+  --diffs-font-family: var(--font-code);
+  --diffs-header-font-family: var(--font-ui);
+  --diffs-font-size: var(--type-code-size);
+  --diffs-bg: var(--color-surface);
+  --diffs-light-bg: var(--color-surface);
+  --diffs-bg-context: var(--color-surface);
+  --diffs-bg-context-number: var(--color-surface-subtle);
+  --diffs-bg-addition: var(--color-success-surface);
+  --diffs-bg-addition-number: color-mix(in srgb, var(--color-success-surface), var(--color-success) 10%);
+  --diffs-bg-deletion: var(--color-danger-surface);
+  --diffs-bg-deletion-number: color-mix(in srgb, var(--color-danger-surface), var(--color-danger) 10%);
   --diffs-token-light-bg: transparent;
   font-size: var(--diffs-font-size);
 }

@@ -1,4 +1,4 @@
-import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,6 +35,56 @@ let experimentStudio;
 let inspectorStudio;
 let lockedFixtureDir;
 let inspectorFixtureDir;
+
+const LAYOUTS = [
+  { name: "wide", width: 1440, height: 900 },
+  { name: "compact", width: 1024, height: 768 },
+  { name: "narrow", width: 390, height: 844 },
+];
+
+async function openDestination(page, label) {
+  const destination = page.getByRole("button", { name: new RegExp(`^${label}`) });
+  const toggle = page.getByRole("button", { name: "Open Studio navigation" });
+  if (await toggle.isVisible() && await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+  await destination.click();
+  if (await toggle.isVisible()) {
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(page.locator(".studio-primary-nav")).not.toBeInViewport();
+  }
+}
+
+async function assertRenderedContract(page) {
+  const contract = await page.evaluate(() => {
+    const directText = (element) => [...element.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
+    const visible = (element) => {
+      const style = getComputedStyle(element);
+      return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
+    };
+    const belowFloor = [...document.body.querySelectorAll("*")]
+      .filter((element) => directText(element) && visible(element))
+      .map((element) => ({ tag: element.tagName, className: element.className, size: Number.parseFloat(getComputedStyle(element).fontSize), text: element.textContent?.trim().slice(0, 60) }))
+      .filter((entry) => entry.size < 12);
+    const dockedShadows = [...document.querySelectorAll(".studio-context-bar,.studio-primary-nav,.control-hero,.control-loop,.control-panel,.builder-primary,.builder-setup,.notebook-context,.notebook-cell-card,.experiment-rail,.execution-tree,.session-notebook,.state-inspector,.decision-summary,.evidence-table-pane")]
+      .filter(visible)
+      .map((element) => ({ className: element.className, shadow: getComputedStyle(element).boxShadow }))
+      .filter((entry) => entry.shadow !== "none");
+    return {
+      innerWidth: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      bodyFont: getComputedStyle(document.body).fontFamily,
+      belowFloor,
+      dockedShadows,
+      visibleSurfaceSwitchers: [...document.querySelectorAll('[role="tablist"][aria-label="Experiment surfaces"]')].filter(visible).length,
+      ownedStyleSheets: [...document.styleSheets].filter((sheet) => sheet.href?.includes("/assets/") && sheet.href.endsWith(".css")).length,
+    };
+  });
+  expect(contract.documentWidth).toBe(contract.innerWidth);
+  expect(contract.bodyFont).not.toContain("Inter");
+  expect(contract.belowFloor).toEqual([]);
+  expect(contract.dockedShadows).toEqual([]);
+  expect(contract.visibleSurfaceSwitchers).toBeLessThanOrEqual(1);
+  expect(contract.ownedStyleSheets).toBe(3);
+}
 
 test.beforeAll(async () => {
   studio = await startHarnessStudioServer({
@@ -109,6 +159,7 @@ test.beforeAll(async () => {
   experimentStudio = await startHarnessStudioServer({
     appDir: resolve(packageRoot, "dist/app"),
     harnessSource: SOURCE,
+    evidenceDir: resolve(packageRoot, "test/fixtures"),
     experimentManifestPath: resolve(packageRoot, "../harness/examples/checkpoint-experiment/experiment.json"),
     checkpointSourcePreview: {
       status: "ready",
@@ -274,7 +325,7 @@ test("compares a focused ACP pair across roles, views, filters, and evidence", a
   await page.getByRole("button", { name: "Resources" }).click();
   await expect(page.locator(".changes-view")).toContainText("shared resources");
   await page.getByRole("button", { name: "Calls", exact: true }).click();
-  await page.getByRole("tab", { name: "Evidence" }).click();
+  await page.getByRole("tab", { name: "Evidence", exact: true }).click();
   await expect(page.locator(".evidence-view")).toContainText("No global verdict");
   await expect(page.locator(".status-accept")).toContainText("accept");
   await page.locator("button.object-card.role-candidate").click();
@@ -308,13 +359,12 @@ test("compares a focused ACP pair across roles, views, filters, and evidence", a
   });
   expect(layout.document).toBe(layout.inner);
   expect(layout.shellWidth).toBe(layout.inner);
-  expect(layout.railWidth).toBeGreaterThanOrEqual(310);
-  expect(layout.railWidth).toBeLessThanOrEqual(330);
-  expect(layout.workspaceHeaderHeight).toBe(68);
+  expect(layout.railWidth).toBe(0);
+  expect(layout.workspaceHeaderHeight).toBe(40);
   expect(layout.surfaceTop).toBeLessThanOrEqual(100);
   expect(layout.laneHeaderHeight).toBeLessThanOrEqual(52);
   expect(layout.toolRowHeight).toBeLessThanOrEqual(30);
-  expect(layout.rowFontSize).toBeGreaterThanOrEqual(11);
+  expect(layout.rowFontSize).toBeGreaterThanOrEqual(12);
   expect(layout.firstLaneGap).toBeLessThanOrEqual(1);
   expect(layout.toolListHeight / layout.toolRowHeight).toBeGreaterThan(6);
   expect(browserErrors).toEqual([]);
@@ -328,7 +378,7 @@ test("contains narrow experiment scrolling inside the comparison regions", async
   await page.getByRole("button", { name: "Lock and compare" }).click();
   await expect(page.locator(".object-card")).toHaveCount(3);
   await expect(page.locator(".call-lane")).toHaveCount(2);
-  await expect(page.locator(".experiment-rail")).toHaveCSS("width", "320px");
+  await expect(page.locator(".experiment-rail")).not.toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator(".experiment-rail")).not.toBeVisible();
   const dimensions = await page.evaluate(() => ({
@@ -344,13 +394,13 @@ test("contains narrow experiment scrolling inside the comparison regions", async
 
   await page.getByRole("button", { name: "Show checkpoints" }).click();
   await expect(page.locator(".experiment-rail")).toBeVisible();
-  await expect(page.locator(".experiment-rail")).toHaveCSS("width", "335px");
+  await expect(page.locator(".experiment-rail")).toHaveCSS("width", "304px");
   const expandedWidth = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(expandedWidth).toBe(390);
-  await expect(page.getByRole("navigation", { name: "Experiment surfaces" })).toBeVisible();
-  await page.getByRole("button", { name: "Live trial" }).click();
+  await expect(page.getByRole("tablist", { name: "Experiment surfaces" })).toBeVisible();
+  await page.getByRole("tab", { name: "Live trial" }).click();
   await expect(page.getByText("Live observation · no Evidence Cursor")).toBeVisible();
-  await page.getByRole("button", { name: "Bench" }).click();
+  await page.getByRole("tab", { name: "Bench" }).click();
   await expect(page.getByRole("heading", { name: "Compare a past agent run" })).toBeVisible();
 });
 
@@ -373,6 +423,31 @@ test("renders a keyboard-expandable failed and truncated Tool Call at 390px", as
   await expect(page.locator(".run-status strong")).toHaveText("finished");
   const card = page.locator("details.tool-card");
   await expect(card.locator(".tool-status")).toHaveText("Failed");
+  const colors = await page.evaluate(() => {
+    const resolveColor = (token) => {
+      const probe = document.createElement("span");
+      probe.style.color = `var(${token})`;
+      document.body.append(probe);
+      const value = getComputedStyle(probe).color;
+      probe.remove();
+      return value;
+    };
+    return {
+      toolIdentity: getComputedStyle(document.querySelector(".tool-icon")).color,
+      expectedToolIdentity: resolveColor("--event-tool"),
+      verifyIdentity: getComputedStyle(document.querySelector(".timeline-segment.kind-verify")).backgroundColor,
+      expectedVerifyIdentity: resolveColor("--event-verify"),
+      interaction: resolveColor("--color-primary"),
+      success: resolveColor("--color-success"),
+      warning: resolveColor("--color-warning"),
+      danger: resolveColor("--color-danger"),
+      candidate: resolveColor("--color-candidate"),
+    };
+  });
+  expect(colors.toolIdentity).toBe(colors.expectedToolIdentity);
+  expect(colors.verifyIdentity).toBe(colors.expectedVerifyIdentity);
+  expect([colors.interaction, colors.success, colors.warning, colors.danger, colors.candidate]).not.toContain(colors.toolIdentity);
+  expect([colors.interaction, colors.success, colors.warning, colors.danger, colors.candidate]).not.toContain(colors.verifyIdentity);
 
   const summary = card.locator("summary");
   await summary.focus();
@@ -391,5 +466,155 @@ test("renders a keyboard-expandable failed and truncated Tool Call at 390px", as
     bodyWidth: document.body.scrollWidth,
   }));
   expect(dimensions).toEqual({ innerWidth: 390, documentWidth: 390, bodyWidth: 390 });
+  expect(browserErrors).toEqual([]);
+});
+
+test("keeps visual decisions in owned Studio style sources", async () => {
+  const [index, shell, workbench] = await Promise.all([
+    readFile(resolve(packageRoot, "src/app/index.html"), "utf8"),
+    readFile(resolve(packageRoot, "src/app/styles/shell.css"), "utf8"),
+    readFile(resolve(packageRoot, "src/app/styles/workbench.css"), "utf8"),
+  ]);
+
+  expect(index).not.toMatch(/<style\b/i);
+  expect(index.match(/<link rel="stylesheet"/g)).toHaveLength(3);
+  for (const source of [shell, workbench]) {
+    expect(source).not.toMatch(/#[\da-f]{3,8}\b|rgba?\(/i);
+    expect(source).not.toMatch(/font-size:\s*(?:\d|\.)/);
+    expect(source).not.toMatch(/border-radius:\s*(?:\d|\.)/);
+    expect(source).not.toContain("!important");
+  }
+});
+
+test("renders the shell, foundation, empty, and Inspector surfaces at all layout modes", async ({ page }, testInfo) => {
+  const browserErrors = [];
+  page.on("console", (message) => { if (message.type() === "error") browserErrors.push(`console: ${message.text()}`); });
+  page.on("pageerror", (error) => browserErrors.push(`page: ${error.message}`));
+
+  for (const layout of LAYOUTS) {
+    await page.setViewportSize({ width: layout.width, height: layout.height });
+    await page.goto(experimentStudio.url);
+    await expect(page.getByRole("heading", { name: "Harness Control Center" })).toBeVisible();
+    await assertRenderedContract(page);
+    await page.screenshot({ path: testInfo.outputPath(`overview-${layout.name}.png`) });
+
+    if (layout.name === "wide") {
+      const current = page.getByRole("button", { name: /^Overview/ });
+      await current.focus();
+      await page.keyboard.press("ArrowDown");
+      await expect(page.getByRole("button", { name: /^Inspector/ })).toBeFocused();
+    } else {
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await expect(page.locator(".studio-primary-nav")).toHaveCSS("transition-duration", "0s");
+      await page.emulateMedia({ reducedMotion: "no-preference" });
+      const toggle = page.getByRole("button", { name: "Open Studio navigation" });
+      await toggle.click();
+      await expect(page.getByRole("button", { name: /^Overview/ })).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(toggle).toBeFocused();
+    }
+
+    await openDestination(page, "Harnesses");
+    await expect(page.getByRole("heading", { name: /Harness context is loaded/ })).toBeVisible();
+    await assertRenderedContract(page);
+    await page.screenshot({ path: testInfo.outputPath(`foundation-${layout.name}.png`) });
+
+    await page.goto(inspectorStudio.url);
+    await openDestination(page, "Experiments");
+    await expect(page.getByRole("heading", { name: "Load an experiment or evidence bundle" })).toBeVisible();
+    await assertRenderedContract(page);
+    await page.screenshot({ path: testInfo.outputPath(`empty-${layout.name}.png`) });
+
+    await openDestination(page, "Inspector");
+    await expect(page.locator('iframe[title="Harness Inspector Workbench"]')).toBeVisible();
+    await assertRenderedContract(page);
+    await page.screenshot({ path: testInfo.outputPath(`inspector-${layout.name}.png`) });
+  }
+  expect(browserErrors).toEqual([]);
+});
+
+test("keeps Bench decision workspaces primary at all layout modes", async ({ page }, testInfo) => {
+  const browserErrors = [];
+  page.on("console", (message) => { if (message.type() === "error") browserErrors.push(`console: ${message.text()}`); });
+  page.on("pageerror", (error) => browserErrors.push(`page: ${error.message}`));
+
+  for (const layout of LAYOUTS) {
+    await page.setViewportSize({ width: layout.width, height: layout.height });
+    await page.goto(experimentStudio.url);
+    await openDestination(page, "Experiments");
+    const action = page.getByRole("button", { name: /^(Lock and compare|Open workbench)$/ });
+    await expect(action).toBeEnabled();
+    await action.click();
+    await expect(page.getByRole("region", { name: "Comparison notebook" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Run comparison" })).toBeInViewport();
+    await assertRenderedContract(page);
+    const ratio = await page.evaluate(() => {
+      const shell = document.querySelector(".experiment-shell")?.getBoundingClientRect();
+      const workspace = document.querySelector(".experiment-workspace")?.getBoundingClientRect();
+      return shell && workspace ? workspace.width / shell.width : 0;
+    });
+    expect(ratio).toBeGreaterThanOrEqual(0.5);
+    if (layout.name === "wide") await expect(page.locator(".experiment-rail")).toBeVisible();
+    else await expect(page.locator(".experiment-rail")).not.toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`bench-${layout.name}.png`) });
+  }
+  expect(browserErrors).toEqual([]);
+});
+
+test("renders meaningful Live trial evidence at all layout modes", async ({ page }, testInfo) => {
+  const browserErrors = [];
+  page.on("console", (message) => { if (message.type() === "error") browserErrors.push(`console: ${message.text()}`); });
+  page.on("pageerror", (error) => browserErrors.push(`page: ${error.message}`));
+
+  for (const layout of LAYOUTS) {
+    await page.setViewportSize({ width: layout.width, height: layout.height });
+    await page.goto(studio.url);
+    await openDestination(page, "Experiments");
+    await page.getByRole("button", { name: "New live run" }).click();
+    await page.getByPlaceholder("Task prompt for the harness run…").fill(`Verify ${layout.name} live evidence`);
+    await page.getByRole("button", { name: "Run harness" }).click();
+    await expect(page.locator(".run-status strong")).toHaveText("finished");
+    await expect(page.locator("details.tool-card")).toHaveCount(1);
+    await assertRenderedContract(page);
+    const ratio = await page.evaluate(() => {
+      const grid = document.querySelector(".debugger-grid")?.getBoundingClientRect();
+      const notebook = document.querySelector(".session-notebook")?.getBoundingClientRect();
+      return grid && notebook ? notebook.width / grid.width : 0;
+    });
+    expect(ratio).toBeGreaterThanOrEqual(0.5);
+    await page.screenshot({ path: testInfo.outputPath(`live-trial-${layout.name}.png`) });
+  }
+  expect(browserErrors).toEqual([]);
+});
+
+test("leads Evidence results with the decision at all layout modes", async ({ page }, testInfo) => {
+  const browserErrors = [];
+  page.on("console", (message) => { if (message.type() === "error") browserErrors.push(`console: ${message.text()}`); });
+  page.on("pageerror", (error) => browserErrors.push(`page: ${error.message}`));
+
+  for (const layout of LAYOUTS) {
+    await page.setViewportSize({ width: layout.width, height: layout.height });
+    await page.goto(experimentStudio.url);
+    await openDestination(page, "Experiments");
+    await page.getByRole("tab", { name: "Evidence results" }).click();
+    const decision = page.locator(".decision-summary");
+    await expect(decision).toContainText("Sufficient");
+    await expect(decision).toContainText("Quality delta");
+    await expect(decision).toContainText("Cost guardrail");
+    await assertRenderedContract(page);
+    const widths = await page.evaluate(() => {
+      const report = document.querySelector(".evidence-report")?.getBoundingClientRect();
+      const decision = document.querySelector(".decision-summary")?.getBoundingClientRect();
+      const tables = [...document.querySelectorAll(".evidence-table-pane .table-scroll")];
+      return {
+        report: report?.width ?? 0,
+        decision: decision?.width ?? 0,
+        boundedTables: tables.every((table) => table.clientWidth <= (report?.width ?? 0) && table.scrollWidth >= table.clientWidth),
+      };
+    });
+    expect(widths.decision).toBe(widths.report);
+    expect(widths.boundedTables).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`evidence-results-${layout.name}.png`) });
+  }
   expect(browserErrors).toEqual([]);
 });

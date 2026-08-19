@@ -3,7 +3,7 @@
 ## Traceability
 
 - Spec ID: `2026-08-18-harness-studio-visual-system`
-- Status: Draft
+- Status: Implemented
 
 ## Intent
 
@@ -13,6 +13,22 @@ but visual hierarchy is inconsistent: navigation and status repeat, small type
 and broad readability overrides flatten semantic roles, nested borders compete
 with the current task, and some constrained regions truncate or fracture
 decision copy.
+
+The two commits immediately preceding this migration make the gap concrete.
+The Date-mode navigation change added useful flat session rows, but shipped with
+new 9/10/11px text and no browser proof. The follow-up Inspector migration had
+to raise rendered type to the 12px floor, replace one-off colors and radii with
+tokens, remove dead rules, repair a malformed declaration, and add a
+computed-style gate across all three layout modes. Studio currently repeats the
+same risks at a larger scale: its 1,200-line inline stylesheet contains 7–11px
+type, an unbundled `Inter` preference, hundreds of literal visual values,
+dashboard cards and shadows, and a broad `!important` readability override.
+
+While the migration was in progress, `a1265ee` extended the contract with a
+fixed categorical scale and separated neutral data identity from interaction,
+runtime state, and Candidate identity. Studio therefore maps its event-kind
+taxonomy onto that scale instead of treating prompt as selection, verify as
+success, or a generic tool call as Candidate evidence.
 
 Establish [the root visual contract](../../DESIGN.md) as the target source of
 truth, then migrate Studio without changing evidence meaning, runtime behavior,
@@ -42,11 +58,30 @@ question, current state, and next action before reading supporting metadata.
   trial tables. Tables preserve role labels and use aligned numeric columns.
 - **AC-6 (semantic and accessible states):** action, selection, success,
   waiting, failure, and Candidate identity use the documented semantic roles,
-  paired with text or icons. Keyboard focus, accessible names, live status, and
-  reduced-motion behavior are verified.
+  paired with text or icons. Prompt, plan, explore, change, verify, response, and
+  tool-call identity use the fixed categorical scale with an accompanying label
+  or legend, never an interaction or state hue. Keyboard focus, accessible
+  names, live status, and reduced-motion behavior are verified.
 - **AC-7 (visual evidence):** built Studio passes browser checks at 1440×900,
   1024×768, and 390×844 for non-loading Bench, Live trial, and Evidence results
   states with no page/console errors or document-level horizontal overflow.
+- **AC-8 (docked control plane):** the application renders as edge-to-edge
+  title bar, primary sidebar, workspace, optional secondary panes, and status
+  regions separated by one-pixel rules. Overview, foundation, empty, Inspector,
+  Bench, Live trial, and Evidence results use pane headers, rows, editor views,
+  and bounded inspectors instead of floating card grids or decorative hero
+  containers. Wide mode keeps the central workspace at least half of the usable
+  width; secondary panes collapse into transient drawers in compact/narrow mode.
+- **AC-9 (owned visual sources):** `index.html` contains document structure and
+  stylesheet links only. Shared semantic tokens, shell primitives, and feature
+  styles live in inspectable CSS files; live component rules contain no raw
+  hexadecimal/rgb colors, off-scale radii, docked shadows, or meaningful text
+  below the metadata floor.
+- **AC-10 (shell interaction remains complete):** every top-level Studio
+  destination remains reachable by pointer and keyboard, the active destination
+  exposes `aria-current`, compact/narrow navigation closes with Escape and
+  returns focus to its toggle, and the three experiment surfaces have exactly
+  one visible switcher per viewport.
 
 ## Non-goals
 
@@ -57,24 +92,29 @@ question, current state, and next action before reading supporting metadata.
 - Replacing Phosphor icons, adding dark mode, or introducing a third-party
   component framework during the first migration.
 - Claiming WCAG conformance from screenshots alone.
-- Rewriting every Studio component in one change.
+- Adding pane-resize persistence before the three fixed responsive layouts are
+  stable and browser-proven.
 
 ## Plan and Tasks
 
 1. Land the root design contract and the short `AGENTS.md` routing rules.
 2. Extract shared semantic tokens and typography from the inline application
-   document into owned Studio styles; remove the unbundled `Inter` assumption
-   and broad readability override.
-3. Fix shell ownership so experiment surface navigation renders once, then
-   normalize page headers and primary actions across the three surfaces.
-4. Recompose Bench around setup → run → outcome, keeping checkpoint and trace
+   document into owned Studio styles; remove the unbundled `Inter` assumption,
+   raw palette duplication, prototype type sizes, and broad readability
+   override.
+3. Refactor the application shell and Overview/Foundation/Empty states into a
+   compact docked control plane while preserving honest capability boundaries.
+4. Fix shell ownership so experiment surface navigation renders once, then
+   normalize page headers and primary actions across all configured surfaces.
+5. Recompose Bench around setup → run → outcome, keeping checkpoint and trace
    details secondary and preventing fractured comparison copy.
-5. Recompose Live trial around the active event stream, with collapsible
+6. Recompose Live trial around the active event stream, with collapsible
    execution/state panes and one clear explanation for unavailable controls.
-6. Add a decision summary to Evidence results and normalize table alignment,
-   overflow, and hierarchy.
-7. Verify accessibility behavior and capture the three layout modes before
-   marking this spec Implemented.
+7. Lead Evidence results with its existing derived verdict data and normalize
+   table alignment, overflow, and hierarchy without changing the verdict model.
+8. Add rendered visual-contract and shell-interaction checks, verify
+   accessibility behavior, and capture all three layout modes before marking
+   this spec Implemented.
 
 ## Test and Review Evidence
 
@@ -92,6 +132,13 @@ question, current state, and next action before reading supporting metadata.
 - **AC-6:** keyboard traversal, visible focus, accessible-name checks, state
   text/icon assertions, live-region inspection, and `prefers-reduced-motion`
   verification.
+- **AC-8/AC-9:** browser-computed checks verify the central-workspace ratio,
+  docked pane geometry, typography floor, zero docked shadows, and token-backed
+  colors/radii after the cascade resolves. A source-level check verifies that
+  `index.html` has no inline style block and each owned stylesheet resolves from
+  the built app.
+- **AC-10:** Playwright drives the shell destinations and experiment surface
+  switcher at wide, compact, and narrow widths, including Escape focus return.
 - **Risk:** a visual refactor can accidentally change evidence meaning.
   Mitigation: preserve view models and state contracts; review copy/status
   changes against existing specs and focused model tests.
@@ -100,3 +147,28 @@ question, current state, and next action before reading supporting metadata.
 - **Risk:** increasing type size can reduce data density. Mitigation: collapse
   secondary panes, reduce decorative labels and borders, and use bounded virtual
   lists before reducing the typography floor.
+
+## Validation Record
+
+- `npm run harness-studio:test`: 15 files and 81 tests passed, including the
+  zero-cost guardrail edge case used by the decision summary.
+- `npm run harness-studio:test:browser`: 9 Playwright scenarios passed. The run
+  covered 1440×900, 1024×768, and 390×844; captured 21 screenshots across
+  Overview, Foundation, Empty, Inspector, Bench, Live trial, and Evidence
+  results; and reported no page or browser-console errors.
+- The browser contract verified the 12px rendered type floor, system font,
+  bounded document width, owned stylesheet loading, docked zero-shadow geometry,
+  central-workspace priority, reduced motion, responsive Escape focus return,
+  one experiment switcher, locally scrolling evidence tables, and distinct
+  categorical colors for tool and timeline identity.
+- `npm run check`: root, Harness, Harness UI, and Studio test suites passed, then
+  package verification passed with 540 npm entries and 577 runtime zip entries.
+- `npx -p @google/design.md designmd lint DESIGN.md` reported zero errors and
+  22 contract-level warnings; the migration did not modify those root metadata,
+  transparent-background contrast, or orphan-token findings. The focused doc
+  link graph suite passed all 6 tests.
+- `npm run preview`: `/health` and `/canvas-module.js` returned HTTP 200 at
+  `http://127.0.0.1:58575`.
+- `git diff --check` passed. No generated build output is tracked, no files are
+  staged, and this implementation does not claim Windows browser execution from
+  the local macOS run.

@@ -38,7 +38,7 @@ export function ExperimentView(props: { navigation?: ReactNode } = {}): React.JS
   const [historyId, setHistoryId] = useState<string | null>(null);
   const [historyDraft, setHistoryDraft] = useState<ResolvedHistoryDraftPreview | null>(null);
   const [historyAction, setHistoryAction] = useState<HistoryActionState>({ phase: "idle" });
-  const [railCollapsed, setRailCollapsed] = useState(() => globalThis.matchMedia?.("(max-width: 900px)").matches ?? false);
+  const [railCollapsed, setRailCollapsed] = useState(() => globalThis.matchMedia?.("(max-width: 1080px)").matches ?? false);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -76,7 +76,7 @@ export function ExperimentView(props: { navigation?: ReactNode } = {}): React.JS
   }, []);
 
   useEffect(() => {
-    const media = globalThis.matchMedia?.("(max-width: 900px)");
+    const media = globalThis.matchMedia?.("(max-width: 1080px)");
     if (media === undefined) return;
     const listener = (event: MediaQueryListEvent): void => setRailCollapsed(event.matches);
     media.addEventListener("change", listener);
