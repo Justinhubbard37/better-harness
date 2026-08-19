@@ -526,7 +526,7 @@ test("renders the shell, foundation, empty, and Inspector surfaces at all layout
     }
 
     await openDestination(page, "Harnesses");
-    await expect(page.getByRole("heading", { name: /Harness context is loaded/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Harness editing unavailable/ })).toBeVisible();
     await assertRenderedContract(page);
     await page.screenshot({ path: testInfo.outputPath(`foundation-${layout.name}.png`) });
 

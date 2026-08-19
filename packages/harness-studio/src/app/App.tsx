@@ -218,24 +218,21 @@ function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => v
     ["Compare evidence", props.config.evidenceEnabled],
     ["History adapter", props.config.historyEnabled],
   ] as const;
-  const loop = [
-    { step: "01", label: "Observe", detail: "Inspect retained delivery evidence", ready: props.config.inspectorEnabled },
-    { step: "02", label: "Compose", detail: "Name the Harness change", ready: props.config.aguiEnabled || props.config.experimentEnabled },
-    { step: "03", label: "Experiment", detail: "Hold task and runtime constant", ready: props.config.experimentEnabled },
-    { step: "04", label: "Explain", detail: "Compare outcome and trace evidence", ready: props.config.experimentEnabled || props.config.evidenceEnabled },
-    { step: "05", label: "Promote", detail: "Bind evidence to a team default", ready: false },
+  const missingInputs = inputs.filter(([, enabled]) => !enabled);
+  const actions = [
+    { label: "Go to Inspector", area: "inspector" as const, enabled: props.config.inspectorEnabled, detail: "Retained sessions" },
+    { label: "Go to Experiments", area: "experiments" as const, enabled: experimentSurfaces(props.config).length > 0, detail: "Run or compare" },
+    { label: "Go to Harnesses", area: "harnesses" as const, enabled: props.config.aguiEnabled || props.config.experimentEnabled, detail: "Loaded context" },
   ];
   return <main className="control-overview">
     <section className="control-hero">
-      <div><small>Repository-native Harness Engineering</small><h1>Change one Harness variable.<br />Prove it holds.</h1><p>Observe real delivery, lock the Harness and runtime envelope, run a controlled comparison, then decide with evidence.</p><button type="button" onClick={() => props.onOpen(nextArea)}>Open {AREA_COPY[nextArea].title}<ArrowRight size={15} weight="bold" /></button></div>
-      <aside aria-label="Harness analysis unit"><small>Analysis unit</small><strong>Harness Revision</strong><span>× Task Suite</span><span>× Runtime Envelope</span><p>Sessions and tool calls are evidence inside this unit, not the product's top-level object.</p></aside>
+      <div><small>Ready now</small><h1>Open the connected workspace.</h1><p>{summary.ready} ready · {summary.partial} partial · {summary.foundation} foundations. Studio shows only configured evidence and keeps unavailable surfaces quiet.</p><button type="button" onClick={() => props.onOpen(nextArea)}>Open {AREA_COPY[nextArea].title}<ArrowRight size={15} weight="bold" /></button></div>
+      <aside className="control-actions" aria-label="Available actions"><small>Available actions</small><ul>{actions.map((action) => <li key={action.label} className={action.enabled ? "is-ready" : "is-foundation"}><span className={`availability-dot availability-${action.enabled ? "ready" : "foundation"}`} /><button type="button" disabled={!action.enabled} onClick={() => props.onOpen(action.area)}>{action.label}</button><em>{action.detail}</em></li>)}</ul></aside>
     </section>
 
-    <section className="control-loop" aria-labelledby="control-loop-title"><header><div><small>Operating model</small><h2 id="control-loop-title">Observe → Compose → Experiment → Explain → Promote</h2></div><span>{summary.ready} ready · {summary.partial} partial · {summary.foundation} foundations</span></header><ol>{loop.map((item) => <li key={item.step} className={item.ready ? "is-ready" : "is-foundation"}><small>{item.step}</small><strong>{item.label}</strong><p>{item.detail}</p><span>{item.ready ? "Available" : "Contract first"}</span></li>)}</ol></section>
-
     <div className="control-grid">
-      <section className="control-panel"><header><div><small>Loaded inputs</small><h2>Current workspace boundary</h2></div><span>Server facts</span></header><ul className="input-readiness">{inputs.map(([label, enabled]) => <li key={label}><span className={`availability-dot ${enabled ? "availability-ready" : "availability-foundation"}`} /><strong>{label}</strong><em>{enabled ? "Connected" : "Not supplied"}</em></li>)}</ul></section>
-      <section className="control-panel"><header><div><small>Information architecture</small><h2>Objects before pages</h2></div><span>No invented state</span></header><div className="object-map"><article><strong>Harnesses</strong><p>Source, components, revisions, compatibility, materialization.</p></article><article><strong>Task Suites</strong><p>Tasks, checkpoints, graders, splits, replayability.</p></article><article><strong>Experiments</strong><p>Design, lock, run, analyze, evidence bundle.</p></article><article><strong>Registry</strong><p>Candidates, policies, revalidation, rollback.</p></article></div></section>
+      <section className="control-panel"><header><div><small>Loaded inputs</small><h2>Current boundary</h2></div><span>Server facts</span></header><ul className="input-readiness">{inputs.map(([label, enabled]) => <li key={label}><span className={`availability-dot ${enabled ? "availability-ready" : "availability-foundation"}`} /><strong>{label}</strong><em>{enabled ? "Connected" : "Not supplied"}</em></li>)}</ul></section>
+      <section className="control-panel"><header><div><small>Next action</small><h2>Missing inputs stay explicit</h2></div><span>No inferred state</span></header><ul className="input-readiness">{missingInputs.length > 0 ? missingInputs.map(([label]) => <li key={label}><span className="availability-dot availability-foundation" /><strong>{label}</strong><em>Load when needed</em></li>) : <li><span className="availability-dot availability-ready" /><strong>All configured inputs connected</strong><em>Ready</em></li>}</ul></section>
     </div>
   </main>;
 }
@@ -247,7 +244,7 @@ function InspectorWorkspace(props: { config: StudioConfig }): React.JSX.Element 
   }
   if (props.config.inspectorEnabled) {
     return <section className="inspector-workspace" aria-label="Inspector workspace">
-      <header><div><strong>Inspector Workbench</strong><span>Cross-delivery evidence · read-only</span></div><p>Capability / Date → Session → Commit / File</p></header>
+      <header><div><strong>Inspector Workbench</strong><span>Read-only</span></div></header>
       <InspectorWorkbench fallback={<iframe title="Harness Inspector Workbench" src="inspector" sandbox="allow-scripts" referrerPolicy="no-referrer" />} />
     </section>;
   }
@@ -280,10 +277,9 @@ function HarnessesWorkspace(props: { config: StudioConfig; onOpen: (area: Studio
   const loaded = props.config.aguiEnabled || props.config.experimentEnabled;
   return <FoundationWorkspace
     eyebrow="Harness Revision"
-    title={loaded ? "Harness context is loaded, editing is not." : "Load a Harness source or experiment."}
-    detail="Harnesses own the change under test: Skills, Tools, MCP, Workflows, Runtime Profiles, the locked Revision, and host materialization. Studio currently receives that context from the server; it does not yet expose a source editor or revision catalog."
-    current={loaded ? "Current experiment/runtime can identify Harness and profile context." : "No Harness or experiment context was supplied."}
-    capabilities={["Source & components", "Semantic diff", "Revision history", "Host compatibility", "Materialization preview"]}
+    title={loaded ? "Harness editing unavailable" : "Load a Harness source"}
+    current={loaded ? "Run and experiment context are loaded; source editing is not connected." : "No Harness or experiment context was supplied."}
+    capabilities={["Source editor", "Revision catalog", "Compatibility checks"]}
     action={props.config.experimentEnabled ? { label: "Open Harness Bench", onClick: () => props.onOpen("experiments") } : undefined}
   />;
 }
@@ -291,10 +287,9 @@ function HarnessesWorkspace(props: { config: StudioConfig; onOpen: (area: Studio
 function TaskSuitesWorkspace(props: { config: StudioConfig; onOpen: (area: StudioArea) => void }): React.JSX.Element {
   return <FoundationWorkspace
     eyebrow="Repository task assets"
-    title={props.config.experimentEnabled ? "One task is bound; a Suite is not." : "Task Suite contract comes before evaluation scale."}
-    detail="A Task Suite should bind replayable repository tasks to checkpoints, requests, deterministic graders, and held-out coverage. The current experiment manifest supplies one request/checkpoint comparison, so Studio labels that partial truth instead of presenting a dataset dashboard."
-    current={props.config.experimentEnabled ? "The loaded experiment provides a single task boundary." : "No task or grader contract is connected."}
-    capabilities={["Tasks & checkpoints", "Graders", "History candidates", "Splits & coverage", "Replayability & leakage"]}
+    title={props.config.experimentEnabled ? "Single task loaded" : "Task Suite unavailable"}
+    current={props.config.experimentEnabled ? "The experiment supplies one task boundary, not a Suite dashboard." : "No task or grader contract is connected."}
+    capabilities={["Task catalog", "Grader contract", "Coverage splits"]}
     action={props.config.experimentEnabled ? { label: "Inspect current experiment", onClick: () => props.onOpen("experiments") } : undefined}
   />;
 }
@@ -302,22 +297,20 @@ function TaskSuitesWorkspace(props: { config: StudioConfig; onOpen: (area: Studi
 function RegistryWorkspace(): React.JSX.Element {
   return <FoundationWorkspace
     eyebrow="Evidence-backed governance"
-    title="Promotion is intentionally unavailable."
-    detail="Registry needs a frozen state machine and immutable Evidence Bundle links before Studio can name a Candidate, Team Default, or Promoted Revision. Revalidation must create new evidence rather than mutate prior proof."
-    current="No registry, promotion policy, CI gate, or rollback contract is connected."
-    capabilities={["Candidates & promoted revisions", "Evidence bundles", "Promotion policy", "CI gates", "Drift & revalidation", "Rollback"]}
+    title="Registry unavailable"
+    current="No promotion policy or Evidence Bundle registry is connected."
+    capabilities={["Candidate records", "Promotion policy", "Revalidation"]}
   />;
 }
 
 function FoundationWorkspace(props: {
   eyebrow: string;
   title: string;
-  detail: string;
   current: string;
   capabilities: readonly string[];
   action?: { label: string; onClick: () => void };
 }): React.JSX.Element {
-  return <main className="foundation-workspace"><section className="foundation-intro"><small>{props.eyebrow}</small><h1>{props.title}</h1><p>{props.detail}</p>{props.action && <button type="button" onClick={props.action.onClick}>{props.action.label}<ArrowRight size={14} /></button>}</section><div className="foundation-grid"><section><small>Available evidence</small><h2>Current boundary</h2><p>{props.current}</p><span>Facts only · no inferred capability</span></section><section><small>Target object model</small><h2>Planned surfaces</h2><ul>{props.capabilities.map((capability) => <li key={capability}><span className="availability-dot availability-foundation" />{capability}</li>)}</ul></section></div></main>;
+  return <main className="foundation-workspace"><section className="foundation-intro"><small>{props.eyebrow}</small><h1>{props.title}</h1><p>{props.current}</p>{props.action && <button type="button" onClick={props.action.onClick}>{props.action.label}<ArrowRight size={14} /></button>}</section><section className="foundation-status"><header><div><small>Needed next</small><h2>Foundation only</h2></div><span>Not connected</span></header><ul>{props.capabilities.map((capability) => <li key={capability}><span className="availability-dot availability-foundation" />{capability}</li>)}</ul></section></main>;
 }
 
 function EmptyWorkspace(props: { eyebrow: string; title: string; detail: string; command?: string }): React.JSX.Element {
