@@ -7,6 +7,7 @@ import { HarnessRunEmitter, loadSkillDeliveries, type HarnessExecutor } from "@q
 import { decodeSseStream, type HarnessUiExecutorFactory } from "@qoder-ai/harness-ui";
 import { parseHarnessStudioArgs, resolveHarnessStudioSourceRoot, runHarnessStudioCli } from "../src/server/cli.js";
 import { startHarnessStudioServer, type StartedHarnessStudioServer } from "../src/server/server.js";
+import { extractInspectorReportJson } from "../src/server/query/inspector-query.js";
 import type { CheckpointHistoryAdapter } from "../src/server/query/checkpoint-history.js";
 import { FIXTURE_VERDICT } from "./compare-model.test.js";
 
@@ -132,18 +133,49 @@ describe("harness-studio server", () => {
 
     const config = await (await fetch(`${started.url}/api/config`)).json();
     const report = await fetch(`${started.url}/inspector`);
+    const structured = await fetch(`${started.url}/api/inspector-report`);
 
     expect(config.inspectorEnabled).toBe(true);
     expect(report.status).toBe(200);
     expect(report.headers.get("content-type")).toContain("text/html");
     expect(report.headers.get("cache-control")).toBe("no-store");
     expect(await report.text()).toContain("Evidence Workbench");
+    expect(structured.status).toBe(204);
 
     await started.close();
     started = await startHarnessStudioServer({ appDir });
     const missing = await fetch(`${started.url}/inspector`);
     expect(missing.status).toBe(404);
     expect((await missing.json()).error).toMatch(/--inspector/);
+  });
+
+  it("serves structured Inspector report JSON for the native Studio workbench", async () => {
+    const appDir = await makeAppDir();
+    const reportDir = await makeTempDir("studio-inspector-json-");
+    const reportPath = join(reportDir, "inspector.html");
+    const payload = {
+      kind: "HarnessInspectorReportV1",
+      workspace: { name: "fixture <repo>" },
+      featureTree: { nodes: [], roots: [] },
+      stories: [],
+      days: [],
+      sessions: [],
+      commits: [],
+      providers: [],
+      filters: { platform: "qoder" },
+    };
+    const html = `<!doctype html><title>Inspector fixture</title><script type="application/json" id="inspector-data">${JSON.stringify(payload).replaceAll("<", "\\u003c")}</script>`;
+    await writeFile(reportPath, html, "utf8");
+    started = await startHarnessStudioServer({ appDir, inspectorReportPath: reportPath });
+
+    expect(JSON.parse(extractInspectorReportJson(html))).toMatchObject({ kind: "HarnessInspectorReportV1", workspace: { name: "fixture <repo>" } });
+    expect(() => extractInspectorReportJson("<!doctype html><title>No data</title>")).toThrow(/embedded workbench data/);
+    const response = await fetch(`${started.url}/api/inspector-report`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toMatchObject({ kind: "HarnessInspectorReportV1", workspace: { name: "fixture <repo>" } });
   });
 
   it("resolves source-neutral history and activates only the successfully locked manifest", async () => {

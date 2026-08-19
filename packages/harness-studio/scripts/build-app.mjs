@@ -6,6 +6,7 @@ import { build } from "esbuild-wasm";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const appDir = join(packageRoot, "dist", "app");
+const inspectorAssetRoot = join(packageRoot, "..", "..", "scripts", "harness-inspector", "ui");
 
 await mkdir(join(appDir, "assets"), { recursive: true });
 await build({
@@ -29,6 +30,8 @@ await Promise.all([
   ...["tokens.css", "shell.css", "workbench.css"].map((file) =>
     copyFile(join(packageRoot, "src", "app", "styles", file), join(appDir, "assets", file)),
   ),
+  copyFile(join(inspectorAssetRoot, "workbench.css"), join(appDir, "assets", "inspector-workbench.css")),
+  copyFile(join(inspectorAssetRoot, "workbench.js"), join(appDir, "assets", "inspector-workbench.js")),
 ]);
 process.stdout.write(`Built studio app into ${appDir}\n`);
 process.exit(0);

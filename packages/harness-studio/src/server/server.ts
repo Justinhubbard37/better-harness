@@ -29,7 +29,7 @@ import {
 } from "./query/checkpoint-history.js";
 import { buildExperimentPreview, readObservedCallsPage } from "./query/experiment-query.js";
 import { loadEvidenceVerdict } from "./query/evidence-query.js";
-import { loadInspectorReport } from "./query/inspector-query.js";
+import { extractInspectorReportJson, loadInspectorReport } from "./query/inspector-query.js";
 import { ObservedCallIndex } from "./query/observed-call-index.js";
 import { lockHistoryExperiment } from "./experiment-lock.js";
 import { canonicalToolEvents } from "./experiment-events.js";
@@ -135,6 +135,10 @@ async function route(
     });
     return;
   }
+  if (request.method === "GET" && url.pathname === "/api/inspector-report") {
+    await serveInspectorReportJson(response, options.inspectorReportPath);
+    return;
+  }
   if (request.method === "GET" && url.pathname === "/inspector") {
     await serveInspectorReport(response, options.inspectorReportPath);
     return;
@@ -222,6 +226,39 @@ async function serveInspectorReport(response: ServerResponse, reportPath: string
       "X-Content-Type-Options": "nosniff",
     });
     response.end(html);
+  } catch {
+    respondJson(response, 404, {
+      error: "Cannot read the configured Inspector report.",
+    });
+  }
+}
+
+async function serveInspectorReportJson(response: ServerResponse, reportPath: string | undefined): Promise<void> {
+  if (reportPath === undefined) {
+    respondJson(response, 404, {
+      error: "No Inspector report loaded; start with --inspector <report.html>.",
+    });
+    return;
+  }
+  try {
+    const html = await loadInspectorReport(reportPath);
+    let json: string;
+    try {
+      json = extractInspectorReportJson(html);
+    } catch {
+      response.writeHead(204, {
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+      });
+      response.end();
+      return;
+    }
+    response.writeHead(200, {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    });
+    response.end(`${json}\n`);
   } catch {
     respondJson(response, 404, {
       error: "Cannot read the configured Inspector report.",

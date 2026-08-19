@@ -11,6 +11,7 @@ import { SquaresFour } from "@phosphor-icons/react/SquaresFour";
 import { TreeStructure } from "@phosphor-icons/react/TreeStructure";
 import { CompareView } from "./CompareView.js";
 import { ExperimentView } from "./ExperimentView.js";
+import { InspectorWorkbench } from "./InspectorWorkbench.js";
 import { RunView } from "./RunView.js";
 import { useRovingFocus } from "./roving-tablist.js";
 import {
@@ -247,7 +248,7 @@ function InspectorWorkspace(props: { config: StudioConfig }): React.JSX.Element 
   if (props.config.inspectorEnabled) {
     return <section className="inspector-workspace" aria-label="Inspector workspace">
       <header><div><strong>Inspector Workbench</strong><span>Cross-delivery evidence · read-only</span></div><p>Capability / Date → Session → Commit / File</p></header>
-      <iframe title="Harness Inspector Workbench" src="inspector" sandbox="allow-scripts" referrerPolicy="no-referrer" />
+      <InspectorWorkbench fallback={<iframe title="Harness Inspector Workbench" src="inspector" sandbox="allow-scripts" referrerPolicy="no-referrer" />} />
     </section>;
   }
   return <EmptyWorkspace eyebrow="Observed delivery" title="Connect an Inspector report" detail="Inspector requires retained, privacy-filtered evidence. It never substitutes the recorded Session Debugger fixture for a real workspace." command="--inspector ./harness-inspector.html" />;
