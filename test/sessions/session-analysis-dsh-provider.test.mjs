@@ -98,6 +98,7 @@ function privacyRows(context, sessionId = "dsh-provider-privacy") {
     workspace: context.workspace,
     sessionId,
     parentSession: DSH_FIXTURE_SECRET,
+    seedLength: undefined,
     agentPreset: DSH_FIXTURE_SECRET,
   }));
   rows[3].data.content[0].text = `Run synthetic validation with ${DSH_FIXTURE_SECRET}`;
@@ -126,6 +127,37 @@ function privacyRows(context, sessionId = "dsh-provider-privacy") {
     ],
   });
   return insertProviderRequestHeader(rows);
+}
+
+function seedOwnershipRows({ workspace, sessionId, includeChild }) {
+  const rows = makeSupportedDshSessionRows({
+    workspace,
+    sessionId,
+    parentSession: "fixture-parent",
+    seedLength: undefined,
+    origin: "subagent",
+    delegationDepth: 1,
+    agentPreset: undefined,
+  });
+  const inherited = rows.slice(1);
+  rows[0].seedLength = inherited.length;
+  if (!includeChild) return rows;
+
+  const child = structuredClone(inherited);
+  for (const event of child) {
+    event.seq += inherited.length;
+    event.time += 1_000;
+    if (Object.hasOwn(event.data, "turn")) event.data.turn = 2;
+    if (event.type === "user/message") event.data.id = `child-${event.data.id}`;
+    if (event.type === "assistant/message") event.data.message.id = `child-${event.data.message.id}`;
+    if (event.type === "tool/call") event.data.callId = `child-${event.data.callId}`;
+    if (event.type === "tool/result") {
+      event.data.message.id = `child-${event.data.message.id}`;
+      event.data.message.source.callId = `child-${event.data.message.source.callId}`;
+      event.data.message.content[0].toolCallId = `child-${event.data.message.content[0].toolCallId}`;
+    }
+  }
+  return [rows[0], ...inherited, ...child];
 }
 
 test("DSH provider reads the pinned headless snapshot-like base flow without widening normalization", async () => {
@@ -214,6 +246,53 @@ test("DSH provider accounts private subagent descriptors without exposing compos
     const facts = await analyzer.analyze({ ...input, command: "facts", limit: 1, ...gate });
     assert.equal(JSON.stringify({ sessions, events, facts }).includes(DSH_FIXTURE_SECRET), false);
   }
+});
+
+test("DSH child projection excludes inherited seed activity while preserving lineage and validation", async () => {
+  const context = await fixtureContext("better-harness-dsh-seed-ownership-");
+  const allSeed = seedOwnershipRows({
+    workspace: context.workspace,
+    sessionId: "dsh-seed-only",
+    includeChild: false,
+  });
+  const mixed = seedOwnershipRows({
+    workspace: context.workspace,
+    sessionId: "dsh-seed-mixed",
+    includeChild: true,
+  });
+  const malformedSeed = seedOwnershipRows({
+    workspace: context.workspace,
+    sessionId: "dsh-seed-malformed",
+    includeChild: true,
+  });
+  malformedSeed[3].data.role = "assistant";
+  await writeRows(context, allSeed);
+  await writeRows(context, mixed);
+  await writeRows(context, malformedSeed);
+
+  const analyzer = new DshSessionAnalyzer();
+  const { scope, sessions } = await discover(analyzer, context);
+  const byId = new Map(sessions.map((session) => [session.sessionId, session]));
+  assert.equal(byId.has("dsh-seed-malformed"), false);
+  assert.equal(analyzer.analysisWarnings.some((warning) => warning.reason === "DSH_EVENT_SHAPE_DRIFT"), true);
+
+  const seedOnlySession = byId.get("dsh-seed-only");
+  assert.deepEqual(seedOnlySession.dshProvenance, {
+    delegationDepth: 1,
+    parentSession: "fixture-parent",
+    seedLength: allSeed.length - 1,
+    origin: "subagent",
+  });
+  assert.deepEqual(await analyzer.readSession(seedOnlySession, scope), []);
+
+  const mixedSession = byId.get("dsh-seed-mixed");
+  const events = await analyzer.readSession(mixedSession, scope);
+  assert.equal(events.every((event) => event.nativeSeq >= mixed[0].seedLength), true);
+  assert.equal(events.filter((event) => event.userPrompt === true).length, 1);
+  assert.equal(events.filter((event) => event.type === "tool.call").length, 2);
+  assert.deepEqual(events.filter((event) => event.type === "tool.result").map((event) => event.success), [true, false]);
+  assert.equal(events.filter((event) => event.type === "model.response.completed").length, 1);
+  assert.equal(events.filter((event) => event.type === "turn.end" && event.success === true).length, 1);
 });
 
 test("DSH provider projects only the six approved native event types and publishes dsh-v1 evidence", async () => {
@@ -603,7 +682,8 @@ test("DSH provider admits open-step and pending-call crash prefixes without synt
   const context = await fixtureContext();
   const time = Date.parse("2026-08-18T00:00:00.000Z");
   const openStepRows = [
-    makeDshHeader({ workspace: context.workspace, sessionId: "dsh-open-step", createdAt: time }),
+    makeDshHeader({ workspace: context.workspace, sessionId: "dsh-open-step", createdAt: time,
+      parentSession: undefined, seedLength: undefined, origin: undefined, delegationDepth: 0, agentPreset: undefined }),
     makeDshEvent("turn/start", { turn: 1 }, { seq: 0, time: time + 1 }),
     makeDshEvent("step/start", { turn: 1, step: 1 }, { seq: 1, time: time + 2 }),
   ];

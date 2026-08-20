@@ -2359,6 +2359,7 @@ export class DshSessionAnalyzer extends SessionAnalyzer {
         fail("DSH_ARTIFACT_IDENTITY_DRIFT");
       }
       const finalSurfaceSeqs = finalDshSurfaceSeqs(artifact.events);
+      const firstOwnedSeq = artifact.header.seedLength ?? 0;
       const normalizedSourceRef = {
         ...ref,
         sessionId: session.sessionId,
@@ -2366,6 +2367,7 @@ export class DshSessionAnalyzer extends SessionAnalyzer {
         dshProvenance: dshProvenance(artifact.header),
       };
       for (const event of artifact.events) {
+        if (event.seq < firstOwnedSeq) continue;
         if (!withinTimeRange(normalizeDshEpochMillis(event.time), scope)) continue;
         if (!NORMALIZATION_ALLOWLIST.has(event.type)) continue;
         if (["user/message", "assistant/message", "tool/result"].includes(event.type)
