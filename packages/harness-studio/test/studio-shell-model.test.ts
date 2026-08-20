@@ -32,7 +32,7 @@ describe("Studio control-plane navigation", () => {
     expect(destinations.find((destination) => destination.id === "overview")).toMatchObject({ availability: "ready" });
     expect(destinations.find((destination) => destination.id === "sessions")).toMatchObject({
       availability: "partial",
-      status: "Open session folder",
+      status: "Open workspace",
     });
     expect(destinations.find((destination) => destination.id === "artifacts")).toMatchObject({
       availability: "foundation",
@@ -89,7 +89,7 @@ describe("Studio control-plane navigation", () => {
     expect(compareSurfaces(config)).toEqual([]);
     expect(studioDestinations(config).find((destination) => destination.id === "sessions")).toMatchObject({
       availability: "partial",
-      status: "Open session folder",
+      status: "Open workspace",
     });
     expect(studioDestinations(config).find((destination) => destination.id === "compare")).toMatchObject({
       availability: "foundation",

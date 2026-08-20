@@ -38,7 +38,7 @@ export function studioDestinations(config: StudioConfig): readonly StudioDestina
       label: "Sessions",
       group: "Observe",
       availability: config.workspaceConnected ? "ready" : "partial",
-      status: config.workspaceConnected ? `${config.sessionCount} session${config.sessionCount === 1 ? "" : "s"}` : "Open session folder",
+      status: config.workspaceConnected ? `${config.sessionCount} session${config.sessionCount === 1 ? "" : "s"}` : "Open workspace",
     },
     {
       id: "artifacts",

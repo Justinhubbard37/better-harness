@@ -6,6 +6,7 @@ import { expect, test } from "@playwright/test";
 import { resolveCanvasRuntime } from "../../dist/server/artifact-viewer-runtime.js";
 import { discoverCanvasViewers, matchCanvasViewer } from "../../dist/server/artifact-viewers.js";
 import { startHarnessStudioServer } from "../../dist/server/server.js";
+import { sessionFromRetainedRun } from "../../dist/app/session-debugger-model.js";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const canvasSdkRoot = process.env.CANVAS_SDK_ROOT ?? resolve(packageRoot, "../../../canvas-sdk");
@@ -16,6 +17,7 @@ const PPTX_REQUIREMENT = "needs a provisioned Qoder Canvas pptx viewer, the canv
 let studio;
 let emptyStudio;
 let pptxReady = false;
+let selectedWorkspace;
 
 // The PPTX scenarios exercise a real provisioned Canvas viewer, the canvas-sdk
 // checkout hosting it, and a real deck. A clean machine has none of the three,
@@ -50,17 +52,49 @@ test.beforeAll(async () => {
     canvasViewerRoot,
     port: 0,
   });
+  selectedWorkspace = await mkdtemp(join(tmpdir(), "studio-project-workspace-"));
+  const retainedRun = (id, savedAt, prompt, tools) => ({
+    id,
+    savedAt,
+    prompt,
+    status: "finished",
+    toolCallCount: tools.length,
+    warnings: [],
+    timeline: [
+      ...tools.map((name, index) => ({ kind: "tool-call", id: `tool_${index}`, name, argsText: "{}", status: "completed", resultText: "ok" })),
+      { kind: "message", id: "message_1", text: `${prompt} complete`, complete: true },
+    ],
+  });
+  const workspaceRecords = [
+    retainedRun("run_left", "2026-08-20T10:00:00.000Z", "Repair parser", ["Read", "Edit", "Bash"]),
+    retainedRun("run_right", "2026-08-20T11:00:00.000Z", "Repair renderer", ["Read", "Bash"]),
+  ];
   emptyStudio = await startHarnessStudioServer({
     appDir: join(packageRoot, "dist", "app"),
     canvasSdkRoot,
     canvasViewerRoot,
     port: 0,
+    workspaceDirectoryPicker: async () => selectedWorkspace,
+    workspaceSessionProvider: {
+      discover: async () => {
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_200));
+        return {
+          label: "fixture-project",
+          providers: [{ provider: "qoder", status: "ok", discovered: 2, included: 2 }],
+          sessions: workspaceRecords.map((record) => ({
+            summary: { id: `qoder:${record.id}`, savedAt: record.savedAt, prompt: record.prompt, status: "observed", toolCallCount: record.toolCallCount, provider: "qoder", messageCount: 1, warningCount: 0 },
+            debugger: { ...sessionFromRetainedRun(record), id: `qoder:${record.id}`, agent: "qoder", protocol: "Inspector normalized local evidence", connection: "observed" },
+          })),
+        };
+      },
+    },
   });
 });
 
 test.afterAll(async () => {
   await studio?.close();
   await emptyStudio?.close();
+  if (selectedWorkspace) await rm(selectedWorkspace, { recursive: true, force: true });
 });
 
 function watchFailures(page) {
@@ -139,15 +173,14 @@ test("gives artifact rows a visible keyboard focus ring", async ({ page }) => {
   expect(Number.parseFloat(await row.evaluate((element) => getComputedStyle(element).outlineWidth))).toBeGreaterThan(0);
 });
 
-test("opens a session folder in Studio and compares two retained Sessions", async ({ page }) => {
+test("opens a project workspace and compares Inspector-discovered Sessions", async ({ page }) => {
   const failures = watchFailures(page);
   await page.goto(emptyStudio.url);
-  const openFolder = page.getByRole("button", { name: "Open session folder" }).first();
-  await expect(openFolder).toBeEnabled();
-  await openFolder.click();
-  await expect(page.getByRole("heading", { name: "Open a session folder" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Choose session folder" })).toBeVisible();
-  expect(await page.getByTestId("workspace-folder-input").evaluate((input) => input.hasAttribute("webkitdirectory"))).toBe(true);
+  const openWorkspace = page.getByRole("button", { name: "Open workspace" }).first();
+  await expect(openWorkspace).toBeEnabled();
+  await openWorkspace.click();
+  await expect(page.getByRole("heading", { name: "Open a project workspace" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Choose workspace" })).toBeVisible();
 
   for (const layout of [
     { name: "wide", width: 1440, height: 900 },
@@ -162,22 +195,11 @@ test("opens a session folder in Studio and compares two retained Sessions", asyn
   }
 
   await page.setViewportSize({ width: 1440, height: 900 });
-  const retainedRun = (id, savedAt, prompt, tools) => ({
-    id,
-    savedAt,
-    prompt,
-    status: "finished",
-    toolCallCount: tools.length,
-    warnings: [],
-    timeline: [
-      ...tools.map((name, index) => ({ kind: "tool-call", id: `tool_${index}`, name, argsText: "{}", status: "completed", resultText: "ok" })),
-      { kind: "message", id: "message_1", text: `${prompt} complete`, complete: true },
-    ],
-  });
-  const sessionDirectory = await mkdtemp(join(tmpdir(), "studio-session-workspace-"));
-  await writeFile(join(sessionDirectory, "run_left.json"), JSON.stringify(retainedRun("run_left", "2026-08-20T10:00:00.000Z", "Repair parser", ["Read", "Edit", "Bash"])), "utf8");
-  await writeFile(join(sessionDirectory, "run_right.json"), JSON.stringify(retainedRun("run_right", "2026-08-20T11:00:00.000Z", "Repair renderer", ["Read", "Bash"])), "utf8");
-  await page.getByTestId("workspace-folder-input").setInputFiles(sessionDirectory);
+  await page.getByRole("button", { name: "Choose workspace" }).click();
+  await expect(page.getByRole("button", { name: "Opening…" })).toBeDisabled();
+  await expect(page.locator(".workspace-open-progress")).toContainText("Finding matching Sessions across local providers");
+  await expect(page.locator(".workspace-open-progress > i")).toHaveCSS("animation-name", "workspace-progress-spin");
+  await page.screenshot({ path: "test-results/session-workspace-loading-wide.png", fullPage: true });
 
   await expect(page.getByRole("button", { name: /Repair renderer/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Repair renderer" })).toBeVisible();
@@ -216,6 +238,8 @@ test("opens a session folder in Studio and compares two retained Sessions", asyn
   }
   const config = await page.evaluate(async () => await (await fetch("api/config")).json());
   expect(config).toMatchObject({ workspaceConnected: true, sessionCount: 2 });
+  const workspace = await page.evaluate(async () => await (await fetch("api/workspace")).json());
+  expect(workspace).toMatchObject({ connected: true, label: "fixture-project", providers: [{ provider: "qoder", status: "ok" }] });
+  expect(JSON.stringify(workspace)).not.toContain(selectedWorkspace);
   expect(failures).toEqual([]);
-  await rm(sessionDirectory, { recursive: true, force: true });
 });

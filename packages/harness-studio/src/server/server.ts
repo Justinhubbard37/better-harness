@@ -46,7 +46,8 @@ import {
   type StudioSourceCandidate,
   type StudioSourceKind,
 } from "./source-catalog.js";
-import { sessionFromRetainedRun } from "../app/session-debugger-model.js";
+import { sessionFromRetainedRun, type DebuggerSession } from "../app/session-debugger-model.js";
+import { pickLocalWorkspaceDirectory } from "./native-directory-picker.js";
 import {
   assertArtifactId,
   describeArtifacts,
@@ -106,6 +107,40 @@ const IMPORT_SESSION_TTL_MS = 10 * 60 * 1000;
 const MAX_WORKSPACE_FILES = 512;
 const MAX_WORKSPACE_SESSIONS = 200;
 
+export interface StudioWorkspaceSessionSummary {
+  id: string;
+  savedAt: string;
+  prompt: string;
+  status: "finished" | "error" | "observed";
+  toolCallCount: number;
+  provider?: string;
+  messageCount?: number;
+  warningCount?: number;
+}
+
+export interface StudioWorkspaceSession {
+  summary: StudioWorkspaceSessionSummary;
+  debugger: DebuggerSession;
+}
+
+export interface StudioWorkspaceProviderDiagnostic {
+  provider: string;
+  status: "ok" | "no-evidence" | "error";
+  discovered: number;
+  included: number;
+  message?: string;
+}
+
+export interface StudioWorkspaceDiscovery {
+  label: string;
+  sessions: StudioWorkspaceSession[];
+  providers?: StudioWorkspaceProviderDiagnostic[];
+}
+
+export interface StudioWorkspaceSessionProvider {
+  discover(workspacePath: string): Promise<StudioWorkspaceDiscovery>;
+}
+
 export interface HarnessStudioServerOptions {
   /** Directory holding the built React app (index.html + assets/). */
   appDir: string;
@@ -149,6 +184,10 @@ export interface HarnessStudioServerOptions {
   experimentLocker?: typeof lockHistoryExperiment;
   experimentOutputDirectory?: string;
   experimentRunner?: (options: RunHarnessExperimentOptions) => Promise<HarnessExperimentCompareSet>;
+  /** In-process Inspector-style workspace-to-Session discovery capability. */
+  workspaceSessionProvider?: StudioWorkspaceSessionProvider;
+  /** Test/embedder seam for the server-owned native working-directory chooser. */
+  workspaceDirectoryPicker?: () => Promise<string | undefined>;
 }
 
 /**
@@ -184,6 +223,7 @@ export function createHarnessStudioServer(options: HarnessStudioServerOptions): 
     artifactDirectory: options.artifactDirectory,
     artifactImports: new Map(),
     workspaceImports: new Map(),
+    workspaceOpenStage: "idle",
   };
   const server = createServer((request, response) => {
     void route(request, response, options, state, experimentRuns).catch((error: unknown) => {
@@ -218,11 +258,16 @@ interface WorkspaceImportSession {
 }
 
 interface StudioWorkspace {
-  directory: string;
-  runDirectory: string;
   label: string;
   sessionCount: number;
   omittedCount: number;
+  sessions: Map<string, StoredWorkspaceSession>;
+  providers: StudioWorkspaceProviderDiagnostic[];
+  ownedDirectory?: string;
+}
+
+interface StoredWorkspaceSession extends StudioWorkspaceSession {
+  retainedRun?: SavedRunRecord;
 }
 
 interface HarnessStudioState {
@@ -239,6 +284,7 @@ interface HarnessStudioState {
   artifactImports: Map<string, ArtifactImportSession>;
   workspace?: StudioWorkspace;
   workspaceImports: Map<string, WorkspaceImportSession>;
+  workspaceOpenStage: "idle" | "choosing" | "discovering";
 }
 
 function artifactOptions(options: HarnessStudioServerOptions, state: HarnessStudioState): HarnessStudioServerOptions {
@@ -271,11 +317,19 @@ async function route(
   if (request.method === "GET" && url.pathname === "/api/workspace") {
     respondJson(response, 200, state.workspace === undefined
       ? { connected: false, sessionCount: 0, omittedCount: 0 }
-      : { connected: true, label: state.workspace.label, sessionCount: state.workspace.sessionCount, omittedCount: state.workspace.omittedCount });
+      : { connected: true, label: state.workspace.label, sessionCount: state.workspace.sessionCount, omittedCount: state.workspace.omittedCount, providers: state.workspace.providers });
     return;
   }
   if (request.method === "DELETE" && url.pathname === "/api/workspace") {
     await disconnectWorkspace(request, response, state);
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/workspace/open/status") {
+    respondJson(response, 200, { stage: state.workspaceOpenStage });
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/workspace/open") {
+    await openWorkspace(request, response, options, state);
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/workspaces") {
@@ -492,6 +546,102 @@ async function createWorkspaceImport(
   respondJson(response, 201, { sessionId, maxFiles: MAX_WORKSPACE_FILES, maxBytes: MAX_IMPORT_BYTES });
 }
 
+async function openWorkspace(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: HarnessStudioServerOptions,
+  state: HarnessStudioState,
+): Promise<void> {
+  if (!sameOriginRequest(request)) {
+    respondJson(response, 403, { error: "Cross-origin workspace changes are not allowed." });
+    return;
+  }
+  if (options.workspaceSessionProvider === undefined) {
+    respondJson(response, 501, { error: "This Studio launcher does not provide workspace Session discovery." });
+    return;
+  }
+  if (state.workspaceOpenStage !== "idle") {
+    respondJson(response, 409, { error: "A workspace directory chooser is already open." });
+    return;
+  }
+  state.workspaceOpenStage = "choosing";
+  try {
+    const selected = await (options.workspaceDirectoryPicker ?? pickLocalWorkspaceDirectory)();
+    if (selected === undefined) {
+      respondJson(response, 200, { opened: false, cancelled: true });
+      return;
+    }
+    state.workspaceOpenStage = "discovering";
+    const workspacePath = await realpath(selected);
+    if (!(await stat(workspacePath)).isDirectory()) {
+      respondJson(response, 422, { error: "The selected workspace is not a directory." });
+      return;
+    }
+    const discovered = await options.workspaceSessionProvider.discover(workspacePath);
+    const sessions = new Map<string, StoredWorkspaceSession>();
+    for (const candidate of discovered.sessions.slice(0, MAX_WORKSPACE_SESSIONS)) {
+      const normalized = normalizeDiscoveredWorkspaceSession(candidate);
+      if (!sessions.has(normalized.summary.id)) sessions.set(normalized.summary.id, normalized);
+    }
+    const providers = (discovered.providers ?? []).map((provider) => ({
+      provider: portableWorkspaceLabel(provider.provider),
+      status: provider.status,
+      discovered: boundedNonNegativeInteger(provider.discovered),
+      included: boundedNonNegativeInteger(provider.included),
+      ...(provider.status === "error" ? { message: "Provider discovery failed." } : {}),
+    }));
+    const previous = state.workspace?.ownedDirectory;
+    state.workspace = {
+      label: portableWorkspaceLabel(discovered.label),
+      sessionCount: sessions.size,
+      omittedCount: Math.max(0, discovered.sessions.length - sessions.size),
+      sessions,
+      providers,
+    };
+    if (previous !== undefined) await rm(previous, { recursive: true, force: true }).catch(() => undefined);
+    respondJson(response, 200, {
+      opened: true,
+      label: state.workspace.label,
+      sessionCount: state.workspace.sessionCount,
+      providers,
+    });
+  } catch {
+    respondJson(response, 422, { error: "Studio could not discover Sessions for the selected workspace." });
+  } finally {
+    state.workspaceOpenStage = "idle";
+  }
+}
+
+function normalizeDiscoveredWorkspaceSession(candidate: StudioWorkspaceSession): StudioWorkspaceSession {
+  const id = String(candidate?.summary?.id ?? "").normalize("NFKC").trim();
+  if (id === "" || id.length > 240 || /[\u0000-\u001f\u007f/\\]/u.test(id)) {
+    throw new Error("Discovered Session id is not a bounded opaque identifier.");
+  }
+  const savedAt = new Date(candidate.summary.savedAt);
+  if (Number.isNaN(savedAt.valueOf())) throw new Error("Discovered Session requires an observed timestamp.");
+  if (candidate.debugger === null || typeof candidate.debugger !== "object" || !Array.isArray(candidate.debugger.events)) {
+    throw new Error("Discovered Session requires a debugger projection.");
+  }
+  return {
+    summary: {
+      id,
+      savedAt: savedAt.toISOString(),
+      prompt: String(candidate.summary.prompt || "Untitled Session").slice(0, 500),
+      status: ["finished", "error", "observed"].includes(candidate.summary.status) ? candidate.summary.status : "observed",
+      toolCallCount: boundedNonNegativeInteger(candidate.summary.toolCallCount),
+      ...(candidate.summary.provider === undefined ? {} : { provider: portableWorkspaceLabel(candidate.summary.provider) }),
+      ...(candidate.summary.messageCount === undefined ? {} : { messageCount: boundedNonNegativeInteger(candidate.summary.messageCount) }),
+      ...(candidate.summary.warningCount === undefined ? {} : { warningCount: boundedNonNegativeInteger(candidate.summary.warningCount) }),
+    },
+    debugger: candidate.debugger,
+  };
+}
+
+function boundedNonNegativeInteger(value: unknown): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.trunc(numeric))) : 0;
+}
+
 async function importWorkspaceFile(
   request: IncomingMessage,
   response: ServerResponse,
@@ -570,9 +720,7 @@ async function commitWorkspaceImport(
     respondJson(response, 404, { error: "Workspace import session is unavailable." });
     return;
   }
-  const runDirectory = join(session.directory, `.studio-session-index-${sessionId}`);
-  await mkdir(runDirectory, { recursive: true });
-  const accepted = new Set<string>();
+  const accepted = new Map<string, StoredWorkspaceSession>();
   let omittedCount = 0;
   for (const relativePath of session.paths) {
     if (!/^run_[A-Za-z0-9_-]+\.json$/u.test(basename(relativePath)) || accepted.size >= MAX_WORKSPACE_SESSIONS) {
@@ -586,26 +734,38 @@ async function commitWorkspaceImport(
         omittedCount += 1;
         continue;
       }
-      accepted.add(record.id);
-      await writeFile(join(runDirectory, `${record.id}.json`), `${JSON.stringify(record, null, 2)}\n`, "utf8");
+      accepted.set(record.id, {
+        summary: {
+          id: record.id,
+          savedAt: record.savedAt,
+          prompt: record.prompt,
+          status: record.status,
+          toolCallCount: record.toolCallCount,
+          provider: "Harness Studio",
+          messageCount: record.timeline.filter((item) => item.kind === "message").length,
+          warningCount: record.warnings.length,
+        },
+        debugger: sessionFromRetainedRun(record),
+        retainedRun: record,
+      });
     } catch {
       omittedCount += 1;
     }
   }
   if (accepted.size === 0) {
-    await rm(runDirectory, { recursive: true, force: true });
     respondJson(response, 422, { error: "No supported retained run records were found in this folder." });
     return;
   }
   clearTimeout(session.expiry);
   state.workspaceImports.delete(sessionId);
-  const previous = state.workspace?.directory;
+  const previous = state.workspace?.ownedDirectory;
   state.workspace = {
-    directory: session.directory,
-    runDirectory,
     label: session.label,
     sessionCount: accepted.size,
     omittedCount,
+    sessions: accepted,
+    providers: [{ provider: "Harness Studio", status: "ok", discovered: accepted.size, included: accepted.size }],
+    ownedDirectory: session.directory,
   };
   if (previous !== undefined && previous !== session.directory) {
     await rm(previous, { recursive: true, force: true }).catch(() => undefined);
@@ -642,7 +802,7 @@ async function disconnectWorkspace(
   }
   const workspace = state.workspace;
   state.workspace = undefined;
-  if (workspace !== undefined) await rm(workspace.directory, { recursive: true, force: true });
+  if (workspace?.ownedDirectory !== undefined) await rm(workspace.ownedDirectory, { recursive: true, force: true });
   respondJson(response, 200, { disconnected: workspace !== undefined });
 }
 
@@ -653,8 +813,8 @@ function workspaceImportSession(state: HarnessStudioState, sessionId: string): W
 }
 
 function portableWorkspaceLabel(value: string | null): string {
-  const label = (value ?? "Selected session folder").trim().replace(/[\u0000-\u001f]/gu, " ").slice(0, 80);
-  return label || "Selected session folder";
+  const label = (value ?? "Selected workspace").trim().replace(/[\u0000-\u001f]/gu, " ").slice(0, 80);
+  return label || "Selected workspace";
 }
 
 function portableWorkspacePath(value: string | null): string {
@@ -683,20 +843,19 @@ async function removeWorkspaceImport(state: HarnessStudioState, sessionId: strin
 
 async function cleanupWorkspaceImports(state: HarnessStudioState): Promise<void> {
   await Promise.all([...state.workspaceImports.keys()].map((sessionId) => removeWorkspaceImport(state, sessionId)));
-  if (state.workspace !== undefined) {
-    await rm(state.workspace.directory, { recursive: true, force: true });
-    state.workspace = undefined;
-  }
+  if (state.workspace?.ownedDirectory !== undefined) await rm(state.workspace.ownedDirectory, { recursive: true, force: true });
+  state.workspace = undefined;
 }
 
 async function serveWorkspaceSessions(response: ServerResponse, state: HarnessStudioState): Promise<void> {
   if (state.workspace === undefined) {
-    respondJson(response, 404, { error: "No session workspace is open." });
+    respondJson(response, 404, { error: "No project workspace is open." });
     return;
   }
   respondJson(response, 200, {
-    workspace: { label: state.workspace.label, omittedCount: state.workspace.omittedCount },
-    sessions: await listRunRecords(state.workspace.runDirectory),
+    workspace: { label: state.workspace.label, omittedCount: state.workspace.omittedCount, providers: state.workspace.providers },
+    sessions: [...state.workspace.sessions.values()].map((session) => session.summary)
+      .sort((left, right) => right.savedAt.localeCompare(left.savedAt)),
   });
 }
 
@@ -707,15 +866,15 @@ async function serveWorkspaceSession(
   debuggerProjection: boolean,
 ): Promise<void> {
   if (state.workspace === undefined) {
-    respondJson(response, 404, { error: "No session workspace is open." });
+    respondJson(response, 404, { error: "No project workspace is open." });
     return;
   }
-  try {
-    const record = await readRunRecord(state.workspace.runDirectory, sessionId);
-    respondJson(response, 200, debuggerProjection ? sessionFromRetainedRun(record) : record);
-  } catch {
+  const session = state.workspace.sessions.get(sessionId);
+  if (session === undefined) {
     respondJson(response, 404, { error: `Session '${sessionId}' is not available in the current workspace.` });
+    return;
   }
+  respondJson(response, 200, debuggerProjection ? session.debugger : session.retainedRun ?? session.summary);
 }
 
 async function serveSessionComparison(
@@ -725,41 +884,40 @@ async function serveSessionComparison(
   rightId: string | null,
 ): Promise<void> {
   if (state.workspace === undefined) {
-    respondJson(response, 404, { error: "No session workspace is open." });
+    respondJson(response, 404, { error: "No project workspace is open." });
     return;
   }
   if (leftId === null || rightId === null || leftId === rightId) {
     respondJson(response, 400, { error: "Choose two different sessions to compare." });
     return;
   }
-  try {
-    const [left, right] = await Promise.all([
-      readRunRecord(state.workspace.runDirectory, leftId),
-      readRunRecord(state.workspace.runDirectory, rightId),
-    ]);
-    respondJson(response, 200, {
-      kind: "observational-session-compare.v1",
-      boundary: "Observed retained evidence only; no winner is inferred.",
-      left: sessionComparisonSide(left),
-      right: sessionComparisonSide(right),
-    });
-  } catch {
+  const left = state.workspace.sessions.get(leftId);
+  const right = state.workspace.sessions.get(rightId);
+  if (left === undefined || right === undefined) {
     respondJson(response, 404, { error: "One or both sessions are unavailable in the current workspace." });
+    return;
   }
+  respondJson(response, 200, {
+    kind: "observational-session-compare.v1",
+    boundary: "Observed retained evidence only; no winner is inferred.",
+    left: sessionComparisonSide(left),
+    right: sessionComparisonSide(right),
+  });
 }
 
-function sessionComparisonSide(record: SavedRunRecord): Record<string, unknown> {
-  const tools = record.timeline.filter((item): item is Extract<SavedRunRecord["timeline"][number], { kind: "tool-call" }> => item.kind === "tool-call");
-  const messages = record.timeline.filter((item) => item.kind === "message");
+function sessionComparisonSide(session: StoredWorkspaceSession): Record<string, unknown> {
+  const tools = session.debugger.events.flatMap((event) => event.toolCalls ?? []);
+  const messages = session.summary.messageCount
+    ?? session.debugger.events.filter((event) => event.kind === "prompt" || event.kind === "response").length;
   return {
-    id: record.id,
-    prompt: record.prompt,
-    savedAt: record.savedAt,
-    status: record.status,
-    retainedEventCount: record.timeline.length + 1 + (record.error === undefined ? 0 : 1),
-    toolCallCount: tools.length,
-    messageCount: messages.length,
-    warningCount: record.warnings.length,
+    id: session.summary.id,
+    prompt: session.summary.prompt,
+    savedAt: session.summary.savedAt,
+    status: session.summary.status,
+    retainedEventCount: session.debugger.events.length,
+    toolCallCount: session.summary.toolCallCount,
+    messageCount: messages,
+    warningCount: session.summary.warningCount ?? 0,
     toolSequence: tools.map((tool) => tool.name),
   };
 }

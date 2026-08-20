@@ -9,9 +9,11 @@
 
 Harness Studio is a local Web application, not a collection of views enabled by
 startup flags. Launching the server should open an empty workbench. The user
-then chooses a local directory in the browser, Studio discovers the supported
-sessions inside that directory, and the user can inspect one session or compare
-two sessions without restarting the process.
+then chooses a project working directory in the Web UI. Studio passes that
+absolute local workspace identity to the same in-process discovery capability
+used by Harness Inspector, which finds workspace-matching sessions in each
+supported host's evidence store. The user does not need to know where a host
+stores transcripts or select a Session directory manually.
 
 The product hierarchy is `Workspace -> Sessions -> Session detail / Compare ->
 Session artifacts`. CLI arguments may preload data for compatibility and
@@ -20,15 +22,18 @@ surface exists.
 
 ## Decisions
 
-- **D-1: the Web workspace is the root aggregate.** A selected directory creates
-  one replaceable, server-managed workspace session. Session, compare, and
-  artifact routes resolve through that workspace.
-- **D-2: directory selection stays browser-native.** The browser uses a directory
-  picker and sends relative paths plus bounded file bytes. It never claims that
-  a browser file picker exposes a portable server-readable absolute path.
-- **D-3: adapters own session formats.** The first adapter accepts retained
-  Harness Studio `run_*.json` records. Additional Qoder, Codex, Claude, or
-  harness-run layouts must be added through a format adapter, not UI branching.
+- **D-1: the project workspace is the root aggregate.** A selected local working
+  directory creates one replaceable workspace scope. Session, compare, and
+  artifact routes resolve through the sessions discovered for that scope.
+- **D-2: a local server owns directory selection.** A normal browser directory
+  input cannot reveal a portable absolute path, so it cannot establish the same
+  workspace identity as Inspector. A same-origin POST asks the loopback server
+  to open the operating system's directory chooser. No project files are
+  uploaded or copied into Studio.
+- **D-3: reuse Inspector discovery code in process.** Studio calls the existing
+  multi-provider session-analysis capability with the selected workspace. It
+  does not invoke an Inspector or session-analysis CLI subprocess and does not
+  duplicate host path/slug rules in React.
 - **D-4: Session Compare is observational.** Comparing two selected sessions
   shows retained status, duration boundary, tool calls, messages, and semantic
   phase differences. It does not emit a winner or reuse the frozen
@@ -40,18 +45,23 @@ surface exists.
 - **D-6: `better-harness web` is a launcher only.** The future public command
   locates and starts the packaged Studio application. Selecting or switching a
   workspace remains entirely inside the Web UI.
+- **D-7: slow discovery reports real stages, not fake percentages.** While an
+  open request is pending, Studio exposes only the coarse server-owned stage:
+  waiting for the native directory chooser or discovering workspace-matched
+  Sessions. The Web UI polls that privacy-safe state and renders an indeterminate
+  progress indicator with reduced-motion support.
 
 ## Acceptance Scenarios
 
 - **AC-1:** Studio starts with no data arguments and presents an enabled
-  **Open session folder** action on Overview and Sessions.
-- **AC-2:** Choosing a directory creates a same-origin, opaque, bounded import
-  session. Relative paths are portable and confined; the active workspace
-  changes only after all selected files are accepted and indexed.
-- **AC-3:** A directory containing valid retained `run_*.json` records produces
-  a newest-first Session list with prompt, status, saved time, and tool-call
-  count. Unsupported and malformed files are reported as omitted and do not
-  break the workspace.
+  **Open workspace** action on Overview and Sessions.
+- **AC-2:** Choosing a directory is allowed only from a same-origin loopback
+  request, returns no absolute path to the browser, and does not upload or copy
+  the project's files. Cancelling leaves the active workspace unchanged.
+- **AC-3:** Selecting a project directory runs the Inspector-owned provider
+  discovery against that workspace and produces a newest-first Session list
+  with provider, prompt, observed time, and tool-call count. One unavailable or
+  failed provider does not hide sessions from other providers.
 - **AC-4:** Selecting a Session opens its real retained Session Debugger
   projection. No sample session is substituted when the workspace has data.
 - **AC-5:** The user can select exactly two sessions from the current workspace
@@ -60,8 +70,8 @@ surface exists.
   for status, retained event count, tool-call count, message count, and tool
   sequence. It labels missing evidence and makes no winner claim.
 - **AC-7:** Replacing or disconnecting the workspace clears the prior Session,
-  Compare, and Artifact selection and removes Studio-owned temporary data. It
-  never writes into the source directory.
+  Compare, and Artifact selection. Discovery is read-only and never writes into
+  the workspace or native host session stores.
 - **AC-8:** Empty-state UI copy does not instruct the user to restart with
   `--inspector`, `--evidence`, `--harness`, or `--artifacts` for browsing and
   comparing retained sessions.
@@ -70,12 +80,16 @@ surface exists.
 - **AC-10:** The root CLI contract can later expose `better-harness web` as a
   workflow command that starts the same empty Studio server; it does not add
   directory-selection flags to the primary Web workflow.
+- **AC-11:** During a slow workspace open, the button is disabled, an animated
+  live status first reports directory selection and then Session discovery, and
+  completion automatically replaces the intake with the discovered Session
+  list. No made-up percentage or absolute path is shown.
 
 ## Non-goals
 
 - Treating observational Session Compare as an experiment verdict.
-- Uploading an entire repository or agent home without a bounded adapter plan.
-- Supporting every host transcript layout in the first adapter.
+- Uploading an entire repository or agent home to the loopback server.
+- Reimplementing host transcript discovery inside the Studio package or UI.
 - Editing, replaying, or writing back into imported sessions.
 - Shipping the public `better-harness web` package boundary in this first UI
   migration; the server and packaged-app ownership must be resolved first.
@@ -84,15 +98,15 @@ surface exists.
 
 ### 1. Introduce the workspace session contract
 
-Add bounded create/upload/commit/disconnect routes. Preserve relative paths in
-a confined temporary root, index supported records through a format adapter,
-and make the committed workspace the dynamic owner for Session routes.
+Add same-origin open/disconnect routes around a cross-platform native directory
+picker. Keep the absolute path server-side and make the discovered workspace
+scope the dynamic owner for Session routes.
 
 ### 2. Make Sessions the primary observed-data surface
 
-Replace startup-flag-driven empty states with an Open session folder action,
-render the committed Session catalog, and open real retained Session Debugger
-data from the selected row.
+Replace startup-flag-driven empty states with an Open workspace action, invoke
+the Inspector-owned multi-provider collector in process, render its Session
+catalog, and open real retained Session evidence from the selected row.
 
 ### 3. Add observational Session Compare
 
@@ -102,9 +116,9 @@ Keep frozen harness-compare evidence as a separate surface.
 
 ### 4. Scope Artifact View below Session
 
-Resolve artifacts from the selected Session workspace when the adapter exposes
-them. Until then, show an honest session-scoped empty state rather than a loose
-global artifact picker.
+Resolve artifacts from a Session discovered for the selected project workspace
+when the adapter exposes them. Until then, show an honest session-scoped empty
+state rather than a loose global artifact picker.
 
 ### 5. Prepare the launcher boundary
 
@@ -114,21 +128,10 @@ package the built Studio runtime so the root command registry can dispatch
 
 ## Test and Review Evidence
 
-Implementation evidence captured on 2026-08-20:
-
-- `npm test` in `packages/harness-studio`: 17 files, 115 tests passed.
-- `npm run test:browser` in `packages/harness-studio`: 15 Playwright tests
-  passed, including the folder-to-Session-to-Compare flow and the provisioned
-  PPTX viewer regression.
-- `npx vitest run test/skills-docs/doc-link-graph.test.mjs`: 6 tests passed
-  after regenerating `docs/better-harness-doc-links.mmd`.
-- Wide, compact, and narrow screenshots were captured for workspace intake,
-  Session browsing, and Session Compare with browser console/page-error and
-  horizontal-overflow assertions.
-
 - AC-1/AC-8: empty-start model and Playwright assertions for UI copy and actions.
-- AC-2/AC-3/AC-7: HTTP tests for transactionality, traversal, limits,
-  replacement, disconnect, malformed files, and source immutability.
+- AC-2/AC-3/AC-7: HTTP tests with an injected picker/provider for same-origin
+  access, cancellation, atomic replacement, disconnect, provider diagnostics,
+  path redaction, and read-only discovery.
 - AC-4: browser test that selects a retained session and verifies its prompt and
   real tool-call projection.
 - AC-5/AC-6: model and browser tests selecting two sessions and rendering an
@@ -136,14 +139,33 @@ Implementation evidence captured on 2026-08-20:
 - AC-9: Playwright screenshots, keyboard focus, horizontal overflow, browser
   console, and page-error checks at all three required widths.
 - AC-10: CLI inventory/dispatch tests belong to the packaging follow-up.
+- AC-11: HTTP tests pause the injected chooser and provider to verify the two
+  status stages; Playwright verifies the live discovery message, progress
+  indicator, disabled action, and automatic transition to the Session list.
+
+Implementation evidence (2026-08-20):
+
+- `npm test` in `packages/harness-studio`: 18 files, 118 tests passed,
+  including controlled chooser/discovery stage transitions.
+- `npm run test:browser` in `packages/harness-studio`: 15 Playwright tests
+  passed, including the workspace intake, discovered Session detail, Compare,
+  animated discovery status, wide/compact/narrow screenshots, keyboard focus,
+  overflow, console, and page error checks.
+- `npm test` at the repository root: 99 files, 1412 tests passed.
+- A live in-process discovery smoke against this repository returned the bounded
+  100-Session catalog: Qoder 79, Codex 16, and Claude 5.
 
 ### Risks
 
-- Directory pickers expose relative paths and bytes, not portable absolute
-  paths. The UI must not imply direct filesystem mounting.
+- Browser directory inputs expose relative paths and bytes, not a portable
+  absolute path. The loopback server therefore owns the native picker and must
+  never expose the selected absolute path back to the page.
 - Session records may contain sensitive prompts or tool output. Imports remain
   loopback-only, temporary, bounded, and never leave the local server.
-- Host transcript formats differ substantially. UI inference would create false
-  compatibility; adapter detection must fail closed with omission reasons.
-- Large histories can exhaust browser or server memory. The first slice limits
-  files, per-file bytes, aggregate bytes, depth, and accepted record count.
+- Host transcript formats differ substantially. Studio must reuse the bounded
+  provider discovery and privacy-safe projection already owned by Inspector.
+- Native directory chooser availability differs across Windows, macOS, and
+  Linux. Platform implementations must use fixed commands without a shell and
+  return an actionable unavailable state when no chooser exists.
+- Large histories can exhaust memory. Discovery retains Inspector's global
+  Session bound and hydrates only selected recent candidates.

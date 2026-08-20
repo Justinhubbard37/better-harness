@@ -265,9 +265,9 @@ test("organizes configured surfaces around the Harness control plane", async ({ 
   await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Sessions");
   await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Debugger");
   await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Compare");
-  await page.getByRole("button", { name: "Open session folder" }).first().click();
-  await expect(page.getByRole("heading", { name: "Open a session folder" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Choose session folder" })).toBeVisible();
+  await page.getByRole("button", { name: "Open workspace" }).first().click();
+  await expect(page.getByRole("heading", { name: "Open a project workspace" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Choose workspace" })).toBeVisible();
 });
 
 test("compares a focused ACP pair across roles, views, filters, and evidence", async ({ page }, testInfo) => {
@@ -555,18 +555,18 @@ test("renders the shell, local workspace intake, and empty compare surfaces at a
     }
 
     await openDestination(page, "Sessions");
-    await expect(page.getByRole("heading", { name: "Open a session folder" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Open a project workspace" })).toBeVisible();
     await assertRenderedContract(page);
     await page.screenshot({ path: testInfo.outputPath(`foundation-${layout.name}.png`) });
 
     await page.goto(inspectorStudio.url);
     await openDestination(page, "Compare");
-    await expect(page.getByRole("heading", { name: "Open a session workspace" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Open a project workspace" })).toBeVisible();
     await assertRenderedContract(page);
     await page.screenshot({ path: testInfo.outputPath(`empty-${layout.name}.png`) });
 
     await openDestination(page, "Sessions");
-    await expect(page.getByRole("button", { name: "Choose session folder" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Choose workspace" })).toBeVisible();
     await assertRenderedContract(page);
     await page.screenshot({ path: testInfo.outputPath(`sessions-${layout.name}.png`) });
   }

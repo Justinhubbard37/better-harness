@@ -8,7 +8,8 @@ import { HarnessRunEmitter, loadSkillDeliveries, type HarnessExecutor } from "@q
 import { decodeSseStream, type HarnessUiExecutorFactory } from "@qoder-ai/harness-ui";
 import { parseHarnessStudioArgs, resolveHarnessStudioSourceRoot, runHarnessStudioCli, discoverDefaultInspectorReport } from "../src/server/cli.js";
 import { parseSourceCatalog } from "../src/server/source-catalog.js";
-import { startHarnessStudioServer, type StartedHarnessStudioServer } from "../src/server/server.js";
+import { startHarnessStudioServer, type StartedHarnessStudioServer, type StudioWorkspaceDiscovery } from "../src/server/server.js";
+import { sessionFromRetainedRun } from "../src/app/session-debugger-model.js";
 import { extractInspectorReportJson } from "../src/server/query/inspector-query.js";
 import type { CheckpointHistoryAdapter } from "../src/server/query/checkpoint-history.js";
 import { FIXTURE_VERDICT } from "./compare-model.test.js";
@@ -108,6 +109,20 @@ async function makeAppDir(): Promise<string> {
   return dir;
 }
 
+async function waitForWorkspaceOpenStage(
+  serverUrl: string,
+  expected: "idle" | "choosing" | "discovering",
+): Promise<string> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const response = await fetch(`${serverUrl}/api/workspace/open/status`);
+    const payload = await response.json() as { stage?: string };
+    if (payload.stage === expected) return payload.stage;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
+  }
+  throw new Error(`Workspace open stage did not become '${expected}'.`);
+}
+
 function retainedRunFixture(id: string, savedAt: string, prompt: string, tools: string[]) {
   return {
     id,
@@ -143,6 +158,115 @@ describe("harness-studio server", () => {
       workspaceConnected: false,
       sessionCount: 0,
     });
+  });
+
+  it("opens a project workspace and serves provider-discovered Sessions without exposing its path", async () => {
+    const appDir = await makeAppDir();
+    const workspace = await makeTempDir("studio-project-workspace-");
+    let pickerCalls = 0;
+    const records = [
+      retainedRunFixture("run_qoder", "2026-08-20T11:00:00.000Z", "Inspect Qoder session", ["Read", "Bash"]),
+      retainedRunFixture("run_codex", "2026-08-20T10:00:00.000Z", "Inspect Codex session", ["Read"]),
+    ];
+    started = await startHarnessStudioServer({
+      appDir,
+      workspaceDirectoryPicker: async () => {
+        pickerCalls += 1;
+        return pickerCalls === 1 ? undefined : workspace;
+      },
+      workspaceSessionProvider: {
+        discover: async (selected) => ({
+          label: "fixture-repository",
+          providers: [
+            { provider: "qoder", status: "ok", discovered: 1, included: 1 },
+            { provider: "codex", status: "ok", discovered: 1, included: 1 },
+            { provider: "claude", status: "no-evidence", discovered: 0, included: 0 },
+          ],
+          sessions: records.map((record, index) => ({
+            summary: {
+              id: `${index === 0 ? "qoder" : "codex"}:${record.id}`,
+              savedAt: record.savedAt,
+              prompt: record.prompt,
+              status: "observed",
+              toolCallCount: record.toolCallCount,
+              provider: index === 0 ? "qoder" : "codex",
+              messageCount: 1,
+            },
+            debugger: {
+              ...sessionFromRetainedRun(record),
+              id: `${index === 0 ? "qoder" : "codex"}:${record.id}`,
+              agent: index === 0 ? "qoder" : "codex",
+              protocol: "Inspector normalized local evidence",
+              connection: "observed",
+            },
+          })),
+          selected,
+        }),
+      },
+    });
+
+    const hostile = await fetch(`${started.url}/api/workspace/open`, { method: "POST", headers: { Origin: "https://hostile.example" } });
+    expect(hostile.status).toBe(403);
+    expect(pickerCalls).toBe(0);
+
+    const cancelled = await fetch(`${started.url}/api/workspace/open`, { method: "POST" });
+    expect(await cancelled.json()).toEqual({ opened: false, cancelled: true });
+    expect(await (await fetch(`${started.url}/api/workspace`)).json()).toMatchObject({ connected: false });
+
+    const opened = await fetch(`${started.url}/api/workspace/open`, { method: "POST" });
+    expect(opened.status).toBe(200);
+    expect(await opened.json()).toMatchObject({ opened: true, label: "fixture-repository", sessionCount: 2 });
+    const workspaceState = await (await fetch(`${started.url}/api/workspace`)).json();
+    expect(workspaceState).toMatchObject({
+      connected: true,
+      label: "fixture-repository",
+      sessionCount: 2,
+      providers: [
+        { provider: "qoder", status: "ok" },
+        { provider: "codex", status: "ok" },
+        { provider: "claude", status: "no-evidence" },
+      ],
+    });
+    expect(JSON.stringify(workspaceState)).not.toContain(workspace);
+
+    const catalog = await (await fetch(`${started.url}/api/sessions`)).json() as { sessions: Array<{ id: string; provider: string }> };
+    expect(catalog.sessions.map((session) => session.id)).toEqual(["qoder:run_qoder", "codex:run_codex"]);
+    expect(catalog.sessions.map((session) => session.provider)).toEqual(["qoder", "codex"]);
+    const detail = await (await fetch(`${started.url}/api/sessions/${encodeURIComponent("qoder:run_qoder")}/debugger`)).json();
+    expect(detail).toMatchObject({ name: "Inspect Qoder session", agent: "qoder", protocol: "Inspector normalized local evidence" });
+    const comparison = await (await fetch(`${started.url}/api/session-compare?left=${encodeURIComponent("qoder:run_qoder")}&right=${encodeURIComponent("codex:run_codex")}`)).json();
+    expect(comparison).toMatchObject({
+      left: { prompt: "Inspect Qoder session", status: "observed", toolSequence: ["Read", "Bash"] },
+      right: { prompt: "Inspect Codex session", status: "observed", toolSequence: ["Read"] },
+    });
+  });
+
+  it("reports directory selection and Session discovery as separate open stages", async () => {
+    const appDir = await makeAppDir();
+    const workspace = await makeTempDir("studio-progress-workspace-");
+    let selectWorkspace!: (value: string) => void;
+    let finishDiscovery!: (value: StudioWorkspaceDiscovery) => void;
+    const selected = new Promise<string>((resolveSelection) => { selectWorkspace = resolveSelection; });
+    const discovered = new Promise<StudioWorkspaceDiscovery>((resolveDiscovery) => { finishDiscovery = resolveDiscovery; });
+    started = await startHarnessStudioServer({
+      appDir,
+      workspaceDirectoryPicker: async () => selected,
+      workspaceSessionProvider: { discover: async () => discovered },
+    });
+
+    const opening = fetch(`${started.url}/api/workspace/open`, { method: "POST" });
+    expect(await waitForWorkspaceOpenStage(started.url, "choosing")).toBe("choosing");
+
+    selectWorkspace(workspace);
+    expect(await waitForWorkspaceOpenStage(started.url, "discovering")).toBe("discovering");
+
+    finishDiscovery({
+      label: "progress-project",
+      providers: [{ provider: "qoder", status: "no-evidence", discovered: 0, included: 0 }],
+      sessions: [],
+    });
+    expect(await (await opening).json()).toMatchObject({ opened: true, label: "progress-project", sessionCount: 0 });
+    expect(await waitForWorkspaceOpenStage(started.url, "idle")).toBe("idle");
   });
 
   it("opens a browser-selected workspace, indexes Sessions, and compares two retained runs", async () => {
