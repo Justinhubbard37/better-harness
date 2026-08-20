@@ -17,6 +17,8 @@ import {
   makeDshHeader,
   makeDshEvent,
   makeOpenTurnDshRows,
+  makeRc8InterruptedDshSessionRows,
+  makeRc8TeamDshSessionRows,
   makeSupportedDshSessionRows,
   makeTerminalDshSessionRows,
   makeUnknownIgnorableDshEvent,
@@ -327,9 +329,59 @@ test("DSH assistant usage remains observed only when the native assembled messag
     reasoningTokens: 1,
   });
   assert.equal(usage.usageFieldsObserved, true);
+  assert.equal(Object.hasOwn(observed.find((event) => event.type === "assistant"), "interrupted"), false);
+  assert.equal(Object.hasOwn(usage, "interrupted"), false);
   assert.equal(unobserved.some((event) => event.type === "model.response.completed"), false);
   assert.equal(unobserved.some((event) => Object.hasOwn(event, "modelUsage")), false);
   assert.equal(unobserved.some((event) => Object.hasOwn(event, "usageFieldsObserved")), false);
+});
+
+test("DSH preserves RC8 assistant interruption as bounded structural evidence", async () => {
+  const context = await fixtureContext();
+  const rows = makeRc8InterruptedDshSessionRows({
+    workspace: context.workspace,
+    sessionId: "dsh-rc8-interrupted",
+  });
+  rows.find((event) => event.type === "assistant/message").data.usage = {
+    inputTokens: 5,
+    outputTokens: 2,
+  };
+  await writeRows(context, rows);
+  const analyzer = new DshSessionAnalyzer();
+  const { scope, sessions } = await discover(analyzer, context);
+  assert.equal(sessions.length, 1);
+
+  const events = await analyzer.readSession(sessions[0], scope);
+  const assistant = events.find((event) => event.type === "assistant");
+  assert.equal(assistant.interrupted, true);
+  assert.equal(assistant.incomplete, true);
+  assert.equal(Object.hasOwn(assistant, "content"), false);
+  assert.equal(events.filter((event) => event.type === "assistant").length, 1);
+  assert.equal(JSON.stringify(events).includes("Partial synthetic response."), false);
+  const usage = events.find((event) => event.type === "model.response.completed");
+  assert.equal(usage.interrupted, true);
+  assert.equal(usage.incomplete, true);
+  assert.equal(usage.usageFieldsObserved, true);
+
+  const gated = await analyzer.readSession(sessions[0], scope, { includeContent: true });
+  assert.equal(gated.find((event) => event.type === "assistant").content, "Partial synthetic response.");
+});
+
+test("DSH accounts RC8 team vocabulary without fabricating team analytics or user/tool activity", async () => {
+  const context = await fixtureContext();
+  const rows = makeRc8TeamDshSessionRows({
+    workspace: context.workspace,
+    sessionId: "dsh-rc8-team",
+  });
+  await writeRows(context, rows);
+  const analyzer = new DshSessionAnalyzer();
+  const { scope, sessions } = await discover(analyzer, context);
+  assert.equal(sessions.length, 1);
+  assert.deepEqual(sessions[0].diagnostics.knownUnsupportedTypes, [
+    "team/member", "team/message/delivered", "team/message/queued", "team/task",
+  ]);
+  assert.equal(sessions[0].diagnostics.knownUnsupportedCount, 4);
+  assert.deepEqual(await analyzer.readSession(sessions[0], scope), []);
 });
 
 test("DSH tool requests and results correlate while content, arguments, meta, and internal errors stay bounded", async () => {

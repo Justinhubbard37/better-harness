@@ -40,6 +40,8 @@ import {
   makeNativeSnapshotDshSessionRows,
   makeOpenTurnDshRows,
   makePackedDshStorageRows,
+  makeRc8InterruptedDshSessionRows,
+  makeRc8TeamDshSessionRows,
   makeSupportedDshSessionRows,
   makeTerminalDshSessionRows,
   makeUnknownIgnorableDshEvent,
@@ -127,6 +129,7 @@ const PINNED_KNOWN_EVENT_TYPES = [
   "llm/retry-started", "permission/preset", "plan/mode", "request/context", "request/header",
   "sandbox/mode", "schedule/change", "session/end-seed", "session/title",
   "session/title-llm-request", "step/end", "step/start", "subagent/descriptor", "todo/write",
+  "team/member", "team/message/delivered", "team/message/queued", "team/task",
   "tool-workflow/agent-end", "tool-workflow/agent-start", "tool-workflow/run-end",
   "tool-workflow/run-start", "tool/call", "tool/code-dispatch", "tool/code-dispatch-start",
   "tool/result", "turn/end", "turn/start", "user/message", "web/deepseek-search-llm-request",
@@ -735,6 +738,70 @@ test("known unsupported and unknown ignorable events are accounted, while open t
   assert.equal(result.sessions[0].diagnostics.incompleteReason, "open-turn");
   assert.equal(result.warnings.some((warning) => warning.code === "dsh-incomplete-session"), true);
   assert.deepEqual(await readFile(written.filePath), before);
+});
+
+test("RC8 interrupted assistant messages accept only the optional literal true marker", () => {
+  const valid = makeRc8InterruptedDshSessionRows();
+  const decoded = decodeDshJsonl(encodeDshRawJsonl(valid));
+  assert.equal(decoded.events.find((event) => event.type === "assistant/message").data.interrupted, true);
+
+  for (const value of [false, "true", 1]) {
+    const rows = makeRc8InterruptedDshSessionRows();
+    rows.find((event) => event.type === "assistant/message").data.interrupted = value;
+    assert.throws(() => decodeDshJsonl(encodeDshRawJsonl(rows)),
+      stableError("DSH_EVENT_SHAPE_DRIFT"));
+  }
+});
+
+test("RC8 team events validate all four strict payloads and remain account-only", () => {
+  const rows = makeRc8TeamDshSessionRows();
+  const decoded = decodeDshJsonl(encodeDshRawJsonl(rows));
+  assert.deepEqual(decoded.events.map((event) => event.type), [
+    "team/member", "team/task", "team/message/queued", "team/message/delivered",
+  ]);
+  assert.deepEqual(decoded.diagnostics.knownUnsupportedTypes, [
+    "team/member", "team/message/delivered", "team/message/queued", "team/task",
+  ]);
+  assert.equal(decoded.diagnostics.knownUnsupportedCount, 4);
+
+  const malformed = [
+    (events) => { events[1].data.member.name = 42; },
+    (events) => { events[2].data.task.revision = 0; },
+    (events) => { events[3].data.message.delivery = "immediate"; },
+    (events) => { delete events[4].data.messageId; },
+    (events) => { events[1].data.extra = true; },
+    (events) => { events[3].data.message.content[0].extra = true; },
+  ];
+  for (const mutate of malformed) {
+    const candidate = makeRc8TeamDshSessionRows();
+    mutate(candidate);
+    assert.throws(() => decodeDshJsonl(encodeDshRawJsonl(candidate)),
+      stableError("DSH_EVENT_SHAPE_DRIFT"));
+  }
+});
+
+test("RC8 team fold enforces member, task, and mailbox relationships", () => {
+  const invalidCases = [
+    (rows) => { rows[1].data.member.phase = "active"; },
+    (rows) => { rows[2].data.task.revision = 2; },
+    (rows) => { rows[2].data.task.blockedBy = ["task-404"]; },
+    (rows) => { rows[4].data.targetId = "different-target"; },
+    (rows) => { [rows[3], rows[4]] = [rows[4], rows[3]]; },
+  ];
+  for (const mutate of invalidCases) {
+    const rows = makeRc8TeamDshSessionRows();
+    mutate(rows);
+    rows.slice(1).forEach((event, index) => { event.seq = index; });
+    assert.throws(() => decodeDshJsonl(encodeDshRawJsonl(rows)),
+      stableError("DSH_EVENT_RELATIONSHIP_INVALID"));
+  }
+
+  const foreign = makeRc8TeamDshSessionRows();
+  for (const event of foreign.slice(1)) event.data.teamId = "inherited-team-root";
+  foreign[1].data.member.phase = "active";
+  foreign[2].data.task.revision = 9;
+  foreign[4].data.targetId = "different-target";
+  assert.doesNotThrow(() => decodeDshJsonl(encodeDshRawJsonl(foreign)));
 });
 
 test("pinned types.ts validates todo, request context, and end-seed payloads before accounting", () => {

@@ -36,6 +36,7 @@ const VALIDATED_KNOWN_UNSUPPORTED_TYPES = new Set([
   "hook/result", "llm/retry", "llm/retry-started", "permission/preset", "plan/mode",
   "request/context", "request/header", "sandbox/mode", "session/end-seed", "session/title",
   "session/title-llm-request", "subagent/descriptor", "todo/write", "tool-workflow/agent-end",
+  "team/member", "team/message/delivered", "team/message/queued", "team/task",
   "tool-workflow/agent-start", "tool-workflow/run-end", "tool-workflow/run-start",
   "tool/code-dispatch", "tool/code-dispatch-start", "schedule/change", "web/deepseek-search-llm-request",
 ]);
@@ -48,6 +49,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "llm/retry-started", "permission/preset", "plan/mode", "request/context", "request/header",
   "sandbox/mode", "schedule/change", "session/end-seed", "session/title",
   "session/title-llm-request", "step/end", "step/start", "subagent/descriptor", "todo/write",
+  "team/member", "team/message/delivered", "team/message/queued", "team/task",
   "tool-workflow/agent-end", "tool-workflow/agent-start", "tool-workflow/run-end",
   "tool-workflow/run-start", "tool/call", "tool/code-dispatch", "tool/code-dispatch-start",
   "tool/result", "turn/end", "turn/start", "user/message", "web/deepseek-search-llm-request",
@@ -364,6 +366,96 @@ function validateContentBlock(block) {
   }
 }
 
+const TEAM_CORE_CONTENT_BLOCK_TYPES = new Set(["text", "reasoning", "image", "tool-call", "tool-result"]);
+
+function validateTeamContentBlock(block) {
+  if (!plain(block) || !nonemptyString(block.type)) fail("DSH_EVENT_SHAPE_DRIFT");
+  switch (block.type) {
+    case "text":
+    case "reasoning":
+      if (!exactKeys(block, ["type", "text"]) || typeof block.text !== "string") fail("DSH_EVENT_SHAPE_DRIFT");
+      break;
+    case "image": {
+      if (!exactKeys(block, ["type", "attachment"]) || !exactKeys(block.attachment,
+        ["attachmentId", "mediaType", "bytes", "width", "height"], ["name"])) fail("DSH_EVENT_SHAPE_DRIFT");
+      const attachment = block.attachment;
+      if (!nonemptyString(attachment.attachmentId)
+        || !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(attachment.mediaType)
+        || !safeNonnegative(attachment.bytes) || !safePositive(attachment.width) || !safePositive(attachment.height)
+        || (Object.hasOwn(attachment, "name") && typeof attachment.name !== "string")) {
+        fail("DSH_EVENT_SHAPE_DRIFT");
+      }
+      break;
+    }
+    case "tool-call":
+      if (!exactKeys(block, ["type", "id", "name", "arguments"]) || !nonemptyString(block.id)
+        || typeof block.name !== "string" || typeof block.arguments !== "string") fail("DSH_EVENT_SHAPE_DRIFT");
+      break;
+    case "tool-result":
+      if (!exactKeys(block, ["type", "toolCallId", "content"], ["isError"])
+        || !nonemptyString(block.toolCallId) || !Array.isArray(block.content)
+        || (Object.hasOwn(block, "isError") && typeof block.isError !== "boolean")) fail("DSH_EVENT_SHAPE_DRIFT");
+      for (const nested of block.content) validateTeamContentBlock(nested);
+      break;
+    default:
+      if (TEAM_CORE_CONTENT_BLOCK_TYPES.has(block.type) || !isDshJsonValue(block)) fail("DSH_EVENT_SHAPE_DRIFT");
+  }
+}
+
+function validTeamTaskId(value) {
+  if (!nonemptyString(value)) return false;
+  const match = /^task-(\d+)$/u.exec(value);
+  return match === null || Number.isSafeInteger(Number(match[1]));
+}
+
+function validateTeamEvent(event) {
+  const data = event.data;
+  if (!plain(data) || !safeNonnegative(data.version) || !nonemptyString(data.teamId)) {
+    fail("DSH_EVENT_SHAPE_DRIFT");
+  }
+  if (data.version !== 1) return;
+  if (event.type === "team/member") {
+    if (!exactKeys(data, ["version", "teamId", "member"]) || !exactKeys(data.member,
+      ["id", "name", "description", "provider", "context", "phase"], ["error"])) {
+      fail("DSH_EVENT_SHAPE_DRIFT");
+    }
+    const member = data.member;
+    if (!nonemptyString(member.id) || [member.name, member.description, member.provider]
+      .some((value) => typeof value !== "string") || !["fresh", "fork"].includes(member.context)
+      || !["provisioning", "active", "failed"].includes(member.phase)
+      || (Object.hasOwn(member, "error") && typeof member.error !== "string")) fail("DSH_EVENT_SHAPE_DRIFT");
+    return;
+  }
+  if (event.type === "team/task") {
+    if (!exactKeys(data, ["version", "teamId", "task"]) || !exactKeys(data.task,
+      ["id", "revision", "subject", "description", "status", "blockedBy", "writeScopes"], ["ownerId"])) {
+      fail("DSH_EVENT_SHAPE_DRIFT");
+    }
+    const task = data.task;
+    if (!validTeamTaskId(task.id) || !safePositive(task.revision)
+      || typeof task.subject !== "string" || typeof task.description !== "string"
+      || !["pending", "in_progress", "completed", "deleted"].includes(task.status)
+      || (Object.hasOwn(task, "ownerId") && !nonemptyString(task.ownerId))
+      || !Array.isArray(task.blockedBy) || task.blockedBy.some((id) => !validTeamTaskId(id))
+      || !Array.isArray(task.writeScopes) || task.writeScopes.some((scope) => typeof scope !== "string")) {
+      fail("DSH_EVENT_SHAPE_DRIFT");
+    }
+    return;
+  }
+  if (event.type === "team/message/queued") {
+    if (!exactKeys(data, ["version", "teamId", "message"]) || !exactKeys(data.message,
+      ["id", "senderId", "senderName", "targetId", "delivery", "content"])) fail("DSH_EVENT_SHAPE_DRIFT");
+    const message = data.message;
+    if (![message.id, message.senderId, message.targetId].every(nonemptyString)
+      || typeof message.senderName !== "string" || !["quiet", "wakeup"].includes(message.delivery)
+      || !Array.isArray(message.content)) fail("DSH_EVENT_SHAPE_DRIFT");
+    for (const block of message.content) validateTeamContentBlock(block);
+    return;
+  }
+  if (!exactKeys(data, ["version", "teamId", "messageId", "targetId"])
+    || !nonemptyString(data.messageId) || !nonemptyString(data.targetId)) fail("DSH_EVENT_SHAPE_DRIFT");
+}
+
 function validateMessage(message, role) {
   if (!exactKeys(message, ["id", "role", "content", "source"])
     || message.role !== role || typeof message.id !== "string"
@@ -567,11 +659,12 @@ function validateSupportedEvent(event) {
       validateUserSource(data.source);
       break;
     case "assistant/message":
-      if (!exactKeys(data, ["turn", "step", "message"], ["usage"]) || !safePositive(data.turn)
+      if (!exactKeys(data, ["turn", "step", "message"], ["usage", "interrupted"]) || !safePositive(data.turn)
         || !safePositive(data.step)) fail("DSH_EVENT_SHAPE_DRIFT");
       validateMessage(data.message, "assistant");
       validateAssistantSource(data.message.source);
       if (Object.hasOwn(data, "usage")) validateTokenUsage(data.usage);
+      if (Object.hasOwn(data, "interrupted") && data.interrupted !== true) fail("DSH_EVENT_SHAPE_DRIFT");
       break;
     case "assistant/chunk":
       if (!exactKeys(data, ["turn", "step", "chunk"]) || !safePositive(data.turn)
@@ -701,6 +794,12 @@ function validateKnownUnsupportedEvent(event) {
       break;
     case "request/header":
       validateRequestHeader(data);
+      break;
+    case "team/member":
+    case "team/task":
+    case "team/message/queued":
+    case "team/message/delivered":
+      validateTeamEvent(event);
       break;
     case "session/end-seed":
       if (!exactKeys(data, [])) fail("DSH_EVENT_SHAPE_DRIFT");
@@ -1374,6 +1473,81 @@ function applyCompactionFold(state, event, openTurn, durableSuffixStart) {
   state.open = null;
 }
 
+function validateTeamTaskGraph(current, candidate) {
+  const tasks = new Map(current);
+  tasks.set(candidate.id, candidate);
+  for (const task of tasks.values()) {
+    if (task.status === "deleted") continue;
+    const seen = new Set();
+    for (const blockerId of task.blockedBy) {
+      if (blockerId === task.id || seen.has(blockerId)) fail("DSH_EVENT_RELATIONSHIP_INVALID");
+      const blocker = tasks.get(blockerId);
+      if (blocker === undefined || blocker.status === "deleted") fail("DSH_EVENT_RELATIONSHIP_INVALID");
+      seen.add(blockerId);
+    }
+  }
+  const visiting = new Set();
+  const visited = new Set();
+  const visit = (id) => {
+    if (visiting.has(id)) fail("DSH_EVENT_RELATIONSHIP_INVALID");
+    if (visited.has(id)) return;
+    const task = tasks.get(id);
+    if (task === undefined || task.status === "deleted") return;
+    visiting.add(id);
+    for (const blockerId of task.blockedBy) visit(blockerId);
+    visiting.delete(id);
+    visited.add(id);
+  };
+  for (const task of tasks.values()) visit(task.id);
+}
+
+function applyTeamFold(state, event) {
+  if (!["team/member", "team/task", "team/message/queued", "team/message/delivered"].includes(event.type)) {
+    return;
+  }
+  const data = event.data;
+  if (data.version !== 1) {
+    if (data.teamId === state.id) fail("DSH_EVENT_RELATIONSHIP_INVALID");
+    return;
+  }
+  if (data.teamId !== state.id) return;
+  if (event.type === "team/member") {
+    const member = data.member;
+    const prior = state.members.get(member.id);
+    const named = state.memberIdsByName.get(member.name);
+    if (named !== undefined && named !== member.id) fail("DSH_EVENT_RELATIONSHIP_INVALID");
+    if (prior === undefined) {
+      if (member.phase !== "provisioning") fail("DSH_EVENT_RELATIONSHIP_INVALID");
+      state.memberIdsByName.set(member.name, member.id);
+    } else if (prior.name !== member.name || prior.provider !== member.provider || prior.context !== member.context
+      || prior.phase !== "provisioning" || member.phase === "provisioning") {
+      fail("DSH_EVENT_RELATIONSHIP_INVALID");
+    }
+    state.members.set(member.id, member);
+    return;
+  }
+  if (event.type === "team/task") {
+    const task = data.task;
+    const prior = state.tasks.get(task.id);
+    if ((prior === undefined && task.revision !== 1)
+      || (prior !== undefined && task.revision !== prior.revision + 1)) fail("DSH_EVENT_RELATIONSHIP_INVALID");
+    validateTeamTaskGraph(state.tasks, task);
+    state.tasks.set(task.id, task);
+    return;
+  }
+  if (event.type === "team/message/queued") {
+    const message = data.message;
+    if (state.messages.has(message.id)) fail("DSH_EVENT_RELATIONSHIP_INVALID");
+    state.messages.set(message.id, message);
+    return;
+  }
+  const message = state.messages.get(data.messageId);
+  if (message === undefined || message.targetId !== data.targetId || state.delivered.has(data.messageId)) {
+    fail("DSH_EVENT_RELATIONSHIP_INVALID");
+  }
+  state.delivered.add(data.messageId);
+}
+
 function validateSequence(events, header) {
   let nextTurn = 1;
   let nextStep = 1;
@@ -1394,6 +1568,14 @@ function validateSequence(events, header) {
   const retryScheduled = new Map();
   const retryStarted = new Set();
   const goal = { goal: null, roundsStarted: 0, createdAt: null, updatedAt: null, seenIds: new Set() };
+  const team = {
+    id: header.id,
+    members: new Map(),
+    memberIdsByName: new Map(),
+    tasks: new Map(),
+    messages: new Map(),
+    delivered: new Set(),
+  };
   const compaction = { open: null, pendingShadow: null };
   let latestRequestHeader = null;
   let ownDescriptorSeen = false;
@@ -1411,6 +1593,7 @@ function validateSequence(events, header) {
     if (event.type === "agent/inbox/spliced" && index >= durableSuffixStart) applyInboxSplice(data, queues);
     if (event.type === "schedule/change" && index >= durableSuffixStart) applyScheduleChange(data, schedules);
     applyGoalFold(goal, event);
+    applyTeamFold(team, event);
     if (event.type === "user/message" && data.source?.kind === "user"
       && textFromContent(data.content).trim().length > 0) directHumanSeqs.push(event.seq);
     if (event.type === "approval/asked") {
@@ -1912,16 +2095,18 @@ function normalizeDshEvents(event, sourceRef, options = {}) {
     const safeText = boundedPrivateText(rawText, 8_000);
     const model = safeLabel(event.data.message.source.model);
     const provider = safeLabel(event.data.message.source.provider);
+    const interrupted = event.data.interrupted === true;
     const assistant = {
       ...base,
       type: "assistant",
       category: "assistant",
       model,
       modelProvider: provider,
+      ...(interrupted ? { interrupted: true, incomplete: true } : {}),
       contentLength: rawText.length,
       userVisibleAssistantMessage: rawText.length > 0,
       evidenceRef: normalizedEvidenceRef(sourceRef, event, "assistant"),
-      summary: "assembled assistant message",
+      summary: interrupted ? "interrupted assembled assistant message" : "assembled assistant message",
     };
     if (includeGate(options, "includeContent", "include-content") && safeText) assistant.content = safeText;
     const events = [assistant];
@@ -1934,8 +2119,11 @@ function normalizeDshEvents(event, sourceRef, options = {}) {
         modelProvider: provider,
         modelUsage: normalizedUsage(event.data.usage),
         usageFieldsObserved: true,
+        ...(interrupted ? { interrupted: true, incomplete: true } : {}),
         evidenceRef: normalizedEvidenceRef(sourceRef, event, "model.response.completed"),
-        summary: "DeepSeek Harness model response completed",
+        summary: interrupted
+          ? "DeepSeek Harness interrupted model response usage"
+          : "DeepSeek Harness model response completed",
       });
     }
     return events;
