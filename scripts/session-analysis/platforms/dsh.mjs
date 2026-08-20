@@ -2147,19 +2147,19 @@ function normalizeDshEvents(event, sourceRef, options = {}) {
     const block = event.data.message.content[0];
     const rawText = textFromContent(block.content);
     const safeText = boundedPrivateText(rawText, 8_000);
-    const success = block.isError !== true;
+    const outcomeObserved = Object.hasOwn(block, "isError");
+    const success = block.isError === false;
     const normalized = {
       ...base,
       type: "tool.result",
       category: "tool",
       lifecyclePhase: "result",
       toolInvocationId: event.data.message.source.callId,
-      success,
-      hasError: !success,
+      ...(outcomeObserved ? { success, hasError: !success } : {}),
       ...(event.data.error ? { internalError: true, internalErrorName: safeLabel(event.data.error.name),
-        internalErrorCode: safeLabel(event.data.error.code) } : { internalError: false }),
+        internalErrorCode: safeLabel(event.data.error.code) } : outcomeObserved ? { internalError: false } : {}),
       evidenceRef: normalizedEvidenceRef(sourceRef, event, "tool.result"),
-      summary: success ? "tool result" : "tool result failed",
+      summary: block.isError === true ? "tool result failed" : "tool result",
     };
     if (includeGate(options, "includeContent", "include-content") && safeText) normalized.content = safeText;
     return [normalized];

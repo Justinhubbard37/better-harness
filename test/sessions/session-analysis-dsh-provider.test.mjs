@@ -384,6 +384,27 @@ test("DSH accounts RC8 team vocabulary without fabricating team analytics or use
   assert.deepEqual(await analyzer.readSession(sessions[0], scope), []);
 });
 
+test("DSH tool result outcomes remain unobserved when native isError is omitted", async () => {
+  const context = await fixtureContext();
+  const rows = makeSupportedDshSessionRows({
+    workspace: context.workspace,
+    sessionId: "dsh-tool-outcome-unobserved",
+  });
+  const nativeResult = rows.find((row) => row.type === "tool/result" && row.data.message.content[0].isError === false);
+  delete nativeResult.data.message.content[0].isError;
+  await writeRows(context, rows);
+  const analyzer = new DshSessionAnalyzer();
+  const { scope, sessions } = await discover(analyzer, context);
+  const events = await analyzer.readSession(sessions[0], scope);
+  const call = events.find((event) => event.type === "tool.call");
+  const result = events.find((event) => event.type === "tool.result");
+
+  assert.equal(result.toolInvocationId, call.toolInvocationId);
+  assert.equal(Object.hasOwn(result, "success"), false);
+  assert.equal(Object.hasOwn(result, "hasError"), false);
+  assert.equal(Object.hasOwn(result, "internalError"), false);
+});
+
 test("DSH tool requests and results correlate while content, arguments, meta, and internal errors stay bounded", async () => {
   const context = await fixtureContext();
   const rows = privacyRows(context, "dsh-tool-correlation");
@@ -398,6 +419,7 @@ test("DSH tool requests and results correlate while content, arguments, meta, an
   const results = events.filter((event) => event.type === "tool.result");
   assert.deepEqual(calls.map((event) => event.toolInvocationId), results.map((event) => event.toolInvocationId));
   assert.deepEqual(results.map((event) => event.success), [true, false]);
+  assert.deepEqual(results.map((event) => event.hasError), [false, true]);
   assert.equal(results[0].internalError, false);
   assert.equal(results[1].internalError, true);
   assert.equal(results[1].internalErrorCode, "FIXTURE_TOOL_FAILURE");
