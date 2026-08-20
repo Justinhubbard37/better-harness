@@ -1900,10 +1900,14 @@ async function directoryEntries(directory) {
   }
 }
 
-async function isDirectoryEntry(entry, fullPath) {
-  if (entry.isDirectory()) return true;
-  if (!entry.isSymbolicLink()) return false;
-  try { return (await stat(fullPath)).isDirectory(); } catch { return false; }
+function isDirectoryEntry(entry) {
+  return entry.isDirectory();
+}
+
+function isContainedPath(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (relative !== ".."
+    && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
 function sourceRef(candidate) {
@@ -2227,16 +2231,24 @@ export class DshSessionAnalyzer extends SessionAnalyzer {
       if (root) root.warnings = [];
       return [];
     }
+    let canonicalRoot;
+    try { canonicalRoot = await realpath(root.path); } catch (error) {
+      if (error?.code === "ENOENT") {
+        root.warnings = [];
+        return [];
+      }
+      throw error;
+    }
     const candidates = [];
     for (const projectEntry of await directoryEntries(root.path)) {
       const projectPath = path.join(root.path, projectEntry.name);
-      if (!(await isDirectoryEntry(projectEntry, projectPath))) {
+      if (!isDirectoryEntry(projectEntry)) {
         if (projectEntry.name.startsWith("session.jsonl")) this.analysisWarnings.push(diagnostic("dsh-flat-artifact-rejected"));
         continue;
       }
       for (const sessionEntry of await directoryEntries(projectPath)) {
         const sessionPath = path.join(projectPath, sessionEntry.name);
-        if (!(await isDirectoryEntry(sessionEntry, sessionPath))) {
+        if (!isDirectoryEntry(sessionEntry)) {
           if (sessionEntry.name.startsWith("session.jsonl")) this.analysisWarnings.push(diagnostic("dsh-flat-artifact-rejected"));
           continue;
         }
@@ -2246,7 +2258,7 @@ export class DshSessionAnalyzer extends SessionAnalyzer {
         const nestedArtifacts = [];
         for (const entry of entries) {
           const childPath = path.join(sessionPath, entry.name);
-          if (await isDirectoryEntry(entry, childPath)) {
+          if (isDirectoryEntry(entry)) {
             nestedArtifacts.push(...(await directoryEntries(childPath)).filter((child) => child.name.startsWith("session.jsonl")));
           }
         }
@@ -2258,7 +2270,8 @@ export class DshSessionAnalyzer extends SessionAnalyzer {
         const artifact = artifacts[0];
         const artifactPath = path.join(sessionPath, artifact.name);
         let canonicalPath;
-        try { canonicalPath = await realpath(artifactPath); } catch { canonicalPath = path.resolve(artifactPath); }
+        try { canonicalPath = await realpath(artifactPath); } catch { continue; }
+        if (!isContainedPath(canonicalRoot, canonicalPath)) continue;
         candidates.push({ path: artifactPath, canonicalPath, projectSegment: projectEntry.name,
           sessionSegment: sessionEntry.name, compressed: artifact.name.endsWith(".zstd") });
       }

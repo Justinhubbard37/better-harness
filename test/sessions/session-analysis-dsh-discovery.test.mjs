@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as zlib from "node:zlib";
@@ -48,6 +48,8 @@ import {
   makeUnknownRequiredDshEvent,
   writeNestedDshArtifact,
 } from "./dsh-fixtures.mjs";
+
+const SYMLINK_TYPE = process.platform === "win32" ? "junction" : "dir";
 
 async function tempRoot(prefix = "dsh-discovery-") {
   return mkdtemp(path.join(os.tmpdir(), prefix));
@@ -725,6 +727,36 @@ test("flat, wrong-depth, and dual-encoding layouts fail closed without hiding va
   assert.equal(result.warnings.some((warning) => warning.code === "dsh-flat-artifact-rejected"), true);
   assert.equal(result.warnings.some((warning) => warning.code === "dsh-wrong-depth-rejected"), true);
   assert.equal(result.warnings.some((warning) => warning.code === "dsh-ambiguous-artifact-rejected"), true);
+});
+
+test("DSH discovery does not admit project or session directory symlinks escaping the sessions root", async () => {
+  const root = await tempRoot("dsh-containment-");
+  for (const level of ["project", "session"]) {
+    const workspace = path.join(root, `${level}-workspace`);
+    const home = path.join(root, `${level}-home`);
+    const outsideHome = path.join(root, `${level}-outside`);
+    const sessionId = `${level}-escape`;
+    const written = await writeNestedDshArtifact({
+      dshHome: outsideHome,
+      rows: makeSupportedDshSessionRows({ workspace, sessionId }),
+    });
+    const outsideSession = path.dirname(written.filePath);
+    const outsideProject = path.dirname(outsideSession);
+    const sessionsRoot = path.join(home, "sessions");
+    await mkdir(sessionsRoot, { recursive: true });
+
+    if (level === "project") {
+      await symlink(outsideProject, path.join(sessionsRoot, path.basename(outsideProject)), SYMLINK_TYPE);
+    } else {
+      const project = path.join(sessionsRoot, path.basename(outsideProject));
+      await mkdir(project, { recursive: true });
+      await symlink(outsideSession, path.join(project, path.basename(outsideSession)), SYMLINK_TYPE);
+    }
+
+    const result = await inventory(home, workspace);
+    assert.equal(result.sessions.length, 0, level);
+    assert.equal(JSON.stringify(result).includes(outsideHome), false, level);
+  }
 });
 
 test("known unsupported and unknown ignorable events are accounted, while open turns are admitted incomplete", async () => {
