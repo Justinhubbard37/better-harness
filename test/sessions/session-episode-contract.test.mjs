@@ -9,6 +9,7 @@ import {
 } from "../../scripts/session-analysis/episode-contract.mjs";
 import { buildInsightPack } from "../../scripts/session-analysis/insights.mjs";
 import { buildObservationManifest } from "../../scripts/session-analysis/observation-manifest.mjs";
+import { buildToolCallTrace } from "../../scripts/session-analysis/tool-call-trace.mjs";
 
 function event({
   sessionId = "session-a",
@@ -185,6 +186,75 @@ test("lifecycle deduplication retains sequential occurrences that reuse an invoc
   assert.equal(events.length, 2);
   assert.deepEqual(events.map((item) => item.success), [true, false]);
   assert.ok(events.every((item) => item.lifecycle.deduplicated));
+});
+
+test("lifecycle deduplication retains reused invocation occurrences across timestamp drift", () => {
+  const input = [
+    event({ timestamp: "2026-07-10T10:00:00.000Z", toolName: "Read A", toolInvocationId: "reused",
+      lifecyclePhase: "request" }),
+    event({ timestamp: "2026-07-10T10:00:03.000Z", toolName: "Read A", toolInvocationId: "reused",
+      lifecyclePhase: "result", success: true }),
+    event({ timestamp: "2026-07-10T10:00:01.000Z", toolName: "Read B", toolInvocationId: "reused",
+      lifecyclePhase: "request" }),
+    event({ timestamp: "2026-07-10T10:00:02.000Z", toolName: "Read B", toolInvocationId: "reused",
+      lifecyclePhase: "result", success: false }),
+  ];
+
+  const occurrences = deduplicateLifecycleEvents(input);
+
+  assert.equal(occurrences.length, 2);
+  assert.deepEqual(occurrences.map((item) => [item.toolName, item.success]), [
+    ["Read B", false],
+    ["Read A", true],
+  ]);
+  assert.equal(buildToolCallTrace(input).totalCalls, 2);
+});
+
+test("lifecycle occurrence boundaries preserve duplicate and incomplete telemetry controls", () => {
+  const occurrenceCount = (phases, timestamps) => deduplicateLifecycleEvents(phases.map((lifecyclePhase, index) =>
+    event({
+      timestamp: timestamps[index],
+      toolName: "Read",
+      toolInvocationId: "reused",
+      lifecyclePhase,
+      success: lifecyclePhase === "result",
+    }))).length;
+  const equalTimestampEvents = ["request", "result", "request", "result"].map((lifecyclePhase) => event({
+    timestamp: "2026-07-10T10:00:00.000Z",
+    toolName: "Read",
+    toolInvocationId: "reused",
+    lifecyclePhase,
+    success: lifecyclePhase === "result",
+  }));
+
+  assert.deepEqual({
+    duplicateRequestTelemetry: occurrenceCount(
+      ["request", "request", "result"],
+      ["2026-07-10T10:00:00.000Z", "2026-07-10T10:00:01.000Z", "2026-07-10T10:00:02.000Z"],
+    ),
+    incompletePriorOccurrence: occurrenceCount(
+      ["request", "request", "result"],
+      ["2026-07-10T10:00:02.000Z", "2026-07-10T10:00:00.000Z", "2026-07-10T10:00:01.000Z"],
+    ),
+    equalTimestamps: deduplicateLifecycleEvents(equalTimestampEvents).length,
+    equalTimestampIdsPreserved: deduplicateLifecycleEvents(equalTimestampEvents)
+      .every((item) => item.toolInvocationId === "reused"),
+    threeCompletedOccurrences: occurrenceCount(
+      ["request", "result", "request", "result", "request", "result"],
+      Array.from({ length: 6 }, (_, index) => `2026-07-10T10:00:0${index}.000Z`),
+    ),
+    duplicateSecondRequest: occurrenceCount(
+      ["request", "result", "request", "request", "result"],
+      Array.from({ length: 5 }, (_, index) => `2026-07-10T10:00:0${index}.000Z`),
+    ),
+  }, {
+    duplicateRequestTelemetry: 1,
+    incompletePriorOccurrence: 1,
+    equalTimestamps: 2,
+    equalTimestampIdsPreserved: true,
+    threeCompletedOccurrences: 3,
+    duplicateSecondRequest: 2,
+  });
 });
 
 test("permission observations keep routine allows aggregate and bound real boundary evidence", () => {

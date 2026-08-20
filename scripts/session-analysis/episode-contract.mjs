@@ -176,7 +176,9 @@ export function deduplicateLifecycleEvents(events = []) {
   const activeGroups = new Map();
   const ungrouped = [];
 
-  for (const event of deduplicatePromptSubmissionEvents(events)) {
+  // Provider order carries lifecycle semantics; wall-clock observations may
+  // drift and are reserved for duration evidence and final presentation.
+  for (const event of events) {
     const invocation = event?.toolInvocationId ?? event?.requestId ?? event?.callId ?? null;
     const phase = event?.lifecyclePhase ?? null;
     if (!invocation || !phase || !["pre", "request", "post", "result"].includes(phase)) {
@@ -226,7 +228,7 @@ export function deduplicateLifecycleEvents(events = []) {
     });
   }
 
-  return [...ungrouped, ...merged].sort(compareEvents);
+  return [...deduplicatePromptSubmissionEvents(ungrouped), ...merged].sort(compareEvents);
 }
 
 function deduplicatePromptSubmissionEvents(events) {

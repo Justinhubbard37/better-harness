@@ -886,14 +886,14 @@ function reusedCallAcrossStepsRows(workspace) {
   firstCall.seq = 2;
   firstCall.time = eventTime + 20;
   firstResult.seq = 3;
-  firstResult.time = eventTime + 30;
+  firstResult.time = eventTime + 40;
   const secondCall = structuredClone(firstCall);
   secondCall.seq = 6;
-  secondCall.time = eventTime + 60;
+  secondCall.time = eventTime + 30;
   secondCall.data.step = 2;
   const secondResult = structuredClone(firstResult);
   secondResult.seq = 7;
-  secondResult.time = eventTime + 70;
+  secondResult.time = eventTime + 50;
   secondResult.data.step = 2;
   secondResult.data.message.id = "fixture-tool-reused-step-result";
   const rows = [
@@ -941,16 +941,22 @@ test("DSH normalization projects final canonical surface nodes and preserves cal
     && event.toolInvocationId === "fixture-call-success").length, 2);
 });
 
-test("DSH repeated callId occurrences survive lifecycle deduplication and tool tracing", async () => {
+test("DSH repeated callId occurrences survive timestamp drift through lifecycle deduplication and tool tracing", async () => {
   const context = await fixtureContext();
   await writeRows(context, reusedCallAcrossStepsRows(context.workspace));
   const analyzer = new DshSessionAnalyzer();
   const { scope, sessions } = await discover(analyzer, context);
   const session = sessions.find((candidate) => candidate.sessionId === "dsh-provider-reused-call-steps");
   const events = await analyzer.readSession(session, scope);
+  const calls = events.filter((event) => event.type === "tool.call");
+  const results = events.filter((event) => event.type === "tool.result");
   const canonical = deduplicateLifecycleEvents(events);
   const occurrences = canonical.filter((event) => event.category === "tool"
     && event.toolInvocationId === "fixture-call-success");
+  assert.equal(calls.length, 2);
+  assert.equal(results.length, 2);
+  assert.deepEqual(calls.map((event) => [event.step, event.toolInvocationId]),
+    results.map((event) => [event.step, event.toolInvocationId]));
   assert.equal(occurrences.length, 2);
   assert.deepEqual(occurrences.map((event) => event.step), [1, 2]);
   assert.equal(buildToolCallTrace(events).totalCalls, 2);
