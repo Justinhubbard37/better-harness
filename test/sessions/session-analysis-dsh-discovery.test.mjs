@@ -159,6 +159,17 @@ test("DSH scope resolution has strict explicit, environment, and default precede
   }
 });
 
+test("DSH scope treats blank environment homes as unset", async () => {
+  const analyzer = new DshSessionAnalyzer();
+  const workspace = path.resolve("synthetic-workspace");
+  const expected = path.join(os.homedir(), ".dsh");
+
+  for (const value of ["", " ", "\t"]) {
+    const scope = await analyzer.resolveScope({ env: { DSH_HOME: value }, workspace });
+    assert.equal(scope.dshHome, expected);
+  }
+});
+
 test("production identity encoders independently match the pinned fixture oracle", () => {
   for (const value of ["session", ".", "..", "with spaces/~and-unicode-\u03bb", "nul\0unit"]) {
     assert.equal(encodeDshSessionId(value), encodeDshSessionIdSegment(value));

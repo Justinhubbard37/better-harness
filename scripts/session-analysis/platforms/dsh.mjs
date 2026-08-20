@@ -2196,7 +2196,8 @@ export class DshSessionAnalyzer extends SessionAnalyzer {
   async resolveScope(options = {}) {
     const direct = explicitHome(options);
     const envValue = options.env?.DSH_HOME ?? process.env.DSH_HOME;
-    const home = expandExplicitHome(direct !== undefined ? direct : envValue !== undefined ? envValue : path.join(os.homedir(), ".dsh"));
+    const inherited = typeof envValue === "string" && envValue.trim().length === 0 ? undefined : envValue;
+    const home = expandExplicitHome(direct !== undefined ? direct : inherited !== undefined ? inherited : path.join(os.homedir(), ".dsh"));
     const workspace = options.workspace ?? process.cwd();
     if (!absoluteFlavor(workspace)) fail("DSH_INVALID_WORKSPACE", "workspace must be an absolute path");
     const since = normalizeCliDate(options.since);
