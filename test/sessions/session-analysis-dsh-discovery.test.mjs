@@ -285,7 +285,7 @@ test("missing public decompressor marks compressed unavailable while independent
 test("Zstd frame scanner rejects malformed boundaries with stable privacy-safe codes", () => {
   const header = Buffer.from([0x28, 0xB5, 0x2F, 0xFD, 0x24, 0x00]);
   const cases = [
-    [Buffer.from([0x50, 0x2A, 0x4D, 0x18]), "DSH_ZSTD_TRUNCATED_HEADER"],
+    [Buffer.from([0x50, 0x2A, 0x4D, 0x18]), "DSH_ZSTD_BAD_MAGIC"],
     [Buffer.from([0x00, 0x00, 0x00, 0x00, 0x24]), "DSH_ZSTD_BAD_MAGIC"],
     [Buffer.from([0x28, 0xB5, 0x2F, 0xFD, 0x2C, 0x00]), "DSH_ZSTD_RESERVED_DESCRIPTOR"],
     [Buffer.from([0x28, 0xB5, 0x2F, 0xFD, 0x20, 0x00]), "DSH_ZSTD_CHECKSUM_REQUIRED"],
@@ -298,8 +298,56 @@ test("Zstd frame scanner rejects malformed boundaries with stable privacy-safe c
   const syntacticallyComplete = Buffer.concat([header, Buffer.from([0x01, 0, 0]), Buffer.alloc(4)]);
   assert.throws(() => decodeDshZstdArtifact(syntacticallyComplete, { decompressor() { throw new Error(DSH_FIXTURE_SECRET); } }),
     stableError("DSH_ZSTD_DECOMPRESSION_FAILED"));
-  assert.throws(() => splitDshZstdFrames(Buffer.concat([syntacticallyComplete, Buffer.from([1])])),
-    stableError("DSH_ZSTD_TRUNCATED_HEADER"));
+  assert.deepEqual(splitDshZstdFrames(Buffer.concat([syntacticallyComplete, Buffer.from([1])])),
+    [syntacticallyComplete]);
+});
+
+test("crash tails preserve only the committed raw and Zstd event prefix", () => {
+  const rows = makeSupportedDshSessionRows({ sessionId: "crash-tail-prefix" });
+  const committedRows = rows.slice(0, -1);
+  const committedEvents = committedRows.slice(1);
+  const finalRow = Buffer.from(JSON.stringify(rows.at(-1)), "utf8");
+
+  const partialRaw = decodeDshJsonl(Buffer.concat([
+    encodeDshRawJsonl(committedRows),
+    finalRow.subarray(0, Math.max(1, Math.floor(finalRow.length / 2))),
+  ]));
+  assert.deepEqual(partialRaw.events, committedEvents);
+  assert.equal(partialRaw.incomplete, true);
+  assert.equal(partialRaw.diagnostics.incompleteReason, "open-turn");
+
+  const malformedLogicalRow = {
+    ...makeDshEvent("step/start", { turn: 1, step: 2 }),
+    seq: committedEvents.length + 1,
+  };
+  const malformedTail = decodeDshJsonl(encodeDshRawJsonl([...committedRows, malformedLogicalRow]));
+  assert.deepEqual(malformedTail.events, committedEvents);
+  assert.equal(malformedTail.incomplete, true);
+  assert.equal(malformedTail.diagnostics.incompleteReason, "open-turn");
+  assert.throws(() => decodeDshJsonl(Buffer.concat([
+    encodeDshRawJsonl([...committedRows, malformedLogicalRow]),
+    Buffer.from(`${JSON.stringify(rows.at(-1))}\n`, "utf8"),
+  ])), stableError("DSH_INVALID_EVENT"));
+
+  if (typeof zlib.zstdCompressSync !== "function" || typeof zlib.zstdDecompressSync !== "function"
+    || !Number.isSafeInteger(zlib.constants?.ZSTD_c_checksumFlag)) return;
+  const fixture = makeDshZstdArtifact([[rows[0]], rows.slice(1, -1), [rows.at(-1)]]);
+  const committedArtifact = Buffer.concat(fixture.frames.slice(0, -1));
+  const finalFrame = fixture.frames.at(-1);
+  for (let length = 1; length < finalFrame.length; length += 1) {
+    const decoded = decodeDshArtifact(Buffer.concat([committedArtifact, finalFrame.subarray(0, length)]), {
+      compressed: true,
+    });
+    assert.deepEqual(decoded.events, committedEvents, `proper final-frame prefix length ${length}`);
+    assert.equal(decoded.incomplete, true, `proper final-frame prefix length ${length}`);
+    assert.equal(decoded.diagnostics.incompleteReason, "open-turn", `proper final-frame prefix length ${length}`);
+  }
+  assert.throws(() => decodeDshArtifact(Buffer.concat([committedArtifact, Buffer.alloc(4)]), { compressed: true }),
+    stableError("DSH_ZSTD_BAD_MAGIC"));
+  const checksumCorrupt = Buffer.from(finalFrame);
+  checksumCorrupt[checksumCorrupt.length - 1] ^= 0xFF;
+  assert.throws(() => decodeDshArtifact(Buffer.concat([committedArtifact, checksumCorrupt]), { compressed: true }),
+    stableError("DSH_ZSTD_DECOMPRESSION_FAILED"));
 });
 
 test("all three pinned packed rows expand losslessly and malformed packed shapes fail closed", () => {
@@ -321,7 +369,8 @@ test("all three pinned packed rows expand losslessly and malformed packed shapes
   assert.deepEqual(decoded.diagnostics.knownUnsupportedTypes, ["assistant/chunk"]);
   assert.deepEqual(decoded.events.map((event) => event.seq), decoded.events.map((_, index) => index));
   for (const row of makeMalformedPackedDshStorageRows()) {
-    assert.throws(() => decodeDshJsonl(encodeDshRawJsonl([header, row])),
+    const committedBoundary = makeDshEvent("turn/end", { turn: 1, reason: { kind: "completed" } }, { seq: 0 });
+    assert.throws(() => decodeDshJsonl(encodeDshRawJsonl([header, row, committedBoundary])),
       (error) => ["DSH_MALFORMED_PACKED_ROW", "DSH_UNSUPPORTED_PACKED_ROW"].includes(error?.code));
   }
 });
@@ -686,11 +735,17 @@ test("header, format, sequence, identity, project key, raw syntax, and unknown-r
     [makeBadSequenceDshRows(), "DSH_INVALID_EVENT"],
   ];
   for (const [rows, code] of directCases) assert.throws(() => decodeDshJsonl(encodeDshRawJsonl(rows)), stableError(code));
-  assert.throws(() => decodeDshJsonl(makeMalformedDshJsonlBytes()), stableError("DSH_MALFORMED_JSONL"));
+  const malformedTail = decodeDshJsonl(makeMalformedDshJsonlBytes());
+  assert.equal(malformedTail.events.length, 0);
+  assert.equal(malformedTail.incomplete, true);
+  assert.equal(malformedTail.diagnostics.incompleteReason, "crash-tail");
   const valid = encodeDshRawJsonl(makeSupportedDshSessionRows());
-  assert.throws(() => decodeDshJsonl(valid.subarray(0, -1)), stableError("DSH_INCOMPLETE_JSONL_LINE"));
-  assert.throws(() => decodeDshJsonl(Buffer.concat([valid.subarray(0, valid.length - 1), Buffer.from("\n\n")])),
-    stableError("DSH_BLANK_JSONL_LINE"));
+  const withoutFinalNewline = decodeDshJsonl(valid.subarray(0, -1));
+  assert.deepEqual(withoutFinalNewline.events, decodeDshJsonl(encodeDshRawJsonl(makeSupportedDshSessionRows().slice(0, -1))).events);
+  assert.equal(withoutFinalNewline.incomplete, true);
+  const blankTail = decodeDshJsonl(Buffer.concat([valid.subarray(0, valid.length - 1), Buffer.from("\n\n")]));
+  assert.equal(blankTail.incomplete, true);
+  assert.equal(blankTail.diagnostics.incompleteReason, "crash-tail");
   const unknownRows = appendEvent(makeSupportedDshSessionRows(), makeUnknownRequiredDshEvent({ seq: 10 }));
   assert.throws(() => decodeDshJsonl(encodeDshRawJsonl(unknownRows)), stableError("DSH_UNKNOWN_REQUIRED_EVENT"));
 

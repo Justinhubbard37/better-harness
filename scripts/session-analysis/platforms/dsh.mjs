@@ -159,33 +159,35 @@ function readU24(buffer, offset) {
   return buffer[offset] | (buffer[offset + 1] << 8) | (buffer[offset + 2] << 16);
 }
 
-/** Split standard checksummed Zstd frames without guessing boundaries from magic bytes. */
-export function splitDshZstdFrames(input) {
+function scanDshZstdFrames(input) {
   const buffer = Buffer.from(input);
   if (buffer.length === 0) fail("DSH_ZSTD_EMPTY");
   const frames = [];
   let offset = 0;
   while (offset < buffer.length) {
     const start = offset;
-    if (offset + 5 > buffer.length) fail("DSH_ZSTD_TRUNCATED_HEADER");
+    if (offset + 4 > buffer.length) return { frames, torn: true, tornCode: "DSH_ZSTD_TRUNCATED_HEADER" };
     if (buffer.readUInt32LE(offset) !== ZSTD_MAGIC) fail("DSH_ZSTD_BAD_MAGIC");
     offset += 4;
+    if (offset === buffer.length) return { frames, torn: true, tornCode: "DSH_ZSTD_TRUNCATED_HEADER" };
     const descriptor = buffer[offset++];
     if ((descriptor & 0x18) !== 0) fail("DSH_ZSTD_RESERVED_DESCRIPTOR");
     if ((descriptor & 0x04) === 0) fail("DSH_ZSTD_CHECKSUM_REQUIRED");
     const singleSegment = (descriptor & 0x20) !== 0;
     if (!singleSegment) {
-      if (offset + 1 > buffer.length) fail("DSH_ZSTD_TRUNCATED_HEADER");
+      if (offset + 1 > buffer.length) return { frames, torn: true, tornCode: "DSH_ZSTD_TRUNCATED_HEADER" };
       offset += 1;
     }
     const dictionarySize = [0, 1, 2, 4][descriptor & 0x03];
     const fcsFlag = descriptor >>> 6;
     const contentSizeLength = fcsFlag === 0 ? (singleSegment ? 1 : 0) : fcsFlag === 1 ? 2 : fcsFlag === 2 ? 4 : 8;
-    if (offset + dictionarySize + contentSizeLength > buffer.length) fail("DSH_ZSTD_TRUNCATED_HEADER");
+    if (offset + dictionarySize + contentSizeLength > buffer.length) {
+      return { frames, torn: true, tornCode: "DSH_ZSTD_TRUNCATED_HEADER" };
+    }
     offset += dictionarySize + contentSizeLength;
     let lastBlock = false;
     while (!lastBlock) {
-      if (offset + 3 > buffer.length) fail("DSH_ZSTD_TRUNCATED_BLOCK");
+      if (offset + 3 > buffer.length) return { frames, torn: true, tornCode: "DSH_ZSTD_TRUNCATED_BLOCK" };
       const blockHeader = readU24(buffer, offset);
       offset += 3;
       lastBlock = (blockHeader & 1) === 1;
@@ -193,19 +195,28 @@ export function splitDshZstdFrames(input) {
       const blockSize = blockHeader >>> 3;
       if (blockType === 3) fail("DSH_ZSTD_RESERVED_BLOCK");
       const payloadSize = blockType === 1 ? 1 : blockSize;
-      if (offset + payloadSize > buffer.length) fail("DSH_ZSTD_TRUNCATED_BLOCK");
+      if (offset + payloadSize > buffer.length) return { frames, torn: true, tornCode: "DSH_ZSTD_TRUNCATED_BLOCK" };
       offset += payloadSize;
     }
-    if (offset + 4 > buffer.length) fail("DSH_ZSTD_TRUNCATED_CHECKSUM");
+    if (offset + 4 > buffer.length) return { frames, torn: true, tornCode: "DSH_ZSTD_TRUNCATED_CHECKSUM" };
     offset += 4;
     frames.push(Buffer.from(buffer.subarray(start, offset)));
   }
-  return frames;
+  return { frames, torn: false };
+}
+
+/** Split complete standard checksummed Zstd frames, discarding only a torn final frame. */
+export function splitDshZstdFrames(input) {
+  const scan = scanDshZstdFrames(input);
+  if (scan.frames.length === 0 && scan.torn) fail(scan.tornCode);
+  return scan.frames;
 }
 
 export function decodeDshZstdArtifact(input, { decompressor = zlib.zstdDecompressSync } = {}) {
   if (typeof decompressor !== "function") fail("DSH_ZSTD_UNAVAILABLE", "DSH compressed evidence is unavailable");
-  const frames = splitDshZstdFrames(input);
+  const scan = scanDshZstdFrames(input);
+  if (scan.frames.length === 0) fail(scan.torn ? scan.tornCode : "DSH_ZSTD_EMPTY");
+  const { frames } = scan;
   const decoded = [];
   for (const [index, frame] of frames.entries()) {
     try {
@@ -220,7 +231,7 @@ export function decodeDshZstdArtifact(input, { decompressor = zlib.zstdDecompres
       fail("DSH_ZSTD_DECOMPRESSION_FAILED");
     }
   }
-  return { frames, bytes: Buffer.concat(decoded) };
+  return { frames, bytes: Buffer.concat(decoded), torn: scan.torn };
 }
 
 function packedRow(record) {
@@ -1757,33 +1768,83 @@ function validateSequence(events, header) {
   };
 }
 
-export function decodeDshJsonl(input) {
-  let text;
+function decodeDshUtf8Line(input) {
   try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(input);
+    return new TextDecoder("utf-8", { fatal: true }).decode(input);
   } catch {
     fail("DSH_INVALID_UTF8");
   }
-  if (text.length === 0) fail("DSH_EMPTY_ARTIFACT");
-  if (!text.endsWith("\n")) fail("DSH_INCOMPLETE_JSONL_LINE");
-  const lines = text.slice(0, -1).split("\n");
-  if (lines.some((line) => line.length === 0)) fail("DSH_BLANK_JSONL_LINE");
-  let records;
+}
+
+function parseDshJsonlLine(input) {
+  const line = decodeDshUtf8Line(input);
+  if (line.length === 0) fail("DSH_BLANK_JSONL_LINE");
   try {
-    records = lines.map((line) => JSON.parse(line));
+    const record = JSON.parse(line);
+    if (!plain(record)) fail("DSH_MALFORMED_JSONL");
+    return record;
   } catch {
     fail("DSH_MALFORMED_JSONL");
   }
-  if (records.some((record) => !plain(record))) fail("DSH_MALFORMED_JSONL");
-  const header = validateHeader(records[0]);
+}
+
+function expandDshStorageRecord(record) {
+  const expanded = packedRow(record);
+  if (expanded) return expanded;
+  if (typeof record.type === "string" && record.type.endsWith("-chunks")) fail("DSH_UNSUPPORTED_PACKED_ROW");
+  return [record];
+}
+
+function scanDshJsonlPrefix(input, { requireComplete = false } = {}) {
+  const buffer = Buffer.from(input);
+  if (buffer.length === 0) fail("DSH_EMPTY_ARTIFACT");
+  const headerEnd = buffer.indexOf(0x0A);
+  if (headerEnd === -1) fail("DSH_INCOMPLETE_JSONL_LINE");
+  const header = validateHeader(parseDshJsonlLine(buffer.subarray(0, headerEnd)));
   const events = [];
-  for (const record of records.slice(1)) {
-    const expanded = packedRow(record);
-    if (expanded) events.push(...expanded);
-    else if (typeof record.type === "string" && record.type.endsWith("-chunks")) fail("DSH_UNSUPPORTED_PACKED_ROW");
-    else events.push(record);
+  let committedBytes = headerEnd + 1;
+  let issue = null;
+  let lineStart = committedBytes;
+  for (let newline = buffer.indexOf(0x0A, lineStart); newline !== -1;
+    newline = buffer.indexOf(0x0A, lineStart)) {
+    let expanded;
+    try {
+      expanded = expandDshStorageRecord(parseDshJsonlLine(buffer.subarray(lineStart, newline)));
+    } catch (error) {
+      issue ??= error;
+      lineStart = newline + 1;
+      continue;
+    }
+    if (issue !== null) {
+      if (expanded.some((event) => event?.type === "turn/end")) throw issue;
+      lineStart = newline + 1;
+      continue;
+    }
+    const rowStart = events.length;
+    for (const event of expanded) {
+      if (event?.seq !== events.length) {
+        events.length = rowStart;
+        issue = Object.assign(new Error("DSH_INVALID_EVENT"), { code: "DSH_INVALID_EVENT" });
+        break;
+      }
+      events.push(event);
+    }
+    if (issue !== null && expanded.some((event) => event?.type === "turn/end")) throw issue;
+    if (issue === null) committedBytes = newline + 1;
+    lineStart = newline + 1;
   }
+  const crashTail = issue !== null || committedBytes < buffer.length;
+  if (requireComplete && crashTail) throw issue ?? Object.assign(
+    new Error("DSH_INCOMPLETE_JSONL_LINE"), { code: "DSH_INCOMPLETE_JSONL_LINE" },
+  );
+  return { header, events, crashTail };
+}
+
+export function decodeDshJsonl(input, options = {}) {
+  const { header, events, crashTail } = scanDshJsonlPrefix(input, options);
   const sequence = validateSequence(events, header);
+  const incomplete = sequence.incomplete || crashTail;
+  const incompleteReason = sequence.incompleteReason ?? (crashTail ? "crash-tail" : null);
   const knownUnsupportedTypes = [...new Set(events.filter((event) => KNOWN_EVENT_TYPES.has(event.type)
     && !NORMALIZATION_ALLOWLIST.has(event.type) && !CONTROL_TYPES.has(event.type)).map((event) => event.type))].sort();
   const unknownIgnorableTypes = [...new Set(events.filter((event) => !KNOWN_EVENT_TYPES.has(event.type)
@@ -1791,7 +1852,7 @@ export function decodeDshJsonl(input) {
   return {
     header,
     events,
-    incomplete: sequence.incomplete,
+    incomplete,
     diagnostics: {
       knownUnsupportedCount: events.filter((event) => KNOWN_EVENT_TYPES.has(event.type)
         && !NORMALIZATION_ALLOWLIST.has(event.type) && !CONTROL_TYPES.has(event.type)).length,
@@ -1799,7 +1860,7 @@ export function decodeDshJsonl(input) {
       unknownIgnorableCount: events.filter((event) => !KNOWN_EVENT_TYPES.has(event.type)
         && event.ignorable === true).length,
       unknownIgnorableTypes,
-      ...(sequence.incomplete ? { incompleteReason: sequence.incompleteReason } : {}),
+      ...(incomplete ? { incompleteReason } : {}),
       ...(sequence.pendingToolCallCount > 0 ? { pendingToolCallCount: sequence.pendingToolCallCount } : {}),
       ...(sequence.pendingInboxMessageCount > 0 ? { pendingInboxMessageCount: sequence.pendingInboxMessageCount } : {}),
     },
@@ -1807,8 +1868,18 @@ export function decodeDshJsonl(input) {
 }
 
 export function decodeDshArtifact(input, { compressed = false, decompressor = zlib.zstdDecompressSync } = {}) {
-  const decoded = compressed ? decodeDshZstdArtifact(input, { decompressor }).bytes : Buffer.from(input);
-  return decodeDshJsonl(decoded);
+  if (!compressed) return decodeDshJsonl(Buffer.from(input));
+  const decoded = decodeDshZstdArtifact(input, { decompressor });
+  const result = decodeDshJsonl(decoded.bytes, { requireComplete: true });
+  if (!decoded.torn) return result;
+  return {
+    ...result,
+    incomplete: true,
+    diagnostics: {
+      ...result.diagnostics,
+      incompleteReason: result.diagnostics.incompleteReason ?? "crash-tail",
+    },
+  };
 }
 
 function pathMatchesWorkspace(cwd, workspace) {
