@@ -118,6 +118,7 @@ describe("harness-studio server", () => {
 
     expect(config).toEqual({
       aguiEnabled: false,
+      artifactsEnabled: false,
       evidenceEnabled: true,
       experimentEnabled: false,
       historyEnabled: false,
@@ -744,5 +745,42 @@ describe("harness-studio CLI", () => {
     await writeFile(join(reportDir, "inspector.html"), "<!doctype html><title>local report</title>", "utf8");
 
     expect(await discoverDefaultInspectorReport(cwd)).toBe(join(reportDir, "inspector.html"));
+  });
+
+  it("serves a resolvable sourcemap alongside the compiled artifact module", async () => {
+    const appDir = await makeAppDir();
+    const artifactDirectory = await makeTempDir("studio-artifacts-");
+    await writeFile(join(artifactDirectory, "card.tsx"), "export default () => <p>hi</p>;\n", "utf8");
+    started = await startHarnessStudioServer({ appDir, artifactDirectory });
+
+    const code = await (await fetch(`${started.url}/api/artifacts/card/module.js`)).text();
+    expect(code).toContain("//# sourceMappingURL=module.js.map");
+
+    // The comment resolves against the module URL, so the named sibling route
+    // has to answer with a real map rather than falling through to a 404.
+    const map = await fetch(`${started.url}/api/artifacts/card/module.js.map`);
+    expect(map.status).toBe(200);
+    expect(await map.json()).toMatchObject({ version: 3, sources: ["card.tsx"] });
+  });
+
+  it("answers with a status when the artifact directory disappears after startup", async () => {
+    const appDir = await makeAppDir();
+    const artifactDirectory = await makeTempDir("studio-artifacts-");
+    await writeFile(join(artifactDirectory, "card.tsx"), "export default () => <p>hi</p>;\n", "utf8");
+    started = await startHarnessStudioServer({ appDir, artifactDirectory });
+    expect((await fetch(`${started.url}/api/artifacts/card/module.js`)).status).toBe(200);
+
+    await rm(artifactDirectory, { recursive: true, force: true });
+
+    // An unreadable directory must not reject out of the route handler: that is
+    // an unhandled rejection, which takes the whole Studio process down.
+    const response = await fetch(`${started.url}/api/artifacts/card/module.js`);
+    expect(response.status).toBe(404);
+    const body = await response.json() as { error: string };
+    expect(body.error).toBe("Cannot read the configured artifact directory.");
+    expect(body.error).not.toContain(artifactDirectory);
+
+    // The server is still answering, which is the point of the guard.
+    expect((await fetch(`${started.url}/api/config`)).status).toBe(200);
   });
 });

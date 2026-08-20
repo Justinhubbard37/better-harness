@@ -1,6 +1,7 @@
 export type StudioArea =
   | "overview"
   | "inspector"
+  | "artifacts"
   | "debugger"
   | "compare";
 
@@ -9,6 +10,7 @@ export type StudioInspectorSurface = "workbench";
 
 export interface StudioConfig {
   aguiEnabled: boolean;
+  artifactsEnabled: boolean;
   evidenceEnabled: boolean;
   experimentEnabled: boolean;
   historyEnabled: boolean;
@@ -35,6 +37,13 @@ export function studioDestinations(config: StudioConfig): readonly StudioDestina
       group: "Observe",
       availability: config.inspectorEnabled ? "ready" : "foundation",
       status: config.inspectorEnabled ? "Evidence workbench" : "Report required",
+    },
+    {
+      id: "artifacts",
+      label: "Artifacts",
+      group: "Observe",
+      availability: config.artifactsEnabled ? "ready" : "foundation",
+      status: config.artifactsEnabled ? "Run outputs" : "Artifact directory required",
     },
     {
       id: "debugger",

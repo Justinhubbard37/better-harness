@@ -5,6 +5,7 @@ import { Binoculars } from "@phosphor-icons/react/Binoculars";
 import { BugBeetle } from "@phosphor-icons/react/BugBeetle";
 import { Flask } from "@phosphor-icons/react/Flask";
 import { GitBranch } from "@phosphor-icons/react/GitBranch";
+import { Package } from "@phosphor-icons/react/Package";
 import { SidebarSimple } from "@phosphor-icons/react/SidebarSimple";
 import { SquaresFour } from "@phosphor-icons/react/SquaresFour";
 import { CompareView } from "./CompareView.js";
@@ -26,6 +27,7 @@ import {
 const NAV_ICONS: Record<StudioArea, Icon> = {
   overview: SquaresFour,
   inspector: Binoculars,
+  artifacts: Package,
   debugger: BugBeetle,
   compare: Flask,
 };
@@ -33,6 +35,7 @@ const NAV_ICONS: Record<StudioArea, Icon> = {
 const AREA_COPY: Record<StudioArea, { eyebrow: string; title: string }> = {
   overview: { eyebrow: "Control", title: "Harness Control Center" },
   inspector: { eyebrow: "Observe", title: "Inspector" },
+  artifacts: { eyebrow: "Observe", title: "Artifacts" },
   debugger: { eyebrow: "Run", title: "Debugger" },
   compare: { eyebrow: "Validate", title: "Compare" },
 };
@@ -48,6 +51,7 @@ interface StudioSourceOption {
 
 const EMPTY_CONFIG: StudioConfig = {
   aguiEnabled: false,
+  artifactsEnabled: false,
   evidenceEnabled: false,
   experimentEnabled: false,
   historyEnabled: false,
@@ -191,6 +195,7 @@ export function App(): React.JSX.Element {
       <div className={`studio-surface studio-surface-${area}`}>
         {area === "overview" && <Overview config={config} onOpen={openArea} />}
         {area === "inspector" && <InspectorWorkspace key={`inspector-${dataRevision}-${config.inspectorEnabled}`} config={config} />}
+        {area === "artifacts" && <ArtifactsWorkspace key={`artifacts-${dataRevision}-${config.artifactsEnabled}`} config={config} />}
         {area === "debugger" && <DebuggerWorkspace config={config} />}
         {area === "compare" && <CompareWorkspace key={`compare-${dataRevision}-${config.experimentEnabled}-${config.evidenceEnabled}`} config={config} surface={compareSurface} navigation={compareNavigation} />}
       </div>
@@ -313,6 +318,96 @@ function InspectorWorkspace(props: { config: StudioConfig }): React.JSX.Element 
     </section>;
   }
   return <EmptyWorkspace eyebrow="Observed delivery" title="Connect an Inspector report" detail="Inspector requires retained, privacy-filtered evidence. It never substitutes the recorded Session Debugger fixture for a real workspace." command="--inspector ./harness-inspector.html" />;
+}
+
+interface ArtifactDescriptor {
+  id: string;
+  kind: string;
+  label: string;
+  size: number;
+}
+
+/**
+ * Artifacts pane: a row list of run outputs plus a sandboxed preview.
+ *
+ * The preview frame withholds `allow-same-origin`, so artifact code runs on an
+ * opaque origin and cannot reach the Studio shell.
+ */
+function ArtifactsWorkspace(props: { config: StudioConfig }): React.JSX.Element {
+  const [artifacts, setArtifacts] = useState<ArtifactDescriptor[] | undefined>(undefined);
+  const [failure, setFailure] = useState<string | undefined>(undefined);
+  const [selected, setSelected] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!props.config.artifactsEnabled) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("api/artifacts");
+        if (!response.ok) throw new Error(`Artifact catalog failed (${response.status}).`);
+        const payload = await response.json() as { artifacts?: ArtifactDescriptor[] };
+        if (cancelled) return;
+        // Deliberately no auto-selection: compiling an artifact the reader has
+        // not asked for spends server work and can open the pane on an error.
+        setArtifacts(Array.isArray(payload.artifacts) ? payload.artifacts : []);
+      } catch (error) {
+        if (!cancelled) setFailure(error instanceof Error ? error.message : String(error));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [props.config.artifactsEnabled]);
+
+  if (!props.config.artifactsEnabled) {
+    return <EmptyWorkspace eyebrow="Run outputs" title="Load an artifact directory" detail="Artifacts renders what a run produced. It reads a directory read-only and never writes back to it." command="--artifacts ./artifacts" />;
+  }
+  if (failure !== undefined) {
+    return <EmptyWorkspace eyebrow="Run outputs" title="Cannot read the artifact catalog" detail={failure} command="--artifacts ./artifacts" />;
+  }
+  if (artifacts === undefined) {
+    return <p className="artifact-status" role="status">Loading artifacts…</p>;
+  }
+  if (artifacts.length === 0) {
+    return <EmptyWorkspace eyebrow="Run outputs" title="No artifacts in this directory" detail="The configured directory holds no files Studio can render yet. Artifact rows appear once a run writes into it." command="--artifacts ./artifacts" />;
+  }
+
+  const active = artifacts.find((entry) => entry.id === selected);
+  return <section className="artifact-workspace" aria-label="Artifacts workspace">
+    <div className="artifact-list-pane">
+      <header><div><small>Retained</small><h2>Artifacts</h2></div><span>{artifacts.length}</span></header>
+      <ul className="artifact-rows">
+        {artifacts.map((entry) => <li key={entry.id}>
+          <button
+            type="button"
+            className={entry.id === selected ? "selected" : undefined}
+            aria-current={entry.id === selected}
+            onClick={() => setSelected(entry.id)}
+          >
+            <span className="artifact-row-copy"><strong>{entry.label}</strong><small>{entry.kind} · {formatBytes(entry.size)}</small></span>
+          </button>
+        </li>)}
+      </ul>
+    </div>
+    <div className="artifact-preview-pane">
+      {active === undefined
+        ? <p className="artifact-status" role="status">Select an artifact to preview it.</p>
+        : active.kind === "module"
+          ? <iframe
+            key={active.id}
+            className="artifact-frame"
+            title={`Artifact preview: ${active.label}`}
+            src={`artifact-host.html?module=api/artifacts/${active.id}/module.js`}
+            sandbox="allow-scripts"
+            referrerPolicy="no-referrer"
+          />
+          : <p className="artifact-status" role="status">No renderer for <code>{active.kind}</code> yet. Only compiled modules render in this increment.</p>}
+    </div>
+  </section>;
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function DebuggerWorkspace(props: { config: StudioConfig }): React.JSX.Element {

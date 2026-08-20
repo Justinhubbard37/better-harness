@@ -25,6 +25,7 @@ Options:
                       Durable root for content-addressed experiment locks
   --runs <dir>        Durable directory for saved Debugger runs
                       (default: .harness-studio-runs under --cwd)
+  --artifacts <dir>   Directory of run-produced artifacts to view read-only
   --source-catalog <file>
                       JSON catalog of bounded switchable Studio inputs
   --harness-id <id>   Harness to resolve (default: the file's only harness)
@@ -75,6 +76,7 @@ interface ParsedArgs {
   harnessId?: string;
   runtime?: string;
   runs?: string;
+  artifacts?: string;
   sourceCatalog?: string;
   port: number;
   host: string;
@@ -127,6 +129,9 @@ export function parseHarnessStudioArgs(argv: string[]): ParsedArgs {
         break;
       case "--runs":
         parsed.runs = takeValue();
+        break;
+      case "--artifacts":
+        parsed.artifacts = takeValue();
         break;
       case "--source-catalog":
         parsed.sourceCatalog = takeValue();
@@ -187,9 +192,10 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     && parsed.evidence === undefined
     && parsed.harness === undefined
     && parsed.experiment === undefined
+    && parsed.artifacts === undefined
     && sourceCatalog.length === 0
   ) {
-    io.stderr("Nothing to show: pass --inspector, --experiment, --evidence, --harness, or --source-catalog (see --help).\n");
+    io.stderr("Nothing to show: pass --inspector, --experiment, --evidence, --harness, --artifacts, or --source-catalog (see --help).\n");
     return 2;
   }
   const harnessSource = parsed.harness !== undefined ? await readFile(parsed.harness, "utf8") : undefined;
@@ -207,6 +213,7 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     ...(parsed.harnessId !== undefined ? { harnessId: parsed.harnessId } : {}),
     ...(parsed.runtime !== undefined ? { runtimeId: parsed.runtime } : {}),
     ...(parsed.runs !== undefined ? { runDirectory: resolve(parsed.runs) } : {}),
+    ...(parsed.artifacts !== undefined ? { artifactDirectory: resolve(parsed.artifacts) } : {}),
     ...(sourceCatalog.length > 0 ? { sourceCatalog } : {}),
     ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
     ...(sourceRoot !== undefined ? { sourceRoot } : {}),

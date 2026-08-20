@@ -47,6 +47,7 @@
     "@shikijs/engine-javascript": "^4.4.3",
     "@shikijs/langs": "^4.4.3",
     "@tanstack/react-virtual": "^3.14.9",
+    "esbuild-wasm": "0.28.1",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
@@ -55,7 +56,6 @@
     "@types/node": "26.2.0",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
-    "esbuild-wasm": "0.28.1",
     "typescript": "7.0.2",
     "vitest": "4.1.10"
   },

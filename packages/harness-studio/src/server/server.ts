@@ -45,6 +45,14 @@ import {
   type StudioSourceKind,
 } from "./source-catalog.js";
 import { sessionFromRetainedRun } from "../app/session-debugger-model.js";
+import {
+  assertArtifactId,
+  describeArtifacts,
+  findArtifact,
+  indexArtifactDirectory,
+  type ArtifactEntry,
+} from "./artifact-catalog.js";
+import { compileArtifactModule, formatArtifactCompileError } from "./artifact-compile.js";
 
 const builtInExecutorFactory: HarnessUiExecutorFactory = (context) => {
   if (context.runtimeId === "qoder") {
@@ -81,6 +89,8 @@ export interface HarnessStudioServerOptions {
   sourceRoot?: string;
   /** Durable directory for saved Debugger run records (default: .harness-studio-runs under cwd). */
   runDirectory?: string;
+  /** Directory of run-produced artifacts exposed read-only under /api/artifacts. */
+  artifactDirectory?: string;
   /** Additional bounded source candidates selectable from inside Studio. */
   sourceCatalog?: StudioSourceCandidate[];
   executorFactory?: HarnessUiExecutorFactory;
@@ -160,6 +170,7 @@ async function route(
   if (request.method === "GET" && url.pathname === "/api/config") {
     respondJson(response, 200, {
       aguiEnabled: options.harnessSource !== undefined,
+      artifactsEnabled: options.artifactDirectory !== undefined,
       evidenceEnabled: activeSourcePath(state.sourceCatalog, state.activeSources, "evidence") !== undefined,
       experimentEnabled: state.activeManifestPath !== undefined,
       historyEnabled: state.historyAdapter !== undefined,
@@ -231,6 +242,20 @@ async function route(
     await serveEvidence(response, activeSourcePath(state.sourceCatalog, state.activeSources, "evidence"));
     return;
   }
+  if (request.method === "GET" && url.pathname === "/api/artifacts") {
+    await serveArtifactCatalog(response, options.artifactDirectory);
+    return;
+  }
+  const artifactModule = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/module\.js$/);
+  if (request.method === "GET" && artifactModule !== null) {
+    await serveArtifactModule(response, options.artifactDirectory, decodeURIComponent(artifactModule[1]!));
+    return;
+  }
+  const artifactModuleMap = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/module\.js\.map$/);
+  if (request.method === "GET" && artifactModuleMap !== null) {
+    await serveArtifactModuleMap(response, options.artifactDirectory, decodeURIComponent(artifactModuleMap[1]!));
+    return;
+  }
   if (url.pathname === "/agui" || url.pathname === "/healthz") {
     if (options.harnessSource === undefined) {
       respondJson(response, 404, { error: "No harness loaded; start with --harness <file.harness>." });
@@ -257,6 +282,118 @@ async function route(
     return;
   }
   respondJson(response, 404, { error: `No route for ${request.method} ${url.pathname}` });
+}
+
+/**
+ * Resolve an artifact through the catalog. The client only ever names an opaque
+ * id, so no request can turn into a filesystem path of its own choosing.
+ */
+async function resolveArtifactEntry(
+  directory: string | undefined,
+  id: string,
+): Promise<{ entry: ArtifactEntry } | { error: string; status: number }> {
+  if (directory === undefined) {
+    return { error: "No artifact directory loaded; start with --artifacts <dir>.", status: 404 };
+  }
+  try {
+    assertArtifactId(id);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error), status: 400 };
+  }
+  let indexed: ArtifactEntry[];
+  try {
+    indexed = await indexArtifactDirectory(directory);
+  } catch {
+    // A directory that vanished or turned unreadable after startup must answer
+    // with a status, not reject out of the route handler and take the server
+    // down. The message stays generic so no filesystem path reaches the client.
+    return { error: "Cannot read the configured artifact directory.", status: 404 };
+  }
+  const entry = findArtifact(indexed, id);
+  if (entry === undefined) {
+    return { error: `No artifact '${id}'.`, status: 404 };
+  }
+  return { entry };
+}
+
+async function serveArtifactCatalog(response: ServerResponse, directory: string | undefined): Promise<void> {
+  if (directory === undefined) {
+    respondJson(response, 404, { error: "No artifact directory loaded; start with --artifacts <dir>." });
+    return;
+  }
+  try {
+    respondJson(response, 200, { artifacts: describeArtifacts(await indexArtifactDirectory(directory)) });
+  } catch {
+    respondJson(response, 404, { error: "Cannot read the configured artifact directory." });
+  }
+}
+
+/**
+ * Artifact module responses are read from an opaque origin, so both the success
+ * and the failure body need CORS: without it the host frame sees only a generic
+ * "failed to fetch dynamically imported module" and the compile diagnostic is
+ * lost before it reaches the reader.
+ */
+function respondArtifactJson(response: ServerResponse, status: number, payload: unknown): void {
+  response.writeHead(status, {
+    "Content-Type": "application/json",
+    "Cache-Control": "no-store",
+    "Access-Control-Allow-Origin": "*",
+  });
+  response.end(`${JSON.stringify(payload)}\n`);
+}
+
+async function serveArtifactModule(
+  response: ServerResponse,
+  directory: string | undefined,
+  id: string,
+): Promise<void> {
+  const resolved = await resolveArtifactEntry(directory, id);
+  if ("error" in resolved) {
+    respondArtifactJson(response, resolved.status, { error: resolved.error });
+    return;
+  }
+  if (resolved.entry.kind !== "module") {
+    respondArtifactJson(response, 415, { error: `Artifact '${id}' is not a compilable module.` });
+    return;
+  }
+  try {
+    const compiled = await compileArtifactModule(resolved.entry.path);
+    response.writeHead(200, {
+      "Content-Type": CONTENT_TYPES[".js"]!,
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+      // The artifact iframe is sandboxed without allow-same-origin, so it has an
+      // opaque origin and this module counts as a cross-origin module script.
+      "Access-Control-Allow-Origin": "*",
+    });
+    // The sourcemap comment names the sibling route rather than the artifact
+    // file, so the browser resolves it against this URL and reaches the map.
+    response.end(`${compiled.code}//# sourceMappingURL=module.js.map\n`);
+  } catch (error) {
+    respondArtifactJson(response, 422, { error: formatArtifactCompileError(error) });
+  }
+}
+
+async function serveArtifactModuleMap(
+  response: ServerResponse,
+  directory: string | undefined,
+  id: string,
+): Promise<void> {
+  const resolved = await resolveArtifactEntry(directory, id);
+  if ("error" in resolved) {
+    respondArtifactJson(response, resolved.status, { error: resolved.error });
+    return;
+  }
+  if (resolved.entry.kind !== "module") {
+    respondArtifactJson(response, 415, { error: `Artifact '${id}' is not a compilable module.` });
+    return;
+  }
+  try {
+    respondArtifactJson(response, 200, JSON.parse((await compileArtifactModule(resolved.entry.path)).map));
+  } catch (error) {
+    respondArtifactJson(response, 422, { error: formatArtifactCompileError(error) });
+  }
 }
 
 async function serveInspectorReport(response: ServerResponse, reportPath: string | undefined): Promise<void> {
