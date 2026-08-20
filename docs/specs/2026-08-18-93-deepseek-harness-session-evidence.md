@@ -26,15 +26,24 @@ supported.
 ## Native Contract Evidence
 
 The implementation and its support claims remain bound to these five primary
-upstream sources at the RC7 commit, plus the corresponding session types,
-JSONL persistence scanner, home-path resolution, and experimental team event
-contracts at the RC8 commit:
+upstream sources at the RC7 commit:
 
 1. [Developer-preview status, compatibility warning, and plugin-oriented positioning](https://github.com/deepseek-ai/deepseek-harness/blob/99f6f02fecdb7dff40c3fbc9470f5907c29f74ca/README.md)
 2. [Base profile composition and the DSH-home sessions route](https://github.com/deepseek-ai/deepseek-harness/blob/99f6f02fecdb7dff40c3fbc9470f5907c29f74ca/packages/bundle/base/cordis.patch.yml)
 3. [Session header, format version, event vocabulary, correlation fields, and turn outcomes](https://github.com/deepseek-ai/deepseek-harness/blob/99f6f02fecdb7dff40c3fbc9470f5907c29f74ca/packages/core/session/src/types.ts)
 4. [JSONL layout, default Zstandard encoding, packed rows, identity checks, and discovery constraints](https://github.com/deepseek-ai/deepseek-harness/blob/99f6f02fecdb7dff40c3fbc9470f5907c29f74ca/packages/session/session-persistence-jsonl/README.md)
 5. [SQLite's separate persistence and discovery contract](https://github.com/deepseek-ai/deepseek-harness/blob/99f6f02fecdb7dff40c3fbc9470f5907c29f74ca/packages/session/session-persistence-sqlite/README.md)
+
+The RC8 requalification and RC8-only extensions are separately bound to their
+corresponding source owners at the RC8 commit:
+
+6. [`assistant/message.interrupted` and the current session event vocabulary](https://github.com/deepseek-ai/deepseek-harness/blob/141eb6fef83422698aef7a981029e843e8161534/packages/core/session/src/types.ts)
+7. [Committed JSONL rows and packed-row expansion](https://github.com/deepseek-ai/deepseek-harness/blob/141eb6fef83422698aef7a981029e843e8161534/packages/session/session-persistence-jsonl/src/format.ts)
+8. [Concatenated Zstandard frame scanning and torn-frame boundaries](https://github.com/deepseek-ai/deepseek-harness/blob/141eb6fef83422698aef7a981029e843e8161534/packages/session/session-persistence-jsonl/src/zstd.ts)
+9. [DSH-home precedence and blank-environment handling](https://github.com/deepseek-ai/deepseek-harness/blob/141eb6fef83422698aef7a981029e843e8161534/packages/util/home-paths/src/index.ts)
+10. [`team/member`, `team/task`, `team/message/queued`, and `team/message/delivered` payload contracts](https://github.com/deepseek-ai/deepseek-harness/blob/141eb6fef83422698aef7a981029e843e8161534/packages/experimental/agent-team/src/types.ts)
+11. [Strict team payload schemas and replay relationships](https://github.com/deepseek-ai/deepseek-harness/blob/141eb6fef83422698aef7a981029e843e8161534/packages/experimental/agent-team/src/fold.ts)
+12. [Team task dependency-graph constraints](https://github.com/deepseek-ai/deepseek-harness/blob/141eb6fef83422698aef7a981029e843e8161534/packages/experimental/agent-team/src/task-graph.ts)
 
 Synthetic fixtures may encode only behavior supported by those pinned sources
 and the approved Issue #93 boundary. A fixture passing is not evidence that a
