@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compileCanvasViewerModule } from "../src/server/canvas-viewer-compile.js";
 import type { ArtifactEntry } from "../src/server/artifact-catalog.js";
@@ -9,8 +9,8 @@ import { defaultCanvasViewerRoot, discoverCanvasViewers, presentArtifact } from 
 
 describe("Canvas artifact viewers", () => {
   it("uses the Qoder canvas/canvases directory", () => {
-    expect(defaultCanvasViewerRoot({ QODER_HOME: "/qoder-home" }, "/home/test")).toBe("/qoder-home/canvas/canvases");
-    expect(defaultCanvasViewerRoot({}, "/home/test")).toBe("/home/test/.qoder/canvas/canvases");
+    expect(defaultCanvasViewerRoot({ QODER_HOME: "/qoder-home" }, "/home/test")).toBe(join(resolve("/qoder-home"), "canvas", "canvases"));
+    expect(defaultCanvasViewerRoot({}, "/home/test")).toBe(join("/home/test", ".qoder", "canvas", "canvases"));
   });
 
   it("discovers a viewer and keeps direct rendering ahead of non-overrides", async () => {

@@ -1,6 +1,6 @@
 import { mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
@@ -55,7 +55,7 @@ describe("assertArtifactId", () => {
 
 describe("confineToRoot", () => {
   it("resolves names inside the root", () => {
-    expect(confineToRoot("/srv/artifacts", "a.tsx")).toBe(join("/srv/artifacts", "a.tsx"));
+    expect(confineToRoot("/srv/artifacts", "a.tsx")).toBe(resolve("/srv/artifacts", "a.tsx"));
   });
 
   it("rejects escapes regardless of separator style", () => {
