@@ -29,8 +29,8 @@ describe("Studio control-plane navigation", () => {
     ]);
     expect(destinations.find((destination) => destination.id === "overview")).toMatchObject({ availability: "ready" });
     expect(destinations.find((destination) => destination.id === "artifacts")).toMatchObject({
-      availability: "foundation",
-      status: "Artifact directory required",
+      availability: "partial",
+      status: "Analyze artifacts",
     });
     expect(destinations.find((destination) => destination.id === "debugger")).toMatchObject({
       availability: "foundation",
@@ -40,7 +40,7 @@ describe("Studio control-plane navigation", () => {
       availability: "foundation",
       status: "Input required",
     });
-    expect(capabilitySummary(EMPTY)).toEqual({ ready: 1, partial: 0, foundation: 4 });
+    expect(capabilitySummary(EMPTY)).toEqual({ ready: 1, partial: 1, foundation: 3 });
   });
 
   it("routes configured artifacts to Debugger, Compare, and Inspector surfaces", () => {

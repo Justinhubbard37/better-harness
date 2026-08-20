@@ -4,10 +4,11 @@ import { FileDiff, type FileDiffMetadata } from "@pierre/diffs/react";
 import type { DebuggerDiff } from "./session-debugger-model.js";
 import { buildDebuggerPatch } from "./code-rendering-model.js";
 
-export default function StudioDiff({ diff }: { diff: DebuggerDiff }): React.JSX.Element {
-  const fileDiff = useMemo(() => parseFileDiff(diff), [diff]);
+export default function StudioDiff(props: { diff?: DebuggerDiff; patch?: string }): React.JSX.Element {
+  const patch = props.patch ?? (props.diff === undefined ? "" : buildDebuggerPatch(props.diff));
+  const fileDiff = useMemo(() => parseFileDiff(patch), [patch]);
   if (fileDiff === undefined) {
-    return <pre className="studio-diff-fallback">{buildDebuggerPatch(diff)}</pre>;
+    return <pre className="studio-diff-fallback">{patch}</pre>;
   }
   return <div className="studio-diff-renderer" data-code-diff="pierre">
     <FileDiff
@@ -28,9 +29,9 @@ export default function StudioDiff({ diff }: { diff: DebuggerDiff }): React.JSX.
   </div>;
 }
 
-function parseFileDiff(diff: DebuggerDiff): FileDiffMetadata | undefined {
+function parseFileDiff(patch: string): FileDiffMetadata | undefined {
   try {
-    return parsePatchFiles(buildDebuggerPatch(diff), `session-debugger:${diff.path}:${diff.before.length}:${diff.after.length}`)
+    return parsePatchFiles(patch, `artifact:${patch.length}`)
       .flatMap((patch) => patch.files)
       .at(0);
   } catch {

@@ -1,5 +1,6 @@
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { request as httpRequest } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -692,16 +693,9 @@ describe("harness-studio CLI", () => {
     expect(out.join("")).toContain("--evidence <dir>");
   });
 
-  it("requires at least one Studio surface", async () => {
-    const errors: string[] = [];
-
-    const code = await runHarnessStudioCli([], {
-      stdout: () => undefined,
-      stderr: (text) => errors.push(text),
-    });
-
-    expect(code).toBe(2);
-    expect(errors.join("")).toMatch(/--source-catalog/);
+  it("accepts an empty startup so Studio can acquire artifacts in the UI", () => {
+    expect(parseHarnessStudioArgs([])).toMatchObject({ host: "127.0.0.1", port: 3311 });
+    expect(parseHarnessStudioArgs([]).error).toBeUndefined();
   });
 
   it("resolves the default source root from the harness file and honors an override", () => {
@@ -747,20 +741,108 @@ describe("harness-studio CLI", () => {
     expect(await discoverDefaultInspectorReport(cwd)).toBe(join(reportDir, "inspector.html"));
   });
 
-  it("serves a resolvable sourcemap alongside the compiled artifact module", async () => {
+  it("serves TSX as inert source instead of executing it as an artifact module", async () => {
     const appDir = await makeAppDir();
     const artifactDirectory = await makeTempDir("studio-artifacts-");
     await writeFile(join(artifactDirectory, "card.tsx"), "export default () => <p>hi</p>;\n", "utf8");
     started = await startHarnessStudioServer({ appDir, artifactDirectory });
 
-    const code = await (await fetch(`${started.url}/api/artifacts/card/module.js`)).text();
-    expect(code).toContain("//# sourceMappingURL=module.js.map");
+    const catalog = await (await fetch(`${started.url}/api/artifacts`)).json() as { artifacts: Array<{ kind: string; renderer: string }> };
+    expect(catalog.artifacts).toEqual([expect.objectContaining({ kind: "code", renderer: "code" })]);
+    const source = await fetch(`${started.url}/api/artifacts/card/content`);
+    expect(source.status).toBe(200);
+    expect(await source.text()).toContain("export default");
+    expect((await fetch(`${started.url}/api/artifacts/card/module.js`)).status).toBe(404);
+  });
 
-    // The comment resolves against the module URL, so the named sibling route
-    // has to answer with a real map rather than falling through to a 404.
-    const map = await fetch(`${started.url}/api/artifacts/card/module.js.map`);
-    expect(map.status).toBe(200);
-    expect(await map.json()).toMatchObject({ version: 3, sources: ["card.tsx"] });
+  it("imports a manually selected artifact set and switches the live catalog atomically", async () => {
+    const appDir = await makeAppDir();
+    const originalDirectory = await makeTempDir("studio-artifacts-original-");
+    const originalPath = join(originalDirectory, "old.tsx");
+    await writeFile(originalPath, "export const old = true;\n", "utf8");
+    started = await startHarnessStudioServer({ appDir, artifactDirectory: originalDirectory });
+
+    const created = await fetch(`${started.url}/api/artifact-imports`, { method: "POST" });
+    expect(created.status).toBe(201);
+    const { sessionId, maxFiles, maxBytes } = await created.json() as { sessionId: string; maxFiles: number; maxBytes: number };
+    expect(sessionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(maxFiles).toBe(256);
+    expect(maxBytes).toBe(128 * 1024 * 1024);
+
+    const deck = await fetch(`${started.url}/api/artifact-imports/${sessionId}/files?name=${encodeURIComponent("slides/deck.pptx")}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: Buffer.from("pptx fixture"),
+    });
+    const source = await fetch(`${started.url}/api/artifact-imports/${sessionId}/files?name=${encodeURIComponent("code/card.tsx")}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: Buffer.from("export default () => <p>imported</p>;\n"),
+    });
+    expect(deck.status).toBe(201);
+    expect(await deck.json()).toMatchObject({ label: "slides--deck.pptx" });
+    expect(source.status).toBe(201);
+    expect(await source.json()).toMatchObject({ label: "code--card.tsx" });
+
+    const beforeCommit = await (await fetch(`${started.url}/api/artifacts`)).json() as { artifacts: Array<{ label: string }> };
+    expect(beforeCommit.artifacts.map((artifact) => artifact.label)).toEqual(["old.tsx"]);
+
+    const committed = await fetch(`${started.url}/api/artifact-imports/${sessionId}/commit`, { method: "POST" });
+    expect(committed.status).toBe(200);
+    expect(await committed.json()).toMatchObject({ imported: 2 });
+    expect(await readFile(originalPath, "utf8")).toBe("export const old = true;\n");
+
+    const config = await (await fetch(`${started.url}/api/config`)).json() as { artifactsEnabled: boolean };
+    expect(config.artifactsEnabled).toBe(true);
+    const catalog = await (await fetch(`${started.url}/api/artifacts`)).json() as { artifacts: Array<{ label: string }> };
+    expect(catalog.artifacts.map((artifact) => artifact.label).sort()).toEqual(["code--card.tsx", "slides--deck.pptx"]);
+  });
+
+  it("rejects hostile or incomplete manual artifact imports without changing the catalog", async () => {
+    const appDir = await makeAppDir();
+    started = await startHarnessStudioServer({ appDir });
+
+    const hostile = await fetch(`${started.url}/api/artifact-imports`, {
+      method: "POST",
+      headers: { Origin: "https://hostile.example" },
+    });
+    expect(hostile.status).toBe(403);
+
+    const created = await fetch(`${started.url}/api/artifact-imports`, { method: "POST" });
+    const { sessionId, maxBytes } = await created.json() as { sessionId: string; maxBytes: number };
+    const oversizedStatus = await new Promise<number | undefined>((resolveStatus, reject) => {
+      const upload = httpRequest(
+        `${started!.url}/api/artifact-imports/${sessionId}/files?name=oversized.bin`,
+        { method: "PUT", headers: { "Content-Length": String(maxBytes + 1) } },
+        (response) => {
+          response.resume();
+          response.once("end", () => resolveStatus(response.statusCode));
+        },
+      );
+      upload.once("error", reject);
+      upload.end();
+    });
+    expect(oversizedStatus).toBe(413);
+    const traversal = await fetch(`${started.url}/api/artifact-imports/${sessionId}/files?name=${encodeURIComponent("../secret.txt")}`, {
+      method: "PUT",
+      body: Buffer.from("must not land"),
+    });
+    expect(traversal.status).toBe(400);
+    expect((await fetch(`${started.url}/api/artifact-imports/${sessionId}/commit`, { method: "POST" })).status).toBe(400);
+    expect((await fetch(`${started.url}/api/artifact-imports/${sessionId}`, { method: "DELETE" })).status).toBe(200);
+
+    const config = await (await fetch(`${started.url}/api/config`)).json() as { artifactsEnabled: boolean };
+    expect(config.artifactsEnabled).toBe(false);
+    expect((await fetch(`${started.url}/api/artifacts`)).status).toBe(404);
+  });
+
+  it("rejects malformed percent-encoded artifact ids without taking down the server", async () => {
+    const appDir = await makeAppDir();
+    const artifactDirectory = await makeTempDir("studio-artifacts-");
+    await writeFile(join(artifactDirectory, "card.tsx"), "export default () => null;\n", "utf8");
+    started = await startHarnessStudioServer({ appDir, artifactDirectory });
+    expect((await fetch(`${started.url}/api/artifacts/%E0%A4%A/content`)).status).toBe(400);
+    expect((await fetch(`${started.url}/api/config`)).status).toBe(200);
   });
 
   it("answers with a status when the artifact directory disappears after startup", async () => {
@@ -768,13 +850,13 @@ describe("harness-studio CLI", () => {
     const artifactDirectory = await makeTempDir("studio-artifacts-");
     await writeFile(join(artifactDirectory, "card.tsx"), "export default () => <p>hi</p>;\n", "utf8");
     started = await startHarnessStudioServer({ appDir, artifactDirectory });
-    expect((await fetch(`${started.url}/api/artifacts/card/module.js`)).status).toBe(200);
+    expect((await fetch(`${started.url}/api/artifacts/card/content`)).status).toBe(200);
 
     await rm(artifactDirectory, { recursive: true, force: true });
 
     // An unreadable directory must not reject out of the route handler: that is
     // an unhandled rejection, which takes the whole Studio process down.
-    const response = await fetch(`${started.url}/api/artifacts/card/module.js`);
+    const response = await fetch(`${started.url}/api/artifacts/card/content`);
     expect(response.status).toBe(404);
     const body = await response.json() as { error: string };
     expect(body.error).toBe("Cannot read the configured artifact directory.");

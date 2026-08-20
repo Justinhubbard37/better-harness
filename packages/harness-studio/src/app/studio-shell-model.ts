@@ -42,8 +42,8 @@ export function studioDestinations(config: StudioConfig): readonly StudioDestina
       id: "artifacts",
       label: "Artifacts",
       group: "Observe",
-      availability: config.artifactsEnabled ? "ready" : "foundation",
-      status: config.artifactsEnabled ? "Run outputs" : "Artifact directory required",
+      availability: config.artifactsEnabled ? "ready" : "partial",
+      status: config.artifactsEnabled ? "Run outputs" : "Analyze artifacts",
     },
     {
       id: "debugger",

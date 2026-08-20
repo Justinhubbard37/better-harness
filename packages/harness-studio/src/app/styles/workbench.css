@@ -901,6 +901,25 @@
 .artifact-list-pane > header small { display: block; color: var(--color-text-muted); font-size: var(--type-meta-size); }
 .artifact-list-pane > header h2 { margin: 0; font-size: var(--type-label-size); line-height: var(--type-label-line); }
 .artifact-list-pane > header span { color: var(--color-text-muted); font-size: var(--type-meta-size); }
+.artifact-list-actions { min-width: 0; display: flex; align-items: center; gap: var(--space-xs); }
+.artifact-intake { min-width: 0; place-content: center stretch; }
+.artifact-intake > span,
+.artifact-intake > small,
+.artifact-intake > h1,
+.artifact-intake > p,
+.artifact-intake .artifact-import-controls { justify-self: center; }
+.artifact-intake > h1,
+.artifact-intake > p { max-width: 100%; overflow-wrap: anywhere; }
+.artifact-intake .artifact-import-controls { margin-top: var(--space-lg); }
+.artifact-import-controls { display: grid; justify-items: center; gap: var(--space-xs); }
+.artifact-import-buttons { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-sm); }
+.artifact-import-controls > small { max-width: 56ch; color: var(--color-text-muted); }
+.artifact-import-controls > .artifact-import-error { color: var(--color-danger); }
+.artifact-import-controls.is-compact { position: relative; display: flex; align-items: center; justify-items: initial; }
+.artifact-import-controls.is-compact .artifact-import-buttons { flex-wrap: nowrap; gap: var(--space-xs); }
+.artifact-import-controls.is-compact button { min-height: var(--control-height); padding-inline: var(--space-xs); font-size: var(--type-meta-size); }
+.artifact-import-controls.is-compact > small { width: 220px; position: absolute; z-index: 2; top: calc(100% + var(--space-xs)); right: 0; border: 1px solid var(--color-border); padding: var(--space-xs) var(--space-sm); color: var(--color-text-muted); background: var(--color-surface); box-shadow: var(--shadow-overlay); white-space: normal; }
+.artifact-import-controls.is-compact > .artifact-import-error { border-color: var(--color-danger); color: var(--color-danger); background: var(--color-danger-surface); }
 .artifact-rows { margin: 0; padding: 0; overflow-y: auto; list-style: none; }
 .artifact-rows button {
   width: 100%;
@@ -926,6 +945,10 @@
 .artifact-row-copy small { color: var(--color-text-muted); font-size: var(--type-meta-size); }
 .artifact-preview-pane { min-width: 0; min-height: 0; display: flex; background: var(--color-workspace); }
 .artifact-frame { flex: 1; min-width: 0; border: 0; background: var(--color-surface); }
+.artifact-code-preview { flex: 1; min-width: 0; min-height: 0; overflow: auto; background: var(--color-surface); }
+.artifact-code-preview > * { min-height: 100%; }
+.artifact-image-stage { flex: 1; min-width: 0; min-height: 0; padding: var(--space-md); display: grid; place-items: center; overflow: auto; }
+.artifact-image-stage img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .artifact-status { margin: 0; padding: var(--space-md); color: var(--color-text-muted); }
 .artifact-status code { font-family: var(--font-code); }
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import type { Icon } from "@phosphor-icons/react";
 import { ArrowRight } from "@phosphor-icons/react/ArrowRight";
 import { Binoculars } from "@phosphor-icons/react/Binoculars";
@@ -11,8 +11,11 @@ import { SquaresFour } from "@phosphor-icons/react/SquaresFour";
 import { CompareView } from "./CompareView.js";
 import { ExperimentView } from "./ExperimentView.js";
 import { InspectorWorkbench } from "./InspectorWorkbench.js";
+import { HighlightedCode } from "./HighlightedCode.js";
 import { RunView } from "./RunView.js";
 import { useRovingFocus } from "./roving-tablist.js";
+
+const StudioDiff = lazy(() => import("./StudioDiff.js"));
 import {
   capabilitySummary,
   compareSurfaces,
@@ -76,6 +79,7 @@ export function App(): React.JSX.Element {
   const [config, setConfig] = useState<StudioConfig | undefined>(undefined);
   const [sources, setSources] = useState<StudioSourceOption[]>([]);
   const [dataRevision, setDataRevision] = useState(0);
+  const [artifactImportRevision, setArtifactImportRevision] = useState(0);
   const [configFailure, setConfigFailure] = useState<string | null>(null);
   const [area, setArea] = useState<StudioArea>(areaFromHash);
   const [compareSurface, setCompareSurface] = useState<StudioCompareSurface>("bench");
@@ -157,6 +161,14 @@ export function App(): React.JSX.Element {
     }
   }
 
+  async function artifactsImported(): Promise<void> {
+    const loaded = await fetchStudioState();
+    setConfigFailure(null);
+    setSources(loaded.sources);
+    setConfig(loaded.config);
+    setArtifactImportRevision((revision) => revision + 1);
+  }
+
   if (config === undefined) {
     return <main className="studio-loading"><span className="studio-loading-mark"><GitBranch size={18} weight="bold" /></span><p>Loading Harness control plane…</p></main>;
   }
@@ -195,7 +207,7 @@ export function App(): React.JSX.Element {
       <div className={`studio-surface studio-surface-${area}`}>
         {area === "overview" && <Overview config={config} onOpen={openArea} />}
         {area === "inspector" && <InspectorWorkspace key={`inspector-${dataRevision}-${config.inspectorEnabled}`} config={config} />}
-        {area === "artifacts" && <ArtifactsWorkspace key={`artifacts-${dataRevision}-${config.artifactsEnabled}`} config={config} />}
+        {area === "artifacts" && <ArtifactsWorkspace key={`artifacts-${dataRevision}-${config.artifactsEnabled}`} config={config} importRevision={artifactImportRevision} onImported={artifactsImported} />}
         {area === "debugger" && <DebuggerWorkspace config={config} />}
         {area === "compare" && <CompareWorkspace key={`compare-${dataRevision}-${config.experimentEnabled}-${config.evidenceEnabled}`} config={config} surface={compareSurface} navigation={compareNavigation} />}
       </div>
@@ -279,8 +291,9 @@ function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => v
       ? "debugger"
       : props.config.experimentEnabled || props.config.evidenceEnabled
         ? "compare"
-        : "inspector";
+        : "artifacts";
   const inputs = [
+    ["Artifact catalog", props.config.artifactsEnabled],
     ["Inspector report", props.config.inspectorEnabled],
     ["Harness runtime", props.config.aguiEnabled],
     ["Experiment manifest", props.config.experimentEnabled],
@@ -289,6 +302,7 @@ function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => v
   ] as const;
   const missingInputs = inputs.filter(([, enabled]) => !enabled);
   const actions = [
+    { label: "Analyze artifacts", area: "artifacts" as const, enabled: true, detail: "Files or folder" },
     { label: "Go to Inspector", area: "inspector" as const, enabled: props.config.inspectorEnabled, detail: "Retained sessions" },
     { label: "Go to Debugger", area: "debugger" as const, enabled: props.config.aguiEnabled, detail: "Live runs" },
     { label: "Go to Compare", area: "compare" as const, enabled: props.config.experimentEnabled || props.config.evidenceEnabled, detail: "Bench and results" },
@@ -325,6 +339,10 @@ interface ArtifactDescriptor {
   kind: string;
   label: string;
   size: number;
+  renderer: "canvas" | "code" | "diff" | "image" | "json" | "svg" | "text" | "unavailable";
+  viewerId?: string;
+  viewerLabel?: string;
+  reason?: string;
 }
 
 /**
@@ -333,7 +351,7 @@ interface ArtifactDescriptor {
  * The preview frame withholds `allow-same-origin`, so artifact code runs on an
  * opaque origin and cannot reach the Studio shell.
  */
-function ArtifactsWorkspace(props: { config: StudioConfig }): React.JSX.Element {
+function ArtifactsWorkspace(props: { config: StudioConfig; importRevision: number; onImported: () => Promise<void> }): React.JSX.Element {
   const [artifacts, setArtifacts] = useState<ArtifactDescriptor[] | undefined>(undefined);
   const [failure, setFailure] = useState<string | undefined>(undefined);
   const [selected, setSelected] = useState<string | undefined>(undefined);
@@ -347,33 +365,36 @@ function ArtifactsWorkspace(props: { config: StudioConfig }): React.JSX.Element 
         if (!response.ok) throw new Error(`Artifact catalog failed (${response.status}).`);
         const payload = await response.json() as { artifacts?: ArtifactDescriptor[] };
         if (cancelled) return;
-        // Deliberately no auto-selection: compiling an artifact the reader has
-        // not asked for spends server work and can open the pane on an error.
-        setArtifacts(Array.isArray(payload.artifacts) ? payload.artifacts : []);
+        // Preloaded directories remain unselected. A manual analysis revision
+        // opens its first result so the UI flow ends at a real preview.
+        const entries = Array.isArray(payload.artifacts) ? payload.artifacts : [];
+        setFailure(undefined);
+        setArtifacts(entries);
+        if (props.importRevision > 0) setSelected(entries[0]?.id);
       } catch (error) {
         if (!cancelled) setFailure(error instanceof Error ? error.message : String(error));
       }
     })();
     return () => { cancelled = true; };
-  }, [props.config.artifactsEnabled]);
+  }, [props.config.artifactsEnabled, props.importRevision]);
 
   if (!props.config.artifactsEnabled) {
-    return <EmptyWorkspace eyebrow="Run outputs" title="Load an artifact directory" detail="Artifacts renders what a run produced. It reads a directory read-only and never writes back to it." command="--artifacts ./artifacts" />;
+    return <ArtifactIntake title="Analyze generated artifacts" detail="Choose files or a folder from this device. Studio copies them into a bounded temporary session for read-only preview; the originals stay untouched." onImported={props.onImported} />;
   }
   if (failure !== undefined) {
-    return <EmptyWorkspace eyebrow="Run outputs" title="Cannot read the artifact catalog" detail={failure} command="--artifacts ./artifacts" />;
+    return <ArtifactIntake title="Choose another artifact set" detail={failure} onImported={props.onImported} />;
   }
   if (artifacts === undefined) {
     return <p className="artifact-status" role="status">Loading artifacts…</p>;
   }
   if (artifacts.length === 0) {
-    return <EmptyWorkspace eyebrow="Run outputs" title="No artifacts in this directory" detail="The configured directory holds no files Studio can render yet. Artifact rows appear once a run writes into it." command="--artifacts ./artifacts" />;
+    return <ArtifactIntake title="No artifacts in this set" detail="Choose files or a folder to replace the empty set and open a preview." onImported={props.onImported} />;
   }
 
   const active = artifacts.find((entry) => entry.id === selected);
   return <section className="artifact-workspace" aria-label="Artifacts workspace">
     <div className="artifact-list-pane">
-      <header><div><small>Retained</small><h2>Artifacts</h2></div><span>{artifacts.length}</span></header>
+      <header><div><small>Retained</small><h2>Artifacts</h2></div><div className="artifact-list-actions"><span>{artifacts.length}</span><ArtifactImportControls compact onImported={props.onImported} /></div></header>
       <ul className="artifact-rows">
         {artifacts.map((entry) => <li key={entry.id}>
           <button
@@ -390,18 +411,129 @@ function ArtifactsWorkspace(props: { config: StudioConfig }): React.JSX.Element 
     <div className="artifact-preview-pane">
       {active === undefined
         ? <p className="artifact-status" role="status">Select an artifact to preview it.</p>
-        : active.kind === "module"
-          ? <iframe
-            key={active.id}
-            className="artifact-frame"
-            title={`Artifact preview: ${active.label}`}
-            src={`artifact-host.html?module=api/artifacts/${active.id}/module.js`}
-            sandbox="allow-scripts"
-            referrerPolicy="no-referrer"
-          />
-          : <p className="artifact-status" role="status">No renderer for <code>{active.kind}</code> yet. Only compiled modules render in this increment.</p>}
+        : <ArtifactPreview artifact={active} />}
     </div>
   </section>;
+}
+
+function ArtifactIntake(props: { title: string; detail: string; onImported: () => Promise<void> }): React.JSX.Element {
+  return <main className="artifact-intake empty-workspace">
+    <span><Package size={22} /></span>
+    <small>Run outputs</small>
+    <h1>{props.title}</h1>
+    <p>{props.detail}</p>
+    <ArtifactImportControls onImported={props.onImported} />
+  </main>;
+}
+
+function ArtifactImportControls(props: { compact?: boolean; onImported: () => Promise<void> }): React.JSX.Element {
+  const filesRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string>();
+  const [failure, setFailure] = useState<string>();
+
+  async function analyze(selected: FileList | null): Promise<void> {
+    const files = selected === null ? [] : Array.from(selected);
+    if (files.length === 0) return;
+    setBusy(true);
+    setFailure(undefined);
+    setMessage(`Preparing ${files.length} artifact${files.length === 1 ? "" : "s"}…`);
+    let sessionId: string | undefined;
+    try {
+      const created = await fetch("api/artifact-imports", { method: "POST" });
+      if (!created.ok) throw new Error(await artifactImportError(created));
+      const session = await created.json() as { sessionId: string; maxFiles: number; maxBytes: number };
+      sessionId = session.sessionId;
+      const totalBytes = files.reduce((total, file) => total + file.size, 0);
+      if (files.length > session.maxFiles) throw new Error(`Select no more than ${session.maxFiles} files at once.`);
+      if (totalBytes > session.maxBytes) throw new Error(`The selected artifacts exceed the ${formatBytes(session.maxBytes)} import limit.`);
+      for (const [index, file] of files.entries()) {
+        setMessage(`Importing ${index + 1} of ${files.length}: ${file.name}`);
+        const name = file.webkitRelativePath || file.name;
+        const uploaded = await fetch(`api/artifact-imports/${encodeURIComponent(sessionId)}/files?${new URLSearchParams({ name })}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: file,
+        });
+        if (!uploaded.ok) throw new Error(await artifactImportError(uploaded));
+      }
+      const committed = await fetch(`api/artifact-imports/${encodeURIComponent(sessionId)}/commit`, { method: "POST" });
+      if (!committed.ok) throw new Error(await artifactImportError(committed));
+      sessionId = undefined;
+      setMessage("Opening artifact preview…");
+      await props.onImported();
+    } catch (error) {
+      if (sessionId !== undefined) {
+        await fetch(`api/artifact-imports/${encodeURIComponent(sessionId)}`, { method: "DELETE" }).catch(() => undefined);
+      }
+      setMessage(undefined);
+      setFailure(error instanceof Error ? error.message : "Artifact analysis failed.");
+    } finally {
+      setBusy(false);
+      if (filesRef.current) filesRef.current.value = "";
+      if (folderRef.current) folderRef.current.value = "";
+    }
+  }
+
+  return <div className={`artifact-import-controls${props.compact ? " is-compact" : ""}`}>
+    <input ref={filesRef} data-testid="artifact-files-input" hidden type="file" multiple onChange={(event) => void analyze(event.currentTarget.files)} />
+    <input ref={(node) => { folderRef.current = node; node?.setAttribute("webkitdirectory", ""); }} data-testid="artifact-folder-input" hidden type="file" multiple onChange={(event) => void analyze(event.currentTarget.files)} />
+    <div className="artifact-import-buttons">
+      <button className={props.compact ? undefined : "primary"} type="button" disabled={busy} onClick={() => filesRef.current?.click()}>{props.compact ? "Files" : "Choose files"}</button>
+      <button type="button" disabled={busy} onClick={() => folderRef.current?.click()}>{props.compact ? "Folder" : "Choose folder"}</button>
+    </div>
+    {message !== undefined && <small role="status">{message}</small>}
+    {failure !== undefined && <small className="artifact-import-error" role="alert">{failure}</small>}
+  </div>;
+}
+
+async function artifactImportError(response: Response): Promise<string> {
+  try {
+    const payload = await response.json() as { error?: string };
+    if (typeof payload.error === "string") return payload.error;
+  } catch {
+    // Preserve the status fallback when a proxy returns a non-JSON body.
+  }
+  return `Artifact analysis failed (${response.status}).`;
+}
+
+function ArtifactPreview({ artifact }: { artifact: ArtifactDescriptor }): React.JSX.Element {
+  const contentUrl = `api/artifacts/${artifact.id}/content`;
+  if (artifact.renderer === "canvas") {
+    return <iframe key={artifact.id} className="artifact-frame" title={`Artifact preview: ${artifact.label}`} src={`api/artifacts/${artifact.id}/viewer/`} sandbox="allow-scripts" referrerPolicy="no-referrer" />;
+  }
+  if (artifact.renderer === "svg") {
+    return <iframe key={artifact.id} className="artifact-frame" title={`SVG preview: ${artifact.label}`} src={contentUrl} sandbox="" referrerPolicy="no-referrer" />;
+  }
+  if (artifact.renderer === "image") {
+    return <div className="artifact-image-stage"><img src={contentUrl} alt={artifact.label} /></div>;
+  }
+  if (["code", "diff", "json", "text"].includes(artifact.renderer)) {
+    return <ArtifactTextPreview artifact={artifact} url={contentUrl} />;
+  }
+  return <p className="artifact-status" role="status">{artifact.reason ?? "No renderer is available for this artifact."}</p>;
+}
+
+function ArtifactTextPreview({ artifact, url }: { artifact: ArtifactDescriptor; url: string }): React.JSX.Element {
+  const [content, setContent] = useState<string>();
+  const [failure, setFailure] = useState<string>();
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(url, { signal: controller.signal }).then(async (response) => {
+      if (!response.ok) throw new Error(`Artifact content failed (${response.status}).`);
+      setContent(await response.text());
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
+    });
+    return () => controller.abort();
+  }, [url]);
+  if (failure !== undefined) return <p className="artifact-status" role="alert">{failure}</p>;
+  if (content === undefined) return <p className="artifact-status" role="status">Loading preview…</p>;
+  if (artifact.renderer === "diff") {
+    return <Suspense fallback={<pre className="studio-diff-fallback">{content}</pre>}><StudioDiff patch={content} /></Suspense>;
+  }
+  return <div className="artifact-code-preview"><HighlightedCode code={content} sourceHint={artifact.label} label={`Artifact source: ${artifact.label}`} /></div>;
 }
 
 function formatBytes(size: number): string {
@@ -414,7 +546,7 @@ function DebuggerWorkspace(props: { config: StudioConfig }): React.JSX.Element {
   if (!props.config.aguiEnabled) {
     return <EmptyWorkspace eyebrow="Live runs" title="Load a harness for live runs" detail="The Debugger drives a live harness run over the embedded AG-UI endpoint and saves finished runs for replay." command="--harness ./my-agent.harness" />;
   }
-  return <div className="debugger-mode"><RunView aguiEndpoint="agui" /></div>;
+  return <div className="debugger-mode"><RunView aguiEndpoint="agui" artifactEndpoint={props.config.artifactsEnabled ? "api/artifacts" : undefined} /></div>;
 }
 
 function CompareWorkspace(props: {

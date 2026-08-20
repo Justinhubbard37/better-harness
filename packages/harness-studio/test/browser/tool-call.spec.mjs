@@ -36,6 +36,7 @@ let inspectorStudio;
 let lockedFixtureDir;
 let inspectorFixtureDir;
 let runsFixtureDir;
+let artifactFixtureDir;
 
 const LAYOUTS = [
   { name: "wide", width: 1440, height: 900 },
@@ -94,10 +95,13 @@ async function assertRenderedContract(page) {
 
 test.beforeAll(async () => {
   runsFixtureDir = await mkdtemp(join(tmpdir(), "studio-browser-runs-"));
+  artifactFixtureDir = await mkdtemp(join(tmpdir(), "studio-browser-artifacts-"));
+  await writeFile(join(artifactFixtureDir, "actual-run-output.json"), '{"status":"retained"}\n', "utf8");
   studio = await startHarnessStudioServer({
     appDir: resolve(packageRoot, "dist/app"),
     harnessSource: SOURCE,
     runDirectory: join(runsFixtureDir, "live"),
+    artifactDirectory: artifactFixtureDir,
     executorFactory: (context) => ({
       host: "qoder",
       async execute(revision) {
@@ -250,6 +254,7 @@ test.afterAll(async () => {
   if (lockedFixtureDir) await rm(lockedFixtureDir, { recursive: true, force: true });
   if (inspectorFixtureDir) await rm(inspectorFixtureDir, { recursive: true, force: true });
   if (runsFixtureDir) await rm(runsFixtureDir, { recursive: true, force: true });
+  if (artifactFixtureDir) await rm(artifactFixtureDir, { recursive: true, force: true });
 });
 
 test("organizes configured surfaces around the Harness control plane", async ({ page }) => {
@@ -502,6 +507,11 @@ test("renders a keyboard-expandable failed and truncated Tool Call at 390px", as
   await expect(page.locator(".step-controls button")).toHaveCount(7);
   await expect(page.locator(".debugger-event-card").filter({ hasText: "Bash tool call" })).toBeVisible();
   await expect(page.locator(".event-status.failed")).toContainText("failed");
+  await page.getByTitle("Toggle State Inspector").click();
+  await expect(page.locator(".state-inspector")).toBeVisible();
+  await page.locator(".inspector-tabs button").nth(2).click();
+  await expect(page.locator(".state-inspector")).toContainText("actual-run-output.json");
+  await expect(page.locator(".state-inspector")).not.toContainText("acp-debugger-reference.png");
   expect(browserErrors).toEqual([]);
 });
 

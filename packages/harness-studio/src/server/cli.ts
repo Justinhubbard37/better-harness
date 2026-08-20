@@ -25,7 +25,13 @@ Options:
                       Durable root for content-addressed experiment locks
   --runs <dir>        Durable directory for saved Debugger runs
                       (default: .harness-studio-runs under --cwd)
-  --artifacts <dir>   Directory of run-produced artifacts to view read-only
+  --artifacts <dir>   Optional artifact directory to preload read-only
+  --canvas-viewers <dir>
+                      Provisioned format viewers (default: ~/.qoder/canvas/canvases)
+  --canvas-sdk-root <dir>
+                      Canvas SDK checkout used by provisioned viewers
+  --canvas-sdk-media <dir>
+                      Prebuilt Canvas SDK media directory
   --source-catalog <file>
                       JSON catalog of bounded switchable Studio inputs
   --harness-id <id>   Harness to resolve (default: the file's only harness)
@@ -77,6 +83,9 @@ interface ParsedArgs {
   runtime?: string;
   runs?: string;
   artifacts?: string;
+  canvasViewers?: string;
+  canvasSdkRoot?: string;
+  canvasSdkMedia?: string;
   sourceCatalog?: string;
   port: number;
   host: string;
@@ -133,6 +142,15 @@ export function parseHarnessStudioArgs(argv: string[]): ParsedArgs {
       case "--artifacts":
         parsed.artifacts = takeValue();
         break;
+      case "--canvas-viewers":
+        parsed.canvasViewers = takeValue();
+        break;
+      case "--canvas-sdk-root":
+        parsed.canvasSdkRoot = takeValue();
+        break;
+      case "--canvas-sdk-media":
+        parsed.canvasSdkMedia = takeValue();
+        break;
       case "--source-catalog":
         parsed.sourceCatalog = takeValue();
         break;
@@ -187,17 +205,6 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     : undefined;
   const inspectorPath = parsed.inspector ?? discoveredInspector;
   const sourceCatalog = parsed.sourceCatalog === undefined ? [] : await readSourceCatalogFile(parsed.sourceCatalog);
-  if (
-    inspectorPath === undefined
-    && parsed.evidence === undefined
-    && parsed.harness === undefined
-    && parsed.experiment === undefined
-    && parsed.artifacts === undefined
-    && sourceCatalog.length === 0
-  ) {
-    io.stderr("Nothing to show: pass --inspector, --experiment, --evidence, --harness, --artifacts, or --source-catalog (see --help).\n");
-    return 2;
-  }
   const harnessSource = parsed.harness !== undefined ? await readFile(parsed.harness, "utf8") : undefined;
   // Skills are conventionally declared relative to their `.harness` file (see
   // examples/*.harness), so loading one without a flag still delivers them.
@@ -214,6 +221,9 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     ...(parsed.runtime !== undefined ? { runtimeId: parsed.runtime } : {}),
     ...(parsed.runs !== undefined ? { runDirectory: resolve(parsed.runs) } : {}),
     ...(parsed.artifacts !== undefined ? { artifactDirectory: resolve(parsed.artifacts) } : {}),
+    ...(parsed.canvasViewers !== undefined ? { canvasViewerRoot: resolve(parsed.canvasViewers) } : {}),
+    ...(parsed.canvasSdkRoot !== undefined ? { canvasSdkRoot: resolve(parsed.canvasSdkRoot) } : {}),
+    ...(parsed.canvasSdkMedia !== undefined ? { canvasSdkMedia: resolve(parsed.canvasSdkMedia) } : {}),
     ...(sourceCatalog.length > 0 ? { sourceCatalog } : {}),
     ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
     ...(sourceRoot !== undefined ? { sourceRoot } : {}),

@@ -1,11 +1,8 @@
-import { readdir, stat } from "node:fs/promises";
+import { lstat, readdir, realpath } from "node:fs/promises";
 import { basename, extname, normalize, resolve, sep } from "node:path";
 
-/**
- * Artifact kinds the Studio can render. `module` is the compiled-TSX tier; the
- * remaining kinds are served as bytes and rendered by existing surfaces.
- */
-export type ArtifactKind = "module" | "code" | "diff" | "json" | "svg" | "text" | "unknown";
+/** Artifact kinds are inert data presentations; none is executable code. */
+export type ArtifactKind = "code" | "diff" | "image" | "json" | "svg" | "text" | "unknown";
 
 export interface ArtifactEntry {
   id: string;
@@ -25,8 +22,8 @@ export interface ArtifactDescriptor {
 const ARTIFACT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 const KIND_BY_EXTENSION = new Map<string, ArtifactKind>([
-  [".tsx", "module"],
-  [".jsx", "module"],
+  [".tsx", "code"],
+  [".jsx", "code"],
   [".ts", "code"],
   [".js", "code"],
   [".mjs", "code"],
@@ -37,6 +34,11 @@ const KIND_BY_EXTENSION = new Map<string, ArtifactKind>([
   [".diff", "diff"],
   [".json", "json"],
   [".svg", "svg"],
+  [".png", "image"],
+  [".jpg", "image"],
+  [".jpeg", "image"],
+  [".gif", "image"],
+  [".webp", "image"],
   [".md", "text"],
   [".txt", "text"],
 ]);
@@ -66,17 +68,28 @@ export function assertArtifactId(value: unknown): string {
  */
 export async function indexArtifactDirectory(directory: string): Promise<ArtifactEntry[]> {
   const root = resolve(directory);
+  const physicalRoot = await realpath(root);
   const entries: ArtifactEntry[] = [];
   const used = new Set<string>();
   for (const name of (await readdir(root)).sort()) {
     const path = confineToRoot(root, name);
-    const stats = await stat(path);
-    if (!stats.isFile()) continue;
+    const stats = await lstat(path);
+    // Artifact directories are data boundaries. Following a symlink would let
+    // an otherwise harmless catalog id read bytes outside that boundary.
+    if (!stats.isFile() || stats.isSymbolicLink()) continue;
+    const physicalPath = await realpath(path);
+    if (!isWithinRoot(physicalRoot, physicalPath)) continue;
     const id = uniqueId(basename(name, extname(name)), used);
     used.add(id);
     entries.push({ id, kind: resolveArtifactKind(name), label: name, path, size: stats.size });
   }
   return entries;
+}
+
+function isWithinRoot(root: string, target: string): boolean {
+  const resolvedRoot = resolve(root);
+  const resolvedTarget = resolve(target);
+  return resolvedTarget === resolvedRoot || resolvedTarget.startsWith(resolvedRoot + sep);
 }
 
 export function describeArtifacts(entries: readonly ArtifactEntry[]): ArtifactDescriptor[] {

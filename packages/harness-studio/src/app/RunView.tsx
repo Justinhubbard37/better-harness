@@ -236,10 +236,12 @@ function stopConditionLabel(enabled: StopConditionState): string {
 
 export function RunView({
   aguiEndpoint,
+  artifactEndpoint,
   navigation,
   initialMode = "live",
 }: {
   aguiEndpoint: string;
+  artifactEndpoint?: string;
   navigation?: ReactNode;
   initialMode?: SurfaceMode;
 }): React.JSX.Element {
@@ -427,7 +429,7 @@ export function RunView({
     <div className="debugger-grid">
       {live ? <LiveExecutionTree state={viewState} prompt={viewPrompt} /> : <ExecutionTree session={retainedSession} cursor={cursor} expanded={expandedNodes} onToggle={toggleExpanded} onSelect={selectNode} />}
       {live ? <LiveNotebook state={viewState} prompt={viewPrompt} groups={liveGroups} /> : <SessionNotebook session={retainedSession} cursor={cursor} expanded={expandedNodes} onSelect={selectCursor} onToggle={toggleExpanded} />}
-      {live ? <LiveInspector state={viewState} /> : <StateInspector session={retainedSession} cursor={cursor} activeTab={inspectorTab} onTab={setInspectorTab} onPrevious={() => selectCursor(previousStateCursor(retainedSession, cursor))} />}
+      {live ? <LiveInspector state={viewState} /> : <StateInspector session={retainedSession} cursor={cursor} activeTab={inspectorTab} artifactEndpoint={artifactEndpoint} onTab={setInspectorTab} onPrevious={() => selectCursor(previousStateCursor(retainedSession, cursor))} />}
     </div>
 
     {live ? <LiveTimeline state={viewState} bins={liveBins} eventCount={liveTimeline.length} /> : <TimelineMinimap session={retainedSession} cursor={cursor} onSelect={selectCursor} />}
@@ -551,25 +553,25 @@ function ValidationCell({ event }: { event: DebuggerEvent }): React.JSX.Element 
   return <section className={`validation-cell ${validation.status}`}><header><span><StatusIcon size={15} weight="fill" /><strong>{validation.command}</strong></span><time>{validation.duration}</time></header><p>{validation.summary}</p><ul>{validation.output.map((line) => <li key={line}>{line}</li>)}</ul></section>;
 }
 
-function StateInspector(props: { session: DebuggerSession; cursor: DebuggerCursor; activeTab: InspectorTab; onTab: (tab: InspectorTab) => void; onPrevious: () => void }): React.JSX.Element {
+function StateInspector(props: { session: DebuggerSession; cursor: DebuggerCursor; activeTab: InspectorTab; artifactEndpoint?: string; onTab: (tab: InspectorTab) => void; onPrevious: () => void }): React.JSX.Element {
   const event = eventForCursor(props.session, props.cursor);
   const previous = priorStopEvent(props.session, props.cursor);
   const tablist = useRovingTablist({ ids: INSPECTOR_TABS.map((tab) => tab.id), active: props.activeTab, onSelect: props.onTab, panelId: "state-inspector-panel" });
   return <aside className="state-inspector" aria-label="State Inspector">
     <header><div><small>State Inspector</small><strong>{event.phase} · {event.timestamp}</strong></div><span>{props.cursor.toolCallId ? "Tool Call Cursor" : "Evidence Cursor"}</span></header>
     <nav className="inspector-tabs" aria-label="State Inspector views" {...tablist.tablistProps}>{INSPECTOR_TABS.map((tab) => { const TabIcon = tab.icon; return <button key={tab.id} type="button" {...tablist.getTabProps(tab.id)} onClick={() => props.onTab(tab.id)}><TabIcon size={14} /><span>{tab.label}</span></button>; })}</nav>
-    <div className="inspector-scroll" id="state-inspector-panel" role="tabpanel"><div className="inspector-comparison"><strong>{INSPECTOR_TABS.find((tab) => tab.id === props.activeTab)?.label} at {event.timestamp}</strong><span>Compared with {previous?.timestamp ?? "session start"}</span></div><InspectorContent session={props.session} tab={props.activeTab} cursor={props.cursor} /></div>
+    <div className="inspector-scroll" id="state-inspector-panel" role="tabpanel"><div className="inspector-comparison"><strong>{INSPECTOR_TABS.find((tab) => tab.id === props.activeTab)?.label} at {event.timestamp}</strong><span>Compared with {previous?.timestamp ?? "session start"}</span></div><InspectorContent session={props.session} tab={props.activeTab} cursor={props.cursor} artifactEndpoint={props.artifactEndpoint} /></div>
     <footer><button type="button" onClick={props.onPrevious}><ClockCounterClockwise size={13} />Previous State</button><button type="button"><Clock size={13} />View History</button></footer>
   </aside>;
 }
 
-function InspectorContent({ session, tab, cursor }: { session: DebuggerSession; tab: InspectorTab; cursor: DebuggerCursor }): React.JSX.Element {
+function InspectorContent({ session, tab, cursor, artifactEndpoint }: { session: DebuggerSession; tab: InspectorTab; cursor: DebuggerCursor; artifactEndpoint?: string }): React.JSX.Element {
   const event = eventForCursor(session, cursor);
   const tool = toolForCursor(session, cursor);
   const cumulative = cumulativeFileChanges(session, cursor);
   if (tab === "changes") return <ChangesInspector event={event} cumulative={cumulative} />;
   if (tab === "files") return <FilesInspector session={session} files={cumulative} />;
-  if (tab === "artifacts") return <ArtifactsInspector event={event} />;
+  if (tab === "artifacts") return <ArtifactsInspector endpoint={artifactEndpoint} />;
   if (tab === "tests") return <TestsInspector session={session} event={event} />;
   if (tab === "terminal") return <TerminalInspector event={event} />;
   if (tab === "plan") return <PlanInspector event={event} />;
@@ -593,8 +595,25 @@ function FilesInspector({ session, files }: { session: DebuggerSession; files: D
   return <><InspectorSection title="Observed files" count={files.length}>{files.length > 0 ? <FileRows files={files} /> : <p className="inspector-empty">No modified file observed before this cursor.</p>}</InspectorSection><InspectorSection title="Exploration ledger" count={resources.length}>{resources.length === 0 ? <p className="inspector-empty">No retained file resources in this session.</p> : <ul className="simple-rows">{resources.map((file, index) => <li key={`${file}:${index}`}><FileText size={13} /><code>{file}</code><span>Retained</span></li>)}</ul>}</InspectorSection></>;
 }
 
-function ArtifactsInspector({ event }: { event: DebuggerEvent }): React.JSX.Element {
-  return <><InspectorSection title="Retained artifacts"><ul className="simple-rows"><li><ImageSquare size={13} /><span>acp-debugger-reference.png</span><em>Input</em></li><li><BracketsCurly size={13} /><span>session-debugger-state.json</span><em>{event.timestamp}</em></li></ul></InspectorSection><InspectorSection title="Boundary"><p className="inspector-note">Artifact rows belong to this recorded sample. They are not a restorable workspace snapshot.</p></InspectorSection></>;
+function ArtifactsInspector({ endpoint }: { endpoint?: string }): React.JSX.Element {
+  const [artifacts, setArtifacts] = useState<Array<{ id: string; label: string; renderer: string }>>();
+  const [failure, setFailure] = useState<string>();
+  useEffect(() => {
+    if (endpoint === undefined) return;
+    const controller = new AbortController();
+    void fetch(endpoint, { signal: controller.signal }).then(async (response) => {
+      if (!response.ok) throw new Error(`Artifact catalog failed (${response.status}).`);
+      const payload = await response.json() as { artifacts?: Array<{ id: string; label: string; renderer: string }> };
+      setArtifacts(Array.isArray(payload.artifacts) ? payload.artifacts : []);
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
+    });
+    return () => controller.abort();
+  }, [endpoint]);
+  if (endpoint === undefined) return <InspectorSection title="Retained artifacts"><p className="inspector-empty">No artifact directory is configured for this Studio run.</p></InspectorSection>;
+  if (failure !== undefined) return <InspectorSection title="Retained artifacts"><p className="inspector-empty">{failure}</p></InspectorSection>;
+  if (artifacts === undefined) return <InspectorSection title="Retained artifacts"><p className="inspector-empty">Loading artifact catalog…</p></InspectorSection>;
+  return <><InspectorSection title="Retained artifacts" count={artifacts.length}>{artifacts.length === 0 ? <p className="inspector-empty">The configured artifact directory is empty.</p> : <ul className="simple-rows">{artifacts.map((artifact) => <li key={artifact.id}><FileText size={13} /><span>{artifact.label}</span><em>{artifact.renderer}</em></li>)}</ul>}</InspectorSection><InspectorSection title="Boundary"><p className="inspector-note">These rows come from the configured read-only artifact catalog. They are not a restorable workspace snapshot.</p></InspectorSection></>;
 }
 
 function TestsInspector({ session, event }: { session: DebuggerSession; event: DebuggerEvent }): React.JSX.Element {

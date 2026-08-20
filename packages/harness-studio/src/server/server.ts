@@ -1,8 +1,10 @@
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { mkdtemp, open, realpath, rm, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { dirname, extname, normalize, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import {
   assertBindAddressAllowed,
   handleAguiRun,
@@ -52,7 +54,19 @@ import {
   indexArtifactDirectory,
   type ArtifactEntry,
 } from "./artifact-catalog.js";
-import { compileArtifactModule, formatArtifactCompileError } from "./artifact-compile.js";
+import { compileCanvasViewerModule, formatCanvasViewerCompileError } from "./canvas-viewer-compile.js";
+import {
+  discoverCanvasViewers,
+  matchCanvasViewer,
+  presentArtifact,
+  type CanvasViewer,
+} from "./artifact-viewers.js";
+import {
+  prepareCanvasViewer,
+  resolveCanvasRuntime,
+  serveRuntimeFile,
+  type CanvasRuntime,
+} from "./artifact-viewer-runtime.js";
 
 const builtInExecutorFactory: HarnessUiExecutorFactory = (context) => {
   if (context.runtimeId === "qoder") {
@@ -71,7 +85,24 @@ const CONTENT_TYPES: Record<string, string> = {
   ".json": "application/json",
   ".map": "application/json",
   ".svg": "image/svg+xml",
+  ".txt": "text/plain; charset=utf-8",
+  ".md": "text/markdown; charset=utf-8",
+  ".tsx": "text/plain; charset=utf-8",
+  ".ts": "text/plain; charset=utf-8",
+  ".jsx": "text/plain; charset=utf-8",
+  ".patch": "text/plain; charset=utf-8",
+  ".diff": "text/plain; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
 };
+
+const MAX_IMPORT_FILES = 256;
+const MAX_IMPORT_BYTES = 128 * 1024 * 1024;
+const MAX_IMPORT_SESSIONS = 4;
+const IMPORT_SESSION_TTL_MS = 10 * 60 * 1000;
 
 export interface HarnessStudioServerOptions {
   /** Directory holding the built React app (index.html + assets/). */
@@ -91,6 +122,12 @@ export interface HarnessStudioServerOptions {
   runDirectory?: string;
   /** Directory of run-produced artifacts exposed read-only under /api/artifacts. */
   artifactDirectory?: string;
+  /** Provisioned Canvas format viewers (default: $QODER_HOME/canvas/canvases). */
+  canvasViewerRoot?: string;
+  /** Canvas SDK checkout used to host trusted format viewers. */
+  canvasSdkRoot?: string;
+  /** Prebuilt Canvas SDK media directory containing canvas-sdk.js and index-canvas.html. */
+  canvasSdkMedia?: string;
   /** Additional bounded source candidates selectable from inside Studio. */
   sourceCatalog?: StudioSourceCandidate[];
   executorFactory?: HarnessUiExecutorFactory;
@@ -142,10 +179,28 @@ export function createHarnessStudioServer(options: HarnessStudioServerOptions): 
         ? undefined
         : createCheckpointHistoryCatalogAdapter(options.checkpointHistoryCatalogPath)),
     observedIndexes: new Map(),
+    artifactDirectory: options.artifactDirectory,
+    artifactImports: new Map(),
   };
-  return createServer((request, response) => {
-    void route(request, response, options, state, experimentRuns);
+  const server = createServer((request, response) => {
+    void route(request, response, options, state, experimentRuns).catch((error: unknown) => {
+      if (response.headersSent) {
+        response.destroy(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+      respondJson(response, 500, { error: "Harness Studio could not complete this request." });
+    });
   });
+  server.once("close", () => { void cleanupArtifactImports(state); });
+  return server;
+}
+
+interface ArtifactImportSession {
+  directory: string;
+  fileCount: number;
+  totalBytes: number;
+  labels: Set<string>;
+  expiry: NodeJS.Timeout;
 }
 
 interface HarnessStudioState {
@@ -157,6 +212,15 @@ interface HarnessStudioState {
   historyAdapter?: CheckpointHistoryAdapter;
   lockReceipt?: ExperimentLockReceipt;
   observedIndexes: Map<string, ObservedCallIndex>;
+  artifactDirectory?: string;
+  ownedArtifactDirectory?: string;
+  artifactImports: Map<string, ArtifactImportSession>;
+}
+
+function artifactOptions(options: HarnessStudioServerOptions, state: HarnessStudioState): HarnessStudioServerOptions {
+  return state.artifactDirectory === options.artifactDirectory
+    ? options
+    : { ...options, artifactDirectory: state.artifactDirectory };
 }
 
 async function route(
@@ -170,7 +234,7 @@ async function route(
   if (request.method === "GET" && url.pathname === "/api/config") {
     respondJson(response, 200, {
       aguiEnabled: options.harnessSource !== undefined,
-      artifactsEnabled: options.artifactDirectory !== undefined,
+      artifactsEnabled: state.artifactDirectory !== undefined,
       evidenceEnabled: activeSourcePath(state.sourceCatalog, state.activeSources, "evidence") !== undefined,
       experimentEnabled: state.activeManifestPath !== undefined,
       historyEnabled: state.historyAdapter !== undefined,
@@ -195,7 +259,8 @@ async function route(
   }
   const runRead = url.pathname.match(/^\/api\/runs\/([^/]+)(?:\/(session))?$/);
   if (url.pathname === "/api/runs" || runRead !== null) {
-    await routeRuns(request, response, options, url, runRead === null ? undefined : decodeURIComponent(runRead[1]!), runRead?.[2] === "session");
+    const runId = runRead === null ? undefined : decodeRouteComponent(response, runRead[1]!);
+    if (runRead === null || runId !== undefined) await routeRuns(request, response, options, url, runId, runRead?.[2] === "session");
     return;
   }
   if (request.method === "GET" && url.pathname === "/inspector") {
@@ -228,7 +293,8 @@ async function route(
   }
   const cancellation = url.pathname.match(/^\/api\/experiment\/runs\/([^/]+)$/);
   if (request.method === "DELETE" && cancellation !== null) {
-    const runId = decodeURIComponent(cancellation[1]!);
+    const runId = decodeRouteComponent(response, cancellation[1]!);
+    if (runId === undefined) return;
     const controller = experimentRuns.get(runId);
     if (controller === undefined) {
       respondJson(response, 404, { error: `Experiment run '${runId}' is not running.` });
@@ -243,17 +309,58 @@ async function route(
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/artifacts") {
-    await serveArtifactCatalog(response, options.artifactDirectory);
+    await serveArtifactCatalog(response, artifactOptions(options, state));
     return;
   }
-  const artifactModule = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/module\.js$/);
-  if (request.method === "GET" && artifactModule !== null) {
-    await serveArtifactModule(response, options.artifactDirectory, decodeURIComponent(artifactModule[1]!));
+  if (request.method === "POST" && url.pathname === "/api/artifact-imports") {
+    await createArtifactImport(request, response, state);
     return;
   }
-  const artifactModuleMap = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/module\.js\.map$/);
-  if (request.method === "GET" && artifactModuleMap !== null) {
-    await serveArtifactModuleMap(response, options.artifactDirectory, decodeURIComponent(artifactModuleMap[1]!));
+  const artifactImportFile = url.pathname.match(/^\/api\/artifact-imports\/([^/]+)\/files$/);
+  if (request.method === "PUT" && artifactImportFile !== null) {
+    const sessionId = decodeRouteComponent(response, artifactImportFile[1]!);
+    if (sessionId !== undefined) await importArtifactFile(request, response, state, sessionId, url.searchParams.get("name"));
+    return;
+  }
+  const artifactImportCommit = url.pathname.match(/^\/api\/artifact-imports\/([^/]+)\/commit$/);
+  if (request.method === "POST" && artifactImportCommit !== null) {
+    const sessionId = decodeRouteComponent(response, artifactImportCommit[1]!);
+    if (sessionId !== undefined) await commitArtifactImport(request, response, state, sessionId);
+    return;
+  }
+  const artifactImportAbort = url.pathname.match(/^\/api\/artifact-imports\/([^/]+)$/);
+  if (request.method === "DELETE" && artifactImportAbort !== null) {
+    const sessionId = decodeRouteComponent(response, artifactImportAbort[1]!);
+    if (sessionId !== undefined) await abortArtifactImport(request, response, state, sessionId);
+    return;
+  }
+  const artifactContent = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/content$/);
+  if (request.method === "GET" && artifactContent !== null) {
+    const id = decodeRouteComponent(response, artifactContent[1]!);
+    if (id !== undefined) await serveArtifactContent(response, state.artifactDirectory, id);
+    return;
+  }
+  const artifactViewer = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/viewer\/(?:index\.html)?$/);
+  if (request.method === "GET" && artifactViewer !== null) {
+    const id = decodeRouteComponent(response, artifactViewer[1]!);
+    if (id !== undefined) await serveArtifactViewer(response, artifactOptions(options, state), id);
+    return;
+  }
+  const artifactViewerModule = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/viewer\/canvas-module\.js(?:\.map)?$/);
+  if (request.method === "GET" && artifactViewerModule !== null) {
+    const id = decodeRouteComponent(response, artifactViewerModule[1]!);
+    if (id !== undefined) await serveArtifactViewerModule(response, artifactOptions(options, state), id, url.pathname.endsWith(".map"));
+    return;
+  }
+  const artifactViewerResource = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/viewer\/(runtime\/.*)$/);
+  if (request.method === "GET" && artifactViewerResource !== null) {
+    const id = decodeRouteComponent(response, artifactViewerResource[1]!);
+    const resource = decodeRouteComponent(response, artifactViewerResource[2]!);
+    if (id !== undefined && resource !== undefined) await serveArtifactViewerResource(response, artifactOptions(options, state), id, resource);
+    return;
+  }
+  if (request.method === "GET" && (url.pathname === "/canvas-sdk.js" || url.pathname === "/canvas-sdk.js.map")) {
+    await serveCanvasSdk(response, options, url.pathname.endsWith(".map"));
     return;
   }
   if (url.pathname === "/agui" || url.pathname === "/healthz") {
@@ -284,6 +391,182 @@ async function route(
   respondJson(response, 404, { error: `No route for ${request.method} ${url.pathname}` });
 }
 
+async function createArtifactImport(
+  request: IncomingMessage,
+  response: ServerResponse,
+  state: HarnessStudioState,
+): Promise<void> {
+  if (!sameOriginRequest(request)) {
+    respondJson(response, 403, { error: "Cross-origin artifact imports are not allowed." });
+    return;
+  }
+  if (state.artifactImports.size >= MAX_IMPORT_SESSIONS) {
+    respondJson(response, 429, { error: "Too many artifact import sessions are open." });
+    return;
+  }
+  const sessionId = randomUUID();
+  const directory = await mkdtemp(join(tmpdir(), "harness-studio-import-"));
+  const expiry = setTimeout(() => { void removeArtifactImport(state, sessionId); }, IMPORT_SESSION_TTL_MS);
+  expiry.unref();
+  state.artifactImports.set(sessionId, { directory, fileCount: 0, totalBytes: 0, labels: new Set(), expiry });
+  respondJson(response, 201, { sessionId, maxFiles: MAX_IMPORT_FILES, maxBytes: MAX_IMPORT_BYTES });
+}
+
+async function importArtifactFile(
+  request: IncomingMessage,
+  response: ServerResponse,
+  state: HarnessStudioState,
+  sessionId: string,
+  requestedName: string | null,
+): Promise<void> {
+  if (!sameOriginRequest(request)) {
+    respondJson(response, 403, { error: "Cross-origin artifact imports are not allowed." });
+    return;
+  }
+  const session = artifactImportSession(state, sessionId);
+  if (session === undefined) {
+    respondJson(response, 404, { error: "Artifact import session is unavailable." });
+    return;
+  }
+  if (session.fileCount >= MAX_IMPORT_FILES) {
+    respondJson(response, 413, { error: `Artifact imports are limited to ${MAX_IMPORT_FILES} files.` });
+    return;
+  }
+  const declaredBytes = Number(request.headers["content-length"]);
+  if (Number.isFinite(declaredBytes) && declaredBytes >= 0 && session.totalBytes + declaredBytes > MAX_IMPORT_BYTES) {
+    request.resume();
+    respondJson(response, 413, { error: "Artifact import exceeds the 128 MiB aggregate limit." });
+    return;
+  }
+  let label: string;
+  try {
+    label = uniqueImportLabel(portableImportLabel(requestedName), session.labels);
+  } catch (error) {
+    respondJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+    return;
+  }
+  const chunks: Buffer[] = [];
+  let fileBytes = 0;
+  let destination: string | undefined;
+  try {
+    for await (const chunk of request) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      fileBytes += bytes.length;
+      if (session.totalBytes + fileBytes > MAX_IMPORT_BYTES) throw new Error("Artifact import exceeds the 128 MiB aggregate limit.");
+      chunks.push(bytes);
+    }
+    destination = join(session.directory, label);
+    const handle = await open(destination, "wx");
+    try {
+      await handle.writeFile(Buffer.concat(chunks));
+    } finally {
+      await handle.close();
+    }
+    session.fileCount += 1;
+    session.totalBytes += fileBytes;
+    session.labels.add(label.toLowerCase());
+    respondJson(response, 201, { label, size: fileBytes });
+  } catch (error) {
+    if (destination !== undefined) await rm(destination, { force: true });
+    respondJson(response, 413, { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function commitArtifactImport(
+  request: IncomingMessage,
+  response: ServerResponse,
+  state: HarnessStudioState,
+  sessionId: string,
+): Promise<void> {
+  if (!sameOriginRequest(request)) {
+    respondJson(response, 403, { error: "Cross-origin artifact imports are not allowed." });
+    return;
+  }
+  const session = artifactImportSession(state, sessionId);
+  if (session === undefined) {
+    respondJson(response, 404, { error: "Artifact import session is unavailable." });
+    return;
+  }
+  if (session.fileCount === 0) {
+    respondJson(response, 400, { error: "Select at least one artifact before committing the import." });
+    return;
+  }
+  clearTimeout(session.expiry);
+  state.artifactImports.delete(sessionId);
+  const previous = state.ownedArtifactDirectory;
+  state.artifactDirectory = session.directory;
+  state.ownedArtifactDirectory = session.directory;
+  if (previous !== undefined && previous !== session.directory) {
+    await rm(previous, { recursive: true, force: true }).catch(() => undefined);
+  }
+  respondJson(response, 200, { imported: session.fileCount, totalBytes: session.totalBytes });
+}
+
+async function abortArtifactImport(
+  request: IncomingMessage,
+  response: ServerResponse,
+  state: HarnessStudioState,
+  sessionId: string,
+): Promise<void> {
+  if (!sameOriginRequest(request)) {
+    respondJson(response, 403, { error: "Cross-origin artifact imports are not allowed." });
+    return;
+  }
+  if (artifactImportSession(state, sessionId) === undefined) {
+    respondJson(response, 404, { error: "Artifact import session is unavailable." });
+    return;
+  }
+  await removeArtifactImport(state, sessionId);
+  respondJson(response, 200, { aborted: true });
+}
+
+function artifactImportSession(state: HarnessStudioState, sessionId: string): ArtifactImportSession | undefined {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(sessionId)
+    ? state.artifactImports.get(sessionId)
+    : undefined;
+}
+
+function portableImportLabel(value: string | null): string {
+  if (value === null || value.trim() === "") throw new Error("Artifact file name is required.");
+  const segments = value.replaceAll("\\", "/").split("/").filter((segment) => segment !== "");
+  if (segments.length === 0 || segments.some((segment) => segment === "." || segment === "..")) {
+    throw new Error("Artifact file name must not contain traversal segments.");
+  }
+  const flattened = segments.join("--")
+    .replace(/[<>:"|?*\u0000-\u001f]/gu, "-")
+    .replace(/[. ]+$/u, "")
+    .slice(0, 180);
+  if (flattened === "") throw new Error("Artifact file name has no portable characters.");
+  return /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(flattened) ? `_${flattened}` : flattened;
+}
+
+function uniqueImportLabel(label: string, used: ReadonlySet<string>): string {
+  if (!used.has(label.toLowerCase())) return label;
+  const extension = extname(label);
+  const stem = label.slice(0, label.length - extension.length);
+  for (let suffix = 2; suffix <= MAX_IMPORT_FILES; suffix += 1) {
+    const candidate = `${stem}-${suffix}${extension}`;
+    if (!used.has(candidate.toLowerCase())) return candidate;
+  }
+  throw new Error("Artifact file name cannot be made unique.");
+}
+
+async function removeArtifactImport(state: HarnessStudioState, sessionId: string): Promise<void> {
+  const session = state.artifactImports.get(sessionId);
+  if (session === undefined) return;
+  clearTimeout(session.expiry);
+  state.artifactImports.delete(sessionId);
+  await rm(session.directory, { recursive: true, force: true });
+}
+
+async function cleanupArtifactImports(state: HarnessStudioState): Promise<void> {
+  await Promise.all([...state.artifactImports.keys()].map((sessionId) => removeArtifactImport(state, sessionId)));
+  if (state.ownedArtifactDirectory !== undefined) {
+    await rm(state.ownedArtifactDirectory, { recursive: true, force: true });
+    state.ownedArtifactDirectory = undefined;
+  }
+}
+
 /**
  * Resolve an artifact through the catalog. The client only ever names an opaque
  * id, so no request can turn into a filesystem path of its own choosing.
@@ -293,7 +576,7 @@ async function resolveArtifactEntry(
   id: string,
 ): Promise<{ entry: ArtifactEntry } | { error: string; status: number }> {
   if (directory === undefined) {
-    return { error: "No artifact directory loaded; start with --artifacts <dir>.", status: 404 };
+    return { error: "No artifact set loaded; choose files or a folder in Artifacts.", status: 404 };
   }
   try {
     assertArtifactId(id);
@@ -316,13 +599,22 @@ async function resolveArtifactEntry(
   return { entry };
 }
 
-async function serveArtifactCatalog(response: ServerResponse, directory: string | undefined): Promise<void> {
-  if (directory === undefined) {
-    respondJson(response, 404, { error: "No artifact directory loaded; start with --artifacts <dir>." });
+async function serveArtifactCatalog(response: ServerResponse, options: HarnessStudioServerOptions): Promise<void> {
+  if (options.artifactDirectory === undefined) {
+    respondJson(response, 404, { error: "No artifact set loaded; choose files or a folder in Artifacts." });
     return;
   }
   try {
-    respondJson(response, 200, { artifacts: describeArtifacts(await indexArtifactDirectory(directory)) });
+    const [entries, viewers] = await Promise.all([
+      indexArtifactDirectory(options.artifactDirectory),
+      discoverCanvasViewers(options.canvasViewerRoot),
+    ]);
+    respondJson(response, 200, {
+      artifacts: describeArtifacts(entries).map((descriptor, index) => ({
+        ...descriptor,
+        ...presentArtifact(entries[index]!, viewers),
+      })),
+    });
   } catch {
     respondJson(response, 404, { error: "Cannot read the configured artifact directory." });
   }
@@ -343,7 +635,7 @@ function respondArtifactJson(response: ServerResponse, status: number, payload: 
   response.end(`${JSON.stringify(payload)}\n`);
 }
 
-async function serveArtifactModule(
+async function serveArtifactContent(
   response: ServerResponse,
   directory: string | undefined,
   id: string,
@@ -353,46 +645,137 @@ async function serveArtifactModule(
     respondArtifactJson(response, resolved.status, { error: resolved.error });
     return;
   }
-  if (resolved.entry.kind !== "module") {
-    respondArtifactJson(response, 415, { error: `Artifact '${id}' is not a compilable module.` });
+  try {
+    const stats = await stat(resolved.entry.path);
+    response.writeHead(200, {
+      "Content-Type": CONTENT_TYPES[extname(resolved.entry.label).toLowerCase()] ?? "application/octet-stream",
+      "Content-Length": stats.size,
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+      "Access-Control-Allow-Origin": "*",
+    });
+    createReadStream(resolved.entry.path).pipe(response);
+  } catch {
+    respondArtifactJson(response, 404, { error: `Artifact '${id}' is no longer readable.` });
+  }
+}
+
+async function resolveArtifactViewer(
+  options: HarnessStudioServerOptions,
+  id: string,
+): Promise<{ entry: ArtifactEntry; viewer: CanvasViewer; runtime: CanvasRuntime } | { error: string; status: number }> {
+  const resolved = await resolveArtifactEntry(options.artifactDirectory, id);
+  if ("error" in resolved) return resolved;
+  const viewers = await discoverCanvasViewers(options.canvasViewerRoot);
+  const viewer = matchCanvasViewer(resolved.entry, viewers);
+  if (viewer === undefined || presentArtifact(resolved.entry, viewers).renderer !== "canvas") {
+    return { error: `Artifact '${id}' has no Canvas viewer.`, status: 415 };
+  }
+  const runtime = resolveCanvasRuntime({ sdkRoot: options.canvasSdkRoot, sdkMedia: options.canvasSdkMedia, cwd: options.cwd });
+  if (runtime === undefined) return { error: "Canvas SDK runtime is unavailable.", status: 503 };
+  return { entry: resolved.entry, viewer, runtime };
+}
+
+async function serveArtifactViewer(
+  response: ServerResponse,
+  options: HarnessStudioServerOptions,
+  id: string,
+): Promise<void> {
+  const resolved = await resolveArtifactViewer(options, id);
+  if ("error" in resolved) {
+    respondArtifactJson(response, resolved.status, { error: resolved.error });
     return;
   }
   try {
-    const compiled = await compileArtifactModule(resolved.entry.path);
+    const prepared = await prepareCanvasViewer(
+      resolved.entry,
+      resolved.viewer,
+      resolved.runtime,
+      `/api/artifacts/${id}/viewer/canvas-module.js?v=1`,
+    );
+    response.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "Content-Security-Policy": "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; worker-src blob:;",
+      "X-Content-Type-Options": "nosniff",
+    });
+    response.end(prepared.html);
+  } catch (error) {
+    respondArtifactJson(response, 422, { error: formatCanvasViewerCompileError(error) });
+  }
+}
+
+async function serveArtifactViewerModule(
+  response: ServerResponse,
+  options: HarnessStudioServerOptions,
+  id: string,
+  map: boolean,
+): Promise<void> {
+  const resolved = await resolveArtifactViewer(options, id);
+  if ("error" in resolved) {
+    respondArtifactJson(response, resolved.status, { error: resolved.error });
+    return;
+  }
+  try {
+    const compiled = await compileCanvasViewerModule(resolved.viewer.modulePath);
+    if (map) {
+      respondArtifactJson(response, 200, JSON.parse(compiled.map));
+      return;
+    }
     response.writeHead(200, {
       "Content-Type": CONTENT_TYPES[".js"]!,
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
-      // The artifact iframe is sandboxed without allow-same-origin, so it has an
-      // opaque origin and this module counts as a cross-origin module script.
       "Access-Control-Allow-Origin": "*",
     });
-    // The sourcemap comment names the sibling route rather than the artifact
-    // file, so the browser resolves it against this URL and reaches the map.
-    response.end(`${compiled.code}//# sourceMappingURL=module.js.map\n`);
+    response.end(`${compiled.code}//# sourceMappingURL=canvas-module.js.map\n`);
   } catch (error) {
-    respondArtifactJson(response, 422, { error: formatArtifactCompileError(error) });
+    respondArtifactJson(response, 422, { error: formatCanvasViewerCompileError(error) });
   }
 }
 
-async function serveArtifactModuleMap(
+async function serveCanvasSdk(response: ServerResponse, options: HarnessStudioServerOptions, map: boolean): Promise<void> {
+  const runtime = resolveCanvasRuntime({ sdkRoot: options.canvasSdkRoot, sdkMedia: options.canvasSdkMedia, cwd: options.cwd });
+  const path = map ? runtime?.sdkMapPath : runtime?.sdkPath;
+  if (path === undefined) {
+    respondArtifactJson(response, 404, { error: "Canvas SDK runtime asset is unavailable." });
+    return;
+  }
+  await serveRuntimeFile(response, path, map ? "application/json" : CONTENT_TYPES[".js"]!);
+}
+
+async function serveArtifactViewerResource(
   response: ServerResponse,
-  directory: string | undefined,
+  options: HarnessStudioServerOptions,
   id: string,
+  resource: string,
 ): Promise<void> {
-  const resolved = await resolveArtifactEntry(directory, id);
+  const resolved = await resolveArtifactViewer(options, id);
   if ("error" in resolved) {
     respondArtifactJson(response, resolved.status, { error: resolved.error });
     return;
   }
-  if (resolved.entry.kind !== "module") {
-    respondArtifactJson(response, 415, { error: `Artifact '${id}' is not a compilable module.` });
+  const root = await realpath(resolved.viewer.rootPath);
+  const candidate = resolve(root, resource);
+  if (candidate !== root && !candidate.startsWith(root + sep)) {
+    respondArtifactJson(response, 400, { error: "Canvas viewer resource escapes its viewer root." });
     return;
   }
   try {
-    respondArtifactJson(response, 200, JSON.parse((await compileArtifactModule(resolved.entry.path)).map));
-  } catch (error) {
-    respondArtifactJson(response, 422, { error: formatArtifactCompileError(error) });
+    const physical = await realpath(candidate);
+    if (physical !== root && !physical.startsWith(root + sep)) throw new Error("escape");
+    await serveRuntimeFile(response, physical, CONTENT_TYPES[extname(physical).toLowerCase()] ?? "application/octet-stream");
+  } catch {
+    respondArtifactJson(response, 404, { error: "Canvas viewer resource is unavailable." });
+  }
+}
+
+function decodeRouteComponent(response: ServerResponse, value: string): string | undefined {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    respondJson(response, 400, { error: "Malformed URL path segment." });
+    return undefined;
   }
 }
 
