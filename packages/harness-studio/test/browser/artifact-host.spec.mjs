@@ -3,6 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { HarnessRunEmitter } from "@qoder-ai/harness/exec";
 import { resolveCanvasRuntime } from "../../dist/server/artifact-viewer-runtime.js";
 import { discoverCanvasViewers, matchCanvasViewer } from "../../dist/server/artifact-viewers.js";
 import { startHarnessStudioServer } from "../../dist/server/server.js";
@@ -88,6 +89,23 @@ test.beforeAll(async () => {
         };
       },
     },
+    executorFactory: (context) => ({
+      host: "qoder",
+      async execute(revision, _bundle, task) {
+        const emitter = new HarnessRunEmitter(context.onRunEvent);
+        emitter.start({ revisionId: revision.revisionId, host: "qoder" });
+        emitter.text(`default harness: ${task.prompt}`);
+        emitter.finish(0);
+        return {
+          host: "qoder",
+          revisionId: revision.revisionId,
+          exitCode: 0,
+          output: `default harness: ${task.prompt}`,
+          errorOutput: "",
+          warnings: [],
+        };
+      },
+    }),
   });
 });
 
@@ -173,13 +191,51 @@ test("gives artifact rows a visible keyboard focus ring", async ({ page }) => {
   expect(Number.parseFloat(await row.evaluate((element) => getComputedStyle(element).outlineWidth))).toBeGreaterThan(0);
 });
 
+test("persists the explicit Studio theme and keeps core contrast accessible", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto(studio.url);
+  const contrast = async () => page.evaluate(() => {
+    const parse = (value) => value.match(/[\d.]+/g)?.slice(0, 3).map(Number) ?? [0, 0, 0];
+    const luminance = (value) => parse(value).map((channel) => {
+      const normalized = channel / 255;
+      return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+    }).reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
+    const ratio = (foreground, background) => {
+      const light = Math.max(luminance(foreground), luminance(background));
+      const dark = Math.min(luminance(foreground), luminance(background));
+      return (light + 0.05) / (dark + 0.05);
+    };
+    const body = getComputedStyle(document.body);
+    const primary = getComputedStyle(document.querySelector("button.primary"));
+    return {
+      body: ratio(body.color, body.backgroundColor),
+      primary: ratio(primary.color, primary.backgroundColor),
+    };
+  });
+
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  const darkContrast = await contrast();
+  expect(darkContrast.body).toBeGreaterThanOrEqual(4.5);
+  expect(darkContrast.primary).toBeGreaterThanOrEqual(4.5);
+  await page.getByRole("button", { name: /Dark theme active/ }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  const lightContrast = await contrast();
+  expect(lightContrast.body).toBeGreaterThanOrEqual(4.5);
+  expect(lightContrast.primary).toBeGreaterThanOrEqual(4.5);
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.getByRole("button", { name: /Light theme active/ }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)).toBe(false);
+});
+
 test("opens a project workspace and compares Inspector-discovered Sessions", async ({ page }) => {
   const failures = watchFailures(page);
   await page.goto(emptyStudio.url);
-  const openWorkspace = page.getByRole("button", { name: "Open workspace" }).first();
-  await expect(openWorkspace).toBeEnabled();
-  await openWorkspace.click();
-  await expect(page.getByRole("heading", { name: "Open a project workspace" })).toBeVisible();
+  const gate = page.getByRole("dialog", { name: "Open a workspace to start" });
+  await expect(gate).toBeVisible();
+  await expect(page.locator(".studio-control-plane")).toHaveAttribute("inert", "");
+  await expect(page.locator(".studio-control-plane")).toHaveAttribute("aria-hidden", "true");
   await expect(page.getByRole("button", { name: "Choose workspace" })).toBeVisible();
 
   for (const layout of [
@@ -188,10 +244,9 @@ test("opens a project workspace and compares Inspector-discovered Sessions", asy
     { name: "narrow", width: 390, height: 844 },
   ]) {
     await page.setViewportSize({ width: layout.width, height: layout.height });
-    if (layout.width <= 1080) await expect(page.locator(".studio-primary-nav")).not.toBeInViewport();
     const overflows = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
-    expect(overflows, `${layout.name} workspace intake overflows horizontally`).toBe(false);
-    await page.screenshot({ path: `test-results/session-workspace-intake-${layout.name}.png`, fullPage: true });
+    expect(overflows, `${layout.name} workspace gate overflows horizontally`).toBe(false);
+    await page.screenshot({ path: `test-results/session-workspace-gate-${layout.name}.png`, fullPage: true });
   }
 
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -202,6 +257,9 @@ test("opens a project workspace and compares Inspector-discovered Sessions", asy
   await page.screenshot({ path: "test-results/session-workspace-loading-wide.png", fullPage: true });
 
   await expect(page.getByRole("button", { name: /Repair renderer/ })).toBeVisible();
+  await expect(gate).toHaveCount(0);
+  await expect(page.locator(".studio-control-plane")).not.toHaveAttribute("inert", "");
+  await expect(page).toHaveURL(/#\/sessions$/);
   await expect(page.getByRole("heading", { name: "Repair renderer" })).toBeVisible();
   await expect(page.locator(".session-event-rows")).toContainText("Bash");
   for (const layout of [
@@ -236,8 +294,19 @@ test("opens a project workspace and compares Inspector-discovered Sessions", asy
     expect(overflows, `${layout.name} session comparison overflows horizontally`).toBe(false);
     await page.screenshot({ path: `test-results/session-compare-${layout.name}.png`, fullPage: true });
   }
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("navigation", { name: "Harness control plane" }).getByRole("button", { name: /^Debugger/ }).click();
+  await expect(page.getByText("Workspace default · Qoder", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "New live run" }).click();
+  await expect(page.getByRole("dialog", { name: "Start a live harness session" })).toContainText("selected workspace");
+  await page.getByPlaceholder("Task prompt for the harness run…").fill("verify the default workspace harness");
+  await page.getByRole("button", { name: "Run harness" }).click();
+  await expect(page.locator(".session-notebook")).toContainText("default harness: verify the default workspace harness");
+  await page.screenshot({ path: "test-results/default-workspace-debugger-wide.png", fullPage: true });
+
   const config = await page.evaluate(async () => await (await fetch("api/config")).json());
-  expect(config).toMatchObject({ workspaceConnected: true, sessionCount: 2 });
+  expect(config).toMatchObject({ aguiEnabled: true, harnessMode: "workspace-default", workspaceConnected: true, sessionCount: 2 });
   const workspace = await page.evaluate(async () => await (await fetch("api/workspace")).json());
   expect(workspace).toMatchObject({ connected: true, label: "fixture-project", providers: [{ provider: "qoder", status: "ok" }] });
   expect(JSON.stringify(workspace)).not.toContain(selectedWorkspace);

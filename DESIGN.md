@@ -18,6 +18,7 @@ colors:
   surface: "#FFFFFF"
   surface-subtle: "#F8FAFC"
   surface-hover: "#EEF1F5"
+  surface-active: "#E2E8F0"
   surface-selected: "#E7EFFB"
   border: "#D7DEE8"
   border-strong: "#B8C3D1"
@@ -37,6 +38,55 @@ colors:
   categorical-5: "#A66A1E"
   categorical-6: "#5E7F2E"
   categorical-7: "#7A7385"
+
+themes:
+  default: dark
+  light:
+    source: colors
+    overlay: "rgba(38, 50, 68, 0.34)"
+    scrollbar: "#B8C3D1"
+    scrollbar-hover: "#8D9BAD"
+    overlay-shadow: "0 18px 48px rgba(38, 50, 68, 0.2)"
+  dark:
+    primary: "#79A8FF"
+    primary-hover: "#9ABEFF"
+    primary-soft: "#142B4F"
+    on-primary: "#08111F"
+    text: "#E6EDF7"
+    text-muted: "#A6B2C3"
+    text-subtle: "#8492A6"
+    canvas: "#080C12"
+    titlebar: "#0C121C"
+    sidebar: "#0B1018"
+    workspace: "#111722"
+    panel: "#131A25"
+    surface: "#161F2C"
+    surface-subtle: "#0E141E"
+    surface-hover: "#1D2938"
+    surface-active: "#253348"
+    surface-selected: "#17345F"
+    border: "#2B3647"
+    border-strong: "#3C4B61"
+    focus: "#9FC1FF"
+    success: "#63D7A5"
+    success-surface: "#0E2B22"
+    warning: "#F2B76F"
+    warning-surface: "#352411"
+    danger: "#FF8A94"
+    danger-surface: "#35171D"
+    candidate: "#C5A7FF"
+    candidate-surface: "#251C3B"
+    categorical-1: "#7BB7E7"
+    categorical-2: "#B39AF4"
+    categorical-3: "#9AABC0"
+    categorical-4: "#6FD3BF"
+    categorical-5: "#E3AA61"
+    categorical-6: "#9BC36A"
+    categorical-7: "#B4AABD"
+    overlay: "rgba(2, 6, 12, 0.72)"
+    scrollbar: "#3C4B61"
+    scrollbar-hover: "#56667C"
+    overlay-shadow: "0 18px 48px rgba(0, 0, 0, 0.42)"
 
 typography:
   display:
@@ -281,6 +331,25 @@ Primary references:
 - Use Phosphor icons already owned by Studio. Do not use emoji, text glyphs, or
   improvised SVGs as interface icons.
 
+## Theme and visual direction
+
+- The default appearance is the dark technical-control-room theme. A supported
+  light theme maps the same semantic roles and remains available from a labelled
+  title-bar control. Theme choice is local presentation state, not server or
+  Session evidence.
+- The visual style is minimal and grid-led: tonal surface steps, neutral 1px
+  dividers, a blue interaction role, and semantic evidence colors. It may borrow
+  the discipline of Swiss minimalism, but it must not turn Studio into a landing
+  page, card dashboard, or decorative terminal pastiche.
+- Use the system UI stack in both themes. Generated recommendations for Web fonts
+  such as IBM Plex Sans or JetBrains Mono are references only; do not load them
+  unless the files are deliberately bundled and cross-platform tested.
+- Do not add glow, gradients, glass surfaces, or scroll-reveal choreography.
+  Hover, pressed, disclosure, pane, and loading transitions must explain state
+  and use the shared motion roles.
+- Measure dark and light contrast independently. A token name that passed in one
+  theme is not proof that its mapped value passes in the other.
+
 ## Information hierarchy
 
 Every surface must answer one primary question:
@@ -359,6 +428,10 @@ occupy more attention than the active task.
 - Shadows are forbidden on docked panes, rows, buttons, tabs, tables, empty
   states, and ordinary content groups. A shadow may only communicate a
   transient overlay above the workbench; it must disappear with that overlay.
+- A required first-run workspace chooser may use one centered floating dialog
+  above the dimmed workbench. It has one primary action, keeps the underlying
+  shell inert, cannot be dismissed into an unusable empty application, and
+  replaces itself with stable discovery progress until the workspace opens.
 - `full` radius is limited to a numeric count or circular target. Status text,
   evidence roles, filters, and navigation do not become pills by default.
 - Compact desktop text controls are 30px high and toolbar targets are at least

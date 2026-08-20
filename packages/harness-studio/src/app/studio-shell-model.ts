@@ -13,8 +13,10 @@ export interface StudioConfig {
   artifactsEnabled: boolean;
   evidenceEnabled: boolean;
   experimentEnabled: boolean;
+  harnessMode: "none" | "configured" | "workspace-default";
   historyEnabled: boolean;
   inspectorEnabled: boolean;
+  workspaceDiscoveryEnabled: boolean;
   workspaceConnected: boolean;
   sessionCount: number;
 }
@@ -52,7 +54,7 @@ export function studioDestinations(config: StudioConfig): readonly StudioDestina
       label: "Debugger",
       group: "Run",
       availability: config.aguiEnabled ? "ready" : "foundation",
-      status: config.aguiEnabled ? "Live runs" : "Harness required",
+      status: config.aguiEnabled ? config.harnessMode === "workspace-default" ? "Local default" : "Live runs" : "Harness required",
     },
     {
       id: "compare",

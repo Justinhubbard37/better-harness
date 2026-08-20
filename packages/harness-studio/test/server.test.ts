@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { request as httpRequest } from "node:http";
 import { dirname, join, resolve } from "node:path";
@@ -11,6 +11,7 @@ import { parseSourceCatalog } from "../src/server/source-catalog.js";
 import { startHarnessStudioServer, type StartedHarnessStudioServer, type StudioWorkspaceDiscovery } from "../src/server/server.js";
 import { sessionFromRetainedRun } from "../src/app/session-debugger-model.js";
 import { extractInspectorReportJson } from "../src/server/query/inspector-query.js";
+import { DEFAULT_LOCAL_HARNESS_ID, DEFAULT_LOCAL_RUNTIME_ID } from "../src/server/default-local-harness.js";
 import type { CheckpointHistoryAdapter } from "../src/server/query/checkpoint-history.js";
 import { FIXTURE_VERDICT } from "./compare-model.test.js";
 
@@ -153,8 +154,10 @@ describe("harness-studio server", () => {
       artifactsEnabled: false,
       evidenceEnabled: true,
       experimentEnabled: false,
+      harnessMode: "none",
       historyEnabled: false,
       inspectorEnabled: false,
+      workspaceDiscoveryEnabled: false,
       workspaceConnected: false,
       sessionCount: 0,
     });
@@ -205,6 +208,11 @@ describe("harness-studio server", () => {
       },
     });
 
+    expect(await (await fetch(`${started.url}/api/config`)).json()).toMatchObject({
+      workspaceDiscoveryEnabled: true,
+      workspaceConnected: false,
+    });
+
     const hostile = await fetch(`${started.url}/api/workspace/open`, { method: "POST", headers: { Origin: "https://hostile.example" } });
     expect(hostile.status).toBe(403);
     expect(pickerCalls).toBe(0);
@@ -239,6 +247,96 @@ describe("harness-studio server", () => {
       left: { prompt: "Inspect Qoder session", status: "observed", toolSequence: ["Read", "Bash"] },
       right: { prompt: "Inspect Codex session", status: "observed", toolSequence: ["Read"] },
     });
+  });
+
+  it("provides a default local harness and runs it inside the selected workspace", async () => {
+    const appDir = await makeAppDir();
+    const workspace = await makeTempDir("studio-default-harness-workspace-");
+    let observedTask: { cwd?: string; sourceRoot?: string } | undefined;
+    let observedRevision: { harnessId: string; runtimeId: string } | undefined;
+    started = await startHarnessStudioServer({
+      appDir,
+      workspaceDirectoryPicker: async () => workspace,
+      workspaceSessionProvider: {
+        discover: async () => ({ label: "default-harness-project", sessions: [] }),
+      },
+      executorFactory: (context) => ({
+        host: "qoder",
+        async execute(revision, _bundle, task) {
+          observedTask = task;
+          observedRevision = { harnessId: revision.harness.id, runtimeId: revision.target.runtime };
+          const emitter = new HarnessRunEmitter(context.onRunEvent);
+          emitter.start({ revisionId: revision.revisionId, host: "qoder" });
+          emitter.text(`workspace: ${task.prompt}`);
+          emitter.finish(0);
+          return {
+            host: "qoder",
+            revisionId: revision.revisionId,
+            exitCode: 0,
+            output: `workspace: ${task.prompt}`,
+            errorOutput: "",
+            warnings: [],
+          };
+        },
+      }),
+    });
+
+    expect(await (await fetch(`${started.url}/api/config`)).json()).toMatchObject({
+      aguiEnabled: true,
+      harnessMode: "workspace-default",
+      workspaceDiscoveryEnabled: true,
+    });
+    expect(await (await fetch(`${started.url}/api/workspace/open`, { method: "POST" })).json()).toMatchObject({ opened: true });
+
+    const response = await fetch(`${started.url}/agui`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        threadId: "default-thread",
+        runId: "default-run",
+        messages: [{ role: "user", content: "inspect this workspace" }],
+      }),
+    });
+    const events = decodeSseStream(await response.text());
+
+    expect(events).toContainEqual(expect.objectContaining({ type: "TEXT_MESSAGE_CONTENT", delta: "workspace: inspect this workspace" }));
+    const canonicalWorkspace = await realpath(workspace);
+    expect(observedTask).toMatchObject({ cwd: canonicalWorkspace, sourceRoot: canonicalWorkspace });
+    expect(observedRevision).toEqual({ harnessId: DEFAULT_LOCAL_HARNESS_ID, runtimeId: DEFAULT_LOCAL_RUNTIME_ID });
+  });
+
+  it("keeps an explicitly configured harness and cwd authoritative after workspace selection", async () => {
+    const appDir = await makeAppDir();
+    const workspace = await makeTempDir("studio-configured-workspace-");
+    const configuredCwd = await makeTempDir("studio-configured-cwd-");
+    let observed: { cwd?: string; harnessId: string } | undefined;
+    started = await startHarnessStudioServer({
+      appDir,
+      harnessSource: SOURCE,
+      cwd: configuredCwd,
+      workspaceDirectoryPicker: async () => workspace,
+      workspaceSessionProvider: { discover: async () => ({ label: "configured-project", sessions: [] }) },
+      executorFactory: (context) => ({
+        host: "qoder",
+        async execute(revision, _bundle, task) {
+          observed = { cwd: task.cwd, harnessId: revision.harness.id };
+          const emitter = new HarnessRunEmitter(context.onRunEvent);
+          emitter.start({ revisionId: revision.revisionId, host: "qoder" });
+          emitter.finish(0);
+          return { host: "qoder", revisionId: revision.revisionId, exitCode: 0, output: "", errorOutput: "", warnings: [] };
+        },
+      }),
+    });
+
+    expect(await (await fetch(`${started.url}/api/config`)).json()).toMatchObject({ harnessMode: "configured" });
+    await fetch(`${started.url}/api/workspace/open`, { method: "POST" });
+    await fetch(`${started.url}/agui`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threadId: "configured-thread", runId: "configured-run", messages: [{ role: "user", content: "run configured" }] }),
+    });
+
+    expect(observed).toEqual({ cwd: configuredCwd, harnessId: "my-agent" });
   });
 
   it("reports directory selection and Session discovery as separate open stages", async () => {

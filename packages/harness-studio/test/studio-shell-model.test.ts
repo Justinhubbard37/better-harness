@@ -12,8 +12,10 @@ const EMPTY: StudioConfig = {
   artifactsEnabled: false,
   evidenceEnabled: false,
   experimentEnabled: false,
+  harnessMode: "none",
   historyEnabled: false,
   inspectorEnabled: false,
+  workspaceDiscoveryEnabled: false,
   workspaceConnected: false,
   sessionCount: 0,
 };
@@ -55,8 +57,10 @@ describe("Studio control-plane navigation", () => {
       artifactsEnabled: true,
       evidenceEnabled: true,
       experimentEnabled: true,
+      harnessMode: "configured",
       historyEnabled: true,
       inspectorEnabled: true,
+      workspaceDiscoveryEnabled: true,
       workspaceConnected: true,
       sessionCount: 3,
     };
@@ -83,7 +87,7 @@ describe("Studio control-plane navigation", () => {
   });
 
   it("does not present a live AG-UI endpoint as retained Inspector evidence or a Compare input", () => {
-    const config: StudioConfig = { ...EMPTY, aguiEnabled: true };
+    const config: StudioConfig = { ...EMPTY, aguiEnabled: true, harnessMode: "configured" };
 
     expect(inspectorSurfaces(config)).toEqual([]);
     expect(compareSurfaces(config)).toEqual([]);
@@ -94,6 +98,17 @@ describe("Studio control-plane navigation", () => {
     expect(studioDestinations(config).find((destination) => destination.id === "compare")).toMatchObject({
       availability: "foundation",
     });
+  });
+
+  it("labels the zero-configuration workspace harness without presenting it as retained evidence", () => {
+    const config: StudioConfig = { ...EMPTY, aguiEnabled: true, harnessMode: "workspace-default", workspaceDiscoveryEnabled: true };
+
+    expect(studioDestinations(config).find((destination) => destination.id === "debugger")).toMatchObject({
+      availability: "ready",
+      status: "Local default",
+    });
+    expect(inspectorSurfaces(config)).toEqual([]);
+    expect(compareSurfaces(config)).toEqual([]);
   });
 
   it("enables Compare from frozen evidence alone", () => {

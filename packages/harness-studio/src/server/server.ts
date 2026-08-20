@@ -68,6 +68,11 @@ import {
   serveRuntimeFile,
   type CanvasRuntime,
 } from "./artifact-viewer-runtime.js";
+import {
+  DEFAULT_LOCAL_HARNESS_ID,
+  DEFAULT_LOCAL_HARNESS_SOURCE,
+  DEFAULT_LOCAL_RUNTIME_ID,
+} from "./default-local-harness.js";
 
 const builtInExecutorFactory: HarnessUiExecutorFactory = (context) => {
   if (context.runtimeId === "qoder") {
@@ -150,6 +155,8 @@ export interface HarnessStudioServerOptions {
   evidenceDir?: string;
   /** `.harness` source text; enables the embedded AG-UI endpoint. */
   harnessSource?: string;
+  /** Presentation provenance for the active harness. */
+  harnessMode?: "configured" | "workspace-default";
   harnessId?: string;
   runtimeId?: string;
   cwd?: string;
@@ -196,17 +203,18 @@ export interface HarnessStudioServerOptions {
  * `@qoder-ai/harness-ui` under `/agui`.
  */
 export function createHarnessStudioServer(options: HarnessStudioServerOptions): Server {
+  const resolvedOptions = resolveStudioServerOptions(options);
   const experimentRuns = new Map<string, AbortController>();
   const startupSources = [
-    startupSource("inspector", options.inspectorReportPath),
-    startupSource("evidence", options.evidenceDir),
-    startupSource("experiment", options.experimentManifestPath),
+    startupSource("inspector", resolvedOptions.inspectorReportPath),
+    startupSource("evidence", resolvedOptions.evidenceDir),
+    startupSource("experiment", resolvedOptions.experimentManifestPath),
   ];
-  const sourceCatalog = mergeSourceCatalog(startupSources, options.sourceCatalog);
+  const sourceCatalog = mergeSourceCatalog(startupSources, resolvedOptions.sourceCatalog);
   const activeSources = initialActiveSources(sourceCatalog, {
-    inspector: options.inspectorReportPath === undefined ? undefined : "inspector_startup",
-    evidence: options.evidenceDir === undefined ? undefined : "evidence_startup",
-    experiment: options.experimentManifestPath === undefined ? undefined : "experiment_startup",
+    inspector: resolvedOptions.inspectorReportPath === undefined ? undefined : "inspector_startup",
+    evidence: resolvedOptions.evidenceDir === undefined ? undefined : "evidence_startup",
+    experiment: resolvedOptions.experimentManifestPath === undefined ? undefined : "experiment_startup",
   });
   const activeManifestPath = activeSourcePath(sourceCatalog, activeSources, "experiment");
   const state: HarnessStudioState = {
@@ -215,18 +223,18 @@ export function createHarnessStudioServer(options: HarnessStudioServerOptions): 
     activeManifestPath,
     templateManifestPath: activeManifestPath,
     trajectoryOverrides: options.experimentTrajectoryOverrides,
-    historyAdapter: options.checkpointHistoryAdapter
-      ?? (options.checkpointHistoryCatalogPath === undefined
+    historyAdapter: resolvedOptions.checkpointHistoryAdapter
+      ?? (resolvedOptions.checkpointHistoryCatalogPath === undefined
         ? undefined
-        : createCheckpointHistoryCatalogAdapter(options.checkpointHistoryCatalogPath)),
+        : createCheckpointHistoryCatalogAdapter(resolvedOptions.checkpointHistoryCatalogPath)),
     observedIndexes: new Map(),
-    artifactDirectory: options.artifactDirectory,
+    artifactDirectory: resolvedOptions.artifactDirectory,
     artifactImports: new Map(),
     workspaceImports: new Map(),
     workspaceOpenStage: "idle",
   };
   const server = createServer((request, response) => {
-    void route(request, response, options, state, experimentRuns).catch((error: unknown) => {
+    void route(request, response, resolvedOptions, state, experimentRuns).catch((error: unknown) => {
       if (response.headersSent) {
         response.destroy(error instanceof Error ? error : new Error(String(error)));
         return;
@@ -238,6 +246,20 @@ export function createHarnessStudioServer(options: HarnessStudioServerOptions): 
     void Promise.all([cleanupArtifactImports(state), cleanupWorkspaceImports(state)]);
   });
   return server;
+}
+
+function resolveStudioServerOptions(options: HarnessStudioServerOptions): HarnessStudioServerOptions {
+  if (options.harnessSource !== undefined) {
+    return { ...options, harnessMode: options.harnessMode ?? "configured" };
+  }
+  if (options.workspaceSessionProvider === undefined) return options;
+  return {
+    ...options,
+    harnessSource: DEFAULT_LOCAL_HARNESS_SOURCE,
+    harnessId: DEFAULT_LOCAL_HARNESS_ID,
+    runtimeId: DEFAULT_LOCAL_RUNTIME_ID,
+    harnessMode: "workspace-default",
+  };
 }
 
 interface ArtifactImportSession {
@@ -263,6 +285,8 @@ interface StudioWorkspace {
   omittedCount: number;
   sessions: Map<string, StoredWorkspaceSession>;
   providers: StudioWorkspaceProviderDiagnostic[];
+  /** Server-only execution root for the selected local project. Never serialized. */
+  localDirectory?: string;
   ownedDirectory?: string;
 }
 
@@ -307,8 +331,10 @@ async function route(
       artifactsEnabled: state.artifactDirectory !== undefined,
       evidenceEnabled: activeSourcePath(state.sourceCatalog, state.activeSources, "evidence") !== undefined,
       experimentEnabled: state.activeManifestPath !== undefined,
+      harnessMode: options.harnessSource === undefined ? "none" : options.harnessMode ?? "configured",
       historyEnabled: state.historyAdapter !== undefined,
       inspectorEnabled: activeSourcePath(state.sourceCatalog, state.activeSources, "inspector") !== undefined,
+      workspaceDiscoveryEnabled: options.workspaceSessionProvider !== undefined,
       workspaceConnected: state.workspace !== undefined,
       sessionCount: state.workspace?.sessionCount ?? 0,
     });
@@ -386,7 +412,7 @@ async function route(
   const runRead = url.pathname.match(/^\/api\/runs\/([^/]+)(?:\/(session))?$/);
   if (url.pathname === "/api/runs" || runRead !== null) {
     const runId = runRead === null ? undefined : decodeRouteComponent(response, runRead[1]!);
-    if (runRead === null || runId !== undefined) await routeRuns(request, response, options, url, runId, runRead?.[2] === "session");
+    if (runRead === null || runId !== undefined) await routeRuns(request, response, activeWorkspaceOptions(options, state), url, runId, runRead?.[2] === "session");
     return;
   }
   if (request.method === "GET" && url.pathname === "/inspector") {
@@ -495,13 +521,14 @@ async function route(
       return;
     }
     if (request.method === "POST" && url.pathname === "/agui") {
+      const runtimeOptions = activeWorkspaceOptions(options, state);
       await handleAguiRun(request, response, {
-        source: options.harnessSource,
-        ...(options.harnessId !== undefined ? { harnessId: options.harnessId } : {}),
-        ...(options.runtimeId !== undefined ? { runtimeId: options.runtimeId } : {}),
-        ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
-        ...(options.sourceRoot !== undefined ? { sourceRoot: options.sourceRoot } : {}),
-        executorFactory: options.executorFactory ?? builtInExecutorFactory,
+        source: runtimeOptions.harnessSource!,
+        ...(runtimeOptions.harnessId !== undefined ? { harnessId: runtimeOptions.harnessId } : {}),
+        ...(runtimeOptions.runtimeId !== undefined ? { runtimeId: runtimeOptions.runtimeId } : {}),
+        ...(runtimeOptions.cwd !== undefined ? { cwd: runtimeOptions.cwd } : {}),
+        ...(runtimeOptions.sourceRoot !== undefined ? { sourceRoot: runtimeOptions.sourceRoot } : {}),
+        executorFactory: runtimeOptions.executorFactory ?? builtInExecutorFactory,
       });
       return;
     }
@@ -515,6 +542,19 @@ async function route(
     return;
   }
   respondJson(response, 404, { error: `No route for ${request.method} ${url.pathname}` });
+}
+
+function activeWorkspaceOptions(
+  options: HarnessStudioServerOptions,
+  state: HarnessStudioState,
+): HarnessStudioServerOptions {
+  const localDirectory = state.workspace?.localDirectory;
+  if (localDirectory === undefined || options.harnessMode !== "workspace-default") return options;
+  return {
+    ...options,
+    cwd: localDirectory,
+    sourceRoot: options.sourceRoot ?? localDirectory,
+  };
 }
 
 async function createWorkspaceImport(
@@ -597,6 +637,7 @@ async function openWorkspace(
       omittedCount: Math.max(0, discovered.sessions.length - sessions.size),
       sessions,
       providers,
+      localDirectory: workspacePath,
     };
     if (previous !== undefined) await rm(previous, { recursive: true, force: true }).catch(() => undefined);
     respondJson(response, 200, {

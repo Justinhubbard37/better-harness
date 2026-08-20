@@ -6,9 +6,11 @@ import { BugBeetle } from "@phosphor-icons/react/BugBeetle";
 import { Flask } from "@phosphor-icons/react/Flask";
 import { FolderOpen } from "@phosphor-icons/react/FolderOpen";
 import { GitBranch } from "@phosphor-icons/react/GitBranch";
+import { Moon } from "@phosphor-icons/react/Moon";
 import { Package } from "@phosphor-icons/react/Package";
 import { SidebarSimple } from "@phosphor-icons/react/SidebarSimple";
 import { SquaresFour } from "@phosphor-icons/react/SquaresFour";
+import { Sun } from "@phosphor-icons/react/Sun";
 import { CompareView } from "./CompareView.js";
 import { ExperimentView } from "./ExperimentView.js";
 import { HighlightedCode } from "./HighlightedCode.js";
@@ -44,6 +46,7 @@ const AREA_COPY: Record<StudioArea, { eyebrow: string; title: string }> = {
 };
 
 type StudioSourceKind = "inspector" | "evidence" | "experiment";
+type StudioTheme = "dark" | "light";
 
 interface StudioSourceOption {
   id: string;
@@ -57,11 +60,17 @@ const EMPTY_CONFIG: StudioConfig = {
   artifactsEnabled: false,
   evidenceEnabled: false,
   experimentEnabled: false,
+  harnessMode: "none",
   historyEnabled: false,
   inspectorEnabled: false,
+  workspaceDiscoveryEnabled: false,
   workspaceConnected: false,
   sessionCount: 0,
 };
+
+function initialStudioTheme(): StudioTheme {
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
 
 async function fetchStudioState(): Promise<{ config: StudioConfig; sources: StudioSourceOption[] }> {
   const [configResponse, sourcesResponse] = await Promise.all([
@@ -88,7 +97,17 @@ export function App(): React.JSX.Element {
   const [area, setArea] = useState<StudioArea>(areaFromHash);
   const [compareSurface, setCompareSurface] = useState<StudioCompareSurface>("sessions");
   const [navigationOpen, setNavigationOpen] = useState(false);
+  const [theme, setTheme] = useState<StudioTheme>(initialStudioTheme);
   const navigationToggleRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      globalThis.localStorage.setItem("harness-studio-theme", theme);
+    } catch {
+      // Theme preference remains usable for this page when storage is blocked.
+    }
+  }, [theme]);
 
   useEffect(() => {
     let cancelled = false;
@@ -177,10 +196,10 @@ export function App(): React.JSX.Element {
   }
 
   if (config === undefined) {
-    return <main className="studio-loading"><span className="studio-loading-mark"><GitBranch size={18} weight="bold" /></span><p>Loading Harness control plane…</p></main>;
+    return <main className="studio-loading"><span className="studio-loading-mark"><GitBranch aria-hidden="true" size={18} weight="bold" /></span><p>Loading Harness control plane…</p></main>;
   }
   if (configFailure !== null) {
-    return <main className="studio-loading" role="alert"><span className="studio-loading-mark"><GitBranch size={18} weight="bold" /></span><strong>Cannot load Studio configuration.</strong><p>{configFailure}</p></main>;
+    return <main className="studio-loading" role="alert"><span className="studio-loading-mark"><GitBranch aria-hidden="true" size={18} weight="bold" /></span><strong>Cannot load Studio configuration.</strong><p>{configFailure}</p></main>;
   }
 
   const destinations = studioDestinations(config);
@@ -199,15 +218,18 @@ export function App(): React.JSX.Element {
   const contextNavigation = area === "compare" && compareSurfaces(config).length > 1
     ? compareNavigation
     : null;
+  const workspaceGateOpen = config.workspaceDiscoveryEnabled && !config.workspaceConnected;
 
-  return <div className={`studio-control-plane${navigationOpen ? " navigation-open" : ""}`}>
+  return <>
+  <div className={`studio-control-plane${navigationOpen ? " navigation-open" : ""}`} inert={workspaceGateOpen ? true : undefined} aria-hidden={workspaceGateOpen ? true : undefined}>
     <PrimaryNavigation destinations={destinations} current={area} onSelect={openArea} />
     <button className="studio-nav-backdrop" type="button" aria-label="Close Studio navigation" onClick={() => { setNavigationOpen(false); navigationToggleRef.current?.focus(); }} />
     <section className="studio-area">
       <header className={`studio-context-bar${contextNavigation ? " has-surface-navigation" : ""}`}>
-        <button ref={navigationToggleRef} className="studio-nav-toggle" type="button" aria-label={navigationOpen ? "Close Studio navigation" : "Open Studio navigation"} aria-expanded={navigationOpen} onClick={() => setNavigationOpen((value) => !value)}><SidebarSimple size={17} /></button>
+        <button ref={navigationToggleRef} className="studio-nav-toggle" type="button" title={navigationOpen ? "Close navigation" : "Open navigation"} aria-label={navigationOpen ? "Close Studio navigation" : "Open Studio navigation"} aria-expanded={navigationOpen} onClick={() => setNavigationOpen((value) => !value)}><SidebarSimple aria-hidden="true" size={17} /></button>
         <div className="studio-context-title"><small>{AREA_COPY[area].eyebrow}</small><h1>{AREA_COPY[area].title}</h1></div>
         {contextNavigation && <div className="studio-context-navigation">{contextNavigation}</div>}
+        <ThemeToggle theme={theme} onChange={setTheme} />
         {sources.length > 0 && <SourceSwitcher sources={sources} onSelect={(source) => void selectSource(source)} />}
         <div className="studio-context-state"><span className={`availability-dot availability-${current.availability}`} /><strong>{current.status}</strong><span>Local control plane</span></div>
       </header>
@@ -219,7 +241,32 @@ export function App(): React.JSX.Element {
         {area === "compare" && <CompareWorkspace key={`compare-${dataRevision}-${workspaceRevision}-${config.experimentEnabled}-${config.evidenceEnabled}`} config={config} surface={compareSurface} navigation={compareNavigation} sessionIds={sessionCompareIds} />}
       </div>
     </section>
-  </div>;
+  </div>
+  {workspaceGateOpen && <WorkspaceGate onWorkspaceChanged={async () => {
+    await workspaceChanged();
+    openArea(area === "overview" ? "sessions" : area);
+  }} />}
+  </>;
+}
+
+function WorkspaceGate(props: { onWorkspaceChanged: () => Promise<void> }): React.JSX.Element {
+  return <section className="studio-workspace-gate" role="dialog" aria-modal="true" aria-labelledby="workspace-gate-title" aria-describedby="workspace-gate-description">
+    <div className="studio-workspace-gate-panel">
+      <header><span><FolderOpen aria-hidden="true" size={22} /></span><div><small>Local Web workspace</small><h1 id="workspace-gate-title">Open a workspace to start</h1></div></header>
+      <p id="workspace-gate-description">Choose the repository or project directory you worked in. Studio will discover matching local agent Sessions before opening the workbench.</p>
+      <WorkspaceFolderControls autoFocus onWorkspaceChanged={props.onWorkspaceChanged} />
+      <footer><strong>Workspace-scoped discovery</strong><span>The selected directory scopes Session lookup; Studio does not treat a global Session folder as the project.</span></footer>
+    </div>
+  </section>;
+}
+
+function ThemeToggle(props: { theme: StudioTheme; onChange: (theme: StudioTheme) => void }): React.JSX.Element {
+  const next = props.theme === "dark" ? "light" : "dark";
+  const label = `${props.theme === "dark" ? "Dark" : "Light"} theme active. Switch to ${next} theme`;
+  return <button className="studio-theme-toggle" type="button" title={`Switch to ${next} theme`} aria-label={label} onClick={() => props.onChange(next)}>
+    {props.theme === "dark" ? <Moon aria-hidden="true" size={15} weight="fill" /> : <Sun aria-hidden="true" size={15} weight="fill" />}
+    <span>{props.theme === "dark" ? "Dark" : "Light"}</span>
+  </button>;
 }
 
 function SourceSwitcher(props: {
@@ -230,7 +277,7 @@ function SourceSwitcher(props: {
   const active = props.sources.filter((source) => source.active);
   const kinds: StudioSourceKind[] = ["inspector", "evidence", "experiment"];
   return <div className="studio-source-switcher">
-    <button type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}><GitBranch size={14} /><span>Data sources</span><em>{active.length}</em></button>
+    <button type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}><GitBranch aria-hidden="true" size={14} /><span>Data sources</span><em>{active.length}</em></button>
     {open && <div className="studio-source-menu" role="menu" aria-label="Studio data sources">
       {kinds.map((kind) => {
         const entries = props.sources.filter((source) => source.kind === kind);
@@ -275,12 +322,12 @@ function PrimaryNavigation(props: {
   }
 
   return <aside className="studio-primary-nav" aria-label="Studio navigation">
-    <header className="studio-product-brand"><span><GitBranch size={18} weight="bold" /></span><div><strong>Better Harness</strong><small>Studio</small></div></header>
+    <header className="studio-product-brand"><span><GitBranch aria-hidden="true" size={18} weight="bold" /></span><div><strong>Better Harness</strong><small>Studio</small></div></header>
     <nav aria-label="Harness control plane" onKeyDown={onNavigationKeyDown}>
       {groups.map((group) => <section className="studio-nav-group" key={group}><h2>{group}</h2>{props.destinations.filter((destination) => destination.group === group).map((destination) => {
         const NavIcon = NAV_ICONS[destination.id];
         return <button key={destination.id} ref={(node) => { if (node) buttonRefs.current.set(destination.id, node); else buttonRefs.current.delete(destination.id); }} type="button" tabIndex={props.current === destination.id ? 0 : -1} aria-current={props.current === destination.id ? "page" : undefined} onClick={() => props.onSelect(destination.id)}>
-          <NavIcon size={16} weight={props.current === destination.id ? "fill" : "regular"} />
+          <NavIcon aria-hidden="true" size={17} weight={props.current === destination.id ? "fill" : "regular"} />
           <span><strong>{destination.label}</strong><small>{destination.status}</small></span>
           <i className={`availability-dot availability-${destination.availability}`} aria-label={destination.availability} />
         </button>;
@@ -316,7 +363,7 @@ function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => v
   ];
   return <main className="control-overview">
     <section className="control-hero">
-      <div><small>Local Web workspace</small><h1>{props.config.workspaceConnected ? "Open the discovered Sessions." : "Choose a project workspace in Studio."}</h1><p>{summary.ready} ready · {summary.partial} partial · {summary.foundation} foundations. Studio discovers workspace-matching agent Sessions through the same provider code as Inspector.</p><button type="button" onClick={() => props.onOpen(nextArea)}>{props.config.workspaceConnected ? "Open Sessions" : "Open workspace"}<ArrowRight size={15} weight="bold" /></button></div>
+      <div><small>Local Web workspace</small><h1>{props.config.workspaceConnected ? "Open the discovered Sessions." : "Choose a project workspace in Studio."}</h1><p>{summary.ready} ready · {summary.partial} partial · {summary.foundation} foundations. Studio discovers workspace-matching agent Sessions through the same provider code as Inspector.</p><button className="primary" type="button" onClick={() => props.onOpen(nextArea)}>{props.config.workspaceConnected ? "Open Sessions" : "Open workspace"}<ArrowRight aria-hidden="true" size={15} weight="bold" /></button></div>
       <aside className="control-actions" aria-label="Available actions"><small>Available actions</small><ul>{actions.map((action) => <li key={action.label} className={action.enabled ? "is-ready" : "is-foundation"}><span className={`availability-dot availability-${action.enabled ? "ready" : "foundation"}`} /><button type="button" disabled={!action.enabled} onClick={() => props.onOpen(action.area)}>{action.label}</button><em>{action.detail}</em></li>)}</ul></aside>
     </section>
 
@@ -445,10 +492,10 @@ function SessionDetail({ session }: { session: DebuggerSession }): React.JSX.Ele
 }
 
 function WorkspaceIntake(props: { title?: string; detail?: string; onWorkspaceChanged: () => Promise<void> }): React.JSX.Element {
-  return <main className="workspace-intake empty-workspace"><span><FolderOpen size={22} /></span><small>Local Web workspace</small><h1>{props.title ?? "Open a project workspace"}</h1><p>{props.detail ?? "Choose the repository or project directory you worked in. Studio uses Inspector's provider discovery to find matching Sessions in local agent evidence stores."}</p><WorkspaceFolderControls onWorkspaceChanged={props.onWorkspaceChanged} /></main>;
+  return <main className="workspace-intake empty-workspace"><span><FolderOpen aria-hidden="true" size={22} /></span><small>Local Web workspace</small><h1>{props.title ?? "Open a project workspace"}</h1><p>{props.detail ?? "Choose the repository or project directory you worked in. Studio uses Inspector's provider discovery to find matching Sessions in local agent evidence stores."}</p><WorkspaceFolderControls onWorkspaceChanged={props.onWorkspaceChanged} /></main>;
 }
 
-function WorkspaceFolderControls(props: { compact?: boolean; onWorkspaceChanged: () => Promise<void> }): React.JSX.Element {
+function WorkspaceFolderControls(props: { autoFocus?: boolean; compact?: boolean; onWorkspaceChanged: () => Promise<void> }): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<"idle" | "choosing" | "discovering" | "opening">("idle");
   const [failure, setFailure] = useState<string>();
@@ -498,7 +545,7 @@ function WorkspaceFolderControls(props: { compact?: boolean; onWorkspaceChanged:
       : "Waiting for a project folder selection…";
 
   return <div className={`workspace-folder-controls${props.compact ? " is-compact" : ""}`}>
-    <button className={props.compact ? undefined : "primary"} type="button" disabled={busy} onClick={() => void openWorkspace()}><FolderOpen size={14} />{busy ? "Opening…" : props.compact ? "Change workspace" : "Choose workspace"}</button>
+    <button autoFocus={props.autoFocus} className={props.compact ? undefined : "primary"} type="button" disabled={busy} onClick={() => void openWorkspace()}><FolderOpen aria-hidden="true" size={14} />{busy ? "Opening…" : props.compact ? "Change workspace" : "Choose workspace"}</button>
     {busy && <span className="workspace-open-progress" role="status" aria-live="polite"><i aria-hidden="true" /><small>{progressMessage}</small></span>}
     {failure !== undefined && <small className="workspace-folder-error" role="alert">{failure}</small>}
   </div>;
@@ -648,7 +695,7 @@ function DebuggerWorkspace(props: { config: StudioConfig }): React.JSX.Element {
   if (!props.config.aguiEnabled) {
     return <EmptyWorkspace eyebrow="Live runs" title="Load a harness for live runs" detail="The Debugger drives a live harness run over the embedded AG-UI endpoint and saves finished runs for replay." command="--harness ./my-agent.harness" />;
   }
-  return <div className="debugger-mode"><RunView aguiEndpoint="agui" artifactEndpoint={props.config.artifactsEnabled ? "api/artifacts" : undefined} /></div>;
+  return <div className="debugger-mode"><RunView aguiEndpoint="agui" artifactEndpoint={props.config.artifactsEnabled ? "api/artifacts" : undefined} harnessLabel={props.config.harnessMode === "workspace-default" ? "Workspace default · Qoder" : "Live Trial"} /></div>;
 }
 
 function CompareWorkspace(props: {
@@ -754,7 +801,7 @@ function sessionMetricLabel(metric: "retainedEventCount" | "toolCallCount" | "me
 }
 
 function EmptyWorkspace(props: { eyebrow: string; title: string; detail: string; command?: string }): React.JSX.Element {
-  return <main className="empty-workspace"><span><GitBranch size={22} /></span><small>{props.eyebrow}</small><h1>{props.title}</h1><p>{props.detail}</p>{props.command && <code>{props.command}</code>}</main>;
+  return <main className="empty-workspace"><span><GitBranch aria-hidden="true" size={22} /></span><small>{props.eyebrow}</small><h1>{props.title}</h1><p>{props.detail}</p>{props.command && <code>{props.command}</code>}</main>;
 }
 
 // The surface switcher navigates between separate top-level views (each its own

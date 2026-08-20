@@ -50,6 +50,13 @@ surface exists.
   waiting for the native directory chooser or discovering workspace-matched
   Sessions. The Web UI polls that privacy-safe state and renders an indeterminate
   progress indicator with reduced-motion support.
+- **D-8: local Web owns a real default Debugger harness.** When workspace
+  Session discovery is available and no explicit harness was configured, the
+  server resolves a built-in single-session Qoder harness. Explicit harness
+  configuration still wins. After workspace selection, live runs use that
+  server-only directory as `cwd` and the default capability source root; no
+  absolute path is returned to the browser and no scripted demo executor is
+  substituted in production.
 
 ## Acceptance Scenarios
 
@@ -84,6 +91,11 @@ surface exists.
   live status first reports directory selection and then Session discovery, and
   completion automatically replaces the intake with the discovered Session
   list. No made-up percentage or absolute path is shown.
+- **AC-12:** The local Web Debugger is enabled without `--harness`, identifies
+  itself as the workspace default, opens the existing live-run composer, and
+  executes through the real built-in Qoder adapter in the selected workspace.
+  A caller-supplied harness/runtime remains authoritative, and a Studio server
+  without workspace discovery does not silently acquire a runnable endpoint.
 
 ## Non-goals
 
@@ -93,6 +105,8 @@ surface exists.
 - Editing, replaying, or writing back into imported sessions.
 - Shipping the public `better-harness web` package boundary in this first UI
   migration; the server and packaged-app ownership must be resolved first.
+- Faking an out-of-box run with a production scripted executor or bypassing the
+  selected host's normal authentication and permission boundaries.
 
 ## Plan and Tasks
 
@@ -126,6 +140,14 @@ Keep Studio's server start independent of data arguments. In a follow-up,
 package the built Studio runtime so the root command registry can dispatch
 `better-harness web` without repository-only paths.
 
+### 6. Provide the local default Debugger harness
+
+Resolve a compiler-valid built-in Qoder harness only for the local
+workspace-discovery host. Keep explicit harness configuration authoritative,
+bind execution to the selected workspace on the server, label the active
+default in the UI, and exercise the same AG-UI/live-run path as configured
+harnesses.
+
 ## Test and Review Evidence
 
 - AC-1/AC-8: empty-start model and Playwright assertions for UI copy and actions.
@@ -142,15 +164,21 @@ package the built Studio runtime so the root command registry can dispatch
 - AC-11: HTTP tests pause the injected chooser and provider to verify the two
   status stages; Playwright verifies the live discovery message, progress
   indicator, disabled action, and automatic transition to the Session list.
+- AC-12: server tests resolve and execute the default harness with an injected
+  deterministic executor while asserting the selected workspace `cwd` and
+  source root; Playwright opens Debugger after workspace discovery and completes
+  a live run through the default AG-UI path.
 
 Implementation evidence (2026-08-20):
 
-- `npm test` in `packages/harness-studio`: 18 files, 118 tests passed,
-  including controlled chooser/discovery stage transitions.
-- `npm run test:browser` in `packages/harness-studio`: 15 Playwright tests
+- `npm test` in `packages/harness-studio`: 18 files, 121 tests passed,
+  including controlled chooser/discovery stages and default-harness execution
+  rooted at the selected workspace.
+- `npm run test:browser` in `packages/harness-studio`: 16 Playwright tests
   passed, including the workspace intake, discovered Session detail, Compare,
-  animated discovery status, wide/compact/narrow screenshots, keyboard focus,
-  overflow, console, and page error checks.
+  the default live Debugger flow, animated discovery status,
+  wide/compact/narrow screenshots, keyboard focus, overflow, console, and page
+  error checks.
 - `npm test` at the repository root: 99 files, 1412 tests passed.
 - A live in-process discovery smoke against this repository returned the bounded
   100-Session catalog: Qoder 79, Codex 16, and Claude 5.
