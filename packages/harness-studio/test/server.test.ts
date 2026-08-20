@@ -108,6 +108,22 @@ async function makeAppDir(): Promise<string> {
   return dir;
 }
 
+function retainedRunFixture(id: string, savedAt: string, prompt: string, tools: string[]) {
+  return {
+    id,
+    savedAt,
+    prompt,
+    status: "finished",
+    runId: id.replace(/^run_/u, "session_"),
+    toolCallCount: tools.length,
+    warnings: [],
+    timeline: [
+      ...tools.map((name, index) => ({ kind: "tool-call", id: `tool_${index}`, name, argsText: "{}", status: "completed", resultText: "ok" })),
+      { kind: "message", id: "message_1", text: `${prompt} complete`, complete: true },
+    ],
+  };
+}
+
 describe("harness-studio server", () => {
   it("reports which surfaces are enabled through /api/config", async () => {
     const appDir = await makeAppDir();
@@ -124,7 +140,62 @@ describe("harness-studio server", () => {
       experimentEnabled: false,
       historyEnabled: false,
       inspectorEnabled: false,
+      workspaceConnected: false,
+      sessionCount: 0,
     });
+  });
+
+  it("opens a browser-selected workspace, indexes Sessions, and compares two retained runs", async () => {
+    const appDir = await makeAppDir();
+    started = await startHarnessStudioServer({ appDir });
+    const created = await fetch(`${started.url}/api/workspaces?label=review-sessions`, { method: "POST" });
+    expect(created.status).toBe(201);
+    const { sessionId } = await created.json() as { sessionId: string };
+
+    const upload = async (path: string, value: unknown): Promise<Response> => fetch(
+      `${started!.url}/api/workspaces/${sessionId}/files?path=${encodeURIComponent(path)}`,
+      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) },
+    );
+    expect((await upload("review-sessions/nested/run_left.json", retainedRunFixture("run_left", "2026-08-20T10:00:00.000Z", "Repair parser", ["Read", "Edit", "Bash"]))).status).toBe(201);
+    expect((await upload("review-sessions/run_right.json", retainedRunFixture("run_right", "2026-08-20T11:00:00.000Z", "Repair renderer", ["Read", "Bash"]))).status).toBe(201);
+    expect((await upload("review-sessions/notes.json", { note: "unsupported" })).status).toBe(201);
+
+    expect(await (await fetch(`${started.url}/api/workspace`)).json()).toMatchObject({ connected: false, sessionCount: 0 });
+    expect((await fetch(`${started.url}/api/sessions`)).status).toBe(404);
+
+    const committed = await fetch(`${started.url}/api/workspaces/${sessionId}/commit`, { method: "POST" });
+    expect(committed.status).toBe(200);
+    expect(await committed.json()).toEqual({ label: "review-sessions", sessionCount: 2, omittedCount: 1 });
+
+    const config = await (await fetch(`${started.url}/api/config`)).json() as { workspaceConnected: boolean; sessionCount: number };
+    expect(config).toMatchObject({ workspaceConnected: true, sessionCount: 2 });
+    const catalog = await (await fetch(`${started.url}/api/sessions`)).json() as { sessions: Array<{ id: string; prompt: string }> };
+    expect(catalog.sessions.map((session) => session.id)).toEqual(["run_right", "run_left"]);
+    const debuggerSession = await (await fetch(`${started.url}/api/sessions/run_left/debugger`)).json();
+    expect(debuggerSession).toMatchObject({ name: "Repair parser", mode: "Retained run" });
+
+    const comparison = await (await fetch(`${started.url}/api/session-compare?left=run_left&right=run_right`)).json();
+    expect(comparison).toMatchObject({
+      kind: "observational-session-compare.v1",
+      boundary: expect.stringMatching(/no winner/i),
+      left: { prompt: "Repair parser", toolCallCount: 3, toolSequence: ["Read", "Edit", "Bash"] },
+      right: { prompt: "Repair renderer", toolCallCount: 2, toolSequence: ["Read", "Bash"] },
+    });
+
+    expect((await fetch(`${started.url}/api/workspace`, { method: "DELETE" })).status).toBe(200);
+    expect(await (await fetch(`${started.url}/api/workspace`)).json()).toMatchObject({ connected: false, sessionCount: 0 });
+  });
+
+  it("rejects cross-origin and traversal-shaped workspace imports", async () => {
+    const appDir = await makeAppDir();
+    started = await startHarnessStudioServer({ appDir });
+    expect((await fetch(`${started.url}/api/workspaces`, { method: "POST", headers: { Origin: "https://hostile.example" } })).status).toBe(403);
+    const created = await fetch(`${started.url}/api/workspaces`, { method: "POST" });
+    const { sessionId } = await created.json() as { sessionId: string };
+    const traversal = await fetch(`${started.url}/api/workspaces/${sessionId}/files?path=${encodeURIComponent("../run_escape.json")}`, { method: "PUT", body: "{}" });
+    expect(traversal.status).toBe(400);
+    expect((await fetch(`${started.url}/api/workspaces/${sessionId}/commit`, { method: "POST" })).status).toBe(422);
+    expect((await fetch(`${started.url}/api/workspaces/${sessionId}`, { method: "DELETE" })).status).toBe(200);
   });
 
   it("serves one explicitly configured Inspector report without exposing a file picker", async () => {

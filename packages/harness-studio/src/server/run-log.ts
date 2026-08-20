@@ -40,6 +40,25 @@ export interface SavedRunSummary {
   toolCallCount: number;
 }
 
+/** Validates one complete retained record imported from a local Studio workspace. */
+export function parseSavedRunRecord(value: unknown): SavedRunRecord {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Saved run record must be an object.");
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.id !== "string" || !RUN_ID_PATTERN.test(record.id)) {
+    throw new Error("Saved run id must be an opaque run_<token> id.");
+  }
+  if (typeof record.savedAt !== "string" || Number.isNaN(new Date(record.savedAt).valueOf())) {
+    throw new Error("Saved run record requires an ISO savedAt timestamp.");
+  }
+  return {
+    id: record.id,
+    savedAt: new Date(record.savedAt).toISOString(),
+    ...parseRunSnapshot(record),
+  };
+}
+
 /** Validates a browser-submitted run snapshot into a persistable record body. */
 export function parseRunSnapshot(value: unknown): Omit<SavedRunRecord, "id" | "savedAt"> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {

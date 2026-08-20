@@ -262,18 +262,12 @@ test("organizes configured surfaces around the Harness control plane", async ({ 
   await page.goto(inspectorStudio.url);
 
   await expect(page.getByRole("heading", { name: "Harness Control Center" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Inspector");
+  await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Sessions");
   await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Debugger");
   await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Compare");
-  await page.getByRole("button", { name: "Open Inspector" }).click();
-
-  const frame = page.frameLocator('iframe[title="Harness Inspector Workbench"]');
-  await expect(frame.getByRole("heading", { name: "Delivery evidence workbench" })).toBeVisible();
-  await expect(page.locator('iframe[title="Harness Inspector Workbench"]')).toHaveAttribute("sandbox", "allow-scripts");
-
-  await page.getByRole("button", { name: /Data sources/ }).click();
-  await page.getByRole("menuitemradio", { name: /Alternate Inspector/ }).click();
-  await expect(frame.getByRole("heading", { name: "Alternate evidence workbench" })).toBeVisible();
+  await page.getByRole("button", { name: "Open session folder" }).first().click();
+  await expect(page.getByRole("heading", { name: "Open a session folder" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Choose session folder" })).toBeVisible();
 });
 
 test("compares a focused ACP pair across roles, views, filters, and evidence", async ({ page }, testInfo) => {
@@ -445,7 +439,7 @@ test("renders a keyboard-expandable failed and truncated Tool Call at 390px", as
   page.on("pageerror", (error) => browserErrors.push(`page: ${error.message}`));
 
   await page.goto(studio.url);
-  await page.getByRole("button", { name: "Open Debugger" }).click();
+  await page.getByRole("button", { name: "Go to Debugger" }).click();
   await page.getByRole("button", { name: "New live run" }).click();
   await page.getByPlaceholder("Task prompt for the harness run…").fill("Run the scripted browser fixture");
   await page.getByRole("button", { name: "Run harness" }).click();
@@ -532,7 +526,7 @@ test("keeps visual decisions in owned Studio style sources", async () => {
   }
 });
 
-test("renders the shell, foundation, empty, and Inspector surfaces at all layout modes", async ({ page }, testInfo) => {
+test("renders the shell, local workspace intake, and empty compare surfaces at all layout modes", async ({ page }, testInfo) => {
   const browserErrors = [];
   page.on("console", (message) => { if (message.type() === "error") browserErrors.push(`console: ${message.text()}`); });
   page.on("pageerror", (error) => browserErrors.push(`page: ${error.message}`));
@@ -548,7 +542,7 @@ test("renders the shell, foundation, empty, and Inspector surfaces at all layout
       const current = page.getByRole("button", { name: /^Overview/ });
       await current.focus();
       await page.keyboard.press("ArrowDown");
-      await expect(page.getByRole("button", { name: /^Inspector/ })).toBeFocused();
+      await expect(page.getByRole("button", { name: /^Sessions/ })).toBeFocused();
     } else {
       await page.emulateMedia({ reducedMotion: "reduce" });
       await expect(page.locator(".studio-primary-nav")).toHaveCSS("transition-duration", "0s");
@@ -560,21 +554,21 @@ test("renders the shell, foundation, empty, and Inspector surfaces at all layout
       await expect(toggle).toBeFocused();
     }
 
-    await openDestination(page, "Inspector");
-    await expect(page.getByRole("heading", { name: "Connect an Inspector report" })).toBeVisible();
+    await openDestination(page, "Sessions");
+    await expect(page.getByRole("heading", { name: "Open a session folder" })).toBeVisible();
     await assertRenderedContract(page);
     await page.screenshot({ path: testInfo.outputPath(`foundation-${layout.name}.png`) });
 
     await page.goto(inspectorStudio.url);
     await openDestination(page, "Compare");
-    await expect(page.getByRole("heading", { name: "Load an experiment or evidence bundle" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Open a session workspace" })).toBeVisible();
     await assertRenderedContract(page);
     await page.screenshot({ path: testInfo.outputPath(`empty-${layout.name}.png`) });
 
-    await openDestination(page, "Inspector");
-    await expect(page.locator('iframe[title="Harness Inspector Workbench"]')).toBeVisible();
+    await openDestination(page, "Sessions");
+    await expect(page.getByRole("button", { name: "Choose session folder" })).toBeVisible();
     await assertRenderedContract(page);
-    await page.screenshot({ path: testInfo.outputPath(`inspector-${layout.name}.png`) });
+    await page.screenshot({ path: testInfo.outputPath(`sessions-${layout.name}.png`) });
   }
   expect(browserErrors).toEqual([]);
 });

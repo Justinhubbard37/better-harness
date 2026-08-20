@@ -14,6 +14,8 @@ const EMPTY: StudioConfig = {
   experimentEnabled: false,
   historyEnabled: false,
   inspectorEnabled: false,
+  workspaceConnected: false,
+  sessionCount: 0,
 };
 
 describe("Studio control-plane navigation", () => {
@@ -22,15 +24,19 @@ describe("Studio control-plane navigation", () => {
 
     expect(destinations.map((destination) => destination.id)).toEqual([
       "overview",
-      "inspector",
+      "sessions",
       "artifacts",
       "debugger",
       "compare",
     ]);
     expect(destinations.find((destination) => destination.id === "overview")).toMatchObject({ availability: "ready" });
-    expect(destinations.find((destination) => destination.id === "artifacts")).toMatchObject({
+    expect(destinations.find((destination) => destination.id === "sessions")).toMatchObject({
       availability: "partial",
-      status: "Analyze artifacts",
+      status: "Open session folder",
+    });
+    expect(destinations.find((destination) => destination.id === "artifacts")).toMatchObject({
+      availability: "foundation",
+      status: "Workspace required",
     });
     expect(destinations.find((destination) => destination.id === "debugger")).toMatchObject({
       availability: "foundation",
@@ -38,7 +44,7 @@ describe("Studio control-plane navigation", () => {
     });
     expect(destinations.find((destination) => destination.id === "compare")).toMatchObject({
       availability: "foundation",
-      status: "Input required",
+      status: "Workspace required",
     });
     expect(capabilitySummary(EMPTY)).toEqual({ ready: 1, partial: 1, foundation: 3 });
   });
@@ -51,9 +57,11 @@ describe("Studio control-plane navigation", () => {
       experimentEnabled: true,
       historyEnabled: true,
       inspectorEnabled: true,
+      workspaceConnected: true,
+      sessionCount: 3,
     };
 
-    expect(compareSurfaces(config)).toEqual(["bench", "results"]);
+    expect(compareSurfaces(config)).toEqual(["sessions", "bench", "results"]);
     expect(inspectorSurfaces(config)).toEqual(["workbench"]);
     expect(studioDestinations(config).find((destination) => destination.id === "debugger")).toMatchObject({
       availability: "ready",
@@ -67,7 +75,7 @@ describe("Studio control-plane navigation", () => {
 
     expect(studioDestinations(config).find((destination) => destination.id === "artifacts")).toMatchObject({
       availability: "ready",
-      status: "Run outputs",
+      status: "Session outputs",
     });
     // Artifacts must not imply retained Inspector evidence or a Compare input.
     expect(inspectorSurfaces(config)).toEqual([]);
@@ -79,9 +87,9 @@ describe("Studio control-plane navigation", () => {
 
     expect(inspectorSurfaces(config)).toEqual([]);
     expect(compareSurfaces(config)).toEqual([]);
-    expect(studioDestinations(config).find((destination) => destination.id === "inspector")).toMatchObject({
-      availability: "foundation",
-      status: "Report required",
+    expect(studioDestinations(config).find((destination) => destination.id === "sessions")).toMatchObject({
+      availability: "partial",
+      status: "Open session folder",
     });
     expect(studioDestinations(config).find((destination) => destination.id === "compare")).toMatchObject({
       availability: "foundation",

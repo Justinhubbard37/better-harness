@@ -4,6 +4,8 @@
 
 - Spec ID: harness-studio-artifact-view
 - Status: Implemented
+- Acquisition: Superseded by `harness-studio-local-web-workspace`; Artifact View
+  is session-scoped rather than the root directory-selection workflow.
 
 ## Intent
 
@@ -101,14 +103,14 @@ override spellings used by the provisioner. A viewer must also contain
 - **AC-14:** A real provisioned PPTX viewer renders a representative deck in a
   browser with no page or console errors. Unit-only transform evidence is not
   sufficient for this acceptance scenario.
-- **AC-15:** `harness-studio` can start without CLI-provided inputs. Overview
+- **AC-15 (superseded):** `harness-studio` can start without CLI-provided inputs. Overview
   and Artifacts expose an enabled **Analyze artifacts** action rather than a
   disabled “artifact directory required” state.
-- **AC-16:** Analyze artifacts supports choosing multiple files or a directory
+- **AC-16 (superseded):** Analyze artifacts supports choosing multiple files or a directory
   in the browser. Studio copies selected bytes into a bounded server-managed
   import session, commits the catalog only after every file succeeds, and never
   writes into the selected source directory.
-- **AC-17:** Manual imports require same-origin requests, opaque session ids,
+- **AC-17 (superseded):** Manual imports require same-origin requests, opaque session ids,
   portable flattened labels, bounded file count and aggregate bytes, and
   cleanup on failure, replacement, or server shutdown. Successful commit
   refreshes navigation, Artifact View, and the Debugger artifact endpoint.
@@ -154,11 +156,11 @@ with a concrete reason.
 Pass the bounded artifact endpoint into the recorded Session Debugger and show
 the real configured catalog or an empty state.
 
-### 6. Add a manual analysis entry
+### 6. Add a manual analysis entry (superseded)
 
-Allow the empty Studio shell to start, add file and folder pickers to Overview
-and the Artifact empty state, upload through a request-scoped import session,
-and activate the resulting catalog only after commit.
+This artifact-root workflow was replaced by the workspace-root workflow in
+`harness-studio-local-web-workspace`. Artifact files remain scoped below a
+selected Session; the loose catalog is compatibility-only.
 
 ## Test and Review Evidence
 
@@ -186,10 +188,13 @@ Implementation evidence captured on 2026-08-20:
   console/page-error capture and saved screenshots.
 - AC-12: Session Debugger tests with empty and populated artifact catalogs.
 - AC-14: Playwright against the currently provisioned
-  `~/.qoder/canvas/canvases/pptx` and a real PPTX fixture.
-- AC-15/AC-16/AC-17: HTTP and Playwright coverage starting Studio with no
-  inputs, importing source/diff/SVG/PPTX files from the UI, and rejecting
-  cross-origin, oversized, traversal-shaped, or incomplete import requests.
+  `~/.qoder/canvas/canvases/pptx` and a real PPTX fixture. The scenario is
+  environment-gated: where that viewer, the `canvas-sdk` runtime, or the deck
+  fixture is absent (a clean CI runner has none of them), the deck is left out
+  of the artifact directory and the scenario reports as skipped with its stated
+  requirement rather than failing the artifact suite on a missing external file.
+- AC-15/AC-16/AC-17: superseded by the workspace-root acceptance scenarios in
+  `harness-studio-local-web-workspace`.
 - Regression: package tests, root tests, `git diff --check`, and the Markdown
   link graph.
 

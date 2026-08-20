@@ -1,11 +1,11 @@
 export type StudioArea =
   | "overview"
-  | "inspector"
+  | "sessions"
   | "artifacts"
   | "debugger"
   | "compare";
 
-export type StudioCompareSurface = "bench" | "results";
+export type StudioCompareSurface = "sessions" | "bench" | "results";
 export type StudioInspectorSurface = "workbench";
 
 export interface StudioConfig {
@@ -15,6 +15,8 @@ export interface StudioConfig {
   experimentEnabled: boolean;
   historyEnabled: boolean;
   inspectorEnabled: boolean;
+  workspaceConnected: boolean;
+  sessionCount: number;
 }
 
 export type StudioAvailability = "ready" | "partial" | "foundation";
@@ -32,18 +34,18 @@ export function studioDestinations(config: StudioConfig): readonly StudioDestina
   return [
     { id: "overview", label: "Overview", group: "Control", availability: "ready", status: "Control plane" },
     {
-      id: "inspector",
-      label: "Inspector",
+      id: "sessions",
+      label: "Sessions",
       group: "Observe",
-      availability: config.inspectorEnabled ? "ready" : "foundation",
-      status: config.inspectorEnabled ? "Evidence workbench" : "Report required",
+      availability: config.workspaceConnected ? "ready" : "partial",
+      status: config.workspaceConnected ? `${config.sessionCount} session${config.sessionCount === 1 ? "" : "s"}` : "Open session folder",
     },
     {
       id: "artifacts",
       label: "Artifacts",
       group: "Observe",
-      availability: config.artifactsEnabled ? "ready" : "partial",
-      status: config.artifactsEnabled ? "Run outputs" : "Analyze artifacts",
+      availability: config.artifactsEnabled ? "ready" : config.workspaceConnected ? "partial" : "foundation",
+      status: config.artifactsEnabled ? "Session outputs" : config.workspaceConnected ? "Select a session" : "Workspace required",
     },
     {
       id: "debugger",
@@ -56,14 +58,15 @@ export function studioDestinations(config: StudioConfig): readonly StudioDestina
       id: "compare",
       label: "Compare",
       group: "Validate",
-      availability: compareAvailable ? "ready" : "foundation",
-      status: config.experimentEnabled ? "Harness Bench" : config.evidenceEnabled ? "Frozen results" : "Input required",
+      availability: compareAvailable || config.sessionCount >= 2 ? "ready" : config.workspaceConnected ? "partial" : "foundation",
+      status: config.sessionCount >= 2 ? "Session compare" : config.experimentEnabled ? "Harness Bench" : config.evidenceEnabled ? "Frozen results" : config.workspaceConnected ? "Choose 2 sessions" : "Workspace required",
     },
   ];
 }
 
 export function compareSurfaces(config: StudioConfig): readonly StudioCompareSurface[] {
   return [
+    ...(config.sessionCount >= 2 ? ["sessions" as const] : []),
     ...(config.experimentEnabled ? ["bench" as const] : []),
     ...(config.evidenceEnabled ? ["results" as const] : []),
   ];

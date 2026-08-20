@@ -4,22 +4,22 @@ import { ArrowRight } from "@phosphor-icons/react/ArrowRight";
 import { Binoculars } from "@phosphor-icons/react/Binoculars";
 import { BugBeetle } from "@phosphor-icons/react/BugBeetle";
 import { Flask } from "@phosphor-icons/react/Flask";
+import { FolderOpen } from "@phosphor-icons/react/FolderOpen";
 import { GitBranch } from "@phosphor-icons/react/GitBranch";
 import { Package } from "@phosphor-icons/react/Package";
 import { SidebarSimple } from "@phosphor-icons/react/SidebarSimple";
 import { SquaresFour } from "@phosphor-icons/react/SquaresFour";
 import { CompareView } from "./CompareView.js";
 import { ExperimentView } from "./ExperimentView.js";
-import { InspectorWorkbench } from "./InspectorWorkbench.js";
 import { HighlightedCode } from "./HighlightedCode.js";
 import { RunView } from "./RunView.js";
+import type { DebuggerSession } from "./session-debugger-model.js";
 import { useRovingFocus } from "./roving-tablist.js";
 
 const StudioDiff = lazy(() => import("./StudioDiff.js"));
 import {
   capabilitySummary,
   compareSurfaces,
-  inspectorSurfaces,
   studioDestinations,
   type StudioArea,
   type StudioCompareSurface,
@@ -29,7 +29,7 @@ import {
 
 const NAV_ICONS: Record<StudioArea, Icon> = {
   overview: SquaresFour,
-  inspector: Binoculars,
+  sessions: Binoculars,
   artifacts: Package,
   debugger: BugBeetle,
   compare: Flask,
@@ -37,7 +37,7 @@ const NAV_ICONS: Record<StudioArea, Icon> = {
 
 const AREA_COPY: Record<StudioArea, { eyebrow: string; title: string }> = {
   overview: { eyebrow: "Control", title: "Harness Control Center" },
-  inspector: { eyebrow: "Observe", title: "Inspector" },
+  sessions: { eyebrow: "Observe", title: "Sessions" },
   artifacts: { eyebrow: "Observe", title: "Artifacts" },
   debugger: { eyebrow: "Run", title: "Debugger" },
   compare: { eyebrow: "Validate", title: "Compare" },
@@ -59,6 +59,8 @@ const EMPTY_CONFIG: StudioConfig = {
   experimentEnabled: false,
   historyEnabled: false,
   inspectorEnabled: false,
+  workspaceConnected: false,
+  sessionCount: 0,
 };
 
 async function fetchStudioState(): Promise<{ config: StudioConfig; sources: StudioSourceOption[] }> {
@@ -79,10 +81,12 @@ export function App(): React.JSX.Element {
   const [config, setConfig] = useState<StudioConfig | undefined>(undefined);
   const [sources, setSources] = useState<StudioSourceOption[]>([]);
   const [dataRevision, setDataRevision] = useState(0);
-  const [artifactImportRevision, setArtifactImportRevision] = useState(0);
+  const [workspaceRevision, setWorkspaceRevision] = useState(0);
+  const [selectedSessionId, setSelectedSessionId] = useState<string>();
+  const [sessionCompareIds, setSessionCompareIds] = useState<[string, string] | undefined>();
   const [configFailure, setConfigFailure] = useState<string | null>(null);
   const [area, setArea] = useState<StudioArea>(areaFromHash);
-  const [compareSurface, setCompareSurface] = useState<StudioCompareSurface>("bench");
+  const [compareSurface, setCompareSurface] = useState<StudioCompareSurface>("sessions");
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationToggleRef = useRef<HTMLButtonElement>(null);
 
@@ -95,7 +99,7 @@ export function App(): React.JSX.Element {
           setConfigFailure(null);
           setSources(loaded.sources);
           setConfig(loaded.config);
-          setCompareSurface((currentSurface) => compareSurfaces(loaded.config).includes(currentSurface) ? currentSurface : compareSurfaces(loaded.config)[0] ?? "bench");
+          setCompareSurface((currentSurface) => compareSurfaces(loaded.config).includes(currentSurface) ? currentSurface : compareSurfaces(loaded.config)[0] ?? "sessions");
         }
       } catch (error) {
         if (!cancelled) {
@@ -154,19 +158,22 @@ export function App(): React.JSX.Element {
       setConfigFailure(null);
       setSources(loaded.sources);
       setConfig(loaded.config);
-      setCompareSurface((currentSurface) => compareSurfaces(loaded.config).includes(currentSurface) ? currentSurface : compareSurfaces(loaded.config)[0] ?? "bench");
+      setCompareSurface((currentSurface) => compareSurfaces(loaded.config).includes(currentSurface) ? currentSurface : compareSurfaces(loaded.config)[0] ?? "sessions");
       setDataRevision((revision) => revision + 1);
     } catch (error) {
       setConfigFailure(error instanceof Error ? error.message : "Studio source switch failed.");
     }
   }
 
-  async function artifactsImported(): Promise<void> {
+  async function workspaceChanged(): Promise<void> {
     const loaded = await fetchStudioState();
     setConfigFailure(null);
     setSources(loaded.sources);
     setConfig(loaded.config);
-    setArtifactImportRevision((revision) => revision + 1);
+    setSelectedSessionId(undefined);
+    setSessionCompareIds(undefined);
+    setCompareSurface((currentSurface) => compareSurfaces(loaded.config).includes(currentSurface) ? currentSurface : compareSurfaces(loaded.config)[0] ?? "sessions");
+    setWorkspaceRevision((revision) => revision + 1);
   }
 
   if (config === undefined) {
@@ -183,7 +190,7 @@ export function App(): React.JSX.Element {
       label="Compare surfaces"
       items={compareSurfaces(config).map((id) => ({
         id,
-        label: id === "bench" ? "Bench" : "Evidence results",
+        label: id === "sessions" ? "Sessions" : id === "bench" ? "Bench" : "Evidence results",
       }))}
       active={compareSurface}
       onSelect={setCompareSurface}
@@ -206,10 +213,10 @@ export function App(): React.JSX.Element {
       </header>
       <div className={`studio-surface studio-surface-${area}`}>
         {area === "overview" && <Overview config={config} onOpen={openArea} />}
-        {area === "inspector" && <InspectorWorkspace key={`inspector-${dataRevision}-${config.inspectorEnabled}`} config={config} />}
-        {area === "artifacts" && <ArtifactsWorkspace key={`artifacts-${dataRevision}-${config.artifactsEnabled}`} config={config} importRevision={artifactImportRevision} onImported={artifactsImported} />}
+        {area === "sessions" && <SessionsWorkspace key={`sessions-${dataRevision}-${workspaceRevision}`} config={config} onWorkspaceChanged={workspaceChanged} onSelectSession={setSelectedSessionId} onCompare={(ids) => { setSessionCompareIds(ids); setCompareSurface("sessions"); openArea("compare"); }} />}
+        {area === "artifacts" && <ArtifactsWorkspace key={`artifacts-${dataRevision}-${config.artifactsEnabled}-${selectedSessionId ?? "none"}`} config={config} selectedSessionId={selectedSessionId} />}
         {area === "debugger" && <DebuggerWorkspace config={config} />}
-        {area === "compare" && <CompareWorkspace key={`compare-${dataRevision}-${config.experimentEnabled}-${config.evidenceEnabled}`} config={config} surface={compareSurface} navigation={compareNavigation} />}
+        {area === "compare" && <CompareWorkspace key={`compare-${dataRevision}-${workspaceRevision}-${config.experimentEnabled}-${config.evidenceEnabled}`} config={config} surface={compareSurface} navigation={compareNavigation} sessionIds={sessionCompareIds} />}
       </div>
     </section>
   </div>;
@@ -285,14 +292,15 @@ function PrimaryNavigation(props: {
 
 function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => void }): React.JSX.Element {
   const summary = capabilitySummary(props.config);
-  const nextArea: StudioArea = props.config.inspectorEnabled
-    ? "inspector"
+  const nextArea: StudioArea = props.config.workspaceConnected
+    ? "sessions"
     : props.config.aguiEnabled
       ? "debugger"
       : props.config.experimentEnabled || props.config.evidenceEnabled
         ? "compare"
-        : "artifacts";
+        : "sessions";
   const inputs = [
+    ["Session workspace", props.config.workspaceConnected],
     ["Artifact catalog", props.config.artifactsEnabled],
     ["Inspector report", props.config.inspectorEnabled],
     ["Harness runtime", props.config.aguiEnabled],
@@ -302,14 +310,13 @@ function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => v
   ] as const;
   const missingInputs = inputs.filter(([, enabled]) => !enabled);
   const actions = [
-    { label: "Analyze artifacts", area: "artifacts" as const, enabled: true, detail: "Files or folder" },
-    { label: "Go to Inspector", area: "inspector" as const, enabled: props.config.inspectorEnabled, detail: "Retained sessions" },
+    { label: props.config.workspaceConnected ? "Open Sessions" : "Open session folder", area: "sessions" as const, enabled: true, detail: props.config.workspaceConnected ? `${props.config.sessionCount} retained` : "Choose in Web" },
     { label: "Go to Debugger", area: "debugger" as const, enabled: props.config.aguiEnabled, detail: "Live runs" },
-    { label: "Go to Compare", area: "compare" as const, enabled: props.config.experimentEnabled || props.config.evidenceEnabled, detail: "Bench and results" },
+    { label: "Go to Compare", area: "compare" as const, enabled: props.config.sessionCount >= 2 || props.config.experimentEnabled || props.config.evidenceEnabled, detail: "Sessions and evidence" },
   ];
   return <main className="control-overview">
     <section className="control-hero">
-      <div><small>Ready now</small><h1>Open the connected workspace.</h1><p>{summary.ready} ready · {summary.partial} partial · {summary.foundation} foundations. Studio shows only configured evidence and keeps unavailable surfaces quiet.</p><button type="button" onClick={() => props.onOpen(nextArea)}>Open {AREA_COPY[nextArea].title}<ArrowRight size={15} weight="bold" /></button></div>
+      <div><small>Local Web workspace</small><h1>{props.config.workspaceConnected ? "Open the connected sessions." : "Choose a session folder in Studio."}</h1><p>{summary.ready} ready · {summary.partial} partial · {summary.foundation} foundations. Directory selection, session browsing, and comparison stay inside this Web workbench.</p><button type="button" onClick={() => props.onOpen(nextArea)}>{props.config.workspaceConnected ? "Open Sessions" : "Open session folder"}<ArrowRight size={15} weight="bold" /></button></div>
       <aside className="control-actions" aria-label="Available actions"><small>Available actions</small><ul>{actions.map((action) => <li key={action.label} className={action.enabled ? "is-ready" : "is-foundation"}><span className={`availability-dot availability-${action.enabled ? "ready" : "foundation"}`} /><button type="button" disabled={!action.enabled} onClick={() => props.onOpen(action.area)}>{action.label}</button><em>{action.detail}</em></li>)}</ul></aside>
     </section>
 
@@ -320,18 +327,196 @@ function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => v
   </main>;
 }
 
-function InspectorWorkspace(props: { config: StudioConfig }): React.JSX.Element {
-  const available = inspectorSurfaces(props.config);
-  if (available.length === 0) {
-    return <EmptyWorkspace eyebrow="Observed delivery" title="Connect an Inspector report" detail="Render a privacy-filtered Harness Inspector HTML report, then start Studio with --inspector <report.html>. Live runs remain under Experiments until Studio has a retained-session contract." command="--inspector ./harness-inspector.html" />;
+interface SessionSummary {
+  id: string;
+  savedAt: string;
+  prompt: string;
+  status: "finished" | "error";
+  toolCallCount: number;
+}
+
+function SessionsWorkspace(props: {
+  config: StudioConfig;
+  onWorkspaceChanged: () => Promise<void>;
+  onSelectSession: (id: string) => void;
+  onCompare: (ids: [string, string]) => void;
+}): React.JSX.Element {
+  const [sessions, setSessions] = useState<SessionSummary[]>();
+  const [workspaceLabel, setWorkspaceLabel] = useState("Session workspace");
+  const [omittedCount, setOmittedCount] = useState(0);
+  const [selected, setSelected] = useState<string>();
+  const [compareIds, setCompareIds] = useState<Set<string>>(new Set());
+  const [detail, setDetail] = useState<DebuggerSession>();
+  const [failure, setFailure] = useState<string>();
+  const [detailFailure, setDetailFailure] = useState<string>();
+
+  useEffect(() => {
+    if (!props.config.workspaceConnected) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("api/sessions");
+        if (!response.ok) throw new Error(await studioApiError(response));
+        const payload = await response.json() as { workspace: { label: string; omittedCount: number }; sessions: SessionSummary[] };
+        if (cancelled) return;
+        setWorkspaceLabel(payload.workspace.label);
+        setOmittedCount(payload.workspace.omittedCount);
+        setSessions(payload.sessions);
+        if (payload.sessions[0] !== undefined) await openSession(payload.sessions[0].id, () => cancelled);
+      } catch (error) {
+        if (!cancelled) setFailure(error instanceof Error ? error.message : String(error));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [props.config.workspaceConnected]);
+
+  async function openSession(id: string, cancelled: () => boolean = () => false): Promise<void> {
+    try {
+      const response = await fetch(`api/sessions/${encodeURIComponent(id)}/debugger`);
+      if (!response.ok) throw new Error(await studioApiError(response));
+      const loaded = await response.json() as DebuggerSession;
+      if (cancelled()) return;
+      setDetailFailure(undefined);
+      setSelected(id);
+      setDetail(loaded);
+      props.onSelectSession(id);
+    } catch (error) {
+      if (cancelled()) return;
+      const message = error instanceof Error ? error.message : "Session detail failed to load.";
+      setDetailFailure(message);
+    }
   }
-  if (props.config.inspectorEnabled) {
-    return <section className="inspector-workspace" aria-label="Inspector workspace">
-      <header><div><strong>Inspector Workbench</strong><span>Read-only</span></div></header>
-      <InspectorWorkbench fallback={<iframe title="Harness Inspector Workbench" src="inspector" sandbox="allow-scripts" referrerPolicy="no-referrer" />} />
-    </section>;
+
+  function toggleCompare(id: string): void {
+    setCompareIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else if (next.size < 2) next.add(id);
+      return next;
+    });
   }
-  return <EmptyWorkspace eyebrow="Observed delivery" title="Connect an Inspector report" detail="Inspector requires retained, privacy-filtered evidence. It never substitutes the recorded Session Debugger fixture for a real workspace." command="--inspector ./harness-inspector.html" />;
+
+  async function disconnect(): Promise<void> {
+    const response = await fetch("api/workspace", { method: "DELETE" });
+    if (!response.ok) {
+      setFailure(await studioApiError(response));
+      return;
+    }
+    await props.onWorkspaceChanged();
+  }
+
+  if (!props.config.workspaceConnected) {
+    return <WorkspaceIntake onWorkspaceChanged={props.onWorkspaceChanged} />;
+  }
+  if (failure !== undefined) {
+    return <WorkspaceIntake title="Choose another session folder" detail={failure} onWorkspaceChanged={props.onWorkspaceChanged} />;
+  }
+  if (sessions === undefined) return <p className="artifact-status" role="status">Indexing sessions…</p>;
+
+  const pair = [...compareIds];
+  return <section className="session-browser-workspace" aria-label="Session workspace">
+    <aside className="session-catalog-pane">
+      <header><div><small>Local workspace</small><h2 title={workspaceLabel}>{workspaceLabel}</h2></div><span>{sessions.length}</span></header>
+      {omittedCount > 0 && <p className="session-omissions">{omittedCount} unsupported or malformed file{omittedCount === 1 ? "" : "s"} omitted.</p>}
+      <ul className="session-catalog-rows">{sessions.map((session) => <li key={session.id}>
+        <label title="Select for comparison"><input type="checkbox" checked={compareIds.has(session.id)} disabled={!compareIds.has(session.id) && compareIds.size >= 2} onChange={() => toggleCompare(session.id)} /></label>
+        <button type="button" className={selected === session.id ? "selected" : undefined} onClick={() => void openSession(session.id)}><strong>{session.prompt}</strong><small>{session.status} · {session.toolCallCount} calls · {formatSessionTime(session.savedAt)}</small></button>
+      </li>)}</ul>
+      <footer><button type="button" className="primary" disabled={pair.length !== 2} onClick={() => props.onCompare(pair as [string, string])}>Compare {pair.length}/2</button><WorkspaceFolderControls compact onWorkspaceChanged={props.onWorkspaceChanged} /><button type="button" onClick={() => void disconnect()}>Disconnect</button></footer>
+    </aside>
+    <main className="session-detail-pane">
+      {detailFailure !== undefined
+        ? <p className="artifact-status" role="alert">{detailFailure}</p>
+        : detail === undefined
+          ? <p className="artifact-status">Select a session to inspect retained evidence.</p>
+          : <SessionDetail session={detail} />}
+    </main>
+  </section>;
+}
+
+function SessionDetail({ session }: { session: DebuggerSession }): React.JSX.Element {
+  const toolCalls = session.events.reduce((count, event) => count + (event.toolCalls?.length ?? 0), 0);
+  return <section className="session-detail" aria-label={`Session detail: ${session.name}`}>
+    <header><div><small>Retained Session</small><h1>{session.name}</h1></div><span className={`run-badge status-${session.connection}`}>{session.connection}</span></header>
+    <dl><div><dt>Agent</dt><dd>{session.agent}</dd></div><div><dt>Protocol</dt><dd>{session.protocol}</dd></div><div><dt>Events</dt><dd>{session.events.length}</dd></div><div><dt>Tool calls</dt><dd>{toolCalls}</dd></div></dl>
+    <ol className="session-event-rows">{session.events.map((event) => <li key={event.id}><time>{event.timestamp}</time><span><strong>{event.phase} · {event.title}</strong><small>{event.summary}</small></span>{event.toolCalls && <em>{event.toolCalls.map((tool) => tool.name).join(", ")}</em>}</li>)}</ol>
+  </section>;
+}
+
+function WorkspaceIntake(props: { title?: string; detail?: string; onWorkspaceChanged: () => Promise<void> }): React.JSX.Element {
+  return <main className="workspace-intake empty-workspace"><span><FolderOpen size={22} /></span><small>Local Web workspace</small><h1>{props.title ?? "Open a session folder"}</h1><p>{props.detail ?? "Choose a local directory containing retained run_*.json records. Studio indexes supported sessions temporarily and never writes back to the folder."}</p><WorkspaceFolderControls onWorkspaceChanged={props.onWorkspaceChanged} /></main>;
+}
+
+function WorkspaceFolderControls(props: { compact?: boolean; onWorkspaceChanged: () => Promise<void> }): React.JSX.Element {
+  const folderRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string>();
+  const [failure, setFailure] = useState<string>();
+
+  async function openFolder(selected: FileList | null): Promise<void> {
+    const allFiles = selected === null ? [] : Array.from(selected);
+    const files = allFiles.filter((file) => file.name.toLowerCase().endsWith(".json"));
+    if (allFiles.length === 0) return;
+    if (files.length === 0) {
+      setFailure("This folder has no JSON files for a supported Session adapter.");
+      return;
+    }
+    const firstPath = files[0]?.webkitRelativePath || files[0]?.name || "Session workspace";
+    const label = firstPath.includes("/") ? firstPath.split("/")[0]! : "Selected session folder";
+    setBusy(true);
+    setFailure(undefined);
+    setMessage(`Preparing ${files.length} candidate file${files.length === 1 ? "" : "s"}…`);
+    let importId: string | undefined;
+    try {
+      const created = await fetch(`api/workspaces?${new URLSearchParams({ label })}`, { method: "POST" });
+      if (!created.ok) throw new Error(await studioApiError(created));
+      const limits = await created.json() as { sessionId: string; maxFiles: number; maxBytes: number };
+      importId = limits.sessionId;
+      const totalBytes = files.reduce((total, file) => total + file.size, 0);
+      if (files.length > limits.maxFiles) throw new Error(`This folder has more than ${limits.maxFiles} candidate files.`);
+      if (totalBytes > limits.maxBytes) throw new Error(`Candidate session data exceeds the ${formatBytes(limits.maxBytes)} workspace limit.`);
+      for (const [index, file] of files.entries()) {
+        setMessage(`Indexing ${index + 1} of ${files.length}: ${file.name}`);
+        const path = file.webkitRelativePath || file.name;
+        const uploaded = await fetch(`api/workspaces/${encodeURIComponent(importId)}/files?${new URLSearchParams({ path })}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: file });
+        if (!uploaded.ok) throw new Error(await studioApiError(uploaded));
+      }
+      const committed = await fetch(`api/workspaces/${encodeURIComponent(importId)}/commit`, { method: "POST" });
+      if (!committed.ok) throw new Error(await studioApiError(committed));
+      importId = undefined;
+      setMessage("Opening sessions…");
+      await props.onWorkspaceChanged();
+    } catch (error) {
+      if (importId !== undefined) await fetch(`api/workspaces/${encodeURIComponent(importId)}`, { method: "DELETE" }).catch(() => undefined);
+      setMessage(undefined);
+      setFailure(error instanceof Error ? error.message : "Workspace import failed.");
+    } finally {
+      setBusy(false);
+      if (folderRef.current) folderRef.current.value = "";
+    }
+  }
+
+  return <div className={`workspace-folder-controls${props.compact ? " is-compact" : ""}`}>
+    <input ref={(node) => { folderRef.current = node; node?.setAttribute("webkitdirectory", ""); }} data-testid="workspace-folder-input" hidden type="file" multiple onChange={(event) => void openFolder(event.currentTarget.files)} />
+    <button className={props.compact ? undefined : "primary"} type="button" disabled={busy} onClick={() => folderRef.current?.click()}><FolderOpen size={14} />{props.compact ? "Change" : "Choose session folder"}</button>
+    {message !== undefined && <small role="status">{message}</small>}
+    {failure !== undefined && <small className="workspace-folder-error" role="alert">{failure}</small>}
+  </div>;
+}
+
+async function studioApiError(response: Response): Promise<string> {
+  try {
+    const payload = await response.json() as { error?: string };
+    if (typeof payload.error === "string") return payload.error;
+  } catch {
+    // Preserve the status fallback when a proxy returns a non-JSON body.
+  }
+  return `Studio request failed (${response.status}).`;
+}
+
+function formatSessionTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
 }
 
 interface ArtifactDescriptor {
@@ -351,7 +536,7 @@ interface ArtifactDescriptor {
  * The preview frame withholds `allow-same-origin`, so artifact code runs on an
  * opaque origin and cannot reach the Studio shell.
  */
-function ArtifactsWorkspace(props: { config: StudioConfig; importRevision: number; onImported: () => Promise<void> }): React.JSX.Element {
+function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: string }): React.JSX.Element {
   const [artifacts, setArtifacts] = useState<ArtifactDescriptor[] | undefined>(undefined);
   const [failure, setFailure] = useState<string | undefined>(undefined);
   const [selected, setSelected] = useState<string | undefined>(undefined);
@@ -365,36 +550,35 @@ function ArtifactsWorkspace(props: { config: StudioConfig; importRevision: numbe
         if (!response.ok) throw new Error(`Artifact catalog failed (${response.status}).`);
         const payload = await response.json() as { artifacts?: ArtifactDescriptor[] };
         if (cancelled) return;
-        // Preloaded directories remain unselected. A manual analysis revision
-        // opens its first result so the UI flow ends at a real preview.
         const entries = Array.isArray(payload.artifacts) ? payload.artifacts : [];
         setFailure(undefined);
         setArtifacts(entries);
-        if (props.importRevision > 0) setSelected(entries[0]?.id);
       } catch (error) {
         if (!cancelled) setFailure(error instanceof Error ? error.message : String(error));
       }
     })();
     return () => { cancelled = true; };
-  }, [props.config.artifactsEnabled, props.importRevision]);
+  }, [props.config.artifactsEnabled]);
 
   if (!props.config.artifactsEnabled) {
-    return <ArtifactIntake title="Analyze generated artifacts" detail="Choose files or a folder from this device. Studio copies them into a bounded temporary session for read-only preview; the originals stay untouched." onImported={props.onImported} />;
+    return props.config.workspaceConnected
+      ? <EmptyWorkspace eyebrow="Session artifacts" title={props.selectedSessionId === undefined ? "Select a Session first" : "No artifacts indexed for this Session"} detail={props.selectedSessionId === undefined ? "Open Sessions and select retained evidence before viewing its outputs." : "The current Session adapter did not expose an artifact set. Studio does not substitute a loose global folder."} />
+      : <EmptyWorkspace eyebrow="Session artifacts" title="Open a session workspace" detail="Artifacts belong to a Session. Choose a session folder in Sessions before opening its outputs." />;
   }
   if (failure !== undefined) {
-    return <ArtifactIntake title="Choose another artifact set" detail={failure} onImported={props.onImported} />;
+    return <EmptyWorkspace eyebrow="Session artifacts" title="Cannot read the compatibility artifact catalog" detail={failure} />;
   }
   if (artifacts === undefined) {
     return <p className="artifact-status" role="status">Loading artifacts…</p>;
   }
   if (artifacts.length === 0) {
-    return <ArtifactIntake title="No artifacts in this set" detail="Choose files or a folder to replace the empty set and open a preview." onImported={props.onImported} />;
+    return <EmptyWorkspace eyebrow="Session artifacts" title="No artifacts in this set" detail="The compatibility catalog contains no renderable files." />;
   }
 
   const active = artifacts.find((entry) => entry.id === selected);
   return <section className="artifact-workspace" aria-label="Artifacts workspace">
     <div className="artifact-list-pane">
-      <header><div><small>Retained</small><h2>Artifacts</h2></div><div className="artifact-list-actions"><span>{artifacts.length}</span><ArtifactImportControls compact onImported={props.onImported} /></div></header>
+      <header><div><small>Compatibility preload</small><h2>Artifacts</h2></div><span>{artifacts.length}</span></header>
       <ul className="artifact-rows">
         {artifacts.map((entry) => <li key={entry.id}>
           <button
@@ -414,88 +598,6 @@ function ArtifactsWorkspace(props: { config: StudioConfig; importRevision: numbe
         : <ArtifactPreview artifact={active} />}
     </div>
   </section>;
-}
-
-function ArtifactIntake(props: { title: string; detail: string; onImported: () => Promise<void> }): React.JSX.Element {
-  return <main className="artifact-intake empty-workspace">
-    <span><Package size={22} /></span>
-    <small>Run outputs</small>
-    <h1>{props.title}</h1>
-    <p>{props.detail}</p>
-    <ArtifactImportControls onImported={props.onImported} />
-  </main>;
-}
-
-function ArtifactImportControls(props: { compact?: boolean; onImported: () => Promise<void> }): React.JSX.Element {
-  const filesRef = useRef<HTMLInputElement>(null);
-  const folderRef = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string>();
-  const [failure, setFailure] = useState<string>();
-
-  async function analyze(selected: FileList | null): Promise<void> {
-    const files = selected === null ? [] : Array.from(selected);
-    if (files.length === 0) return;
-    setBusy(true);
-    setFailure(undefined);
-    setMessage(`Preparing ${files.length} artifact${files.length === 1 ? "" : "s"}…`);
-    let sessionId: string | undefined;
-    try {
-      const created = await fetch("api/artifact-imports", { method: "POST" });
-      if (!created.ok) throw new Error(await artifactImportError(created));
-      const session = await created.json() as { sessionId: string; maxFiles: number; maxBytes: number };
-      sessionId = session.sessionId;
-      const totalBytes = files.reduce((total, file) => total + file.size, 0);
-      if (files.length > session.maxFiles) throw new Error(`Select no more than ${session.maxFiles} files at once.`);
-      if (totalBytes > session.maxBytes) throw new Error(`The selected artifacts exceed the ${formatBytes(session.maxBytes)} import limit.`);
-      for (const [index, file] of files.entries()) {
-        setMessage(`Importing ${index + 1} of ${files.length}: ${file.name}`);
-        const name = file.webkitRelativePath || file.name;
-        const uploaded = await fetch(`api/artifact-imports/${encodeURIComponent(sessionId)}/files?${new URLSearchParams({ name })}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/octet-stream" },
-          body: file,
-        });
-        if (!uploaded.ok) throw new Error(await artifactImportError(uploaded));
-      }
-      const committed = await fetch(`api/artifact-imports/${encodeURIComponent(sessionId)}/commit`, { method: "POST" });
-      if (!committed.ok) throw new Error(await artifactImportError(committed));
-      sessionId = undefined;
-      setMessage("Opening artifact preview…");
-      await props.onImported();
-    } catch (error) {
-      if (sessionId !== undefined) {
-        await fetch(`api/artifact-imports/${encodeURIComponent(sessionId)}`, { method: "DELETE" }).catch(() => undefined);
-      }
-      setMessage(undefined);
-      setFailure(error instanceof Error ? error.message : "Artifact analysis failed.");
-    } finally {
-      setBusy(false);
-      if (filesRef.current) filesRef.current.value = "";
-      if (folderRef.current) folderRef.current.value = "";
-    }
-  }
-
-  return <div className={`artifact-import-controls${props.compact ? " is-compact" : ""}`}>
-    <input ref={filesRef} data-testid="artifact-files-input" hidden type="file" multiple onChange={(event) => void analyze(event.currentTarget.files)} />
-    <input ref={(node) => { folderRef.current = node; node?.setAttribute("webkitdirectory", ""); }} data-testid="artifact-folder-input" hidden type="file" multiple onChange={(event) => void analyze(event.currentTarget.files)} />
-    <div className="artifact-import-buttons">
-      <button className={props.compact ? undefined : "primary"} type="button" disabled={busy} onClick={() => filesRef.current?.click()}>{props.compact ? "Files" : "Choose files"}</button>
-      <button type="button" disabled={busy} onClick={() => folderRef.current?.click()}>{props.compact ? "Folder" : "Choose folder"}</button>
-    </div>
-    {message !== undefined && <small role="status">{message}</small>}
-    {failure !== undefined && <small className="artifact-import-error" role="alert">{failure}</small>}
-  </div>;
-}
-
-async function artifactImportError(response: Response): Promise<string> {
-  try {
-    const payload = await response.json() as { error?: string };
-    if (typeof payload.error === "string") return payload.error;
-  } catch {
-    // Preserve the status fallback when a proxy returns a non-JSON body.
-  }
-  return `Artifact analysis failed (${response.status}).`;
 }
 
 function ArtifactPreview({ artifact }: { artifact: ArtifactDescriptor }): React.JSX.Element {
@@ -553,10 +655,14 @@ function CompareWorkspace(props: {
   config: StudioConfig;
   surface: StudioCompareSurface;
   navigation: ReactNode;
+  sessionIds?: [string, string];
 }): React.JSX.Element {
   const available = compareSurfaces(props.config);
   if (available.length === 0) {
-    return <EmptyWorkspace eyebrow="Controlled validation" title="Load an experiment or evidence bundle" detail="Compare needs a locked experiment manifest or frozen compare evidence. It does not infer an experiment from an Inspector association." command="--experiment ./experiment.json" />;
+    return <EmptyWorkspace eyebrow="Session comparison" title={props.config.workspaceConnected ? "Choose a folder with at least two Sessions" : "Open a session workspace"} detail={props.config.workspaceConnected ? "The current workspace needs two retained Sessions before observational comparison is available." : "Choose a local session folder in Sessions. Compare does not require startup parameters."} />;
+  }
+  if (props.surface === "sessions" && props.config.sessionCount >= 2) {
+    return <SessionCompareView navigation={props.navigation} initialIds={props.sessionIds} />;
   }
   if (props.surface === "bench" && props.config.experimentEnabled) {
     return <main className="experiment-mode"><ExperimentView navigation={props.navigation} /></main>;
@@ -566,6 +672,85 @@ function CompareWorkspace(props: {
   }
   const fallback = available[0]!;
   return <EmptyWorkspace eyebrow="Surface unavailable" title="Choose a configured compare surface" detail={`The requested surface is not connected. Available now: ${fallback}.`} />;
+}
+
+interface SessionComparisonSide {
+  id: string;
+  prompt: string;
+  savedAt: string;
+  status: "finished" | "error";
+  retainedEventCount: number;
+  toolCallCount: number;
+  messageCount: number;
+  warningCount: number;
+  toolSequence: string[];
+}
+
+interface SessionComparison {
+  kind: "observational-session-compare.v1";
+  boundary: string;
+  left: SessionComparisonSide;
+  right: SessionComparisonSide;
+}
+
+function SessionCompareView(props: { navigation: ReactNode; initialIds?: [string, string] }): React.JSX.Element {
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [leftId, setLeftId] = useState(props.initialIds?.[0] ?? "");
+  const [rightId, setRightId] = useState(props.initialIds?.[1] ?? "");
+  const [comparison, setComparison] = useState<SessionComparison>();
+  const [failure, setFailure] = useState<string>();
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("api/sessions");
+        if (!response.ok) throw new Error(await studioApiError(response));
+        const loaded = await response.json() as { sessions: SessionSummary[] };
+        if (cancelled) return;
+        setSessions(loaded.sessions);
+        setLeftId((current) => current || loaded.sessions[0]?.id || "");
+        setRightId((current) => current || loaded.sessions[1]?.id || "");
+      } catch (error) {
+        if (!cancelled) setFailure(error instanceof Error ? error.message : String(error));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (leftId === "" || rightId === "" || leftId === rightId) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch(`api/session-compare?${new URLSearchParams({ left: leftId, right: rightId })}`, { signal: controller.signal });
+        if (!response.ok) throw new Error(await studioApiError(response));
+        setFailure(undefined);
+        setComparison(await response.json() as SessionComparison);
+      } catch (error) {
+        if (!controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
+      }
+    })();
+    return () => controller.abort();
+  }, [leftId, rightId]);
+
+  return <main className="session-compare-workspace">
+    <header><div><small>Observed retained evidence</small><h1>Compare Sessions</h1></div>{props.navigation}</header>
+    <div className="session-compare-picker"><label><span>Left Session</span><select value={leftId} onChange={(event) => setLeftId(event.target.value)}>{sessions.map((session) => <option key={session.id} value={session.id} disabled={session.id === rightId}>{session.prompt}</option>)}</select></label><label><span>Right Session</span><select value={rightId} onChange={(event) => setRightId(event.target.value)}>{sessions.map((session) => <option key={session.id} value={session.id} disabled={session.id === leftId}>{session.prompt}</option>)}</select></label></div>
+    {failure !== undefined && <p className="session-compare-boundary status-danger" role="alert">{failure}</p>}
+    {comparison === undefined ? <p className="artifact-status" role="status">Loading Session comparison…</p> : <>
+      <p className="session-compare-boundary"><strong>No winner inferred.</strong> {comparison.boundary}</p>
+      <div className="session-compare-heads"><article><small>Left</small><h2>{comparison.left.prompt}</h2><span className={`run-badge status-${comparison.left.status}`}>{comparison.left.status}</span></article><article><small>Right</small><h2>{comparison.right.prompt}</h2><span className={`run-badge status-${comparison.right.status}`}>{comparison.right.status}</span></article></div>
+      <div className="session-compare-table" role="table" aria-label="Observed Session differences">
+        {(["retainedEventCount", "toolCallCount", "messageCount", "warningCount"] as const).map((metric) => <div role="row" key={metric}><strong role="rowheader">{sessionMetricLabel(metric)}</strong><span role="cell">{comparison.left[metric]}</span><span role="cell">{comparison.right[metric]}</span></div>)}
+      </div>
+      <div className="session-tool-sequences"><section><header>Left tool sequence</header><ol>{comparison.left.toolSequence.map((tool, index) => <li key={`${tool}-${index}`}>{tool}</li>)}</ol></section><section><header>Right tool sequence</header><ol>{comparison.right.toolSequence.map((tool, index) => <li key={`${tool}-${index}`}>{tool}</li>)}</ol></section></div>
+    </>}
+  </main>;
+}
+
+function sessionMetricLabel(metric: "retainedEventCount" | "toolCallCount" | "messageCount" | "warningCount"): string {
+  return ({ retainedEventCount: "Retained events", toolCallCount: "Tool calls", messageCount: "Messages", warningCount: "Warnings" })[metric];
 }
 
 function EmptyWorkspace(props: { eyebrow: string; title: string; detail: string; command?: string }): React.JSX.Element {

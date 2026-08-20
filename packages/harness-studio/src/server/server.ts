@@ -1,10 +1,10 @@
 import { createReadStream } from "node:fs";
-import { mkdtemp, open, realpath, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
 import {
   assertBindAddressAllowed,
   handleAguiRun,
@@ -35,7 +35,7 @@ import { extractInspectorReportJson, loadInspectorReport } from "./query/inspect
 import { ObservedCallIndex } from "./query/observed-call-index.js";
 import { lockHistoryExperiment } from "./experiment-lock.js";
 import { canonicalToolEvents } from "./experiment-events.js";
-import { listRunRecords, parseRunSnapshot, readRunRecord, saveRunRecord } from "./run-log.js";
+import { listRunRecords, parseRunSnapshot, parseSavedRunRecord, readRunRecord, saveRunRecord, type SavedRunRecord } from "./run-log.js";
 import {
   activeSourcePath,
   assertSourceSelection,
@@ -103,6 +103,8 @@ const MAX_IMPORT_FILES = 256;
 const MAX_IMPORT_BYTES = 128 * 1024 * 1024;
 const MAX_IMPORT_SESSIONS = 4;
 const IMPORT_SESSION_TTL_MS = 10 * 60 * 1000;
+const MAX_WORKSPACE_FILES = 512;
+const MAX_WORKSPACE_SESSIONS = 200;
 
 export interface HarnessStudioServerOptions {
   /** Directory holding the built React app (index.html + assets/). */
@@ -181,6 +183,7 @@ export function createHarnessStudioServer(options: HarnessStudioServerOptions): 
     observedIndexes: new Map(),
     artifactDirectory: options.artifactDirectory,
     artifactImports: new Map(),
+    workspaceImports: new Map(),
   };
   const server = createServer((request, response) => {
     void route(request, response, options, state, experimentRuns).catch((error: unknown) => {
@@ -191,7 +194,9 @@ export function createHarnessStudioServer(options: HarnessStudioServerOptions): 
       respondJson(response, 500, { error: "Harness Studio could not complete this request." });
     });
   });
-  server.once("close", () => { void cleanupArtifactImports(state); });
+  server.once("close", () => {
+    void Promise.all([cleanupArtifactImports(state), cleanupWorkspaceImports(state)]);
+  });
   return server;
 }
 
@@ -201,6 +206,23 @@ interface ArtifactImportSession {
   totalBytes: number;
   labels: Set<string>;
   expiry: NodeJS.Timeout;
+}
+
+interface WorkspaceImportSession {
+  directory: string;
+  fileCount: number;
+  totalBytes: number;
+  paths: Set<string>;
+  label: string;
+  expiry: NodeJS.Timeout;
+}
+
+interface StudioWorkspace {
+  directory: string;
+  runDirectory: string;
+  label: string;
+  sessionCount: number;
+  omittedCount: number;
 }
 
 interface HarnessStudioState {
@@ -215,6 +237,8 @@ interface HarnessStudioState {
   artifactDirectory?: string;
   ownedArtifactDirectory?: string;
   artifactImports: Map<string, ArtifactImportSession>;
+  workspace?: StudioWorkspace;
+  workspaceImports: Map<string, WorkspaceImportSession>;
 }
 
 function artifactOptions(options: HarnessStudioServerOptions, state: HarnessStudioState): HarnessStudioServerOptions {
@@ -239,7 +263,55 @@ async function route(
       experimentEnabled: state.activeManifestPath !== undefined,
       historyEnabled: state.historyAdapter !== undefined,
       inspectorEnabled: activeSourcePath(state.sourceCatalog, state.activeSources, "inspector") !== undefined,
+      workspaceConnected: state.workspace !== undefined,
+      sessionCount: state.workspace?.sessionCount ?? 0,
     });
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/workspace") {
+    respondJson(response, 200, state.workspace === undefined
+      ? { connected: false, sessionCount: 0, omittedCount: 0 }
+      : { connected: true, label: state.workspace.label, sessionCount: state.workspace.sessionCount, omittedCount: state.workspace.omittedCount });
+    return;
+  }
+  if (request.method === "DELETE" && url.pathname === "/api/workspace") {
+    await disconnectWorkspace(request, response, state);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/workspaces") {
+    await createWorkspaceImport(request, response, state, url.searchParams.get("label"));
+    return;
+  }
+  const workspaceImportFile = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/files$/);
+  if (request.method === "PUT" && workspaceImportFile !== null) {
+    const sessionId = decodeRouteComponent(response, workspaceImportFile[1]!);
+    if (sessionId !== undefined) await importWorkspaceFile(request, response, state, sessionId, url.searchParams.get("path"));
+    return;
+  }
+  const workspaceImportCommit = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/commit$/);
+  if (request.method === "POST" && workspaceImportCommit !== null) {
+    const sessionId = decodeRouteComponent(response, workspaceImportCommit[1]!);
+    if (sessionId !== undefined) await commitWorkspaceImport(request, response, state, sessionId);
+    return;
+  }
+  const workspaceImportAbort = url.pathname.match(/^\/api\/workspaces\/([^/]+)$/);
+  if (request.method === "DELETE" && workspaceImportAbort !== null) {
+    const sessionId = decodeRouteComponent(response, workspaceImportAbort[1]!);
+    if (sessionId !== undefined) await abortWorkspaceImport(request, response, state, sessionId);
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/sessions") {
+    await serveWorkspaceSessions(response, state);
+    return;
+  }
+  const workspaceSession = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(debugger))?$/);
+  if (request.method === "GET" && workspaceSession !== null) {
+    const sessionId = decodeRouteComponent(response, workspaceSession[1]!);
+    if (sessionId !== undefined) await serveWorkspaceSession(response, state, sessionId, workspaceSession[2] === "debugger");
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/session-compare") {
+    await serveSessionComparison(response, state, url.searchParams.get("left"), url.searchParams.get("right"));
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/sources") {
@@ -389,6 +461,307 @@ async function route(
     return;
   }
   respondJson(response, 404, { error: `No route for ${request.method} ${url.pathname}` });
+}
+
+async function createWorkspaceImport(
+  request: IncomingMessage,
+  response: ServerResponse,
+  state: HarnessStudioState,
+  requestedLabel: string | null,
+): Promise<void> {
+  if (!sameOriginRequest(request)) {
+    respondJson(response, 403, { error: "Cross-origin workspace imports are not allowed." });
+    return;
+  }
+  if (state.workspaceImports.size >= MAX_IMPORT_SESSIONS) {
+    respondJson(response, 429, { error: "Too many workspace import sessions are open." });
+    return;
+  }
+  const sessionId = randomUUID();
+  const directory = await mkdtemp(join(tmpdir(), "harness-studio-workspace-"));
+  const expiry = setTimeout(() => { void removeWorkspaceImport(state, sessionId); }, IMPORT_SESSION_TTL_MS);
+  expiry.unref();
+  state.workspaceImports.set(sessionId, {
+    directory,
+    fileCount: 0,
+    totalBytes: 0,
+    paths: new Set(),
+    label: portableWorkspaceLabel(requestedLabel),
+    expiry,
+  });
+  respondJson(response, 201, { sessionId, maxFiles: MAX_WORKSPACE_FILES, maxBytes: MAX_IMPORT_BYTES });
+}
+
+async function importWorkspaceFile(
+  request: IncomingMessage,
+  response: ServerResponse,
+  state: HarnessStudioState,
+  sessionId: string,
+  requestedPath: string | null,
+): Promise<void> {
+  if (!sameOriginRequest(request)) {
+    respondJson(response, 403, { error: "Cross-origin workspace imports are not allowed." });
+    return;
+  }
+  const session = workspaceImportSession(state, sessionId);
+  if (session === undefined) {
+    respondJson(response, 404, { error: "Workspace import session is unavailable." });
+    return;
+  }
+  if (session.fileCount >= MAX_WORKSPACE_FILES) {
+    respondJson(response, 413, { error: `Workspace imports are limited to ${MAX_WORKSPACE_FILES} files.` });
+    return;
+  }
+  let relativePath: string;
+  try {
+    relativePath = portableWorkspacePath(requestedPath);
+    if ([...session.paths].some((candidate) => candidate.toLowerCase() === relativePath.toLowerCase())) {
+      throw new Error("Workspace file paths must be unique on every supported platform.");
+    }
+  } catch (error) {
+    respondJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+    return;
+  }
+  const declaredBytes = Number(request.headers["content-length"]);
+  if (Number.isFinite(declaredBytes) && declaredBytes >= 0 && session.totalBytes + declaredBytes > MAX_IMPORT_BYTES) {
+    request.resume();
+    respondJson(response, 413, { error: "Workspace import exceeds the 128 MiB aggregate limit." });
+    return;
+  }
+  const chunks: Buffer[] = [];
+  let fileBytes = 0;
+  const destination = resolve(session.directory, ...relativePath.split("/"));
+  try {
+    for await (const chunk of request) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      fileBytes += bytes.length;
+      if (session.totalBytes + fileBytes > MAX_IMPORT_BYTES) throw new Error("Workspace import exceeds the 128 MiB aggregate limit.");
+      chunks.push(bytes);
+    }
+    await mkdir(dirname(destination), { recursive: true });
+    const handle = await open(destination, "wx");
+    try {
+      await handle.writeFile(Buffer.concat(chunks));
+    } finally {
+      await handle.close();
+    }
+    session.fileCount += 1;
+    session.totalBytes += fileBytes;
+    session.paths.add(relativePath);
+    respondJson(response, 201, { path: relativePath, size: fileBytes });
+  } catch (error) {
+    await rm(destination, { force: true });
+    respondJson(response, 413, { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+async function commitWorkspaceImport(
+  request: IncomingMessage,
+  response: ServerResponse,
+  state: HarnessStudioState,
+  sessionId: string,
+): Promise<void> {
+  if (!sameOriginRequest(request)) {
+    respondJson(response, 403, { error: "Cross-origin workspace imports are not allowed." });
+    return;
+  }
+  const session = workspaceImportSession(state, sessionId);
+  if (session === undefined) {
+    respondJson(response, 404, { error: "Workspace import session is unavailable." });
+    return;
+  }
+  const runDirectory = join(session.directory, `.studio-session-index-${sessionId}`);
+  await mkdir(runDirectory, { recursive: true });
+  const accepted = new Set<string>();
+  let omittedCount = 0;
+  for (const relativePath of session.paths) {
+    if (!/^run_[A-Za-z0-9_-]+\.json$/u.test(basename(relativePath)) || accepted.size >= MAX_WORKSPACE_SESSIONS) {
+      omittedCount += 1;
+      continue;
+    }
+    try {
+      const sourcePath = resolve(session.directory, ...relativePath.split("/"));
+      const record = parseSavedRunRecord(JSON.parse(await readFile(sourcePath, "utf8")));
+      if (accepted.has(record.id)) {
+        omittedCount += 1;
+        continue;
+      }
+      accepted.add(record.id);
+      await writeFile(join(runDirectory, `${record.id}.json`), `${JSON.stringify(record, null, 2)}\n`, "utf8");
+    } catch {
+      omittedCount += 1;
+    }
+  }
+  if (accepted.size === 0) {
+    await rm(runDirectory, { recursive: true, force: true });
+    respondJson(response, 422, { error: "No supported retained run records were found in this folder." });
+    return;
+  }
+  clearTimeout(session.expiry);
+  state.workspaceImports.delete(sessionId);
+  const previous = state.workspace?.directory;
+  state.workspace = {
+    directory: session.directory,
+    runDirectory,
+    label: session.label,
+    sessionCount: accepted.size,
+    omittedCount,
+  };
+  if (previous !== undefined && previous !== session.directory) {
+    await rm(previous, { recursive: true, force: true }).catch(() => undefined);
+  }
+  respondJson(response, 200, { label: session.label, sessionCount: accepted.size, omittedCount });
+}
+
+async function abortWorkspaceImport(
+  request: IncomingMessage,
+  response: ServerResponse,
+  state: HarnessStudioState,
+  sessionId: string,
+): Promise<void> {
+  if (!sameOriginRequest(request)) {
+    respondJson(response, 403, { error: "Cross-origin workspace imports are not allowed." });
+    return;
+  }
+  if (workspaceImportSession(state, sessionId) === undefined) {
+    respondJson(response, 404, { error: "Workspace import session is unavailable." });
+    return;
+  }
+  await removeWorkspaceImport(state, sessionId);
+  respondJson(response, 200, { aborted: true });
+}
+
+async function disconnectWorkspace(
+  request: IncomingMessage,
+  response: ServerResponse,
+  state: HarnessStudioState,
+): Promise<void> {
+  if (!sameOriginRequest(request)) {
+    respondJson(response, 403, { error: "Cross-origin workspace changes are not allowed." });
+    return;
+  }
+  const workspace = state.workspace;
+  state.workspace = undefined;
+  if (workspace !== undefined) await rm(workspace.directory, { recursive: true, force: true });
+  respondJson(response, 200, { disconnected: workspace !== undefined });
+}
+
+function workspaceImportSession(state: HarnessStudioState, sessionId: string): WorkspaceImportSession | undefined {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(sessionId)
+    ? state.workspaceImports.get(sessionId)
+    : undefined;
+}
+
+function portableWorkspaceLabel(value: string | null): string {
+  const label = (value ?? "Selected session folder").trim().replace(/[\u0000-\u001f]/gu, " ").slice(0, 80);
+  return label || "Selected session folder";
+}
+
+function portableWorkspacePath(value: string | null): string {
+  if (value === null || value.trim() === "") throw new Error("Workspace file path is required.");
+  if (/^(?:\/|[A-Za-z]:[\\/])/u.test(value)) throw new Error("Workspace file path must be relative.");
+  const segments = value.replaceAll("\\", "/").split("/").filter(Boolean);
+  if (segments.length === 0 || segments.length > 12 || segments.some((segment) => segment === "." || segment === "..")) {
+    throw new Error("Workspace file path must be a bounded relative path.");
+  }
+  const portable = segments.map((segment) => {
+    const cleaned = segment.replace(/[<>:"|?*\u0000-\u001f]/gu, "-").replace(/[. ]+$/u, "");
+    if (cleaned === "") throw new Error("Workspace file path contains an empty portable segment.");
+    return /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(cleaned) ? `_${cleaned}` : cleaned;
+  }).join("/");
+  if (portable.length > 320) throw new Error("Workspace file path exceeds the portable length limit.");
+  return portable;
+}
+
+async function removeWorkspaceImport(state: HarnessStudioState, sessionId: string): Promise<void> {
+  const session = state.workspaceImports.get(sessionId);
+  if (session === undefined) return;
+  clearTimeout(session.expiry);
+  state.workspaceImports.delete(sessionId);
+  await rm(session.directory, { recursive: true, force: true });
+}
+
+async function cleanupWorkspaceImports(state: HarnessStudioState): Promise<void> {
+  await Promise.all([...state.workspaceImports.keys()].map((sessionId) => removeWorkspaceImport(state, sessionId)));
+  if (state.workspace !== undefined) {
+    await rm(state.workspace.directory, { recursive: true, force: true });
+    state.workspace = undefined;
+  }
+}
+
+async function serveWorkspaceSessions(response: ServerResponse, state: HarnessStudioState): Promise<void> {
+  if (state.workspace === undefined) {
+    respondJson(response, 404, { error: "No session workspace is open." });
+    return;
+  }
+  respondJson(response, 200, {
+    workspace: { label: state.workspace.label, omittedCount: state.workspace.omittedCount },
+    sessions: await listRunRecords(state.workspace.runDirectory),
+  });
+}
+
+async function serveWorkspaceSession(
+  response: ServerResponse,
+  state: HarnessStudioState,
+  sessionId: string,
+  debuggerProjection: boolean,
+): Promise<void> {
+  if (state.workspace === undefined) {
+    respondJson(response, 404, { error: "No session workspace is open." });
+    return;
+  }
+  try {
+    const record = await readRunRecord(state.workspace.runDirectory, sessionId);
+    respondJson(response, 200, debuggerProjection ? sessionFromRetainedRun(record) : record);
+  } catch {
+    respondJson(response, 404, { error: `Session '${sessionId}' is not available in the current workspace.` });
+  }
+}
+
+async function serveSessionComparison(
+  response: ServerResponse,
+  state: HarnessStudioState,
+  leftId: string | null,
+  rightId: string | null,
+): Promise<void> {
+  if (state.workspace === undefined) {
+    respondJson(response, 404, { error: "No session workspace is open." });
+    return;
+  }
+  if (leftId === null || rightId === null || leftId === rightId) {
+    respondJson(response, 400, { error: "Choose two different sessions to compare." });
+    return;
+  }
+  try {
+    const [left, right] = await Promise.all([
+      readRunRecord(state.workspace.runDirectory, leftId),
+      readRunRecord(state.workspace.runDirectory, rightId),
+    ]);
+    respondJson(response, 200, {
+      kind: "observational-session-compare.v1",
+      boundary: "Observed retained evidence only; no winner is inferred.",
+      left: sessionComparisonSide(left),
+      right: sessionComparisonSide(right),
+    });
+  } catch {
+    respondJson(response, 404, { error: "One or both sessions are unavailable in the current workspace." });
+  }
+}
+
+function sessionComparisonSide(record: SavedRunRecord): Record<string, unknown> {
+  const tools = record.timeline.filter((item): item is Extract<SavedRunRecord["timeline"][number], { kind: "tool-call" }> => item.kind === "tool-call");
+  const messages = record.timeline.filter((item) => item.kind === "message");
+  return {
+    id: record.id,
+    prompt: record.prompt,
+    savedAt: record.savedAt,
+    status: record.status,
+    retainedEventCount: record.timeline.length + 1 + (record.error === undefined ? 0 : 1),
+    toolCallCount: tools.length,
+    messageCount: messages.length,
+    warningCount: record.warnings.length,
+    toolSequence: tools.map((tool) => tool.name),
+  };
 }
 
 async function createArtifactImport(
