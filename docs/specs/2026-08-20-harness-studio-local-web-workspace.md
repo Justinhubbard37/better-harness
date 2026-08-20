@@ -57,6 +57,16 @@ surface exists.
   server-only directory as `cwd` and the default capability source root; no
   absolute path is returned to the browser and no scripted demo executor is
   substituted in production.
+- **D-9: Sessions reuses the Inspector workbench instead of only its
+  discovery.** The workspace provider returns the same privacy-filtered
+  `HarnessInspectorReportV1` projection consumed by
+  `scripts/harness-inspector/ui/workbench.html`. Studio rewrites that complete
+  workbench interaction in React: Capability/Date navigation, scope metrics,
+  evidence workbench cards, and the retained Session drawer are React-owned
+  state and components. The original Inspector stylesheet/class contract stays
+  the visual source, while `workbench.js` remains only the standalone HTML
+  renderer and is never executed by Studio. The compact catalog remains an
+  explicit secondary view for two-Session selection and comparison.
 
 ## Acceptance Scenarios
 
@@ -96,12 +106,23 @@ surface exists.
   executes through the real built-in Qoder adapter in the selected workspace.
   A caller-supplied harness/runtime remains authoritative, and a Studio server
   without workspace discovery does not silently acquire a runnable endpoint.
+- **AC-13:** After selecting a project workspace, Sessions defaults to the
+  native Harness Inspector workbench backed by the workspace's structured
+  report. Capability/date navigation, scope metrics, workbench rows, and the
+  retained Session drawer execute as React components matching the complete
+  `workbench.html` design; Studio does not load or execute `workbench.js`. A visible,
+  keyboard-usable view switch exposes Catalog & Compare without losing the
+  active workspace or requiring a restart/CLI argument. When a provider cannot
+  supply structured Inspector data, Studio falls back to the catalog with an
+  actionable status rather than an empty workbench.
 
 ## Non-goals
 
 - Treating observational Session Compare as an experiment verdict.
 - Uploading an entire repository or agent home to the loopback server.
 - Reimplementing host transcript discovery inside the Studio package or UI.
+- Maintaining an independent visual language for the React Inspector; the
+  standalone `workbench.html` and its stylesheet remain the design contract.
 - Editing, replaying, or writing back into imported sessions.
 - Shipping the public `better-harness web` package boundary in this first UI
   migration; the server and packaged-app ownership must be resolved first.
@@ -148,6 +169,15 @@ bind execution to the selected workspace on the server, label the active
 default in the UI, and exercise the same AG-UI/live-run path as configured
 harnesses.
 
+### 7. Mount Inspector as the primary Sessions workbench
+
+Build a bounded `HarnessInspectorReportV1` from the same normalized provider
+sessions during workspace discovery, retain it only in the server-side active
+workspace, and expose it through a workspace-scoped structured endpoint. Rewrite
+the complete Inspector workbench UI as React components using the standalone
+HTML/CSS contract, with no `workbench.js` execution, plus an accessible
+Inspector/Catalog & Compare switch and a catalog fallback.
+
 ## Test and Review Evidence
 
 - AC-1/AC-8: empty-start model and Playwright assertions for UI copy and actions.
@@ -168,6 +198,13 @@ harnesses.
   deterministic executor while asserting the selected workspace `cwd` and
   source root; Playwright opens Debugger after workspace discovery and completes
   a live run through the default AG-UI path.
+- AC-13: provider and server tests assert a privacy-filtered structured
+  workspace report, Git/Session correlation, and no absolute-path disclosure.
+  Playwright verifies the React-owned Inspector workbench is the default
+  Sessions surface, opens a retained Session through its Date navigator,
+  switches to Catalog & Compare, repeats wide/compact/narrow overflow plus
+  console/page-error checks, and asserts that Studio never requests the legacy
+  `workbench.js` runtime.
 
 Implementation evidence (2026-08-20):
 
@@ -178,10 +215,12 @@ Implementation evidence (2026-08-20):
   passed, including the workspace intake, discovered Session detail, Compare,
   the default live Debugger flow, animated discovery status,
   wide/compact/narrow screenshots, keyboard focus, overflow, console, and page
-  error checks.
+  error checks. The Sessions flow also exercises the React Inspector drawer and
+  asserts that no legacy Inspector script is loaded.
 - `npm test` at the repository root: 99 files, 1412 tests passed.
 - A live in-process discovery smoke against this repository returned the bounded
-  100-Session catalog: Qoder 79, Codex 16, and Claude 5.
+  React Inspector report with 100 Sessions and 50 commits: Qoder 79, Codex 16,
+  and Claude 5.
 
 ### Risks
 
@@ -197,3 +236,6 @@ Implementation evidence (2026-08-20):
   return an actionable unavailable state when no chooser exists.
 - Large histories can exhaust memory. Discovery retains Inspector's global
   Session bound and hydrates only selected recent candidates.
+- The Inspector workbench is a substantial retained-evidence renderer. Studio
+  must reuse its assets lazily and keep the compact catalog available if the
+  structured report or client runtime cannot be mounted.

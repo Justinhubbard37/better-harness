@@ -140,6 +140,8 @@ export interface StudioWorkspaceDiscovery {
   label: string;
   sessions: StudioWorkspaceSession[];
   providers?: StudioWorkspaceProviderDiagnostic[];
+  /** Privacy-filtered Inspector workbench projection for this workspace. */
+  inspectorReport?: Record<string, unknown>;
 }
 
 export interface StudioWorkspaceSessionProvider {
@@ -285,6 +287,7 @@ interface StudioWorkspace {
   omittedCount: number;
   sessions: Map<string, StoredWorkspaceSession>;
   providers: StudioWorkspaceProviderDiagnostic[];
+  inspectorReport?: Record<string, unknown>;
   /** Server-only execution root for the selected local project. Never serialized. */
   localDirectory?: string;
   ownedDirectory?: string;
@@ -334,6 +337,7 @@ async function route(
       harnessMode: options.harnessSource === undefined ? "none" : options.harnessMode ?? "configured",
       historyEnabled: state.historyAdapter !== undefined,
       inspectorEnabled: activeSourcePath(state.sourceCatalog, state.activeSources, "inspector") !== undefined,
+      workspaceWorkbenchEnabled: state.workspace?.inspectorReport !== undefined,
       workspaceDiscoveryEnabled: options.workspaceSessionProvider !== undefined,
       workspaceConnected: state.workspace !== undefined,
       sessionCount: state.workspace?.sessionCount ?? 0,
@@ -407,6 +411,14 @@ async function route(
   }
   if (request.method === "GET" && url.pathname === "/api/inspector-report") {
     await serveInspectorReportJson(response, activeSourcePath(state.sourceCatalog, state.activeSources, "inspector"));
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/workspace-inspector-report") {
+    if (state.workspace?.inspectorReport === undefined) {
+      respondJson(response, 404, { error: "The current workspace has no structured Inspector workbench data." });
+      return;
+    }
+    respondJson(response, 200, state.workspace.inspectorReport, { "Cache-Control": "no-store" });
     return;
   }
   const runRead = url.pathname.match(/^\/api\/runs\/([^/]+)(?:\/(session))?$/);
@@ -637,6 +649,7 @@ async function openWorkspace(
       omittedCount: Math.max(0, discovered.sessions.length - sessions.size),
       sessions,
       providers,
+      ...(validWorkspaceInspectorReport(discovered.inspectorReport) ? { inspectorReport: discovered.inspectorReport } : {}),
       localDirectory: workspacePath,
     };
     if (previous !== undefined) await rm(previous, { recursive: true, force: true }).catch(() => undefined);
@@ -651,6 +664,15 @@ async function openWorkspace(
   } finally {
     state.workspaceOpenStage = "idle";
   }
+}
+
+function validWorkspaceInspectorReport(report: Record<string, unknown> | undefined): report is Record<string, unknown> {
+  return report !== undefined
+    && report.kind === "HarnessInspectorReportV1"
+    && Array.isArray(report.sessions)
+    && Array.isArray(report.days)
+    && report.featureTree !== null
+    && typeof report.featureTree === "object";
 }
 
 function normalizeDiscoveredWorkspaceSession(candidate: StudioWorkspaceSession): StudioWorkspaceSession {
@@ -1816,7 +1838,7 @@ export async function startHarnessStudioServer(
   };
 }
 
-function respondJson(response: ServerResponse, status: number, payload: unknown): void {
-  response.writeHead(status, { "Content-Type": "application/json" });
+function respondJson(response: ServerResponse, status: number, payload: unknown, headers: Record<string, string> = {}): void {
+  response.writeHead(status, { "Content-Type": "application/json", ...headers });
   response.end(`${JSON.stringify(payload)}\n`);
 }

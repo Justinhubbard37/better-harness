@@ -1,13 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
-type InspectorLoadState = "loading" | "ready" | "fallback";
+type Mode = "feature" | "date";
+type ViewMode = "trace" | "replay";
 
-interface InspectorProvider {
-  platform: string;
-  sessionCount: number;
-}
-
-interface InspectorFeatureNode {
+interface FeatureNode {
   id: string;
   title: string;
   type?: string;
@@ -15,352 +12,323 @@ interface InspectorFeatureNode {
   status?: string | null;
   evidence?: string;
   children?: string[];
+  refs?: { prompts?: string[] };
 }
 
-interface InspectorFeatureTree {
-  roots?: string[];
-  nodes?: InspectorFeatureNode[];
-}
-
-interface InspectorStory {
-  sessionLinks?: unknown[];
+interface Story extends FeatureNode {
+  sessionLinks?: Array<{ sessionId: string; evidenceKind?: string; confidence?: string }>;
   commitHashes?: string[];
 }
 
-interface InspectorDay {
+interface ToolCall {
+  id: string;
+  callId?: string;
+  kind?: "note" | "tool";
+  text?: string;
+  toolName?: string;
+  actionLabel?: string;
+  operation?: string;
+  family?: string;
+  status?: string;
+  startedAt?: number | null;
+  durationMs?: number | null;
+  detail?: string;
+  detailKind?: string;
+  filePath?: string | null;
+  filePaths?: string[];
+}
+
+interface Turn {
+  index: number;
+  anchorId?: string;
+  prompt?: { text?: string; timestamp?: string | null };
+  steps?: ToolCall[];
+  toolCallCount?: number;
+  response?: string | null;
+  responseStatus?: string;
+  durationMs?: number | null;
+}
+
+interface ReplayEvent {
+  id: string;
+  type: string;
+  title?: string;
+  label?: string;
+  body?: string;
+  turnIndex?: number | null;
+  timeBasis?: string;
+  atMs?: number | null;
+  files?: string[];
+}
+
+interface Session {
+  sessionId: string;
+  locator?: string;
+  platform?: string;
+  firstSeen?: string | null;
+  durationMs?: number | null;
+  files?: string[];
+  prompts?: Array<{ text: string; timestamp?: string | null; turnIndex?: number | null }>;
+  models?: string[];
+  toolActivity?: { totalCalls?: number; failedCalls?: number; files?: string[]; calls?: ToolCall[] };
+  dialogue?: { turns?: Turn[] };
+  replay?: { events?: ReplayEvent[] };
+  commitLinks?: Array<{ hash: string }>;
+}
+
+interface Commit {
+  hash: string;
+  shortHash?: string;
+  subject?: string;
+  fileCount?: number;
+  linesAdded?: number;
+  linesRemoved?: number;
+  files?: Array<{ path: string; added?: number | null; removed?: number | null }>;
+}
+
+interface Day {
   date: string;
   sessionIds?: string[];
   commitHashes?: string[];
 }
 
-interface InspectorReport {
+interface Report {
   kind: "HarnessInspectorReportV1";
   workspace?: { name?: string };
-  featureTree?: InspectorFeatureTree;
-  stories?: InspectorStory[];
-  days?: InspectorDay[];
-  providers?: InspectorProvider[];
+  featureTree?: { roots?: string[]; nodes?: FeatureNode[] };
+  stories?: Story[];
+  days?: Day[];
+  sessions?: Session[];
+  commits?: Commit[];
+  providers?: Array<{ platform: string; sessionCount: number }>;
   filters?: { platform?: string };
-  sessions?: unknown[];
+  diagnostics?: string[];
 }
 
-export function InspectorWorkbench(props: { fallback: ReactNode }): React.JSX.Element {
-  const hostRef = useRef<HTMLDivElement>(null);
-  const cleanupRef = useRef<(() => void) | undefined>(undefined);
-  const [state, setState] = useState<InspectorLoadState>("loading");
-  const [message, setMessage] = useState<string | null>(null);
+interface Item {
+  story?: Story;
+  session?: Session;
+  date?: Day;
+  commitHashes?: string[];
+}
+
+export function InspectorWorkbench(props: { fallback: ReactNode; reportUrl?: string }): React.JSX.Element {
+  const [loaded, setLoaded] = useState<{ report: Report; css: string }>();
+  const [failure, setFailure] = useState<string>();
+  const [shadow, setShadow] = useState<ShadowRoot>();
 
   useEffect(() => {
     let cancelled = false;
-    cleanupRef.current?.();
-    cleanupRef.current = undefined;
-    setState("loading");
-    setMessage(null);
-
+    setLoaded(undefined);
+    setFailure(undefined);
     void (async () => {
       try {
-        const [reportResponse, cssResponse, scriptResponse] = await Promise.all([
-          fetch("api/inspector-report"),
+        const [reportResponse, cssResponse] = await Promise.all([
+          fetch(props.reportUrl ?? "api/inspector-report"),
           fetch("assets/inspector-workbench.css"),
-          fetch("assets/inspector-workbench.js"),
         ]);
-        if (reportResponse.status === 204 || reportResponse.status === 404) {
-          if (!cancelled) {
-            setState("fallback");
-            setMessage("Structured Inspector workbench data is unavailable; showing the legacy sandboxed report.");
-          }
-          return;
-        }
         if (!reportResponse.ok) throw new Error(`Inspector report failed (${reportResponse.status}).`);
-        if (!cssResponse.ok || !scriptResponse.ok) throw new Error("Inspector workbench assets are unavailable.");
-        const report = await reportResponse.json() as InspectorReport;
-        const [css, script] = await Promise.all([cssResponse.text(), scriptResponse.text()]);
-        if (cancelled) return;
-        const host = hostRef.current;
-        if (host === null) throw new Error("Inspector workbench host is unavailable.");
-        cleanupRef.current = mountInspectorWorkbench(host, report, css, script);
-        setState("ready");
+        if (!cssResponse.ok) throw new Error("Inspector workbench stylesheet is unavailable.");
+        const report = await reportResponse.json() as Report;
+        if (report.kind !== "HarnessInspectorReportV1") throw new Error("Inspector report contract is unsupported.");
+        const css = scopeCss(await cssResponse.text());
+        if (!cancelled) setLoaded({ report, css });
       } catch (error) {
-        if (!cancelled) {
-          setState("fallback");
-          setMessage(error instanceof Error ? error.message : "Native Inspector workbench failed to load.");
-        }
+        if (!cancelled) setFailure(error instanceof Error ? error.message : "React Inspector failed to load.");
       }
     })();
+    return () => { cancelled = true; };
+  }, [props.reportUrl]);
 
-    return () => {
-      cancelled = true;
-      cleanupRef.current?.();
-      cleanupRef.current = undefined;
-    };
-  }, []);
-
-  if (state === "fallback") {
-    return <div className="inspector-fallback-shell">
-      <p className="inspector-fallback-message" role="status">{message}</p>
-      {props.fallback}
-    </div>;
-  }
-
-  return <div className={`inspector-native-shell inspector-native-${state}`}>
-    {state === "loading" && <p className="inspector-native-status" role="status">Loading native Inspector workbench…</p>}
-    <div ref={hostRef} className="inspector-native-host" aria-label="Native Harness Inspector Workbench" />
+  if (failure) return <div className="inspector-fallback-shell"><p className="inspector-fallback-message" role="status">{failure}</p>{props.fallback}</div>;
+  return <div className="inspector-native-shell">
+    {!loaded && <p className="inspector-native-status" role="status">Loading React Inspector workbench…</p>}
+    <div className="inspector-native-host" aria-label="React Harness Inspector Workbench" ref={(host) => {
+      if (host && !shadow) setShadow(host.shadowRoot ?? host.attachShadow({ mode: "open" }));
+    }} />
+    {loaded && shadow ? createPortal(<><style>{loaded.css}{REACT_CSS}</style><ReactInspector report={loaded.report} /></>, shadow) : null}
   </div>;
 }
 
-function mountInspectorWorkbench(host: HTMLDivElement, report: InspectorReport, css: string, script: string): () => void {
-  const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
-  shadow.replaceChildren();
-  const style = document.createElement("style");
-  style.textContent = scopedInspectorCss(css);
-  const root = document.createElement("div");
-  root.className = "native-inspector-root";
-  root.setAttribute("data-studio-native-inspector", "");
-  root.innerHTML = inspectorWorkbenchMarkup(report);
-  shadow.append(style, root);
-
-  const runtime = createScopedRuntime(shadow, root);
-  try {
-    runtime.run(script);
-  } catch (error) {
-    runtime.dispose();
-    shadow.replaceChildren();
-    throw error;
-  }
-  return () => {
-    runtime.dispose();
-    shadow.replaceChildren();
-  };
-}
-
-function createScopedRuntime(shadow: ShadowRoot, root: HTMLDivElement): { run(script: string): void; dispose(): void } {
-  const rootListeners: Array<{ type: string; listener: EventListenerOrEventListenerObject; options?: boolean | AddEventListenerOptions }> = [];
-  const windowListeners: Array<{ type: string; listener: EventListenerOrEventListenerObject; options?: boolean | AddEventListenerOptions }> = [];
-  const resizeObservers: Array<{ disconnect(): void }> = [];
-  const intersectionObservers: Array<{ disconnect(): void }> = [];
-  const timeouts = new Set<number>();
-  const frames = new Set<number>();
-
-  const scopedDocument = {
-    get body(): HTMLDivElement { return root; },
-    get activeElement(): Element | null { return shadow.activeElement; },
-    getElementById: (id: string): HTMLElement | null => shadow.getElementById(id),
-    querySelector: <T extends Element = Element>(selector: string): T | null => shadow.querySelector<T>(selector),
-    querySelectorAll: <T extends Element = Element>(selector: string): NodeListOf<T> => shadow.querySelectorAll<T>(selector),
-    createElement: document.createElement.bind(document),
-    addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void {
-      root.addEventListener(type, listener, options);
-      rootListeners.push({ type, listener, options });
-    },
-    removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void {
-      root.removeEventListener(type, listener, options);
-    },
-  };
-
-  const addWindowEventListener = (type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void => {
-    globalThis.addEventListener(type, listener, options);
-    windowListeners.push({ type, listener, options });
-  };
-  const removeWindowEventListener = (type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void => {
-    globalThis.removeEventListener(type, listener, options);
-  };
-  const scopedSetTimeout = (handler: TimerHandler, timeout?: number, ...args: unknown[]): number => {
-    const id = window.setTimeout(handler, timeout, ...args);
-    timeouts.add(id);
-    return id;
-  };
-  const scopedClearTimeout = (id?: number): void => {
-    if (id !== undefined) {
-      timeouts.delete(id);
-      window.clearTimeout(id);
-    }
-  };
-  const scopedRequestAnimationFrame = (callback: FrameRequestCallback): number => {
-    const id = globalThis.requestAnimationFrame(callback);
-    frames.add(id);
-    return id;
-  };
-  const scopedCancelAnimationFrame = (id: number): void => {
-    frames.delete(id);
-    globalThis.cancelAnimationFrame(id);
-  };
-  const ScopedResizeObserver = typeof globalThis.ResizeObserver === "function"
-    ? function ScopedResizeObserver(callback: ResizeObserverCallback): ResizeObserver {
-      const observer = new globalThis.ResizeObserver(callback);
-      resizeObservers.push(observer);
-      return observer;
-    }
-    : undefined;
-  const ScopedIntersectionObserver = typeof globalThis.IntersectionObserver === "function"
-    ? function ScopedIntersectionObserver(callback: IntersectionObserverCallback, options?: IntersectionObserverInit): IntersectionObserver {
-      const observer = new globalThis.IntersectionObserver(callback, options);
-      intersectionObservers.push(observer);
-      return observer;
-    }
-    : undefined;
-
-  return {
-    run(script: string): void {
-      const runner = new Function(
-        "document",
-        "location",
-        "history",
-        "addEventListener",
-        "removeEventListener",
-        "ResizeObserver",
-        "IntersectionObserver",
-        "requestAnimationFrame",
-        "cancelAnimationFrame",
-        "setTimeout",
-        "clearTimeout",
-        `${script}\n//# sourceURL=/assets/inspector-workbench.js`,
-      );
-      runner(
-        scopedDocument,
-        globalThis.location,
-        globalThis.history,
-        addWindowEventListener,
-        removeWindowEventListener,
-        ScopedResizeObserver,
-        ScopedIntersectionObserver,
-        scopedRequestAnimationFrame,
-        scopedCancelAnimationFrame,
-        scopedSetTimeout,
-        scopedClearTimeout,
-      );
-    },
-    dispose(): void {
-      for (const { type, listener, options } of rootListeners.splice(0)) root.removeEventListener(type, listener, options);
-      for (const { type, listener, options } of windowListeners.splice(0)) globalThis.removeEventListener(type, listener, options);
-      for (const id of timeouts) window.clearTimeout(id);
-      timeouts.clear();
-      for (const id of frames) globalThis.cancelAnimationFrame(id);
-      frames.clear();
-      for (const observer of resizeObservers.splice(0)) observer.disconnect();
-      for (const observer of intersectionObservers.splice(0)) observer.disconnect();
-    },
-  };
-}
-
-function scopedInspectorCss(css: string): string {
-  return css
-    .replace(/:root\s*\{/u, ":host, .native-inspector-root {")
-    .replace(/html,\s*body\s*\{[^}]*\}/u, ".native-inspector-root { margin:0; min-width:320px; min-height:100%; font:14px/1.45 var(--font-ui); color:var(--ink); background:var(--color-surface); }")
-    .replace(/html:has\(body\.session-open\)\s*\{[^}]*\}/u, ".native-inspector-root.session-open { overflow:hidden; }");
-}
-
-function inspectorWorkbenchMarkup(report: InspectorReport): string {
+function ReactInspector({ report }: { report: Report }): React.JSX.Element {
+  const nodes = report.featureTree?.nodes ?? [];
   const stories = report.stories ?? [];
-  const featureTree = report.featureTree ?? { nodes: [], roots: [] };
-  const hasFeatureEvidence = stories.some((story) => (story.sessionLinks?.length ?? 0) > 0 || (story.commitHashes?.length ?? 0) > 0);
-  const initialMode = (featureTree.nodes?.length ?? 0) > 0 && hasFeatureEvidence ? "feature" : "date";
-  const workspaceName = escapeHtml(report.workspace?.name ?? "workspace");
-  const sessionCount = report.sessions?.length ?? 0;
-  return `<div class="app" data-harness-inspector>
-  <aside class="scope-picker" aria-label="Scope picker">
-    <div class="brand"><div class="brand-copy"><strong>Harness Inspector</strong><span>${workspaceName}</span></div><button class="picker-toggle" data-toggle-picker aria-expanded="true" aria-label="Collapse capability tree"><span class="collapse-label">Hide</span><span class="expand-label">Show tree</span></button></div>
-    <div class="mode-tabs" role="tablist" aria-label="Picker mode"><button id="mode-feature" role="tab" aria-controls="panel-feature" aria-selected="${initialMode === "feature"}" data-mode="feature" class="${initialMode === "feature" ? "active" : ""}">Capability</button><button id="mode-date" role="tab" aria-controls="panel-date" aria-selected="${initialMode === "date"}" data-mode="date" class="${initialMode === "date" ? "active" : ""}">Date</button></div>
-    <section id="panel-feature" class="picker-panel ${initialMode === "feature" ? "active" : ""}" role="tabpanel" aria-labelledby="mode-feature" data-panel="feature"><div class="picker-heading"><strong>Capability tree</strong><span>${featureTree.nodes?.length ?? 0} nodes</span></div>${featurePicker(featureTree)}</section>
-    <section id="panel-date" class="picker-panel ${initialMode === "date" ? "active" : ""}" role="tabpanel" aria-labelledby="mode-date" data-panel="date">${datePicker(report.days ?? [])}</section>
-  </aside>
-  <main class="workspace">
-    <header class="workspace-header">
-      <nav class="workspace-breadcrumb" aria-label="Workbench breadcrumb"><span>Harness Inspector</span><i>/</i><strong id="workspace-scope-crumb">Delivery Workbench</strong></nav>
-      <div class="workspace-header-meta">
-        <label class="scope-index" hidden><span class="visually-hidden">Jump to a workbench in this scope</span><select id="scope-index" data-scope-index></select></label>
-        <div class="scope-metrics" aria-label="Scope metrics">
-          <span class="metric" data-metric="stories" data-metric-label="stories" data-metric-singular="story"><strong id="metric-stories">0</strong><span class="metric-label">stories</span><span class="metric-short" aria-hidden="true">story</span></span>
-          <span class="metric" data-metric="sessions" data-metric-label="sessions" data-metric-singular="session"><strong id="metric-sessions">0</strong><span class="metric-label">sessions</span><span class="metric-short" aria-hidden="true">sess</span></span>
-          <span class="metric" data-metric="calls" data-metric-label="calls" data-metric-singular="call"><strong id="metric-calls">0</strong><span class="metric-label">calls</span><span class="metric-short" aria-hidden="true">calls</span></span>
-          <span class="metric" data-metric="commits" data-metric-label="commits" data-metric-singular="commit"><strong id="metric-commits">0</strong><span class="metric-label">commits</span><span class="metric-short" aria-hidden="true">commits</span></span>
-        </div>
-        <span class="window-badge">${escapeHtml(platformBadge(report))} · ${sessionCount} sessions</span>
-      </div>
-    </header>
-    <div class="workspace-scroll">
-      <section class="workbench-list" id="workbench-list" aria-live="polite"></section>
+  const days = report.days ?? [];
+  const sessions = report.sessions ?? [];
+  const commits = report.commits ?? [];
+  const hasFeatureEvidence = stories.some((story) => (story.sessionLinks?.length ?? 0) + (story.commitHashes?.length ?? 0) > 0);
+  const initialMode: Mode = nodes.length && hasFeatureEvidence ? "feature" : "date";
+  const [mode, setMode] = useState<Mode>(initialMode);
+  const [scope, setScope] = useState(initialMode === "feature" ? report.featureTree?.roots?.[0] ?? nodes[0]?.id ?? "" : days.at(-1)?.date ?? "");
+  const [pickerCollapsed, setPickerCollapsed] = useState(false);
+  const [collapsedBranches, setCollapsedBranches] = useState<Set<string>>(new Set());
+  const [collapsedCards, setCollapsedCards] = useState<Set<number>>(new Set());
+  const [selectedSession, setSelectedSession] = useState<Session>();
+  const byNode = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+  const byStory = useMemo(() => new Map(stories.map((story) => [story.id, story])), [stories]);
+  const bySession = useMemo(() => new Map(sessions.map((session) => [session.sessionId, session])), [sessions]);
+  const byCommit = useMemo(() => new Map(commits.map((commit) => [commit.hash, commit])), [commits]);
+  const items = useMemo(() => itemsForScope(mode, scope, days, byNode, byStory, bySession), [mode, scope, days, byNode, byStory, bySession]);
+  const itemSessions = [...new Map(items.filter((item) => item.session).map((item) => [item.session!.sessionId, item.session!])).values()];
+  const itemCommits = new Set(items.flatMap((item) => commitsFor(item, byCommit).map((commit) => commit.hash)));
+  const itemStories = new Set(items.flatMap((item) => item.story ? [item.story.id] : []));
+  const workspaceName = report.workspace?.name ?? "workspace";
+
+  function changeMode(next: Mode): void {
+    setMode(next);
+    setScope(next === "feature" ? report.featureTree?.roots?.[0] ?? nodes[0]?.id ?? "" : days.at(-1)?.date ?? "");
+  }
+
+  return <div className={`native-inspector-root${selectedSession ? " session-open" : ""}`} data-studio-native-inspector data-react-inspector-workbench>
+    <div className={`app${pickerCollapsed ? " picker-collapsed" : ""}`} data-harness-inspector>
+      <aside className="scope-picker" aria-label="Scope picker">
+        <div className="brand"><div className="brand-copy"><strong>Harness Inspector</strong><span>{workspaceName}</span></div><button className="picker-toggle" type="button" aria-expanded={!pickerCollapsed} aria-label={pickerCollapsed ? "Expand capability tree" : "Collapse capability tree"} onClick={() => setPickerCollapsed((value) => !value)}><span className="collapse-label">Hide</span><span className="expand-label">Show tree</span></button></div>
+        <div className="mode-tabs" role="tablist" aria-label="Picker mode"><button role="tab" aria-selected={mode === "feature"} tabIndex={mode === "feature" ? 0 : -1} className={mode === "feature" ? "active" : undefined} onClick={() => changeMode("feature")} onKeyDown={(event) => moveInspectorTab(event, "date", changeMode)}>Capability</button><button role="tab" aria-selected={mode === "date"} tabIndex={mode === "date" ? 0 : -1} className={mode === "date" ? "active" : undefined} onClick={() => changeMode("date")} onKeyDown={(event) => moveInspectorTab(event, "feature", changeMode)}>Date</button></div>
+        <section className={`picker-panel${mode === "feature" ? " active" : ""}`} role="tabpanel" hidden={mode !== "feature"}><div className="picker-heading"><strong>Capability tree</strong><span>{nodes.length} nodes</span></div>{nodes.length ? <FeatureTree roots={report.featureTree?.roots ?? []} byNode={byNode} selected={scope} collapsed={collapsedBranches} onSelect={setScope} onToggle={(id) => setCollapsedBranches(toggle(collapsedBranches, id))} /> : <p className="picker-empty">No Feature Tree yet. Date mode still exposes observed repository activity.</p>}</section>
+        <section className={`picker-panel${mode === "date" ? " active" : ""}`} role="tabpanel" hidden={mode !== "date"}><DatePicker days={days} bySession={bySession} selected={scope} onSelect={setScope} /></section>
+      </aside>
+      <main className="workspace">
+        <header className="workspace-header"><nav className="workspace-breadcrumb" aria-label="Workbench breadcrumb"><span>Harness Inspector</span><i>/</i><strong>{mode === "date" ? scope : byNode.get(scope)?.title ?? "Delivery Workbench"}</strong></nav><div className="workspace-header-meta"><div className="scope-metrics" aria-label="Scope metrics"><Metric value={itemStories.size} label="stories" singular="story" /><Metric value={itemSessions.length} label="sessions" singular="session" /><Metric value={itemSessions.reduce((sum, session) => sum + totalCalls(session), 0)} label="calls" singular="call" /><Metric value={itemCommits.size} label="commits" singular="commit" /></div><span className="window-badge">{platformBadge(report)} · {sessions.length} sessions</span></div></header>
+        <div className="workspace-scroll">{(report.diagnostics?.length ?? 0) > 0 && <details className="react-diagnostics"><summary>Inspector boundaries · {report.diagnostics!.length}</summary><ul>{report.diagnostics!.map((diagnostic) => <li key={diagnostic}>{diagnostic}</li>)}</ul></details>}<section className="workbench-list" aria-live="polite">{items.length ? items.map((item, index) => <WorkbenchCard key={`${item.session?.sessionId ?? item.story?.id ?? "commit"}-${index}`} item={item} commits={commitsFor(item, byCommit)} collapsed={collapsedCards.has(index)} onToggle={() => setCollapsedCards(toggleNumber(collapsedCards, index))} onOpen={setSelectedSession} />) : <div className="empty-state">No provenance workbench exists in this scope.</div>}</section></div>
+      </main>
     </div>
-  </main>
-</div>
-<section class="session-view" id="session-view" role="dialog" aria-modal="true" aria-labelledby="session-view-title" hidden>
-  <header class="session-nav"><nav class="session-crumbs" aria-label="Session breadcrumb"><span>${workspaceName}</span><i>/</i><span>Sessions</span><i>/</i><strong id="session-view-title">Session</strong></nav><button class="session-close" id="session-view-close" data-close-session>Close</button></header>
-  <div id="session-view-body"></div>
-</section>
-<script type="application/json" id="inspector-data">${safeJson(report)}</script>`;
+    {selectedSession && <SessionView workspaceName={workspaceName} session={selectedSession} onClose={() => setSelectedSession(undefined)} />}
+  </div>;
 }
 
-function featurePicker(tree: InspectorFeatureTree): string {
-  const nodes = tree.nodes ?? [];
-  if (nodes.length === 0) return '<p class="picker-empty">No Feature Tree yet. Date mode still exposes observed repository activity.</p>';
-  const byId = new Map(nodes.map((node) => [node.id, node]));
-  const renderNode = (node: InspectorFeatureNode): string => {
-    const children = (node.children ?? []).map((id) => byId.get(id)).filter((child): child is InspectorFeatureNode => child !== undefined);
-    const hasChildren = children.length > 0;
-    const meta = hasChildren ? `${children.length} item${children.length === 1 ? "" : "s"}` : (node.stage ?? "capability");
+function FeatureTree(props: { roots: string[]; byNode: Map<string, FeatureNode>; selected: string; collapsed: Set<string>; onSelect(id: string): void; onToggle(id: string): void }): React.JSX.Element {
+  const render = (node: FeatureNode): React.JSX.Element => {
+    const children = (node.children ?? []).map((id) => props.byNode.get(id)).filter((child): child is FeatureNode => Boolean(child));
+    const expanded = !props.collapsed.has(node.id);
     const status = node.status === "complete" ? "complete" : node.status === "todo" ? "todo" : "neutral";
-    const statusLabel = status === "complete" ? "Complete" : status === "todo" ? "Todo" : "Status not declared";
-    const title = escapeHtml(node.title);
-    const toggle = hasChildren
-      ? `<button class="tree-branch-toggle" type="button" data-tree-toggle aria-expanded="true" aria-label="Collapse ${title}"><span aria-hidden="true">⌄</span></button>`
-      : '<span class="tree-branch-spacer" aria-hidden="true"></span>';
-    const group = hasChildren ? `<ul class="tree-children" role="group">${children.map(renderNode).join("")}</ul>` : "";
-    const evidence = node.evidence ?? "declared";
-    const badge = evidence === "declared" ? "" : `<span class="evidence ${escapeHtml(evidence)}">${escapeHtml(evidence)}</span>`;
-    const type = escapeHtml(node.type ?? "feature");
-    return `<li class="tree-item ${type}" role="treeitem" data-tree-item data-tree-node-id="${escapeHtml(node.id)}"${hasChildren ? ' aria-expanded="true"' : ""}><div class="tree-line">${toggle}<button class="tree-row ${type}" type="button" data-feature-id="${escapeHtml(node.id)}"><span class="tree-check ${status}" role="img" aria-label="${statusLabel}"><span aria-hidden="true">${status === "complete" ? "✓" : ""}</span></span><span class="tree-copy"><strong>${title}</strong><small>${escapeHtml(meta)}</small></span>${badge}</button></div>${group}</li>`;
+    return <li key={node.id} className={`tree-item ${node.type ?? "feature"}`} role="treeitem" aria-expanded={children.length ? expanded : undefined}><div className="tree-line">{children.length ? <button className="tree-branch-toggle" type="button" aria-expanded={expanded} aria-label={`${expanded ? "Collapse" : "Expand"} ${node.title}`} onClick={() => props.onToggle(node.id)}><span aria-hidden="true">{expanded ? "⌄" : "›"}</span></button> : <span className="tree-branch-spacer" />}<button className={`tree-row ${node.type ?? "feature"}${props.selected === node.id ? " active" : ""}`} type="button" onClick={() => props.onSelect(node.id)}><span className={`tree-check ${status}`} role="img" aria-label={status}><span aria-hidden="true">{status === "complete" ? "✓" : ""}</span></span><span className="tree-copy"><strong>{node.title}</strong><small>{children.length ? `${children.length} items` : node.stage ?? "capability"}</small></span>{node.evidence && node.evidence !== "declared" && <span className={`evidence ${node.evidence}`}>{node.evidence}</span>}</button></div>{children.length > 0 && expanded && <ul className="tree-children" role="group">{children.map(render)}</ul>}</li>;
   };
-  const roots = (tree.roots ?? []).map((id) => byId.get(id)).filter((node): node is InspectorFeatureNode => node !== undefined);
-  return `<ul class="capability-tree" role="tree" aria-label="Capability tree">${roots.map(renderNode).join("")}</ul>`;
+  const roots = props.roots.map((id) => props.byNode.get(id)).filter((node): node is FeatureNode => Boolean(node));
+  return <ul className="capability-tree" role="tree" aria-label="Capability tree">{roots.map(render)}</ul>;
 }
 
-function datePicker(days: InspectorDay[]): string {
-  if (days.length === 0) return '<p class="picker-empty">No timestamped sessions or commits in this window.</p>';
+function DatePicker({ days, bySession, selected, onSelect }: { days: Day[]; bySession: Map<string, Session>; selected: string; onSelect(value: string): void }): React.JSX.Element {
+  if (!days.length) return <p className="picker-empty">No timestamped sessions or commits in this window.</p>;
   const byDate = new Map(days.map((day) => [day.date, day]));
   const first = new Date(`${days[0]!.date}T00:00:00.000Z`);
   const last = new Date(`${days.at(-1)!.date}T00:00:00.000Z`);
-  const gridStart = new Date(first);
-  gridStart.setUTCDate(gridStart.getUTCDate() - ((gridStart.getUTCDay() + 6) % 7));
-  const gridEnd = new Date(last);
-  gridEnd.setUTCDate(gridEnd.getUTCDate() + ((7 - gridEnd.getUTCDay()) % 7));
-  const sameMonth = first.getUTCFullYear() === last.getUTCFullYear() && first.getUTCMonth() === last.getUTCMonth();
-  const calendarLabel = sameMonth
-    ? new Intl.DateTimeFormat("en", { month: "long", year: "numeric", timeZone: "UTC" }).format(first)
-    : `${new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" }).format(first)}–${new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(last)}`;
-  const cells: string[] = [];
-  for (const cursor = new Date(gridStart); cursor <= gridEnd; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+  const start = new Date(first); start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 6) % 7));
+  const end = new Date(last); end.setUTCDate(end.getUTCDate() + ((7 - end.getUTCDay()) % 7));
+  const cells: ReactNode[] = [];
+  for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
     const date = cursor.toISOString().slice(0, 10);
     const day = byDate.get(date);
-    const number = cursor.getUTCDate();
-    if (day === undefined) {
-      cells.push(`<span class="date-cell empty" aria-hidden="true"><time datetime="${date}">${number}</time></span>`);
-      continue;
-    }
-    const sessions = day.sessionIds?.length ?? 0;
-    const commits = day.commitHashes?.length ?? 0;
-    const label = new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }).format(cursor)
-      + `, ${sessions} session${sessions === 1 ? "" : "s"}, ${commits} commit${commits === 1 ? "" : "s"}`;
-    cells.push(`<button class="date-cell" type="button" data-date="${date}" data-session-count="${sessions}" data-commit-count="${commits}" aria-label="${escapeHtml(label)}"><time datetime="${date}">${number}</time><span class="date-activity" aria-hidden="true"></span></button>`);
+    cells.push(day ? <button key={date} className={`date-cell${selected === date ? " active" : ""}`} type="button" aria-current={selected === date ? "date" : undefined} aria-label={`${formatDate(date)}, ${day.sessionIds?.length ?? 0} sessions, ${day.commitHashes?.length ?? 0} commits`} onClick={() => onSelect(date)}><time dateTime={date}>{cursor.getUTCDate()}</time><span className="date-activity" /></button> : <span key={date} className="date-cell empty"><time dateTime={date}>{cursor.getUTCDate()}</time></span>);
   }
-  const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => `<span>${day}</span>`).join("");
-  return `<div class="date-calendar"><header><strong>${escapeHtml(calendarLabel)}</strong><span>UTC</span></header><div class="date-weekdays" aria-hidden="true">${weekdays}</div><div class="date-grid">${cells.join("")}</div><div class="date-selection-summary" aria-live="polite"><strong data-date-summary-label>Select a date</strong><span data-date-summary-meta></span></div></div><nav class="date-session-navigator" aria-label="Sessions on selected date"><div class="date-session-heading"><strong>Sessions</strong><span data-date-session-count>0</span></div><div class="date-session-list" data-date-session-list><p class="picker-empty">Select a date to browse its Sessions.</p></div></nav>`;
+  const day = byDate.get(selected);
+  const sessions = (day?.sessionIds ?? []).map((id) => bySession.get(id)).filter((session): session is Session => Boolean(session));
+  return <><div className="date-calendar"><header><strong>{new Intl.DateTimeFormat("en", { month: "long", year: "numeric", timeZone: "UTC" }).format(last)}</strong><span>UTC</span></header><div className="date-weekdays">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((value) => <span key={value}>{value}</span>)}</div><div className="date-grid">{cells}</div><div className="date-selection-summary" aria-live="polite"><strong>{day ? formatDate(day.date) : "Select a date"}</strong><span>{day ? `${day.sessionIds?.length ?? 0} sessions · ${day.commitHashes?.length ?? 0} commits` : ""}</span></div></div><nav className="date-session-navigator" aria-label="Sessions on selected date"><div className="date-session-heading"><strong>Sessions</strong><span>{sessions.length}</span></div><div className="date-session-list">{sessions.length ? sessions.map((session) => <a className="date-session-row" href={`#workbench-${encodeURIComponent(session.sessionId)}`} key={session.sessionId}><span className="date-session-row-top"><span className="date-session-row-meta"><strong>{session.platform ?? "agent"}</strong><time>{formatClock(session.firstSeen)}</time><span>{formatDuration(session.durationMs)}</span></span><span className="date-session-row-stat">{totalCalls(session)} calls</span></span><span className="date-session-title">{sessionTitle(session)}</span></a>) : <p className="picker-empty">No Sessions were observed on this date.</p>}</div></nav></>;
 }
 
-function platformBadge(report: InspectorReport): string {
-  const contributing = (report.providers ?? []).filter((provider) => provider.sessionCount > 0);
-  if (contributing.length === 0) return report.filters?.platform ?? "all";
-  if (contributing.length <= 3) return contributing.map((provider) => provider.platform).join(" · ");
-  return `${contributing.length} providers`;
+function Metric({ value, label, singular }: { value: number; label: string; singular: string }): React.JSX.Element | null {
+  return value ? <span className="metric" aria-label={`${value} ${value === 1 ? singular : label}`}><strong>{value}</strong><span className="metric-label">{value === 1 ? singular : label}</span><span className="metric-short">{label.slice(0, 5)}</span></span> : null;
 }
 
-function safeJson(value: unknown): string {
-  return JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
+function WorkbenchCard({ item, commits, collapsed, onToggle, onOpen }: { item: Item; commits: Commit[]; collapsed: boolean; onToggle(): void; onOpen(session: Session): void }): React.JSX.Element {
+  const session = item.session;
+  return <article className={`workbench${collapsed ? " card-collapsed" : ""}`} id={session ? `workbench-${encodeURIComponent(session.sessionId)}` : undefined}><header className="workbench-head"><div className="workbench-title-line"><div className="workbench-meta">{session ? <><span className="workbench-provider">{session.platform ?? "agent"}</span><span>{formatClock(session.firstSeen)}</span><span>{formatDuration(session.durationMs)}</span></> : <span>No linked Session</span>}</div><h3>{item.story?.title ?? (session ? sessionTitle(session) : "Commits without a linked Session")}</h3></div><div className="head-actions">{session && <button className="prepare-button" type="button" onClick={() => onOpen(session)}>Open session</button>}<button className="card-collapse" type="button" aria-expanded={!collapsed} onClick={onToggle}>{collapsed ? "+" : "−"}</button></div></header><div className="workbench-grid"><PromptLane item={item} onOpen={onOpen} /><div className="lane-resizer prompt" role="separator" /><ActivityLane session={session} onOpen={onOpen} /><div className="lane-resizer delivery" role="separator" /><DeliveryLane commits={commits} /></div></article>;
 }
 
-function escapeHtml(value: unknown): string {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+function PromptLane({ item, onOpen }: { item: Item; onOpen(session: Session): void }): React.JSX.Element {
+  const prompts = item.session?.prompts ?? [];
+  const declared = item.story?.refs?.prompts?.[0];
+  return <section className={`lane prompt-lane${declared || prompts.length ? "" : " lane-empty"}`}><div className="lane-title"><strong>User prompts</strong><span>{prompts.length} retained</span></div>{declared && <div className="intent-card declared-intent"><p>{declared}</p><small>Feature Tree intent · {item.story?.evidence ?? "declared"}</small></div>}{prompts.map((prompt, index) => <div className="intent-card" key={`${prompt.timestamp ?? index}-${index}`}><p>{prompt.text}</p><small>{prompt.turnIndex ? `User turn ${prompt.turnIndex}` : "Retained prompt"}{prompt.timestamp ? ` · ${formatClock(prompt.timestamp)}` : ""}</small></div>)}{!declared && !prompts.length && <div className="empty-state">No retained privacy-safe user turn for this scope.</div>}{item.session && <button className="lane-more" type="button" onClick={() => onOpen(item.session!)}>Open Session View</button>}</section>;
 }
+
+function ActivityLane({ session, onOpen }: { session?: Session; onOpen(session: Session): void }): React.JSX.Element {
+  const calls = session?.toolActivity?.calls ?? [];
+  if (!session || !calls.length) return <section className="lane activity-lane lane-empty"><div className="lane-title"><strong>Checkpoint activity</strong><span>0 calls</span></div><div className="empty-state">No normalized tool call was retained for this Session.</div></section>;
+  const counts = countActions(calls).slice(0, 6);
+  const max = Math.max(...counts.map(([, value]) => value.count), 1);
+  return <section className="lane activity-lane"><div className="lane-title"><strong>Checkpoint activity</strong><span>{session.toolActivity?.files?.length ?? session.files?.length ?? 0} paths</span></div><div className="activity-summary"><div className="activity-total"><strong>{calls.length}</strong><span>calls · {session.toolActivity?.failedCalls ?? calls.filter((call) => call.status === "failed").length} failed</span></div><div className="family-bars">{counts.map(([label, value]) => <div className="family-row" key={label}><span title={label}><i className="family-dot" style={{ background: familyColor(value.family) }} />{label}</span><div className="family-track"><div className="family-fill" style={{ width: `${Math.max(2, value.count / max * 100)}%`, background: familyColor(value.family) }} /></div><strong>{value.count}</strong></div>)}</div></div><details className="activity-details"><summary><span>Expand {calls.length} normalized actions</span><small>focus view</small></summary><div className="react-action-list">{calls.map((call) => <ToolRow call={call} key={call.id} />)}</div><div className="activity-actions"><button className="activity-action primary" type="button" onClick={() => onOpen(session)}>Open Session</button></div></details></section>;
+}
+
+function DeliveryLane({ commits }: { commits: Commit[] }): React.JSX.Element {
+  if (!commits.length) return <section className="lane delivery-lane lane-empty"><div className="lane-title"><strong>Commits / files</strong><span>0 commits</span></div><div className="empty-state">No commit is linked to this Session or Story.</div></section>;
+  return <section className="lane delivery-lane"><div className="lane-title"><strong>Commits / files</strong><span>{commits.length} commits</span></div><div className="delivery-content">{commits.map((commit) => <details className="commit-card commit-card-expanded" open key={commit.hash}><summary className="commit-head"><div className="commit-head-line"><span className="commit-id"><span className="commit-chevron">›</span><code>{commit.shortHash ?? commit.hash.slice(0, 8)}</code></span><span className="evidence observed">observed</span></div><p>{commit.subject ?? "Commit evidence"}</p><div className="commit-stats">{commit.fileCount ?? commit.files?.length ?? 0} files · +{commit.linesAdded ?? 0} / -{commit.linesRemoved ?? 0}</div></summary><div className="file-tree">{(commit.files ?? []).map((file) => <div className="file-row" key={file.path}><code>{file.path}</code><span className="delta">{file.added == null ? "bin" : `+${file.added}`} / {file.removed == null ? "bin" : `-${file.removed}`}</span></div>)}</div></details>)}</div></section>;
+}
+
+function SessionView({ workspaceName, session, onClose }: { workspaceName: string; session: Session; onClose(): void }): React.JSX.Element {
+  const [mode, setMode] = useState<ViewMode>("trace");
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent): void => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+  return <section className="session-view" role="dialog" aria-modal="true" aria-labelledby="session-view-title"><header className="session-nav"><nav className="session-crumbs"><span>{workspaceName}</span><i>/</i><span>Sessions</span><i>/</i><strong>{sessionTitle(session)}</strong></nav><button className="session-close" type="button" autoFocus onClick={onClose}>Close</button></header><div className="session-shell"><header className="session-titlebar"><div className="session-notebook-brand"><strong>Harness Inspector</strong></div><div className="session-title-copy"><small>{session.platform ?? "agent"} · retained Session</small><h2 id="session-view-title">{sessionTitle(session)}</h2></div><div className="session-title-actions"><div className="session-mode-tabs" role="tablist"><button role="tab" aria-selected={mode === "trace"} tabIndex={mode === "trace" ? 0 : -1} onClick={() => setMode("trace")} onKeyDown={(event) => moveInspectorTab(event, "replay", setMode)}>Trace</button><button role="tab" aria-selected={mode === "replay"} tabIndex={mode === "replay" ? 0 : -1} onClick={() => setMode("replay")} onKeyDown={(event) => moveInspectorTab(event, "trace", setMode)}>Replay</button></div></div></header>{mode === "trace" ? <SessionTrace session={session} /> : <SessionReplay session={session} />}</div></section>;
+}
+
+function SessionTrace({ session }: { session: Session }): React.JSX.Element {
+  const turns = session.dialogue?.turns ?? [];
+  const calls = session.toolActivity?.calls ?? [];
+  return <div className="session-layout"><main className="session-notebook-main"><div className="session-timeline">{turns.length ? turns.map((turn) => <article className="session-cell" key={turn.anchorId ?? turn.index}><header className="session-turn-head"><strong>Turn {turn.index}</strong><span>{turn.toolCallCount ?? 0} calls · {formatDuration(turn.durationMs)}</span></header><div className="session-cell-marker"><span className="turn-select">IN {turn.index}</span><span>OUT</span></div><div className="session-turn"><article className="session-event prompt"><div className="session-event-head"><strong>Prompt</strong><span>{formatClock(turn.prompt?.timestamp)}</span></div><div className="session-event-body session-markdown"><p>{turn.prompt?.text ?? "Prompt unavailable after privacy filtering."}</p></div></article><details className="session-process" open><summary><span>Process</span><em>{turn.toolCallCount ?? 0} tool calls</em></summary><div className="session-process-body">{(turn.steps ?? []).map((step, index) => step.kind === "note" ? <article className="session-event intermediate" key={`note-${index}`}><div className="session-note-label">Intermediate</div><p>{step.text}</p></article> : <ToolRow call={{ ...step, id: step.callId ?? step.id ?? `tool-${index}` }} key={step.callId ?? step.id ?? index} />)}</div></details><article className="session-event response"><div className="session-event-head"><strong>Response</strong><span>{turn.responseStatus ?? "retained"}</span></div><div className="session-event-body session-markdown"><p>{turn.response ?? "No privacy-safe response retained."}</p></div></article></div></article>) : <div className="empty-state">No retained dialogue turns. The normalized tool ledger remains in the outline.</div>}</div></main><aside className="session-sidebar"><header><div><strong>Session outline</strong><span>{session.locator ?? session.sessionId}</span></div></header><section className="session-outline-facts"><h3>Observed facts</h3><dl><div><dt>Provider</dt><dd>{session.platform ?? "unknown"}</dd></div><div><dt>Turns</dt><dd>{turns.length}</dd></div><div><dt>Tool calls</dt><dd>{calls.length}</dd></div><div><dt>Files</dt><dd>{session.files?.length ?? 0}</dd></div><div><dt>Model</dt><dd>{session.models?.join(", ") || "not retained"}</dd></div></dl></section><section><h3>Files</h3><div className="session-file-list">{session.files?.length ? session.files.map((file) => <code key={file}>{file}</code>) : <span className="empty-state">No paths retained.</span>}</div></section></aside></div>;
+}
+
+function ToolRow({ call }: { call: ToolCall }): React.JSX.Element {
+  const files = call.filePaths ?? (call.filePath ? [call.filePath] : []);
+  return <div className="session-tool-row"><span className="session-tool-id">{call.id}</span><span className="session-tool-copy"><strong>{call.actionLabel ?? call.toolName ?? "Tool call"}</strong><code>{call.toolName ?? call.operation ?? "tool"}</code></span><span className="session-tool-time"><code>{formatStamp(call.startedAt)}</code><small>{formatDuration(call.durationMs)}</small></span>{call.detail && <span className="session-tool-detail-row"><em className={`detail-kind ${call.detailKind?.includes("redacted") ? "redacted" : "summary"}`}>{call.detailKind?.includes("redacted") ? "redacted" : "summary"}</em><span className="session-tool-detail">{call.detail}</span></span>}{files.length > 0 && <code className="session-tool-file">{files.join(" · ")}</code>}</div>;
+}
+
+function SessionReplay({ session }: { session: Session }): React.JSX.Element {
+  const events = session.replay?.events ?? [];
+  const [index, setIndex] = useState(0);
+  const event = events[index];
+  if (!event) return <main className="session-notebook-main"><div className="empty-state">Replay is unavailable because no ordered privacy-safe event ledger was retained.</div></main>;
+  return <main className="session-notebook-main replay-shell"><p className="replay-boundary"><strong>Ordered evidence replay</strong><span>Replay follows retained event order; it never executes the Session again.</span></p><div className="replay-layout"><section className="replay-stage"><article className={`replay-event-card ${event.type}`}><header><div><small>{event.label ?? event.type}</small><h3>{event.title ?? `Event ${index + 1}`}</h3></div><div className="replay-event-badges"><span className="replay-excerpt">{event.timeBasis ?? "sequence"}</span></div></header><div className="replay-event-meta"><code>{formatStamp(event.atMs)}</code><span>Turn {event.turnIndex ?? "—"}</span><span>{index + 1} / {events.length}</span></div><div className="replay-event-body"><p>{event.body ?? "No privacy-safe body retained."}</p></div>{event.files?.length ? <div className="replay-stage-files"><strong>Files</strong>{event.files.map((file) => <button type="button" key={file}><code>{file}</code></button>)}</div> : null}</article></section><aside className="replay-index"><div className="replay-index-tabs"><button type="button" aria-selected="true">Events <span>{events.length}</span></button><button type="button" aria-selected="false">Files <span>{session.files?.length ?? 0}</span></button></div><div className="replay-index-body"><div className="replay-event-list">{events.map((candidate, candidateIndex) => <button type="button" className={candidateIndex === index ? "replay-current" : undefined} key={candidate.id} onClick={() => setIndex(candidateIndex)}><span className="replay-event-order">{candidateIndex + 1}</span><span className="replay-event-copy"><strong>{candidate.title ?? candidate.label ?? candidate.type}</strong><small>{candidate.body ?? "No body retained"}</small></span><span className="replay-event-kind">{candidate.type}</span></button>)}</div></div></aside></div><nav className="react-replay-controls"><button type="button" disabled={index === 0} onClick={() => setIndex((value) => Math.max(0, value - 1))}>Previous</button><strong>Event {index + 1} of {events.length}</strong><button type="button" disabled={index === events.length - 1} onClick={() => setIndex((value) => Math.min(events.length - 1, value + 1))}>Next</button></nav></main>;
+}
+
+function itemsForScope(mode: Mode, scope: string, days: Day[], byNode: Map<string, FeatureNode>, byStory: Map<string, Story>, bySession: Map<string, Session>): Item[] {
+  if (mode === "date") {
+    const day = days.find((candidate) => candidate.date === scope);
+    if (!day) return [];
+    const rows = (day.sessionIds ?? []).map((id) => ({ session: bySession.get(id), date: day })).filter((item): item is { session: Session; date: Day } => Boolean(item.session));
+    return day.commitHashes?.length ? [...rows, { date: day, commitHashes: day.commitHashes }] : rows;
+  }
+  const start = byNode.get(scope);
+  if (!start) return [];
+  const found: Story[] = [];
+  const queue = [start];
+  while (queue.length) {
+    const node = queue.shift()!;
+    if (node.type === "story" && byStory.has(node.id)) found.push(byStory.get(node.id)!);
+    queue.push(...(node.children ?? []).map((id) => byNode.get(id)).filter((node): node is FeatureNode => Boolean(node)));
+  }
+  return found.flatMap((story) => story.sessionLinks?.length ? story.sessionLinks.map((link) => ({ story, session: bySession.get(link.sessionId) })) : [{ story }]);
+}
+
+function commitsFor(item: Item, byCommit: Map<string, Commit>): Commit[] {
+  const hashes = new Set([...(item.story?.commitHashes ?? []), ...(item.session?.commitLinks ?? []).map((link) => link.hash), ...(item.commitHashes ?? [])]);
+  return [...hashes].map((hash) => byCommit.get(hash)).filter((commit): commit is Commit => Boolean(commit));
+}
+
+function countActions(calls: ToolCall[]): Array<[string, { count: number; family: string }]> {
+  const counts = new Map<string, { count: number; family: string }>();
+  for (const call of calls) {
+    const label = call.actionLabel ?? call.toolName ?? "Use tool";
+    const value = counts.get(label) ?? { count: 0, family: call.family ?? "other" };
+    counts.set(label, { ...value, count: value.count + 1 });
+  }
+  return [...counts].sort((left, right) => right[1].count - left[1].count);
+}
+
+function toggle(values: Set<string>, value: string): Set<string> { const next = new Set(values); if (next.has(value)) next.delete(value); else next.add(value); return next; }
+function toggleNumber(values: Set<number>, value: number): Set<number> { const next = new Set(values); if (next.has(value)) next.delete(value); else next.add(value); return next; }
+function moveInspectorTab<T extends string>(event: React.KeyboardEvent<HTMLButtonElement>, next: T, select: (value: T) => void): void { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); select(next); const target = event.currentTarget.nextElementSibling ?? event.currentTarget.previousElementSibling; (target as HTMLButtonElement | null)?.focus(); }
+function sessionTitle(session: Session): string { return session.prompts?.[0]?.text ?? session.locator ?? session.sessionId; }
+function totalCalls(session: Session): number { return session.toolActivity?.totalCalls ?? session.toolActivity?.calls?.length ?? 0; }
+function familyColor(family: string): string { return `var(--family-${["inspect", "change", "execute", "verify", "coordinate", "deliver"].includes(family) ? family : "other"})`; }
+function platformBadge(report: Report): string { const values = (report.providers ?? []).filter((provider) => provider.sessionCount > 0); return values.length === 0 ? report.filters?.platform ?? "all" : values.length <= 3 ? values.map((provider) => provider.platform).join(" · ") : `${values.length} providers`; }
+function formatClock(value?: string | null): string { const date = new Date(value ?? ""); return Number.isNaN(date.valueOf()) ? "unknown" : date.toISOString().slice(11, 16); }
+function formatDate(value: string): string { const date = new Date(`${value}T00:00:00.000Z`); return Number.isNaN(date.valueOf()) ? value : new Intl.DateTimeFormat("en", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(date); }
+function formatStamp(value?: number | null): string { return Number.isFinite(value) ? new Date(Number(value)).toISOString().slice(11, 19) : "time unavailable"; }
+function formatDuration(value?: number | null): string { if (!Number.isFinite(value)) return "duration unavailable"; const ms = Math.max(0, Number(value)); return ms < 1_000 ? `${Math.round(ms)} ms` : ms < 60_000 ? `${(ms / 1_000).toFixed(ms < 10_000 ? 1 : 0)} s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1_000)}s`; }
+function scopeCss(css: string): string { return css.replace(/:root\s*\{/u, ":host, .native-inspector-root {").replace(/html,\s*body\s*\{[^}]*\}/u, ".native-inspector-root { margin:0; min-width:320px; min-height:100%; font:14px/1.45 var(--font-ui); color:var(--ink); background:var(--color-surface); }").replace(/html:has\(body\.session-open\)\s*\{[^}]*\}/u, ".native-inspector-root.session-open { overflow:hidden; }"); }
+
+const REACT_CSS = `
+  :host,.native-inspector-root{display:block;width:100%;height:100%;min-height:0}.date-session-row{text-decoration:none}.react-action-list{display:grid;max-height:280px;overflow:auto;border-top:1px solid var(--color-border)}.react-action-list .session-tool-row{grid-template-columns:52px minmax(100px,1fr) 74px}.react-diagnostics{margin:10px 12px 0;border:1px solid var(--color-border);border-radius:var(--radius-lg);color:var(--color-text-muted);background:var(--color-surface-subtle);font-size:12px}.react-diagnostics summary{padding:7px 9px;cursor:pointer;font-weight:700}.react-diagnostics ul{margin:0;padding:0 26px 9px}.react-replay-controls{position:sticky;bottom:0;margin-top:14px;padding:10px 12px;display:flex;align-items:center;justify-content:center;gap:12px;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-surface);box-shadow:0 -8px 24px rgba(15,23,42,.08)}.react-replay-controls button{min-height:30px;border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:4px 9px;color:var(--color-text);background:var(--color-surface);cursor:pointer}.react-replay-controls button:disabled{opacity:.45;cursor:not-allowed}.react-replay-controls strong{font-size:12px}
+`;

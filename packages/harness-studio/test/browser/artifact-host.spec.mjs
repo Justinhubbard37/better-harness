@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { HarnessRunEmitter } from "@qoder-ai/harness/exec";
+import { buildHarnessInspectorReport, emptyFeatureTree } from "../../../../scripts/harness-inspector/index.mjs";
 import { resolveCanvasRuntime } from "../../dist/server/artifact-viewer-runtime.js";
 import { discoverCanvasViewers, matchCanvasViewer } from "../../dist/server/artifact-viewers.js";
 import { startHarnessStudioServer } from "../../dist/server/server.js";
@@ -70,6 +71,34 @@ test.beforeAll(async () => {
     retainedRun("run_left", "2026-08-20T10:00:00.000Z", "Repair parser", ["Read", "Edit", "Bash"]),
     retainedRun("run_right", "2026-08-20T11:00:00.000Z", "Repair renderer", ["Read", "Bash"]),
   ];
+  const workspaceInspectorReport = buildHarnessInspectorReport({
+    repoRoot: selectedWorkspace,
+    featureTree: emptyFeatureTree(),
+    sessions: workspaceRecords.map((record) => ({
+      sessionId: record.id,
+      platform: "qoder",
+      firstSeen: record.savedAt,
+      lastSeen: record.savedAt,
+      prompts: [{ text: record.prompt, timestamp: record.savedAt }],
+      promptCount: 1,
+      assistantMessageCount: 1,
+      toolCallCount: record.toolCallCount,
+      toolActivity: {
+        calls: record.timeline.filter((event) => event.kind === "tool-call").map((event, index) => ({
+          id: event.id,
+          family: event.name === "Edit" ? "change" : "inspect",
+          actionLabel: `${event.name} workspace evidence`,
+          toolName: event.name,
+          status: "completed",
+          startedAt: Date.parse(record.savedAt) + index,
+        })),
+      },
+      dialogue: { turns: [{ prompt: record.prompt, response: `${record.prompt} complete` }] },
+    })),
+    correlation: { commits: [] },
+    providers: [{ platform: "qoder", status: "ok", discovered: 2, included: 2 }],
+    filters: { platform: "all", sessionLimit: 100 },
+  });
   emptyStudio = await startHarnessStudioServer({
     appDir: join(packageRoot, "dist", "app"),
     canvasSdkRoot,
@@ -82,6 +111,7 @@ test.beforeAll(async () => {
         return {
           label: "fixture-project",
           providers: [{ provider: "qoder", status: "ok", discovered: 2, included: 2 }],
+          inspectorReport: workspaceInspectorReport,
           sessions: workspaceRecords.map((record) => ({
             summary: { id: `qoder:${record.id}`, savedAt: record.savedAt, prompt: record.prompt, status: "observed", toolCallCount: record.toolCallCount, provider: "qoder", messageCount: 1, warningCount: 0 },
             debugger: { ...sessionFromRetainedRun(record), id: `qoder:${record.id}`, agent: "qoder", protocol: "Inspector normalized local evidence", connection: "observed" },
@@ -231,6 +261,8 @@ test("persists the explicit Studio theme and keeps core contrast accessible", as
 
 test("opens a project workspace and compares Inspector-discovered Sessions", async ({ page }) => {
   const failures = watchFailures(page);
+  const requestedUrls = [];
+  page.on("request", (request) => requestedUrls.push(request.url()));
   await page.goto(emptyStudio.url);
   const gate = page.getByRole("dialog", { name: "Open a workspace to start" });
   await expect(gate).toBeVisible();
@@ -244,6 +276,7 @@ test("opens a project workspace and compares Inspector-discovered Sessions", asy
     { name: "narrow", width: 390, height: 844 },
   ]) {
     await page.setViewportSize({ width: layout.width, height: layout.height });
+    if (layout.width <= 1080) await expect(page.locator(".studio-primary-nav")).not.toBeInViewport();
     const overflows = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
     expect(overflows, `${layout.name} workspace gate overflows horizontally`).toBe(false);
     await page.screenshot({ path: `test-results/session-workspace-gate-${layout.name}.png`, fullPage: true });
@@ -256,10 +289,36 @@ test("opens a project workspace and compares Inspector-discovered Sessions", asy
   await expect(page.locator(".workspace-open-progress > i")).toHaveCSS("animation-name", "workspace-progress-spin");
   await page.screenshot({ path: "test-results/session-workspace-loading-wide.png", fullPage: true });
 
-  await expect(page.getByRole("button", { name: /Repair renderer/ })).toBeVisible();
   await expect(gate).toHaveCount(0);
   await expect(page.locator(".studio-control-plane")).not.toHaveAttribute("inert", "");
   await expect(page).toHaveURL(/#\/sessions$/);
+  const inspector = page.locator("[data-studio-native-inspector]");
+  await expect(inspector).toBeVisible();
+  await expect(inspector).toHaveAttribute("data-react-inspector-workbench", "true");
+  await expect(inspector.getByRole("tab", { name: "Date" })).toHaveAttribute("aria-selected", "true");
+  await expect(inspector.getByRole("button", { name: "Open session" }).first()).toBeVisible();
+  expect(requestedUrls.some((url) => url.endsWith("/assets/inspector-workbench.js"))).toBe(false);
+  await inspector.getByRole("button", { name: "Open session" }).first().click();
+  await expect(inspector.locator(".session-view")).toBeVisible();
+  await expect(inspector.getByRole("dialog")).toContainText(/Repair (parser|renderer)/);
+  await expect(inspector.getByRole("button", { name: "Close" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(inspector.locator(".session-view")).toHaveCount(0);
+  for (const layout of [
+    { name: "wide", width: 1440, height: 900 },
+    { name: "compact", width: 1024, height: 768 },
+    { name: "narrow", width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize({ width: layout.width, height: layout.height });
+    if (layout.width <= 1080) await expect(page.locator(".studio-primary-nav")).not.toBeInViewport();
+    const overflows = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
+    expect(overflows, `${layout.name} Inspector workbench overflows horizontally`).toBe(false);
+    await page.screenshot({ path: `test-results/session-inspector-${layout.name}.png`, fullPage: true });
+  }
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("tab", { name: "Catalog & Compare" }).click();
+  await expect(page.getByRole("button", { name: /Repair renderer/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Repair renderer" })).toBeVisible();
   await expect(page.locator(".session-event-rows")).toContainText("Bash");
   for (const layout of [
@@ -306,7 +365,7 @@ test("opens a project workspace and compares Inspector-discovered Sessions", asy
   await page.screenshot({ path: "test-results/default-workspace-debugger-wide.png", fullPage: true });
 
   const config = await page.evaluate(async () => await (await fetch("api/config")).json());
-  expect(config).toMatchObject({ aguiEnabled: true, harnessMode: "workspace-default", workspaceConnected: true, sessionCount: 2 });
+  expect(config).toMatchObject({ aguiEnabled: true, harnessMode: "workspace-default", workspaceConnected: true, workspaceWorkbenchEnabled: true, sessionCount: 2 });
   const workspace = await page.evaluate(async () => await (await fetch("api/workspace")).json());
   expect(workspace).toMatchObject({ connected: true, label: "fixture-project", providers: [{ provider: "qoder", status: "ok" }] });
   expect(JSON.stringify(workspace)).not.toContain(selectedWorkspace);

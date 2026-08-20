@@ -26,6 +26,21 @@ describe("Inspector workspace provider", () => {
     }));
     const provider = createInspectorWorkspaceSessionProvider({
       collect,
+      collectCommits: vi.fn(() => ({
+        repoRoot: "/private/repository",
+        commits: [{
+          hash: "0123456789abcdef",
+          shortHash: "0123456",
+          subject: "fix parser",
+          authorName: "Developer",
+          authoredAt: "2026-08-20T09:06:00.000Z",
+          committedAt: "2026-08-20T09:06:00.000Z",
+          files: [{ path: "src/parser.ts", added: 4, removed: 1 }],
+          sessionTrailers: [],
+          sessionLinks: [],
+        }],
+      })),
+      collectCheckpoints: vi.fn(() => ({ checkpoints: [], unresolved: [] })),
       repoRootFor: () => "/private/repository",
       platforms: ["qoder", "codex"],
     });
@@ -41,6 +56,17 @@ describe("Inspector workspace provider", () => {
     }));
     expect(result).toMatchObject({
       label: "repository",
+      inspectorReport: {
+        kind: "HarnessInspectorReportV1",
+        workspace: { name: "repository" },
+        providers: [
+          { platform: "qoder", sessionCount: 1 },
+          { platform: "codex", sessionCount: 0 },
+        ],
+        sessions: [{ sessionId: "session-123", platform: "qoder" }],
+        commits: [{ shortHash: "0123456", subject: "fix parser" }],
+        days: [{ date: "2026-08-20", sessionIds: ["session-123"] }],
+      },
       providers: [{ provider: "qoder", status: "ok" }, { provider: "codex", status: "no-evidence" }],
       sessions: [{
         summary: { id: "qoder:session-123", prompt: "Review the workspace", provider: "qoder", status: "observed", toolCallCount: 1 },

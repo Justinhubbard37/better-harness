@@ -19,6 +19,7 @@ import type { DebuggerSession } from "./session-debugger-model.js";
 import { useRovingFocus } from "./roving-tablist.js";
 
 const StudioDiff = lazy(() => import("./StudioDiff.js"));
+const InspectorWorkbench = lazy(async () => ({ default: (await import("./InspectorWorkbench.js")).InspectorWorkbench }));
 import {
   capabilitySummary,
   compareSurfaces,
@@ -63,6 +64,7 @@ const EMPTY_CONFIG: StudioConfig = {
   harnessMode: "none",
   historyEnabled: false,
   inspectorEnabled: false,
+  workspaceWorkbenchEnabled: false,
   workspaceDiscoveryEnabled: false,
   workspaceConnected: false,
   sessionCount: 0,
@@ -349,7 +351,7 @@ function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => v
   const inputs = [
     ["Project workspace", props.config.workspaceConnected],
     ["Artifact catalog", props.config.artifactsEnabled],
-    ["Inspector report", props.config.inspectorEnabled],
+    ["Inspector workbench", props.config.workspaceWorkbenchEnabled || props.config.inspectorEnabled],
     ["Harness runtime", props.config.aguiEnabled],
     ["Experiment manifest", props.config.experimentEnabled],
     ["Compare evidence", props.config.evidenceEnabled],
@@ -397,6 +399,9 @@ function SessionsWorkspace(props: {
   const [detail, setDetail] = useState<DebuggerSession>();
   const [failure, setFailure] = useState<string>();
   const [detailFailure, setDetailFailure] = useState<string>();
+  const [surface, setSurface] = useState<"inspector" | "catalog">(
+    props.config.workspaceWorkbenchEnabled ? "inspector" : "catalog",
+  );
 
   useEffect(() => {
     if (!props.config.workspaceConnected) return;
@@ -462,7 +467,7 @@ function SessionsWorkspace(props: {
   if (sessions === undefined) return <p className="artifact-status" role="status">Indexing sessions…</p>;
 
   const pair = [...compareIds];
-  return <section className="session-browser-workspace" aria-label="Project workspace sessions">
+  const catalog = <section className="session-browser-workspace" aria-label="Project workspace sessions">
     <aside className="session-catalog-pane">
       <header><div><small>Local workspace</small><h2 title={workspaceLabel}>{workspaceLabel}</h2></div><span>{sessions.length}</span></header>
       {omittedCount > 0 && <p className="session-omissions">{omittedCount} unsupported or malformed file{omittedCount === 1 ? "" : "s"} omitted.</p>}
@@ -479,6 +484,24 @@ function SessionsWorkspace(props: {
           ? <p className="artifact-status">Select a session to inspect retained evidence.</p>
           : <SessionDetail session={detail} />}
     </main>
+  </section>;
+
+  if (!props.config.workspaceWorkbenchEnabled) return catalog;
+  return <section className="session-workbench-stack" aria-label="Workspace Session evidence">
+    <header className="session-workbench-toolbar">
+      <div><strong>{workspaceLabel}</strong><span>Inspector-owned workspace evidence</span></div>
+      <div className="session-surface-tabs" role="tablist" aria-label="Session views">
+        <button id="session-tab-inspector" type="button" role="tab" aria-controls="session-workbench-panel" aria-selected={surface === "inspector"} tabIndex={surface === "inspector" ? 0 : -1} className={surface === "inspector" ? "selected" : undefined} onClick={() => setSurface("inspector")} onKeyDown={(event) => { if (event.key === "ArrowRight") { event.preventDefault(); setSurface("catalog"); (event.currentTarget.nextElementSibling as HTMLButtonElement | null)?.focus(); } }}>Inspector</button>
+        <button id="session-tab-catalog" type="button" role="tab" aria-controls="session-workbench-panel" aria-selected={surface === "catalog"} tabIndex={surface === "catalog" ? 0 : -1} className={surface === "catalog" ? "selected" : undefined} onClick={() => setSurface("catalog")} onKeyDown={(event) => { if (event.key === "ArrowLeft") { event.preventDefault(); setSurface("inspector"); (event.currentTarget.previousElementSibling as HTMLButtonElement | null)?.focus(); } }}>Catalog &amp; Compare</button>
+      </div>
+    </header>
+    <div id="session-workbench-panel" className="session-workbench-surface" role="tabpanel" aria-labelledby={surface === "inspector" ? "session-tab-inspector" : "session-tab-catalog"}>
+      {surface === "inspector"
+        ? <Suspense fallback={<p className="artifact-status" role="status">Loading Inspector workbench…</p>}>
+            <InspectorWorkbench reportUrl="api/workspace-inspector-report" fallback={catalog} />
+          </Suspense>
+        : catalog}
+    </div>
   </section>;
 }
 

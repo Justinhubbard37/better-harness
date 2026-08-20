@@ -1,12 +1,23 @@
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
+  attachCheckpointFactsToSessions,
+  collectCommitFacts,
+  collectEntireCheckpointFacts,
   collectMultiPlatformSessionSummaries,
+  correlateCommitsWithSessions,
   resolveRepoRoot,
 } from "../../../scripts/commit-session-link/index.mjs";
 import { SUPPORTED_SESSION_PROVIDERS } from "../../../scripts/session-analysis/index.mjs";
+import {
+  buildHarnessInspectorReport,
+  emptyFeatureTree,
+  parseFeatureTreeMarkdown,
+} from "../../../scripts/harness-inspector/index.mjs";
 
 const MAX_SESSIONS = 100;
+const MAX_COMMITS = 50;
 
 /**
  * Repository integration adapter: reuse Inspector's real provider discovery in
@@ -14,6 +25,9 @@ const MAX_SESSIONS = 100;
  */
 export function createInspectorWorkspaceSessionProvider({
   collect = collectMultiPlatformSessionSummaries,
+  collectCommits = collectCommitFacts,
+  collectCheckpoints = collectEntireCheckpointFacts,
+  correlate = correlateCommitsWithSessions,
   repoRootFor = resolveRepoRoot,
   platforms = SUPPORTED_SESSION_PROVIDERS,
 } = {}) {
@@ -28,9 +42,44 @@ export function createInspectorWorkspaceSessionProvider({
         includeToolTrace: true,
         includeDialogue: true,
       });
+      const { commits } = collectCommits({ workspace: repoRoot, limit: MAX_COMMITS });
+      const checkpointResolution = collectCheckpoints({ repoRoot, commits });
+      const sessionsWithCheckpoints = attachCheckpointFactsToSessions(sessions, checkpointResolution.checkpoints);
+      const correlated = correlate(commits, sessionsWithCheckpoints);
+      const filesByCommit = new Map(commits.map((commit) => [commit.hash, commit.files]));
+      const correlation = {
+        ...correlated,
+        commits: correlated.commits.map((commit) => ({
+          ...commit,
+          files: filesByCommit.get(commit.hash) ?? [],
+        })),
+      };
+      const { featureTree, diagnostics } = await loadWorkspaceFeatureTree(repoRoot);
+      const inspectorReport = buildHarnessInspectorReport({
+        repoRoot,
+        featureTree,
+        sessions: sessionsWithCheckpoints,
+        correlation,
+        providers,
+        filters: {
+          platform: "all",
+          since: null,
+          until: null,
+          stage: null,
+          commitLimit: MAX_COMMITS,
+          sessionLimit: MAX_SESSIONS,
+        },
+        diagnostics: [
+          ...diagnostics,
+          ...(checkpointResolution.unresolved.length > 0
+            ? [`${checkpointResolution.unresolved.length} Entire checkpoint link(s) could not be resolved locally.`]
+            : []),
+        ],
+      });
       return {
         label: path.basename(repoRoot),
-        sessions: sessions.map(projectInspectorSession).filter(Boolean),
+        inspectorReport,
+        sessions: sessionsWithCheckpoints.map(projectInspectorSession).filter(Boolean),
         providers: providers.map((provider) => ({
           provider: provider.platform,
           status: provider.status,
@@ -41,6 +90,24 @@ export function createInspectorWorkspaceSessionProvider({
       };
     },
   };
+}
+
+async function loadWorkspaceFeatureTree(repoRoot) {
+  const featureTreePath = path.join(repoRoot, ".better-harness", "feature-tree.md");
+  try {
+    return {
+      featureTree: parseFeatureTreeMarkdown(await readFile(featureTreePath, "utf8"), { source: "workspace feature tree" }),
+      diagnostics: [],
+    };
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT") {
+      return { featureTree: emptyFeatureTree(), diagnostics: [] };
+    }
+    return {
+      featureTree: emptyFeatureTree(),
+      diagnostics: ["The workspace Feature Tree could not be parsed; Date mode remains available."],
+    };
+  }
 }
 
 function projectInspectorSession(summary) {

@@ -16,6 +16,7 @@ export interface StudioConfig {
   harnessMode: "none" | "configured" | "workspace-default";
   historyEnabled: boolean;
   inspectorEnabled: boolean;
+  workspaceWorkbenchEnabled: boolean;
   workspaceDiscoveryEnabled: boolean;
   workspaceConnected: boolean;
   sessionCount: number;

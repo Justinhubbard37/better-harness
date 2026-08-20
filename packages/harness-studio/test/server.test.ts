@@ -157,6 +157,7 @@ describe("harness-studio server", () => {
       harnessMode: "none",
       historyEnabled: false,
       inspectorEnabled: false,
+      workspaceWorkbenchEnabled: false,
       workspaceDiscoveryEnabled: false,
       workspaceConnected: false,
       sessionCount: 0,
@@ -185,6 +186,12 @@ describe("harness-studio server", () => {
             { provider: "codex", status: "ok", discovered: 1, included: 1 },
             { provider: "claude", status: "no-evidence", discovered: 0, included: 0 },
           ],
+          inspectorReport: {
+            kind: "HarnessInspectorReportV1",
+            featureTree: { nodes: [], roots: [] },
+            sessions: [{ sessionId: "session-structured" }],
+            days: [{ date: "2026-08-20", sessionIds: ["session-structured"], commitHashes: [] }],
+          },
           sessions: records.map((record, index) => ({
             summary: {
               id: `${index === 0 ? "qoder" : "codex"}:${record.id}`,
@@ -211,7 +218,9 @@ describe("harness-studio server", () => {
     expect(await (await fetch(`${started.url}/api/config`)).json()).toMatchObject({
       workspaceDiscoveryEnabled: true,
       workspaceConnected: false,
+      workspaceWorkbenchEnabled: false,
     });
+    expect((await fetch(`${started.url}/api/workspace-inspector-report`)).status).toBe(404);
 
     const hostile = await fetch(`${started.url}/api/workspace/open`, { method: "POST", headers: { Origin: "https://hostile.example" } });
     expect(hostile.status).toBe(403);
@@ -236,6 +245,16 @@ describe("harness-studio server", () => {
       ],
     });
     expect(JSON.stringify(workspaceState)).not.toContain(workspace);
+
+    const connectedConfig = await (await fetch(`${started.url}/api/config`)).json();
+    expect(connectedConfig).toMatchObject({ workspaceWorkbenchEnabled: true });
+    const inspectorReport = await fetch(`${started.url}/api/workspace-inspector-report`);
+    expect(inspectorReport.status).toBe(200);
+    expect(inspectorReport.headers.get("cache-control")).toBe("no-store");
+    expect(await inspectorReport.json()).toMatchObject({
+      kind: "HarnessInspectorReportV1",
+      sessions: [{ sessionId: "session-structured" }],
+    });
 
     const catalog = await (await fetch(`${started.url}/api/sessions`)).json() as { sessions: Array<{ id: string; provider: string }> };
     expect(catalog.sessions.map((session) => session.id)).toEqual(["qoder:run_qoder", "codex:run_codex"]);
