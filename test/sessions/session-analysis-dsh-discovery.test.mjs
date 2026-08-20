@@ -751,6 +751,27 @@ test("known unsupported and unknown ignorable events are accounted, while open t
   assert.deepEqual(await readFile(written.filePath), before);
 });
 
+test("unknown ignorable events accept every JSON data class without projecting their payloads", async () => {
+  const root = await tempRoot();
+  const home = path.join(root, "home");
+  const workspace = path.join(root, "workspace");
+  const values = [null, true, 7, "future-string", ["future-array"], { future: "object" }];
+  const rows = insertBeforeTurnEnd(makeSupportedDshSessionRows({ workspace, sessionId: "json-ignorable" }),
+    values.map((data, index) => makeDshEvent(`fixture-future/json-${index}`, data, { ignorable: true })));
+
+  const decoded = decodeDshJsonl(encodeDshRawJsonl(rows));
+  const unknown = decoded.events.filter((event) => event.type.startsWith("fixture-future/json-"));
+  assert.equal(decoded.diagnostics.unknownIgnorableCount, values.length);
+  assert.deepEqual(unknown.map((event) => event.data), values);
+
+  await writeNestedDshArtifact({ dshHome: home, rows });
+  const { analyzer, scope, sessions } = await inventory(home, workspace);
+  const normalized = await analyzer.readSession(sessions[0], scope);
+  const unknownSeqs = new Set(unknown.map((event) => event.seq));
+  assert.equal(normalized.some((event) => unknownSeqs.has(event.nativeSeq)), false);
+  assert.equal(JSON.stringify(normalized).includes("future-string"), false);
+});
+
 test("RC8 interrupted assistant messages accept only the optional literal true marker", () => {
   const valid = makeRc8InterruptedDshSessionRows();
   const decoded = decodeDshJsonl(encodeDshRawJsonl(valid));

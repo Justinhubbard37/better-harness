@@ -1191,9 +1191,12 @@ function validateDeepSeekSearchRequest(data) {
 }
 
 function validateEventEnvelope(event, expectedSeq) {
+  const unknownIgnorable = plain(event) && typeof event.type === "string"
+    && event.ignorable === true && !KNOWN_EVENT_TYPES.has(event.type);
   if (!plain(event) || Object.keys(event).some((key) => !EVENT_KEYS.has(key))
     || typeof event.type !== "string" || event.type.length === 0 || event.seq !== expectedSeq
-    || !safeNonnegative(event.seq) || !validDshEpochMillis(event.time) || !plain(event.data)
+    || !safeNonnegative(event.seq) || !validDshEpochMillis(event.time)
+    || !(unknownIgnorable ? isDshJsonValue(event.data) : plain(event.data))
     || (Object.hasOwn(event, "ignorable") && event.ignorable !== true)) fail("DSH_INVALID_EVENT");
   validateSurface(event);
   if (!KNOWN_EVENT_TYPES.has(event.type)) {
