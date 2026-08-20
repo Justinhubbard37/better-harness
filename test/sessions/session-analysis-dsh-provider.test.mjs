@@ -162,6 +162,30 @@ function seedOwnershipRows({ workspace, sessionId, includeChild }) {
   return [rows[0], ...inherited, ...child];
 }
 
+function crossSeedToolLifecycleRows(workspace) {
+  const rows = makeSupportedDshSessionRows({
+    workspace,
+    sessionId: "dsh-cross-seed-tool",
+    parentSession: "fixture-parent",
+    seedLength: 6,
+    origin: "subagent",
+    delegationDepth: 1,
+    agentPreset: undefined,
+  });
+  const call = rows.find((event) => event.type === "tool/call"
+    && event.data.callId === "fixture-call-success");
+  const result = rows.find((event) => event.type === "tool/result"
+    && event.data.message.source.callId === "fixture-call-success");
+  call.data.callId = "cross-seed-call";
+  result.data.message.source.callId = "cross-seed-call";
+  result.data.message.content[0].toolCallId = "cross-seed-call";
+  const filtered = rows.filter((event) => !(event.type === "tool/call"
+    && event.data.callId === "fixture-call-error") && !(event.type === "tool/result"
+    && event.data.message.source.callId === "fixture-call-error"));
+  filtered.slice(1).forEach((event, index) => { event.seq = index; });
+  return filtered;
+}
+
 test("DSH provider reads the pinned headless snapshot-like base flow without widening normalization", async () => {
   const context = await fixtureContext("better-harness-dsh-native-snapshot-");
   const rows = makeNativeSnapshotDshSessionRows({
@@ -295,6 +319,26 @@ test("DSH child projection excludes inherited seed activity while preserving lin
   assert.deepEqual(events.filter((event) => event.type === "tool.result").map((event) => event.success), [true, false]);
   assert.equal(events.filter((event) => event.type === "model.response.completed").length, 1);
   assert.equal(events.filter((event) => event.type === "turn.end" && event.success === true).length, 1);
+});
+
+test("DSH seed ownership validates inherited calls before projecting child-owned results", async () => {
+  const context = await fixtureContext("better-harness-dsh-cross-seed-tool-");
+  const rows = crossSeedToolLifecycleRows(context.workspace);
+  await writeRows(context, rows);
+
+  const analyzer = new DshSessionAnalyzer();
+  const { scope, sessions } = await discover(analyzer, context);
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].incomplete, false);
+  assert.equal(Object.hasOwn(sessions[0].diagnostics, "incompleteReason"), false);
+  assert.deepEqual(analyzer.analysisWarnings, []);
+
+  const events = await analyzer.readSession(sessions[0], scope);
+  assert.equal(events.every((event) => event.nativeSeq >= rows[0].seedLength), true);
+  assert.equal(events.filter((event) => event.type === "tool.call").length, 0);
+  const results = events.filter((event) => event.type === "tool.result");
+  assert.equal(results.length, 1);
+  assert.equal(results[0].toolInvocationId, "cross-seed-call");
 });
 
 test("DSH provider projects only the six approved native event types and publishes dsh-v1 evidence", async () => {

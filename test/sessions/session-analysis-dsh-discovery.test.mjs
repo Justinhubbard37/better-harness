@@ -842,7 +842,7 @@ test("unknown ignorable events accept every JSON data class without projecting t
   const root = await tempRoot();
   const home = path.join(root, "home");
   const workspace = path.join(root, "workspace");
-  const values = [null, true, 7, "future-string", ["future-array"], { future: "object" }];
+  const values = [null, false, true, 0, 7, "future-string", ["future-array"], { future: "object" }];
   const rows = insertBeforeTurnEnd(makeSupportedDshSessionRows({ workspace, sessionId: "json-ignorable" }),
     values.map((data, index) => makeDshEvent(`fixture-future/json-${index}`, data, { ignorable: true })));
 
