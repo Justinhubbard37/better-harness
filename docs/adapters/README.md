@@ -206,8 +206,9 @@ edit host settings, or register an `apply` path.
   projected as team analytics.
   Known-but-unsupported events and unknown ignorable events are explicitly
   accounted for. Unknown required events, malformed records, identity drift,
-  and unsupported versions fail closed; an open trailing turn remains
-  incomplete. Bounded source distinctions are retained without copying
+  committed corruption, and unsupported versions fail closed; an uncommitted
+  raw row or incomplete final Zstandard frame preserves only the prior
+  committed prefix and remains incomplete. Bounded source distinctions are retained without copying
   arbitrary plugin data or inferring plugin ownership, causality, or faults.
   Compressed artifacts are concatenated independently checksummed Zstandard
   frames and are scanned and decompressed one complete frame at a time. The

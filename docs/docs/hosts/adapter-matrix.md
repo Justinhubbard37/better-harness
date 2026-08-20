@@ -138,9 +138,11 @@ feature-detected. When it is unavailable, including Node.js 23.0 through 23.7,
 compressed evidence is reported unavailable while independent raw JSONL
 evidence remains readable; no fallback dependency is installed.
 Known-but-unsupported and unknown ignorable events are accounted
-for, while unknown required events, malformed data, identity drift, and
-unsupported versions fail closed. Open trailing turns remain incomplete, and
-the adapter does not infer plugin ownership, causality, or faults.
+for, while unknown required events, committed corruption, identity drift, and
+unsupported versions fail closed. Uncommitted final raw rows and structurally
+incomplete final Zstandard frames preserve only the prior committed prefix and
+remain incomplete. The adapter does not infer plugin ownership, causality, or
+faults.
 
 The implemented source-checkout smoke boundary is read-only:
 
