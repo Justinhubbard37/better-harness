@@ -172,7 +172,8 @@ export function canonicalTaskKey(event) {
 }
 
 export function deduplicateLifecycleEvents(events = []) {
-  const groups = new Map();
+  const groups = [];
+  const activeGroups = new Map();
   const ungrouped = [];
 
   for (const event of deduplicatePromptSubmissionEvents(events)) {
@@ -183,13 +184,19 @@ export function deduplicateLifecycleEvents(events = []) {
       continue;
     }
     const key = `${event.sessionId ?? "unknown"}:${invocation}`;
-    const group = groups.get(key) ?? [];
+    let group = activeGroups.get(key);
+    if (group?.some((candidate) => ["post", "result"].includes(candidate.lifecyclePhase))
+      && ["pre", "request"].includes(phase)) group = undefined;
+    if (!group) {
+      group = [];
+      groups.push(group);
+      activeGroups.set(key, group);
+    }
     group.push(event);
-    groups.set(key, group);
   }
 
   const merged = [];
-  for (const group of groups.values()) {
+  for (const group of groups) {
     group.sort(compareEvents);
     const canonical = group.findLast((event) => event.lifecyclePhase === "result")
       ?? group.findLast((event) => event.lifecyclePhase === "post")

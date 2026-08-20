@@ -9,7 +9,9 @@ import {
   DSH_ADAPTER_VERSION,
   DshSessionAnalyzer,
 } from "../../scripts/session-analysis/platforms/dsh.mjs";
+import { deduplicateLifecycleEvents } from "../../scripts/session-analysis/episode-contract.mjs";
 import { runProviderCommand } from "../../scripts/session-analysis/provider-runner.mjs";
+import { buildToolCallTrace } from "../../scripts/session-analysis/tool-call-trace.mjs";
 import {
   DSH_FIXTURE_SECRET,
   dshProjectKey,
@@ -823,6 +825,49 @@ function reusedCallAcrossTurnsRows(workspace) {
   return rows;
 }
 
+function reusedCallAcrossStepsRows(workspace) {
+  const source = makeSupportedDshSessionRows({ workspace });
+  const header = makeDshHeader({
+    workspace,
+    sessionId: "dsh-provider-reused-call-steps",
+    parentSession: undefined,
+    seedLength: undefined,
+    origin: undefined,
+    delegationDepth: 0,
+    agentPreset: undefined,
+  });
+  const firstCall = structuredClone(source.find((row) => row.type === "tool/call"));
+  const firstResult = structuredClone(source.find((row) => row.type === "tool/result"));
+  const eventTime = header.createdAt + 1_000;
+  firstCall.seq = 2;
+  firstCall.time = eventTime + 20;
+  firstResult.seq = 3;
+  firstResult.time = eventTime + 30;
+  const secondCall = structuredClone(firstCall);
+  secondCall.seq = 6;
+  secondCall.time = eventTime + 60;
+  secondCall.data.step = 2;
+  const secondResult = structuredClone(firstResult);
+  secondResult.seq = 7;
+  secondResult.time = eventTime + 70;
+  secondResult.data.step = 2;
+  secondResult.data.message.id = "fixture-tool-reused-step-result";
+  const rows = [
+    header,
+    makeDshEvent("turn/start", { turn: 1 }, { seq: 0, time: eventTime }),
+    makeDshEvent("step/start", { turn: 1, step: 1 }, { seq: 1, time: eventTime + 10 }),
+    firstCall,
+    firstResult,
+    makeDshEvent("step/end", { turn: 1, step: 1 }, { seq: 4, time: eventTime + 40 }),
+    makeDshEvent("step/start", { turn: 1, step: 2 }, { seq: 5, time: eventTime + 50 }),
+    secondCall,
+    secondResult,
+    makeDshEvent("step/end", { turn: 1, step: 2 }, { seq: 8, time: eventTime + 80 }),
+    makeDshEvent("turn/end", { turn: 1, reason: { kind: "completed" } }, { seq: 9, time: eventTime + 90 }),
+  ];
+  return rows;
+}
+
 test("DSH normalization projects final canonical surface nodes and preserves callId reuse across turns", async () => {
   const context = await fixtureContext();
   await writeRows(context, surfaceReplacementRows(context.workspace));
@@ -850,6 +895,21 @@ test("DSH normalization projects final canonical surface nodes and preserves cal
     && event.toolInvocationId === "fixture-call-success").length, 2);
   assert.equal(reused.filter((event) => event.type === "tool.result"
     && event.toolInvocationId === "fixture-call-success").length, 2);
+});
+
+test("DSH repeated callId occurrences survive lifecycle deduplication and tool tracing", async () => {
+  const context = await fixtureContext();
+  await writeRows(context, reusedCallAcrossStepsRows(context.workspace));
+  const analyzer = new DshSessionAnalyzer();
+  const { scope, sessions } = await discover(analyzer, context);
+  const session = sessions.find((candidate) => candidate.sessionId === "dsh-provider-reused-call-steps");
+  const events = await analyzer.readSession(session, scope);
+  const canonical = deduplicateLifecycleEvents(events);
+  const occurrences = canonical.filter((event) => event.category === "tool"
+    && event.toolInvocationId === "fixture-call-success");
+  assert.equal(occurrences.length, 2);
+  assert.deepEqual(occurrences.map((event) => event.step), [1, 2]);
+  assert.equal(buildToolCallTrace(events).totalCalls, 2);
 });
 
 test("DSH provider reads concatenated Zstd evidence and reports unavailable compression without hiding raw sessions", async () => {

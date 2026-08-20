@@ -170,6 +170,23 @@ test("lifecycle pre/post records deduplicate only with a stable invocation id", 
   assert.equal(events[0].permissionDecision, "allowed");
 });
 
+test("lifecycle deduplication retains sequential occurrences that reuse an invocation id", () => {
+  const events = deduplicateLifecycleEvents([
+    event({ timestamp: "2026-07-10T10:00:00.000Z", toolName: "Read", toolInvocationId: "reused",
+      lifecyclePhase: "request" }),
+    event({ timestamp: "2026-07-10T10:00:01.000Z", toolName: "Read", toolInvocationId: "reused",
+      lifecyclePhase: "result", success: true }),
+    event({ timestamp: "2026-07-10T10:00:02.000Z", toolName: "Read", toolInvocationId: "reused",
+      lifecyclePhase: "request" }),
+    event({ timestamp: "2026-07-10T10:00:03.000Z", toolName: "Read", toolInvocationId: "reused",
+      lifecyclePhase: "result", success: false }),
+  ]);
+
+  assert.equal(events.length, 2);
+  assert.deepEqual(events.map((item) => item.success), [true, false]);
+  assert.ok(events.every((item) => item.lifecycle.deduplicated));
+});
+
 test("permission observations keep routine allows aggregate and bound real boundary evidence", () => {
   const { episodes, permissionSummary } = buildTaskEpisodes([
     event({ timestamp: "2026-07-10T10:00:00.000Z", toolName: "Bash", permissionDecision: "allowed", permissionMode: "unknown", line: 1 }),
