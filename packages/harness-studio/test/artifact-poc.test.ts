@@ -5,16 +5,21 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   assertArtifactId,
+  ArtifactCatalogContractError,
   confineToRoot,
   describeArtifactCatalog,
-  describeArtifacts,
   findArtifact,
   indexArtifactDirectory,
   resolveArtifactMediaType,
   resolveArtifactKind,
 } from "../src/server/artifact-catalog.js";
+import type { ArtifactPresentation } from "../src/artifact-catalog-contract.js";
+import { isArtifactCatalogResponse } from "../src/artifact-catalog-contract.js";
 
 const fixtures = fileURLToPath(new URL("./fixtures/artifacts/", import.meta.url));
+const presentationFor = (entry: { kind: string }): ArtifactPresentation => ({
+  renderer: entry.kind === "unknown" ? "unavailable" : entry.kind as ArtifactPresentation["renderer"],
+});
 
 describe("resolveArtifactKind", () => {
   it("maps known extensions to their renderer tier", () => {
@@ -42,6 +47,9 @@ describe("resolveArtifactMediaType", () => {
     expect(resolveArtifactMediaType("deck.pptx")).toBe(
       "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     );
+    expect(resolveArtifactMediaType("report.pdf")).toBe("application/pdf");
+    expect(resolveArtifactMediaType("motion.lottie")).toBe("application/zip");
+    expect(resolveArtifactMediaType("script.mjs")).toBe("text/javascript; charset=utf-8");
     expect(resolveArtifactMediaType("archive.bin")).toBe("application/octet-stream");
   });
 });
@@ -97,12 +105,22 @@ describe("indexArtifactDirectory", () => {
   });
 
   it("omits filesystem paths from the described catalog", async () => {
-    const described = describeArtifacts(await indexArtifactDirectory(fixtures));
-    expect(described.length).toBeGreaterThan(0);
-    for (const descriptor of described) {
+    const catalog = describeArtifactCatalog(
+      await indexArtifactDirectory(fixtures, { includeDigests: true }),
+      presentationFor,
+    );
+    expect(catalog.kind).toBe("HarnessStudioArtifactCatalogV1");
+    expect(isArtifactCatalogResponse(catalog)).toBe(true);
+    expect(catalog.artifacts.length).toBeGreaterThan(0);
+    for (const descriptor of catalog.artifacts) {
       expect(descriptor).not.toHaveProperty("path");
       expect(descriptor.artifact.uri).toBe(`/api/artifacts/${descriptor.id}/content`);
+      expect(descriptor.artifact).not.toHaveProperty("role");
+      expect(descriptor.artifact).not.toHaveProperty("data");
     }
+    const malformed = structuredClone(catalog);
+    malformed.artifacts[0]!.artifact.uri = "https://untrusted.invalid/artifact";
+    expect(isArtifactCatalogResponse(malformed)).toBe(false);
   });
 
   it("binds the catalog snapshot to exact artifact bytes", async () => {
@@ -111,25 +129,29 @@ describe("indexArtifactDirectory", () => {
     await writeFile(path, "first", "utf8");
     await writeFile(join(directory, "stable.txt"), "stable", "utf8");
     const firstEntries = await indexArtifactDirectory(directory, { includeDigests: true });
-    const first = describeArtifactCatalog(firstEntries);
-    expect(first.workspace).toMatchObject({
-      id: "harness-studio-artifacts",
-      domain: "artifact-catalog",
-    });
-    expect(first.snapshot.revisions.catalog).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    const first = describeArtifactCatalog(firstEntries, (entry) => ({
+      renderer: entry.id === "notes" ? "text" : "code",
+    }));
+    expect(first.snapshot.catalogId).toBe("harness-studio-artifacts");
+    expect(first.snapshot.revision).toMatch(/^sha256:[0-9a-f]{64}$/u);
     expect(first.artifacts[0]?.artifact.digest).toMatch(/^sha256:[0-9a-f]{64}$/u);
     expect(first.artifacts[0]).not.toHaveProperty("path");
-    expect(describeArtifactCatalog([...firstEntries].reverse()).snapshot).toEqual(first.snapshot);
+    expect(first.artifacts.find((entry) => entry.id === "notes")?.renderer).toBe("text");
+    expect(first.artifacts.find((entry) => entry.id === "stable")?.renderer).toBe("code");
+    expect(describeArtifactCatalog([...firstEntries].reverse(), presentationFor).snapshot).toEqual(first.snapshot);
 
     await writeFile(path, "second", "utf8");
-    const second = describeArtifactCatalog(await indexArtifactDirectory(directory, { includeDigests: true }));
-    expect(second.snapshot.revisions.catalog).not.toBe(first.snapshot.revisions.catalog);
+    const second = describeArtifactCatalog(
+      await indexArtifactDirectory(directory, { includeDigests: true }),
+      presentationFor,
+    );
+    expect(second.snapshot.revision).not.toBe(first.snapshot.revision);
     expect(second.artifacts[0]?.artifact.digest).not.toBe(first.artifacts[0]?.artifact.digest);
   });
 
   it("refuses to mint a revision snapshot without exact-byte digests", async () => {
     const entries = await indexArtifactDirectory(fixtures);
-    expect(() => describeArtifactCatalog(entries)).toThrow(/require exact-byte digests/u);
+    expect(() => describeArtifactCatalog(entries, presentationFor)).toThrow(ArtifactCatalogContractError);
   });
 
   it("disambiguates ids that collide after sanitizing", async () => {

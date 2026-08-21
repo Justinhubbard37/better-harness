@@ -49,10 +49,13 @@ import {
 import { sessionFromRetainedRun, type DebuggerSession } from "../app/session-debugger-model.js";
 import { pickLocalWorkspaceDirectory } from "./native-directory-picker.js";
 import {
+  ArtifactCatalogContractError,
   assertArtifactId,
   describeArtifactCatalog,
   findArtifact,
+  isActiveArtifactContent,
   indexArtifactDirectory,
+  resolveArtifactMediaType,
   type ArtifactEntry,
 } from "./artifact-catalog.js";
 import { compileCanvasViewerModule, formatCanvasViewerCompileError } from "./canvas-viewer-compile.js";
@@ -84,7 +87,8 @@ const builtInExecutorFactory: HarnessUiExecutorFactory = (context) => {
   throw new Error(`No built-in executor for runtime '${context.runtimeId}'.`);
 };
 
-const CONTENT_TYPES: Record<string, string> = {
+/** Static Studio/runtime assets only; artifact media types live in artifact-catalog.ts. */
+const STATIC_CONTENT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -1198,21 +1202,27 @@ async function serveArtifactCatalog(response: ServerResponse, options: HarnessSt
     respondJson(response, 404, { error: "No artifact set loaded; choose files or a folder in Artifacts." });
     return;
   }
+  let entries: ArtifactEntry[];
+  let viewers: CanvasViewer[];
   try {
-    const [entries, viewers] = await Promise.all([
+    [entries, viewers] = await Promise.all([
       indexArtifactDirectory(options.artifactDirectory, { includeDigests: true }),
       discoverCanvasViewers(options.canvasViewerRoot),
     ]);
-    const catalog = describeArtifactCatalog(entries);
-    respondJson(response, 200, {
-      ...catalog,
-      artifacts: catalog.artifacts.map((descriptor, index) => ({
-        ...descriptor,
-        ...presentArtifact(entries[index]!, viewers),
-      })),
-    });
   } catch {
     respondJson(response, 404, { error: "Cannot read the configured artifact directory." });
+    return;
+  }
+  try {
+    respondJson(response, 200, describeArtifactCatalog(
+      entries,
+      (entry) => presentArtifact(entry, viewers),
+    ));
+  } catch (error) {
+    const message = error instanceof ArtifactCatalogContractError
+      ? "Artifact catalog contract validation failed."
+      : "Cannot build the artifact catalog response.";
+    respondJson(response, 500, { error: message });
   }
 }
 
@@ -1243,13 +1253,18 @@ async function serveArtifactContent(
   }
   try {
     const stats = await stat(resolved.entry.path);
-    response.writeHead(200, {
-      "Content-Type": CONTENT_TYPES[extname(resolved.entry.label).toLowerCase()] ?? "application/octet-stream",
+    const headers: Record<string, string | number> = {
+      "Content-Type": resolveArtifactMediaType(resolved.entry.label),
       "Content-Length": stats.size,
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
       "Access-Control-Allow-Origin": "*",
-    });
+    };
+    if (isActiveArtifactContent(resolved.entry.label)) {
+      headers["Content-Disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(resolved.entry.label)}`;
+      headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
+    }
+    response.writeHead(200, headers);
     createReadStream(resolved.entry.path).pipe(response);
   } catch {
     respondArtifactJson(response, 404, { error: `Artifact '${id}' is no longer readable.` });
@@ -1319,7 +1334,7 @@ async function serveArtifactViewerModule(
       return;
     }
     response.writeHead(200, {
-      "Content-Type": CONTENT_TYPES[".js"]!,
+      "Content-Type": STATIC_CONTENT_TYPES[".js"]!,
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
       "Access-Control-Allow-Origin": "*",
@@ -1337,7 +1352,7 @@ async function serveCanvasSdk(response: ServerResponse, options: HarnessStudioSe
     respondArtifactJson(response, 404, { error: "Canvas SDK runtime asset is unavailable." });
     return;
   }
-  await serveRuntimeFile(response, path, map ? "application/json" : CONTENT_TYPES[".js"]!);
+  await serveRuntimeFile(response, path, map ? "application/json" : STATIC_CONTENT_TYPES[".js"]!);
 }
 
 async function serveArtifactViewerResource(
@@ -1360,7 +1375,7 @@ async function serveArtifactViewerResource(
   try {
     const physical = await realpath(candidate);
     if (physical !== root && !physical.startsWith(root + sep)) throw new Error("escape");
-    await serveRuntimeFile(response, physical, CONTENT_TYPES[extname(physical).toLowerCase()] ?? "application/octet-stream");
+    await serveRuntimeFile(response, physical, STATIC_CONTENT_TYPES[extname(physical).toLowerCase()] ?? "application/octet-stream");
   } catch {
     respondArtifactJson(response, 404, { error: "Canvas viewer resource is unavailable." });
   }
@@ -1801,7 +1816,7 @@ async function serveStatic(response: ServerResponse, appDir: string, pathname: s
       throw new Error("not a file");
     }
     response.writeHead(200, {
-      "Content-Type": CONTENT_TYPES[extname(target)] ?? "application/octet-stream",
+      "Content-Type": STATIC_CONTENT_TYPES[extname(target)] ?? "application/octet-stream",
       "Content-Length": stats.size,
     });
     createReadStream(target).pipe(response);

@@ -172,6 +172,21 @@ test("keeps generated TSX inert and renders its source", async ({ page }) => {
   expect(failures).toEqual([]);
 });
 
+test("loads artifact bytes from the catalog content reference", async ({ page }) => {
+  await page.route("**/api/artifacts", async (route) => {
+    const response = await route.fetch();
+    const catalog = await response.json();
+    const component = catalog.artifacts.find((entry) => entry.label === "component.tsx");
+    component.artifact.uri = "/api/artifacts/change/content";
+    component.artifact.digest = `sha256:${"f".repeat(64)}`;
+    await route.fulfill({ response, json: catalog });
+  });
+  await openArtifacts(page);
+  await page.getByRole("button", { name: /component\.tsx/ }).click();
+  await expect(page.locator(".artifact-code-preview")).toContainText("const value = 2");
+  await expect(page.locator(".artifact-code-preview")).not.toContainText("data-danger");
+});
+
 test("renders code diff and sandboxes SVG without script capability", async ({ page }) => {
   await openArtifacts(page);
   await page.getByRole("button", { name: /change\.patch/ }).click();
@@ -179,6 +194,12 @@ test("renders code diff and sandboxes SVG without script capability", async ({ p
   await page.getByRole("button", { name: /diagram\.svg/ }).click();
   const frame = page.locator('iframe[title="SVG preview: diagram.svg"]');
   await expect(frame).toHaveAttribute("sandbox", "");
+  await expect(frame).toHaveAttribute("srcdoc", /Content-Security-Policy/u);
+  await expect(frame).not.toHaveAttribute("src", /api\/artifacts/u);
+  const raw = await page.request.get(`${studio.url}/api/artifacts/diagram/content`);
+  expect(raw.headers()["content-type"]).toBe("image/svg+xml");
+  expect(raw.headers()["content-disposition"]).toMatch(/^attachment;/u);
+  expect(raw.headers()["content-security-policy"]).toBe("default-src 'none'; sandbox");
   await expect(page.locator("body")).not.toHaveAttribute("data-svg-executed", "yes");
 });
 

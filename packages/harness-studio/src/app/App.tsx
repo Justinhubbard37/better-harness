@@ -11,6 +11,11 @@ import { Package } from "@phosphor-icons/react/Package";
 import { SidebarSimple } from "@phosphor-icons/react/SidebarSimple";
 import { SquaresFour } from "@phosphor-icons/react/SquaresFour";
 import { Sun } from "@phosphor-icons/react/Sun";
+import {
+  isArtifactCatalogResponse,
+  type ArtifactCatalogResponse,
+  type ArtifactDescriptor,
+} from "../artifact-catalog-contract.js";
 import { CompareView } from "./CompareView.js";
 import { ExperimentView } from "./ExperimentView.js";
 import { HighlightedCode } from "./HighlightedCode.js";
@@ -604,17 +609,6 @@ function formatSessionTime(value: string): string {
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
 }
 
-interface ArtifactDescriptor {
-  id: string;
-  kind: string;
-  label: string;
-  size: number;
-  renderer: "canvas" | "code" | "diff" | "image" | "json" | "svg" | "text" | "unavailable";
-  viewerId?: string;
-  viewerLabel?: string;
-  reason?: string;
-}
-
 /**
  * Artifacts pane: a row list of run outputs plus a sandboxed preview.
  *
@@ -622,7 +616,7 @@ interface ArtifactDescriptor {
  * opaque origin and cannot reach the Studio shell.
  */
 function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: string }): React.JSX.Element {
-  const [artifacts, setArtifacts] = useState<ArtifactDescriptor[] | undefined>(undefined);
+  const [catalog, setCatalog] = useState<ArtifactCatalogResponse | undefined>(undefined);
   const [failure, setFailure] = useState<string | undefined>(undefined);
   const [selected, setSelected] = useState<string | undefined>(undefined);
 
@@ -633,11 +627,11 @@ function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: s
       try {
         const response = await fetch("api/artifacts");
         if (!response.ok) throw new Error(`Artifact catalog failed (${response.status}).`);
-        const payload = await response.json() as { artifacts?: ArtifactDescriptor[] };
+        const payload: unknown = await response.json();
+        if (!isArtifactCatalogResponse(payload)) throw new Error("Artifact catalog contract is unsupported.");
         if (cancelled) return;
-        const entries = Array.isArray(payload.artifacts) ? payload.artifacts : [];
         setFailure(undefined);
-        setArtifacts(entries);
+        setCatalog(payload);
       } catch (error) {
         if (!cancelled) setFailure(error instanceof Error ? error.message : String(error));
       }
@@ -653,9 +647,10 @@ function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: s
   if (failure !== undefined) {
     return <EmptyWorkspace eyebrow="Session artifacts" title="Cannot read the compatibility artifact catalog" detail={failure} />;
   }
-  if (artifacts === undefined) {
+  if (catalog === undefined) {
     return <p className="artifact-status" role="status">Loading artifacts…</p>;
   }
+  const artifacts = catalog.artifacts;
   if (artifacts.length === 0) {
     return <EmptyWorkspace eyebrow="Session artifacts" title="No artifacts in this set" detail="The compatibility catalog contains no renderable files." />;
   }
@@ -663,7 +658,7 @@ function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: s
   const active = artifacts.find((entry) => entry.id === selected);
   return <section className="artifact-workspace" aria-label="Artifacts workspace">
     <div className="artifact-list-pane">
-      <header><div><small>Compatibility preload</small><h2>Artifacts</h2></div><span>{artifacts.length}</span></header>
+      <header><div><small>Compatibility preload</small><h2>Artifacts</h2></div><span title={`Catalog revision ${catalog.snapshot.revision}`}>{artifacts.length}</span></header>
       <ul className="artifact-rows">
         {artifacts.map((entry) => <li key={entry.id}>
           <button
@@ -686,20 +681,40 @@ function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: s
 }
 
 function ArtifactPreview({ artifact }: { artifact: ArtifactDescriptor }): React.JSX.Element {
-  const contentUrl = `api/artifacts/${artifact.id}/content`;
+  const contentUrl = artifact.artifact.uri;
+  const contentKey = artifact.artifact.digest;
   if (artifact.renderer === "canvas") {
-    return <iframe key={artifact.id} className="artifact-frame" title={`Artifact preview: ${artifact.label}`} src={`api/artifacts/${artifact.id}/viewer/`} sandbox="allow-scripts" referrerPolicy="no-referrer" />;
+    return <iframe key={contentKey} className="artifact-frame" title={`Artifact preview: ${artifact.label}`} src={`api/artifacts/${artifact.id}/viewer/`} sandbox="allow-scripts" referrerPolicy="no-referrer" />;
   }
   if (artifact.renderer === "svg") {
-    return <iframe key={artifact.id} className="artifact-frame" title={`SVG preview: ${artifact.label}`} src={contentUrl} sandbox="" referrerPolicy="no-referrer" />;
+    return <ArtifactSvgPreview key={contentKey} artifact={artifact} />;
   }
   if (artifact.renderer === "image") {
-    return <div className="artifact-image-stage"><img src={contentUrl} alt={artifact.label} /></div>;
+    return <div className="artifact-image-stage"><img key={contentKey} src={contentUrl} alt={artifact.label} /></div>;
   }
   if (["code", "diff", "json", "text"].includes(artifact.renderer)) {
-    return <ArtifactTextPreview artifact={artifact} url={contentUrl} />;
+    return <ArtifactTextPreview key={contentKey} artifact={artifact} url={contentUrl} />;
   }
   return <p className="artifact-status" role="status">{artifact.reason ?? "No renderer is available for this artifact."}</p>;
+}
+
+function ArtifactSvgPreview({ artifact }: { artifact: ArtifactDescriptor }): React.JSX.Element {
+  const [source, setSource] = useState<string>();
+  const [failure, setFailure] = useState<string>();
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(artifact.artifact.uri, { signal: controller.signal }).then(async (response) => {
+      if (!response.ok) throw new Error(`SVG content failed (${response.status}).`);
+      setSource(await response.text());
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
+    });
+    return () => controller.abort();
+  }, [artifact.artifact.uri]);
+  if (failure !== undefined) return <p className="artifact-status" role="alert">{failure}</p>;
+  if (source === undefined) return <p className="artifact-status" role="status">Loading SVG preview…</p>;
+  const policy = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">`;
+  return <iframe className="artifact-frame" title={`SVG preview: ${artifact.label}`} srcDoc={`${policy}${source}`} sandbox="" referrerPolicy="no-referrer" />;
 }
 
 function ArtifactTextPreview({ artifact, url }: { artifact: ArtifactDescriptor; url: string }): React.JSX.Element {

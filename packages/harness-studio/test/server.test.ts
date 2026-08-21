@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { HarnessRunEmitter, loadSkillDeliveries, type HarnessExecutor } from "@qoder-ai/harness/exec";
 import { decodeSseStream, type HarnessUiExecutorFactory } from "@qoder-ai/harness-ui";
+import { isArtifactCatalogResponse } from "../src/artifact-catalog-contract.js";
 import { parseHarnessStudioArgs, resolveHarnessStudioSourceRoot, runHarnessStudioCli, discoverDefaultInspectorReport } from "../src/server/cli.js";
 import { parseSourceCatalog } from "../src/server/source-catalog.js";
 import { startHarnessStudioServer, type StartedHarnessStudioServer, type StudioWorkspaceDiscovery } from "../src/server/server.js";
@@ -1057,34 +1058,42 @@ describe("harness-studio CLI", () => {
     const appDir = await makeAppDir();
     const artifactDirectory = await makeTempDir("studio-artifacts-");
     await writeFile(join(artifactDirectory, "card.tsx"), "export default () => <p>hi</p>;\n", "utf8");
+    await writeFile(join(artifactDirectory, "report.pdf"), "%PDF fixture", "utf8");
+    await writeFile(join(artifactDirectory, "active.html"), "<script>top.location='https://example.invalid'</script>", "utf8");
+    await writeFile(join(artifactDirectory, "diagram.svg"), "<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>", "utf8");
     started = await startHarnessStudioServer({ appDir, artifactDirectory });
 
-    const catalog = await (await fetch(`${started.url}/api/artifacts`)).json() as {
-      workspace: { id: string; domain: string };
-      snapshot: { workspaceId: string; revisions: { catalog: string } };
-      artifacts: Array<{
-        kind: string;
-        renderer: string;
-        artifact: { digest: string; uri: string };
-      }>;
-    };
-    expect(catalog.workspace).toEqual(expect.objectContaining({
-      id: "harness-studio-artifacts",
-      domain: "artifact-catalog",
-    }));
+    const catalog: unknown = await (await fetch(`${started.url}/api/artifacts`)).json();
+    expect(isArtifactCatalogResponse(catalog)).toBe(true);
+    if (!isArtifactCatalogResponse(catalog)) throw new Error("expected typed artifact catalog");
+    expect(catalog.kind).toBe("HarnessStudioArtifactCatalogV1");
     expect(catalog.snapshot).toEqual(expect.objectContaining({
-      workspaceId: catalog.workspace.id,
-      revisions: { catalog: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u) },
+      catalogId: "harness-studio-artifacts",
+      revision: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
     }));
-    expect(catalog.artifacts).toEqual([expect.objectContaining({ kind: "code", renderer: "code" })]);
-    expect(catalog.artifacts[0]?.artifact).toEqual(expect.objectContaining({
+    const card = catalog.artifacts.find((entry) => entry.label === "card.tsx");
+    expect(card).toEqual(expect.objectContaining({ kind: "code", renderer: "code" }));
+    expect(card?.artifact).toEqual(expect.objectContaining({
       digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
       uri: "/api/artifacts/card/content",
+      mediaType: "text/plain; charset=utf-8",
     }));
     const source = await fetch(`${started.url}/api/artifacts/card/content`);
     expect(source.status).toBe(200);
+    expect(source.headers.get("content-type")).toBe(card?.artifact.mediaType);
     expect(await source.text()).toContain("export default");
     expect((await fetch(`${started.url}/api/artifacts/card/module.js`)).status).toBe(404);
+
+    for (const descriptor of catalog.artifacts) {
+      const content = await fetch(`${started.url}${descriptor.artifact.uri}`);
+      expect(content.headers.get("content-type"), descriptor.label).toBe(descriptor.artifact.mediaType);
+      if (descriptor.label === "active.html" || descriptor.label === "diagram.svg") {
+        expect(content.headers.get("content-disposition"), descriptor.label).toMatch(/^attachment;/u);
+        expect(content.headers.get("content-security-policy"), descriptor.label).toBe("default-src 'none'; sandbox");
+      } else {
+        expect(content.headers.get("content-disposition"), descriptor.label).toBeNull();
+      }
+    }
   });
 
   it("imports a manually selected artifact set and switches the live catalog atomically", async () => {

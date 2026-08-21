@@ -33,6 +33,10 @@ import { Plus } from "@phosphor-icons/react/Plus";
 import { SidebarSimple } from "@phosphor-icons/react/SidebarSimple";
 import { SkipForward } from "@phosphor-icons/react/SkipForward";
 import { SquaresFour } from "@phosphor-icons/react/SquaresFour";
+import {
+  isArtifactCatalogResponse,
+  type ArtifactDescriptor,
+} from "../artifact-catalog-contract.js";
 import { TerminalWindow } from "@phosphor-icons/react/TerminalWindow";
 import { TestTube } from "@phosphor-icons/react/TestTube";
 import { TreeStructure } from "@phosphor-icons/react/TreeStructure";
@@ -598,15 +602,16 @@ function FilesInspector({ session, files }: { session: DebuggerSession; files: D
 }
 
 function ArtifactsInspector({ endpoint }: { endpoint?: string }): React.JSX.Element {
-  const [artifacts, setArtifacts] = useState<Array<{ id: string; label: string; renderer: string }>>();
+  const [artifacts, setArtifacts] = useState<ArtifactDescriptor[]>();
   const [failure, setFailure] = useState<string>();
   useEffect(() => {
     if (endpoint === undefined) return;
     const controller = new AbortController();
     void fetch(endpoint, { signal: controller.signal }).then(async (response) => {
       if (!response.ok) throw new Error(`Artifact catalog failed (${response.status}).`);
-      const payload = await response.json() as { artifacts?: Array<{ id: string; label: string; renderer: string }> };
-      setArtifacts(Array.isArray(payload.artifacts) ? payload.artifacts : []);
+      const payload: unknown = await response.json();
+      if (!isArtifactCatalogResponse(payload)) throw new Error("Artifact catalog contract is unsupported.");
+      setArtifacts(payload.artifacts);
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
     });

@@ -3,13 +3,14 @@ import { createReadStream } from "node:fs";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { basename, extname, normalize, resolve, sep } from "node:path";
 import type {
-  ArtifactRef,
-  SnapshotRef,
-  WorkspaceDescriptor,
-} from "../artifact-workspace/index.js";
+  ArtifactCatalogResponse,
+  ArtifactDigest,
+  ArtifactKind,
+  ArtifactPresentation,
+} from "../artifact-catalog-contract.js";
+import { ARTIFACT_CATALOG_RESPONSE_KIND } from "../artifact-catalog-contract.js";
 
-/** Artifact kinds are inert data presentations; none is executable code. */
-export type ArtifactKind = "code" | "diff" | "image" | "json" | "svg" | "text" | "unknown";
+export type { ArtifactKind } from "../artifact-catalog-contract.js";
 
 export interface ArtifactEntry {
   id: string;
@@ -17,21 +18,7 @@ export interface ArtifactEntry {
   label: string;
   path: string;
   size: number;
-  digest?: string;
-}
-
-export interface ArtifactDescriptor {
-  id: string;
-  kind: ArtifactKind;
-  label: string;
-  size: number;
-  artifact: ArtifactRef;
-}
-
-export interface ArtifactCatalogProjection {
-  workspace: WorkspaceDescriptor;
-  snapshot: SnapshotRef;
-  artifacts: ArtifactDescriptor[];
+  digest?: ArtifactDigest;
 }
 
 export interface IndexArtifactDirectoryOptions {
@@ -41,61 +28,55 @@ export interface IndexArtifactDirectoryOptions {
 
 const ARTIFACT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
-const KIND_BY_EXTENSION = new Map<string, ArtifactKind>([
-  [".tsx", "code"],
-  [".jsx", "code"],
-  [".ts", "code"],
-  [".js", "code"],
-  [".mjs", "code"],
-  [".css", "code"],
-  [".html", "code"],
-  [".sh", "code"],
-  [".patch", "diff"],
-  [".diff", "diff"],
-  [".json", "json"],
-  [".svg", "svg"],
-  [".png", "image"],
-  [".jpg", "image"],
-  [".jpeg", "image"],
-  [".gif", "image"],
-  [".webp", "image"],
-  [".md", "text"],
-  [".txt", "text"],
+interface ArtifactFormat {
+  kind: ArtifactKind;
+  mediaType: string;
+  active?: true;
+}
+
+const UNKNOWN_FORMAT: ArtifactFormat = { kind: "unknown", mediaType: "application/octet-stream" };
+
+/** One registry owns both renderer classification and advertised content type. */
+const FORMAT_BY_EXTENSION = new Map<string, ArtifactFormat>([
+  [".css", { kind: "code", mediaType: "text/css; charset=utf-8" }],
+  [".diff", { kind: "diff", mediaType: "text/plain; charset=utf-8" }],
+  [".docx", { kind: "unknown", mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }],
+  [".gif", { kind: "image", mediaType: "image/gif" }],
+  [".html", { kind: "code", mediaType: "text/html; charset=utf-8", active: true }],
+  [".jpeg", { kind: "image", mediaType: "image/jpeg" }],
+  [".jpg", { kind: "image", mediaType: "image/jpeg" }],
+  [".js", { kind: "code", mediaType: "text/javascript; charset=utf-8" }],
+  [".json", { kind: "json", mediaType: "application/json" }],
+  [".jsx", { kind: "code", mediaType: "text/plain; charset=utf-8" }],
+  [".lottie", { kind: "unknown", mediaType: "application/zip" }],
+  [".mjs", { kind: "code", mediaType: "text/javascript; charset=utf-8" }],
+  [".md", { kind: "text", mediaType: "text/markdown; charset=utf-8" }],
+  [".patch", { kind: "diff", mediaType: "text/plain; charset=utf-8" }],
+  [".pdf", { kind: "unknown", mediaType: "application/pdf" }],
+  [".png", { kind: "image", mediaType: "image/png" }],
+  [".pptx", { kind: "unknown", mediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }],
+  [".sh", { kind: "code", mediaType: "text/plain; charset=utf-8" }],
+  [".svg", { kind: "svg", mediaType: "image/svg+xml", active: true }],
+  [".ts", { kind: "code", mediaType: "text/plain; charset=utf-8" }],
+  [".tsx", { kind: "code", mediaType: "text/plain; charset=utf-8" }],
+  [".txt", { kind: "text", mediaType: "text/plain; charset=utf-8" }],
+  [".webp", { kind: "image", mediaType: "image/webp" }],
+  [".xlsx", { kind: "unknown", mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }],
 ]);
 
-const MEDIA_TYPE_BY_EXTENSION = new Map<string, string>([
-  [".css", "text/css; charset=utf-8"],
-  [".diff", "text/plain; charset=utf-8"],
-  [".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
-  [".gif", "image/gif"],
-  [".html", "text/html; charset=utf-8"],
-  [".jpeg", "image/jpeg"],
-  [".jpg", "image/jpeg"],
-  [".js", "text/javascript; charset=utf-8"],
-  [".json", "application/json"],
-  [".jsx", "text/plain; charset=utf-8"],
-  [".lottie", "application/zip"],
-  [".mjs", "text/javascript; charset=utf-8"],
-  [".md", "text/markdown; charset=utf-8"],
-  [".patch", "text/plain; charset=utf-8"],
-  [".pdf", "application/pdf"],
-  [".png", "image/png"],
-  [".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"],
-  [".sh", "text/plain; charset=utf-8"],
-  [".svg", "image/svg+xml"],
-  [".ts", "text/plain; charset=utf-8"],
-  [".tsx", "text/plain; charset=utf-8"],
-  [".txt", "text/plain; charset=utf-8"],
-  [".webp", "image/webp"],
-  [".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
-]);
+export class ArtifactCatalogContractError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ArtifactCatalogContractError";
+  }
+}
 
 /**
  * Resolve an artifact kind from its path. Unrecognized extensions resolve to
  * `unknown` so the caller renders escaped text rather than guessing a renderer.
  */
 export function resolveArtifactKind(path: string): ArtifactKind {
-  return KIND_BY_EXTENSION.get(extname(path).toLowerCase()) ?? "unknown";
+  return resolveArtifactFormat(path).kind;
 }
 
 /** Reject anything that is not an opaque catalog id. */
@@ -150,29 +131,13 @@ function isWithinRoot(root: string, target: string): boolean {
   return resolvedTarget === resolvedRoot || resolvedTarget.startsWith(resolvedRoot + sep);
 }
 
-export function describeArtifacts(entries: readonly ArtifactEntry[]): ArtifactDescriptor[] {
-  return entries.map(({ id, kind, label, size, digest }) => ({
-    id,
-    kind,
-    label,
-    size,
-    artifact: {
-      id,
-      role: "primary",
-      mediaType: resolveArtifactMediaType(label),
-      uri: `/api/artifacts/${encodeURIComponent(id)}/content`,
-      ...(digest === undefined ? {} : { digest }),
-    },
-  }));
-}
-
-/** Project the read-only catalog through the shared artifact-workspace model. */
 export function describeArtifactCatalog(
   entries: readonly ArtifactEntry[],
-  workspaceId = "harness-studio-artifacts",
-): ArtifactCatalogProjection {
+  presentationFor: (entry: ArtifactEntry) => ArtifactPresentation,
+  catalogId = "harness-studio-artifacts",
+): ArtifactCatalogResponse {
   if (entries.some((entry) => entry.digest === undefined)) {
-    throw new Error("Artifact catalog snapshots require exact-byte digests.");
+    throw new ArtifactCatalogContractError("Artifact catalog snapshots require exact-byte digests.");
   }
   const revisionEntries = entries
     .map(({ id, label, size, digest }) => [id, label, size, digest] as const)
@@ -181,21 +146,32 @@ export function describeArtifactCatalog(
     .update(JSON.stringify(revisionEntries))
     .digest("hex");
   return {
-    workspace: {
-      id: workspaceId,
-      domain: "artifact-catalog",
-      capabilities: ["inspect", "artifacts", "present"],
-    },
+    kind: ARTIFACT_CATALOG_RESPONSE_KIND,
     snapshot: {
-      workspaceId,
-      revisions: { catalog: `sha256:${catalogRevision}` },
+      catalogId,
+      revision: `sha256:${catalogRevision}`,
     },
-    artifacts: describeArtifacts(entries),
+    artifacts: entries.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      label: entry.label,
+      size: entry.size,
+      artifact: {
+        mediaType: resolveArtifactMediaType(entry.label),
+        uri: `/api/artifacts/${encodeURIComponent(entry.id)}/content`,
+        digest: entry.digest!,
+      },
+      ...presentationFor(entry),
+    })),
   };
 }
 
 export function resolveArtifactMediaType(path: string): string {
-  return MEDIA_TYPE_BY_EXTENSION.get(extname(path).toLowerCase()) ?? "application/octet-stream";
+  return resolveArtifactFormat(path).mediaType;
+}
+
+export function isActiveArtifactContent(path: string): boolean {
+  return resolveArtifactFormat(path).active === true;
 }
 
 export function findArtifact(entries: readonly ArtifactEntry[], id: string): ArtifactEntry | undefined {
@@ -225,8 +201,12 @@ function uniqueId(stem: string, used: Set<string>): string {
   }
 }
 
-async function digestFile(path: string): Promise<string> {
+async function digestFile(path: string): Promise<ArtifactDigest> {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(path)) hash.update(chunk as Uint8Array);
   return `sha256:${hash.digest("hex")}`;
+}
+
+function resolveArtifactFormat(path: string): ArtifactFormat {
+  return FORMAT_BY_EXTENSION.get(extname(path).toLowerCase()) ?? UNKNOWN_FORMAT;
 }

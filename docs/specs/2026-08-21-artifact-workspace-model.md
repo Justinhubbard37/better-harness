@@ -1,80 +1,95 @@
-# Shared Artifact Workspace Model
+# Narrow the Studio artifact catalog contract
 
 ## Traceability
 
 - Spec ID: artifact-workspace-model
-- Story: unavailable (direct workspace request)
 - Status: Implemented
 
 ## Intent
 
-Make Harness Studio the canonical open-source owner of a small, domain-neutral
-artifact programming model so the public Studio package and current product
-integrations can share the same revision, proposal, planning, execution,
-verification, and artifact contracts.
+Replace the unpushed, cross-domain `artifact-workspace` programming abstraction
+with the smallest contract that Harness Studio actually runs: a read-only,
+versioned Artifact Catalog response shared by the server and both React
+consumers.
 
-The model must remain neutral to Lottie, PPTX, mobile automation, and any one
-renderer. Harness Studio's existing read-only Artifact View should project its
-catalog through the shared snapshot and artifact-reference vocabulary without
-claiming mutation support.
+The catalog must have one format registry, bind every public content reference
+to exact bytes, preserve the existing Canvas viewer priority, and keep active
+artifact bytes safe even when their raw content URL is opened directly. Generic
+planning, execution, verification, and driver contracts must not be published
+until a production domain needs them.
 
 ## Acceptance Scenarios
 
-- AC-1: `@qoder-ai/harness-studio/artifact-workspace` exports the common domain
-  type family, revision-bound proposal, transaction/scenario plans, execution
-  receipt, verification, artifact-reference, driver, and guarded runtime.
-- AC-2: The runtime rejects a wrong domain/workspace, stale named revision
-  clocks, invalid plan execution mode, and any plan carrying error diagnostics
-  before delegating execution.
-- AC-3: Harness Studio's artifact catalog response includes an opaque workspace
-  descriptor and snapshot revision derived from exact artifact bytes; public
-  descriptors retain no filesystem paths and use the shared artifact-reference
-  digest vocabulary.
-- AC-4: Existing direct and provisioned Canvas renderer selection, content
-  confinement, sandboxing, and sidecar behavior remain unchanged.
-- AC-5: Focused model/catalog/server tests and the Harness Studio package build
-  pass on the repository's supported Node and TypeScript toolchain.
+- **AC-1:** Artifact `kind` and `mediaType` derive from one extension registry.
+  The raw content endpoint returns the same media type advertised by the
+  descriptor for PDF, Office, Lottie, HTML, SVG, source, and image formats.
+- **AC-2:** `/api/artifacts` returns an explicit
+  `HarnessStudioArtifactCatalogV1` response. Each descriptor contains one
+  required `{ uri, mediaType, digest }` content reference; it has no unused
+  `role` or optional inline-data branch.
+- **AC-3:** Both React consumers import that response type. Artifact View reads
+  `artifact.uri`, uses the digest as its content identity, and does not rebuild
+  content URLs from ids.
+- **AC-4:** Presentation is joined to catalog entries by id while each entry is
+  projected, never by parallel-array position. Directory failures remain a
+  bounded 404; internal contract violations return a distinct 500 status.
+- **AC-5:** Raw HTML and SVG responses are non-sniffable attachments with a
+  deny-by-default CSP. Studio previews SVG by fetching its declared content URI
+  and placing the text in a sandboxed, network-denied `srcdoc`, so direct raw
+  navigation never becomes the preview execution boundary.
+- **AC-6:** The package no longer exports or packs
+  `@qoder-ai/harness-studio/artifact-workspace`; the generic runtime and its
+  test-only driver are removed before the two local commits reach `origin/main`.
+- **AC-7:** Existing direct/Canvas renderer priority, path confinement, symlink
+  rejection, Office sidecars, and sandboxed Canvas runtime behavior remain
+  unchanged.
 
 ## Non-goals
 
-- Implement Lottie, PPTX, or mobile-simulator authoring adapters in Better
-  Harness.
-- Add artifact editing controls or change Harness Studio visual design.
-- Turn Artifact View's read-only presentation into a fake transaction.
-- Publish packages, change package versions, or alter release metadata.
-- Make Canvas viewer compilation alone count as format or visual fidelity proof.
+- Defining a cross-domain mutation, transaction, scenario, or verification API.
+- Adding artifact authoring controls or a second Artifact classification model.
+- Unifying packaging artifacts, checkpoint evidence references, and Studio run
+  outputs under one vocabulary; those are separate namespaces until a real
+  integration requires a bridge.
+- Publishing packages, changing versions, or altering release metadata.
+- Adding filesystem watching, retention, or a `(size, mtime)` digest cache in
+  this contract correction. Full re-hashing remains a measured follow-up risk.
 
 ## Plan and Tasks
 
-1. Add a browser-safe `src/artifact-workspace/` public contract/runtime boundary
-   and expose it through a package subpath.
-2. Add behavioral tests for transaction/scenario execution and fail-closed
-   revision/mode/diagnostic guards.
-3. Give artifact catalog entries exact-byte digests and build an opaque catalog
-   snapshot using the shared `SnapshotRef`, `WorkspaceDescriptor`, and
-   `ArtifactRef` vocabulary.
-4. Return that descriptor/snapshot from `/api/artifacts` while preserving the
-   existing `artifacts[]` projection consumed by the Studio UI.
-5. Run focused tests, Harness Studio package tests/build, and a local diff scope
-   check that preserves unrelated Studio visual work.
+1. Replace `src/artifact-workspace/` with a browser-safe internal catalog
+   response type and remove the package subpath.
+2. Merge extension kind/media mappings into one registry and project complete
+   typed descriptors from each entry plus its id-bound presentation.
+3. Consume the shared response and content reference in `App.tsx` and
+   `RunView.tsx`; keep the catalog revision visible to React state.
+4. Use the catalog media resolver in the content route, classify directory and
+   contract failures separately, and harden active content response headers.
+5. Add behavioral tests for response shape, id binding, media parity, active
+   content safety, client rendering, removed package exports, and regressions.
 
 ## Test and Review Evidence
 
-- AC-1 through AC-4: from `packages/harness-studio`, `npx vitest run
-  test/artifact-workspace.test.ts test/artifact-poc.test.ts
-  test/artifact-viewers.test.ts test/server.test.ts` passed 63 tests in 4 files.
-- AC-5: `npm run harness-studio:test` rebuilt the package and passed 127
-  tests in 19 files.
-- Public package boundary: package-local `npm pack --dry-run --json
-  --ignore-scripts` included all `dist/artifact-workspace/*.js` and `*.d.ts`
-  files, and a workspace import of
-  `@qoder-ai/harness-studio/artifact-workspace` succeeded.
-- Diff hygiene: `git diff --check` passed. Pre-existing Studio visual changes
-  remain unstaged and outside this implementation boundary.
-- Risk: hashing adds catalog I/O proportional to exact artifact bytes. The
-  catalog already bounds imported artifacts, but configured external directories
-  remain operator-controlled; hashing must stream rather than buffer files.
-- Risk: the package subpath is a new public contract. Keep the first version
-  small, dependency-free, browser-safe, and explicit about unsupported plans.
-- Review boundary: do not stage or rewrite the pre-existing Studio visual spec,
-  UI files, CSS, browser tool-call test, or `.agents/skills/ui-ux-pro-max/`.
+- AC-1/AC-2/AC-4/AC-5/AC-7: 60 focused catalog, viewer, and server behavior
+  tests passed across three files, including exact MIME parity and active
+  response headers.
+- AC-3/AC-5: all 17 Playwright tests passed. A route-level test rewrites one
+  descriptor URI and proves React follows it; the SVG flow verifies sandboxed
+  `srcdoc`, raw attachment/CSP headers, and no parent execution.
+- AC-6: typecheck/build passed. `npm pack --dry-run --json --ignore-scripts`
+  contained zero `dist/artifact-workspace/` files, and importing the removed
+  subpath failed with `ERR_PACKAGE_PATH_NOT_EXPORTED`.
+- Package gate: 124 tests passed across 18 files. The repository-wide run passed
+  1432 of 1433 tests; its sole failure was an unrelated fixed 10-second CLI-help
+  timeout for `commit-session-link render-session --help`, and the isolated
+  behavior rerun passed in 5.41 seconds.
+- Diff hygiene and exact commit/push readback are recorded at delivery.
+
+## Risks
+
+- Raw artifact access is intentionally CORS-readable by the opaque Canvas
+  viewer. CSP, attachment disposition, MIME parity, and renderer sandboxing must
+  therefore remain independent, tested layers.
+- Exact-byte SHA-256 is still recomputed on each catalog request. The configured
+  directory is operator-controlled and bounded, but a cache needs a separate
+  invalidation contract rather than an untested optimization in this patch.

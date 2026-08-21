@@ -1,9 +1,8 @@
 import { homedir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import { readFile, readdir, stat } from "node:fs/promises";
-import type { ArtifactEntry, ArtifactKind } from "./artifact-catalog.js";
-
-export type ArtifactRenderer = ArtifactKind | "canvas" | "unavailable";
+import type { ArtifactKind, ArtifactPresentation, ArtifactRenderer } from "../artifact-catalog-contract.js";
+import type { ArtifactEntry } from "./artifact-catalog.js";
 
 export interface CanvasViewer {
   id: string;
@@ -17,13 +16,6 @@ export interface CanvasViewer {
   scriptPath?: string;
 }
 
-export interface PresentedArtifact {
-  renderer: ArtifactRenderer;
-  viewerId?: string;
-  viewerLabel?: string;
-  reason?: string;
-}
-
 interface ViewerManifest {
   id?: unknown;
   label?: unknown;
@@ -34,7 +26,7 @@ interface ViewerManifest {
   overridesBuiltIn?: unknown;
 }
 
-const DIRECT_RENDERERS = new Set<ArtifactKind>(["code", "diff", "image", "json", "svg", "text"]);
+const DIRECT_RENDERERS = new Set<ArtifactRenderer>(["code", "diff", "image", "json", "svg", "text"]);
 
 /** Qoder stores provisioned format viewers below the canvas subtree. */
 export function defaultCanvasViewerRoot(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
@@ -91,15 +83,19 @@ export function matchCanvasViewer(entry: ArtifactEntry, viewers: readonly Canvas
   return viewers.find((viewer) => viewer.extensions.includes(extension) || viewer.pathGlobs.some((glob) => matchesPathGlob(fileName, glob)));
 }
 
-export function presentArtifact(entry: ArtifactEntry, viewers: readonly CanvasViewer[]): PresentedArtifact {
+export function presentArtifact(entry: ArtifactEntry, viewers: readonly CanvasViewer[]): ArtifactPresentation {
   const viewer = matchCanvasViewer(entry, viewers);
   if (viewer?.overrideBuiltIn === true) return canvasPresentation(viewer);
-  if (DIRECT_RENDERERS.has(entry.kind)) return { renderer: entry.kind };
+  if (isDirectRenderer(entry.kind)) return { renderer: entry.kind };
   if (viewer !== undefined) return canvasPresentation(viewer);
   return { renderer: "unavailable", reason: "No direct renderer or provisioned Canvas viewer matches this file." };
 }
 
-function canvasPresentation(viewer: CanvasViewer): PresentedArtifact {
+function isDirectRenderer(kind: ArtifactKind): kind is Exclude<ArtifactKind, "unknown"> {
+  return kind !== "unknown" && DIRECT_RENDERERS.has(kind);
+}
+
+function canvasPresentation(viewer: CanvasViewer): ArtifactPresentation {
   if (viewer.scriptPath === undefined || viewer.dataKey === undefined) {
     return { renderer: "unavailable", viewerId: viewer.id, viewerLabel: viewer.label, reason: "The matching Canvas viewer has no target-file data adapter." };
   }
