@@ -703,7 +703,9 @@ function validateKnownUnsupportedEvent(event) {
   const data = event.data;
   switch (event.type) {
     case "permission/preset":
-      if (!exactKeys(data, ["preset"]) || typeof data.preset !== "string") fail("DSH_EVENT_SHAPE_DRIFT");
+      if (!exactKeys(data, ["preset"], ["origin"]) || typeof data.preset !== "string"
+        || (Object.hasOwn(data, "origin")
+          && !["default", "selection", "inferred"].includes(data.origin))) fail("DSH_EVENT_SHAPE_DRIFT");
       break;
     case "sandbox/mode":
       if (!exactKeys(data, ["mode"], ["source"])
