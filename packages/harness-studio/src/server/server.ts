@@ -50,7 +50,7 @@ import { sessionFromRetainedRun, type DebuggerSession } from "../app/session-deb
 import { pickLocalWorkspaceDirectory } from "./native-directory-picker.js";
 import {
   assertArtifactId,
-  describeArtifacts,
+  describeArtifactCatalog,
   findArtifact,
   indexArtifactDirectory,
   type ArtifactEntry,
@@ -1200,11 +1200,13 @@ async function serveArtifactCatalog(response: ServerResponse, options: HarnessSt
   }
   try {
     const [entries, viewers] = await Promise.all([
-      indexArtifactDirectory(options.artifactDirectory),
+      indexArtifactDirectory(options.artifactDirectory, { includeDigests: true }),
       discoverCanvasViewers(options.canvasViewerRoot),
     ]);
+    const catalog = describeArtifactCatalog(entries);
     respondJson(response, 200, {
-      artifacts: describeArtifacts(entries).map((descriptor, index) => ({
+      ...catalog,
+      artifacts: catalog.artifacts.map((descriptor, index) => ({
         ...descriptor,
         ...presentArtifact(entries[index]!, viewers),
       })),

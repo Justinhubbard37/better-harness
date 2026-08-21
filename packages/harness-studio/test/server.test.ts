@@ -1059,8 +1059,28 @@ describe("harness-studio CLI", () => {
     await writeFile(join(artifactDirectory, "card.tsx"), "export default () => <p>hi</p>;\n", "utf8");
     started = await startHarnessStudioServer({ appDir, artifactDirectory });
 
-    const catalog = await (await fetch(`${started.url}/api/artifacts`)).json() as { artifacts: Array<{ kind: string; renderer: string }> };
+    const catalog = await (await fetch(`${started.url}/api/artifacts`)).json() as {
+      workspace: { id: string; domain: string };
+      snapshot: { workspaceId: string; revisions: { catalog: string } };
+      artifacts: Array<{
+        kind: string;
+        renderer: string;
+        artifact: { digest: string; uri: string };
+      }>;
+    };
+    expect(catalog.workspace).toEqual(expect.objectContaining({
+      id: "harness-studio-artifacts",
+      domain: "artifact-catalog",
+    }));
+    expect(catalog.snapshot).toEqual(expect.objectContaining({
+      workspaceId: catalog.workspace.id,
+      revisions: { catalog: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u) },
+    }));
     expect(catalog.artifacts).toEqual([expect.objectContaining({ kind: "code", renderer: "code" })]);
+    expect(catalog.artifacts[0]?.artifact).toEqual(expect.objectContaining({
+      digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+      uri: "/api/artifacts/card/content",
+    }));
     const source = await fetch(`${started.url}/api/artifacts/card/content`);
     expect(source.status).toBe(200);
     expect(await source.text()).toContain("export default");
