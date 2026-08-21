@@ -5,7 +5,7 @@
 - Spec ID: deepseek-harness-session-evidence
 - Story: #93
 - Status: Implemented
-- Follow-up status: Draft (DSH 0.1.1-rc.1 compatibility)
+- Follow-up status: Implemented (DSH 0.1.1-rc.1 compatibility; known baseline facts privacy defect unresolved)
 
 ## Intent
 
@@ -22,9 +22,9 @@ supported native contract is pinned to upstream commits
 `99f6f02fecdb7dff40c3fbc9470f5907c29f74ca` (`dsh-v0.1.0-rc.7`) and
 `141eb6fef83422698aef7a981029e843e8161534` (`dsh-v0.1.0-rc.8`), both with
 `SESSION_FORMAT_VERSION = 0`. Later upstream behavior is not implicitly
-supported. The additive 0.1.1-rc.1 qualification below is a draft contract for
-future implementation; it does not claim that the current adapter accepts that
-release.
+supported. The additive 0.1.1-rc.1 qualification below is an implemented
+contract for the pinned optional `permission/preset.origin` extension; it does
+not qualify later releases or unrelated 0.1.1 behavior.
 
 ## Native Contract Evidence
 
@@ -69,9 +69,8 @@ closed rather than extending this contract by inference.
 
 ### Status and qualification target
 
-This follow-up remains under Story #93 and is Draft until its new acceptance
-criteria are implemented and verified. It targets only the official DSH npm
-package `0.1.1-rc.1` at tag commit
+This implemented follow-up remains under Story #93 and targets only the official
+DSH npm package `0.1.1-rc.1` at tag commit
 `528c682e061696f5a160f363f236ecbf53cbd006`. It is temporally additive to the
 implemented RC7/RC8 evidence; it does not rewrite that historical
 qualification or imply support for later DSH releases.
@@ -126,11 +125,11 @@ retain their RC8 definitions. This is a scoped comparison of the existing
 adapter's contract owners, not a claim of universal compatibility with every
 0.1.1-rc.1 package or future event payload.
 
-### Proposed supported behavior
+### Supported behavior
 
-The future implementation may extend only the exact `permission/preset` data
-validator so that a missing `origin` and each of the three pinned enum values
-are accepted. It must validate but not project `origin`: the field alone creates
+The implementation extends only the exact `permission/preset` data validator so
+that a missing `origin` and each of the three pinned enum values are accepted.
+It validates but does not project `origin`: the field alone creates
 no fact, analytics dimension, ownership, causality, user-intent inference, or
 new public output. Invalid types, `null`, invalid strings, and unrelated unknown
 keys continue to fail closed with shape drift. No wildcard passthrough or
@@ -170,6 +169,17 @@ After implementation, default and content-authorized public paths must be
 re-qualified without printing or storing real content. Any later regression
 fixture must be minimal, synthetic, contract-focused, and free of real
 transcripts, credentials, secrets, and machine-specific paths.
+
+During implementation, an isolated comparison at the pre-origin Better Harness
+baseline `996fd3d3045dfe29935fc7948377416712ab2711` used a naturally accepted,
+origin-less RC7/RC8-compatible format-0 fixture and an ephemeral equality-only
+prompt oracle. It reproduced the direct-user prompt at
+`candidates[0].request.summary` in default `facts`; the baseline and rc.1 branch
+otherwise produced identical public sessions, events, facts, show, and gated-
+show results for that fixture. This confirms a pre-existing default-facts defect,
+not a privacy regression introduced by the optional-origin validator. The defect
+remains unresolved and outside this compatibility follow-up; this evidence does
+not claim that default-facts privacy is safe.
 
 ## Support Boundary
 
@@ -349,10 +359,15 @@ sessions, events, facts, show, explicitly content-authorized show where
 applicable, and public qsr1 session selection/reference. It verifies framed
 Zstandard decoding, workspace qualification, normalization, completed
 turn/step relationships, assistant usage, call/result association, completion,
-and zero unexpected DSH diagnostics. Default public output excludes raw prompt,
-assistant/reasoning content, tool payloads, credentials, private DSH-home
-paths, and raw session identity; explicitly gated output exposes only content
-authorized by the existing contract.
+and zero unexpected DSH diagnostics. The rc.1 adaptation must introduce no new
+privacy exposure relative to the audited pre-origin Better Harness baseline:
+default events and show retain their existing content gates, explicitly gated
+output exposes only content authorized by the existing contract, diagnostics
+remain privacy-safe, and `permission/preset.origin` creates no public projection.
+The baseline-reproduced default-facts direct-user-prompt exposure is a known,
+pre-existing, unresolved defect outside this compatibility follow-up. It must
+remain explicit in review evidence and is not evidence that privacy is fully
+safe or that this follow-up repaired it.
 
 ### AC-16: Backward regression and readiness
 
@@ -471,7 +486,7 @@ normalized owner is planned.
 | AC-12 | Focused `permission/preset` origin fixture positives plus the retained origin-less fixture | All three pinned enum members and the absent field decode; the existing preset-only shape remains legal. |
 | AC-13 | Focused invalid-enum/type/null/unrelated-key negatives | Every unqualified shape fails with `DSH_EVENT_SHAPE_DRIFT`; other strict event validators are unchanged. |
 | AC-14 | Normalization, facts, events, show, and snapshot assertions | Legal `origin` affects validity only and adds no normalized or public semantic claim. |
-| AC-15 | Fresh pinned real DSH E2E through public sessions/events/facts/show/gated-show/qsr1 paths | The session is selectable and complete, structural/semantic summaries agree with the real task, content gates behave as owned, and no unexpected DSH diagnostic appears. |
+| AC-15 | Pre-origin baseline prompt-equality oracle plus fresh pinned real DSH E2E through public sessions/events/facts/show/gated-show/qsr1 paths | The baseline reproduces the known default-facts defect; the rc.1 branch adds no privacy exposure, the real session is selectable and complete, content gates behave as owned, and no unexpected DSH diagnostic appears. The known defect remains unresolved and explicit. |
 | AC-16 | Retained RC7/RC8 and drift suites; full tests; package/docs checks; `git diff --check`; Review Readiness Check | Backward evidence stays green, no capability widens, the change is packaging-safe, and the diff contains no real content or machine path. |
 
 Native smoke evidence, if available during implementation, is bounded and
@@ -496,7 +511,7 @@ not described as a successful compressed-session smoke.
 | Capability or documentation overclaim | Test catalog-to-implementation mapping and review both matrices against the non-goals; no catalog projection may create an unsupported slice. |
 | Optional-field qualification becomes broad parsing | Add only the three-value optional enum to the exact event owner; retain invalid-type, invalid-enum, `null`, and unrelated-key rejection tests. |
 | Provenance is mistaken for Better Harness semantics | Validate `origin` without normalization or projection and assert that facts and public summaries do not gain new claims. |
-| Real discovery passes but downstream privacy regresses | Re-run the complete public sessions/events/facts/show/gated-show/reference path and compare only privacy-safe structural summaries. |
+| Real discovery passes but downstream privacy regresses | Reproduce the pre-origin baseline with an equality-only oracle, then re-run the complete public sessions/events/facts/show/gated-show/reference path and reject any new exposure. Preserve the known default-facts defect as unresolved rather than treating baseline behavior as privacy-safe. |
 
 Rollback removes the session-only adapter, its `sessionAnalysis` registration,
 its synthetic fixtures/tests, and its two matrix claims. No user-data migration
