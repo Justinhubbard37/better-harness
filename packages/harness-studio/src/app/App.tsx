@@ -38,12 +38,14 @@ const NAV_ICONS: Record<StudioArea, Icon> = {
   compare: Flask,
 };
 
-const AREA_COPY: Record<StudioArea, { eyebrow: string; title: string }> = {
-  overview: { eyebrow: "Control", title: "Harness Control Center" },
-  sessions: { eyebrow: "Observe", title: "Sessions" },
-  artifacts: { eyebrow: "Observe", title: "Artifacts" },
-  debugger: { eyebrow: "Run", title: "Debugger" },
-  compare: { eyebrow: "Validate", title: "Compare" },
+// The sidebar already groups these destinations, so the context bar carries the
+// view name alone rather than repeating the group as an eyebrow.
+const AREA_COPY: Record<StudioArea, string> = {
+  overview: "Overview",
+  sessions: "Sessions",
+  artifacts: "Artifacts",
+  debugger: "Debugger",
+  compare: "Compare",
 };
 
 type StudioSourceKind = "inspector" | "evidence" | "experiment";
@@ -229,11 +231,11 @@ export function App(): React.JSX.Element {
     <section className="studio-area">
       <header className={`studio-context-bar${contextNavigation ? " has-surface-navigation" : ""}`}>
         <button ref={navigationToggleRef} className="studio-nav-toggle" type="button" title={navigationOpen ? "Close navigation" : "Open navigation"} aria-label={navigationOpen ? "Close Studio navigation" : "Open Studio navigation"} aria-expanded={navigationOpen} onClick={() => setNavigationOpen((value) => !value)}><SidebarSimple aria-hidden="true" size={17} /></button>
-        <div className="studio-context-title"><small>{AREA_COPY[area].eyebrow}</small><h1>{AREA_COPY[area].title}</h1></div>
+        <div className="studio-context-title"><h1>{AREA_COPY[area]}</h1></div>
         {contextNavigation && <div className="studio-context-navigation">{contextNavigation}</div>}
         <ThemeToggle theme={theme} onChange={setTheme} />
         {sources.length > 0 && <SourceSwitcher sources={sources} onSelect={(source) => void selectSource(source)} />}
-        <div className="studio-context-state"><span className={`availability-dot availability-${current.availability}`} /><strong>{current.status}</strong><span>Local control plane</span></div>
+        <div className="studio-context-state"><span className={`availability-dot availability-${current.availability}`} /><strong>{current.status}</strong></div>
       </header>
       <div className={`studio-surface studio-surface-${area}`}>
         {area === "overview" && <Overview config={config} onOpen={openArea} />}
@@ -335,7 +337,6 @@ function PrimaryNavigation(props: {
         </button>;
       })}</section>)}
     </nav>
-    <footer><strong>Observe → Promote</strong><span>Evidence before defaults</span></footer>
   </aside>;
 }
 
@@ -348,31 +349,45 @@ function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => v
       : props.config.experimentEnabled || props.config.evidenceEnabled
         ? "compare"
         : "sessions";
-  const inputs = [
-    ["Project workspace", props.config.workspaceConnected],
-    ["Artifact catalog", props.config.artifactsEnabled],
-    ["Inspector workbench", props.config.workspaceWorkbenchEnabled || props.config.inspectorEnabled],
-    ["Harness runtime", props.config.aguiEnabled],
-    ["Experiment manifest", props.config.experimentEnabled],
-    ["Compare evidence", props.config.evidenceEnabled],
-    ["History adapter", props.config.historyEnabled],
-  ] as const;
-  const missingInputs = inputs.filter(([, enabled]) => !enabled);
-  const actions = [
-    { label: props.config.workspaceConnected ? "Open Sessions" : "Open workspace", area: "sessions" as const, enabled: true, detail: props.config.workspaceConnected ? `${props.config.sessionCount} retained` : "Choose in Web" },
-    { label: "Go to Debugger", area: "debugger" as const, enabled: props.config.aguiEnabled, detail: "Live runs" },
-    { label: "Go to Compare", area: "compare" as const, enabled: props.config.sessionCount >= 2 || props.config.experimentEnabled || props.config.evidenceEnabled, detail: "Sessions and evidence" },
+  // Each row states what the input unlocks and how to supply it, so an absent
+  // input teaches its own next action instead of only reporting "Not supplied".
+  const inputs: Array<{ label: string; connected: boolean; purpose: string; flag?: string }> = [
+    { label: "Project workspace", connected: props.config.workspaceConnected, purpose: "Discovers local agent Sessions" },
+    { label: "Inspector workbench", connected: props.config.workspaceWorkbenchEnabled || props.config.inspectorEnabled, purpose: "Capability and date evidence", flag: "--inspector" },
+    { label: "Harness runtime", connected: props.config.aguiEnabled, purpose: "Live runs in the Debugger", flag: "--harness" },
+    { label: "Compare evidence", connected: props.config.evidenceEnabled, purpose: "Frozen verdict and trials", flag: "--evidence" },
+    { label: "Experiment manifest", connected: props.config.experimentEnabled, purpose: "Three-lane experiment trace", flag: "--experiment" },
+    { label: "Artifact catalog", connected: props.config.artifactsEnabled, purpose: "Read-only run outputs", flag: "--artifacts" },
+    { label: "History adapter", connected: props.config.historyEnabled, purpose: "Checkpoint picker in the Builder", flag: "--history-catalog" },
   ];
+  const connectedCount = inputs.filter((input) => input.connected).length;
   return <main className="control-overview">
-    <section className="control-hero">
-      <div><small>Local Web workspace</small><h1>{props.config.workspaceConnected ? "Open the discovered Sessions." : "Choose a project workspace in Studio."}</h1><p>{summary.ready} ready · {summary.partial} partial · {summary.foundation} foundations. Studio discovers workspace-matching agent Sessions through the same provider code as Inspector.</p><button className="primary" type="button" onClick={() => props.onOpen(nextArea)}>{props.config.workspaceConnected ? "Open Sessions" : "Open workspace"}<ArrowRight aria-hidden="true" size={15} weight="bold" /></button></div>
-      <aside className="control-actions" aria-label="Available actions"><small>Available actions</small><ul>{actions.map((action) => <li key={action.label} className={action.enabled ? "is-ready" : "is-foundation"}><span className={`availability-dot availability-${action.enabled ? "ready" : "foundation"}`} /><button type="button" disabled={!action.enabled} onClick={() => props.onOpen(action.area)}>{action.label}</button><em>{action.detail}</em></li>)}</ul></aside>
+    <section className="control-lead">
+      <h1>{props.config.workspaceConnected
+        ? `${props.config.sessionCount} Sessions discovered in this workspace.`
+        : "Choose a project workspace to begin."}</h1>
+      <p>{props.config.workspaceConnected
+        ? "Open Sessions to read retained prompts, tool calls, and commits, or select two Sessions to compare them."
+        : "Studio discovers agent Sessions for the directory you pick, using the same provider code as Inspector. Nothing is read until you choose."}</p>
+      <div className="control-lead-actions">
+        <button className="primary" type="button" onClick={() => props.onOpen(nextArea)}>{props.config.workspaceConnected ? "Open Sessions" : "Open workspace"}<ArrowRight aria-hidden="true" size={15} weight="bold" /></button>
+        <span>{summary.ready} ready · {summary.partial} partial · {summary.foundation} foundations</span>
+      </div>
     </section>
 
-    <div className="control-grid">
-      <section className="control-panel"><header><div><small>Loaded inputs</small><h2>Current boundary</h2></div><span>Server facts</span></header><ul className="input-readiness">{inputs.map(([label, enabled]) => <li key={label}><span className={`availability-dot ${enabled ? "availability-ready" : "availability-foundation"}`} /><strong>{label}</strong><em>{enabled ? "Connected" : "Not supplied"}</em></li>)}</ul></section>
-      <section className="control-panel"><header><div><small>Next action</small><h2>Missing inputs stay explicit</h2></div><span>No inferred state</span></header><ul className="input-readiness">{missingInputs.length > 0 ? missingInputs.map(([label]) => <li key={label}><span className="availability-dot availability-foundation" /><strong>{label}</strong><em>Load when needed</em></li>) : <li><span className="availability-dot availability-ready" /><strong>All configured inputs connected</strong><em>Ready</em></li>}</ul></section>
-    </div>
+    <section className="control-panel">
+      <header><h2>Inputs</h2><span>{connectedCount} of {inputs.length} connected</span></header>
+      <ul className="input-readiness">{inputs.map((input) => <li key={input.label} data-connected={input.connected ? "true" : "false"}>
+        <span className={`availability-dot ${input.connected ? "availability-ready" : "availability-foundation"}`} aria-hidden="true" />
+        <strong>{input.label}</strong>
+        <em>{input.purpose}</em>
+        {input.connected
+          ? <span className="input-state">Connected</span>
+          : input.flag
+            ? <code>{input.flag}</code>
+            : <span className="input-state">Choose in Studio</span>}
+      </li>)}</ul>
+    </section>
   </main>;
 }
 

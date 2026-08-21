@@ -201,7 +201,10 @@ function FeatureTree(props: { roots: string[]; byNode: Map<string, FeatureNode>;
     const children = (node.children ?? []).map((id) => props.byNode.get(id)).filter((child): child is FeatureNode => Boolean(child));
     const expanded = !props.collapsed.has(node.id);
     const status = node.status === "complete" ? "complete" : node.status === "todo" ? "todo" : "neutral";
-    return <li key={node.id} className={`tree-item ${node.type ?? "feature"}`} role="treeitem" aria-expanded={children.length ? expanded : undefined}><div className="tree-line">{children.length ? <button className="tree-branch-toggle" type="button" aria-expanded={expanded} aria-label={`${expanded ? "Collapse" : "Expand"} ${node.title}`} onClick={() => props.onToggle(node.id)}><span aria-hidden="true">{expanded ? "⌄" : "›"}</span></button> : <span className="tree-branch-spacer" />}<button className={`tree-row ${node.type ?? "feature"}${props.selected === node.id ? " active" : ""}`} type="button" onClick={() => props.onSelect(node.id)}><span className={`tree-check ${status}`} role="img" aria-label={status}><span aria-hidden="true">{status === "complete" ? "✓" : ""}</span></span><span className="tree-copy"><strong>{node.title}</strong><small>{children.length ? `${children.length} items` : node.stage ?? "capability"}</small></span>{node.evidence && node.evidence !== "declared" && <span className={`evidence ${node.evidence}`}>{node.evidence}</span>}</button></div>{children.length > 0 && expanded && <ul className="tree-children" role="group">{children.map(render)}</ul>}</li>;
+    // The node's own type is already carried by the row class, so a generic
+    // "capability" caption would only repeat itself under every row.
+    const detail = children.length ? `${children.length} items` : node.stage ?? undefined;
+    return <li key={node.id} className={`tree-item ${node.type ?? "feature"}`} role="treeitem" aria-expanded={children.length ? expanded : undefined}><div className="tree-line">{children.length ? <button className="tree-branch-toggle" type="button" aria-expanded={expanded} aria-label={`${expanded ? "Collapse" : "Expand"} ${node.title}`} onClick={() => props.onToggle(node.id)}><span aria-hidden="true">{expanded ? "⌄" : "›"}</span></button> : <span className="tree-branch-spacer" />}<button className={`tree-row ${node.type ?? "feature"}${props.selected === node.id ? " active" : ""}`} type="button" onClick={() => props.onSelect(node.id)}><span className={`tree-check ${status}`} role="img" aria-label={status}><span aria-hidden="true">{status === "complete" ? "✓" : ""}</span></span><span className="tree-copy"><strong>{node.title}</strong>{detail !== undefined && <small>{detail}</small>}</span>{node.evidence && node.evidence !== "declared" && <span className={`evidence ${node.evidence}`}>{node.evidence}</span>}</button></div>{children.length > 0 && expanded && <ul className="tree-children" role="group">{children.map(render)}</ul>}</li>;
   };
   const roots = props.roots.map((id) => props.byNode.get(id)).filter((node): node is FeatureNode => Boolean(node));
   return <ul className="capability-tree" role="tree" aria-label="Capability tree">{roots.map(render)}</ul>;
@@ -231,7 +234,16 @@ function Metric({ value, label, singular }: { value: number; label: string; sing
 
 function WorkbenchCard({ item, commits, collapsed, onToggle, onOpen }: { item: Item; commits: Commit[]; collapsed: boolean; onToggle(): void; onOpen(session: Session): void }): React.JSX.Element {
   const session = item.session;
-  return <article className={`workbench${collapsed ? " card-collapsed" : ""}`} id={session ? `workbench-${encodeURIComponent(session.sessionId)}` : undefined}><header className="workbench-head"><div className="workbench-title-line"><div className="workbench-meta">{session ? <><span className="workbench-provider">{session.platform ?? "agent"}</span><span>{formatClock(session.firstSeen)}</span><span>{formatDuration(session.durationMs)}</span></> : <span>No linked Session</span>}</div><h3>{item.story?.title ?? (session ? sessionTitle(session) : "Commits without a linked Session")}</h3></div><div className="head-actions">{session && <button className="prepare-button" type="button" onClick={() => onOpen(session)}>Open session</button>}<button className="card-collapse" type="button" aria-expanded={!collapsed} onClick={onToggle}>{collapsed ? "+" : "−"}</button></div></header><div className="workbench-grid"><PromptLane item={item} onOpen={onOpen} /><div className="lane-resizer prompt" role="separator" /><ActivityLane session={session} onOpen={onOpen} /><div className="lane-resizer delivery" role="separator" /><DeliveryLane commits={commits} /></div></article>;
+  // A scope that retained nothing collapses to its title row. Three empty lanes
+  // read as a completed dashboard, and repeating them down a long scope buries
+  // the scopes that do carry evidence.
+  const retained = Boolean(item.story?.refs?.prompts?.[0])
+    || (session?.prompts?.length ?? 0) > 0
+    || (session?.toolActivity?.calls?.length ?? 0) > 0
+    || commits.length > 0;
+  const head = <header className="workbench-head"><div className="workbench-title-line"><div className="workbench-meta">{session ? <><span className="workbench-provider">{session.platform ?? "agent"}</span><span>{formatClock(session.firstSeen)}</span><span>{formatDuration(session.durationMs)}</span></> : <span>No linked Session</span>}</div><h3>{item.story?.title ?? (session ? sessionTitle(session) : "Commits without a linked Session")}</h3></div><div className="head-actions">{session && <button className="prepare-button" type="button" onClick={() => onOpen(session)}>Open session</button>}{retained && <button className="card-collapse" type="button" aria-expanded={!collapsed} onClick={onToggle}>{collapsed ? "+" : "−"}</button>}</div></header>;
+  if (!retained) return <article className="workbench workbench-unevidenced" id={session ? `workbench-${encodeURIComponent(session.sessionId)}` : undefined}>{head}{session ? <p className="workbench-unevidenced-note">No prompt, tool call, or commit was retained for this Session.</p> : null}</article>;
+  return <article className={`workbench${collapsed ? " card-collapsed" : ""}`} id={session ? `workbench-${encodeURIComponent(session.sessionId)}` : undefined}>{head}<div className="workbench-grid"><PromptLane item={item} onOpen={onOpen} /><div className="lane-resizer prompt" role="separator" /><ActivityLane session={session} onOpen={onOpen} /><div className="lane-resizer delivery" role="separator" /><DeliveryLane commits={commits} /></div></article>;
 }
 
 function PromptLane({ item, onOpen }: { item: Item; onOpen(session: Session): void }): React.JSX.Element {
@@ -327,8 +339,41 @@ function formatClock(value?: string | null): string { const date = new Date(valu
 function formatDate(value: string): string { const date = new Date(`${value}T00:00:00.000Z`); return Number.isNaN(date.valueOf()) ? value : new Intl.DateTimeFormat("en", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(date); }
 function formatStamp(value?: number | null): string { return Number.isFinite(value) ? new Date(Number(value)).toISOString().slice(11, 19) : "time unavailable"; }
 function formatDuration(value?: number | null): string { if (!Number.isFinite(value)) return "duration unavailable"; const ms = Math.max(0, Number(value)); return ms < 1_000 ? `${Math.round(ms)} ms` : ms < 60_000 ? `${(ms / 1_000).toFixed(ms < 10_000 ? 1 : 0)} s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1_000)}s`; }
-function scopeCss(css: string): string { return css.replace(/:root\s*\{/u, ":host, .native-inspector-root {").replace(/html,\s*body\s*\{[^}]*\}/u, ".native-inspector-root { margin:0; min-width:320px; min-height:100%; font:14px/1.45 var(--font-ui); color:var(--ink); background:var(--color-surface); }").replace(/html:has\(body\.session-open\)\s*\{[^}]*\}/u, ".native-inspector-root.session-open { overflow:hidden; }"); }
+/**
+ * The standalone report carries its own literal copy of the palette so it can
+ * open offline. Studio owns the active *theme*, so the report's literal
+ * `--color-*` values and `color-scheme` are dropped and inherit from Studio's
+ * tokens instead of pinning this pane to the report's light palette.
+ *
+ * Shape and metric literals stay report-owned. They are not theme state, and
+ * adopting Studio's scale silently reshapes a surface this package does not
+ * otherwise migrate — a 14px checkbox drawn at Studio's `radius-md` becomes a
+ * circle.
+ */
+function inheritStudioTheme(block: string): string {
+  const kept = block
+    .replace(/\/\*[\s\S]*?\*\//gu, "")
+    .split(";")
+    .map((declaration) => declaration.trim())
+    .filter((declaration) => declaration.startsWith("--"))
+    .filter((declaration) => declaration.includes("var(") || !declaration.startsWith("--color-"));
+  return `:host, .native-inspector-root { ${kept.join("; ")}; }`;
+}
+
+function scopeCss(css: string): string { return css.replace(/:root\s*\{([^}]*)\}/u, (_match, block: string) => inheritStudioTheme(block)).replace(/html,\s*body\s*\{[^}]*\}/u, ".native-inspector-root { margin:0; min-width:320px; min-height:100%; font:14px/1.45 var(--font-ui); color:var(--color-text); background:var(--color-workspace); }").replace(/html:has\(body\.session-open\)\s*\{[^}]*\}/u, ".native-inspector-root.session-open { overflow:hidden; }"); }
+
+// Studio owns presentation for this embedded pane. The standalone report drops
+// its metric labels to truncated stems ("stori", "sessi") at narrow widths;
+// broken words are not an abbreviation, so the strip keeps whole labels and
+// scrolls instead.
+const NARROW_METRIC_CSS = ".workspace-header-meta{min-width:0}.scope-metrics{min-width:0;overflow-x:auto;overscroll-behavior-x:contain}.scope-metrics .metric{flex:none}.metric .metric-short{display:none}.metric .metric-label{display:inline}";
+
+// The report styles focus for buttons and summaries only, so its one anchor row
+// reaches keyboard focus with no visible ring.
+const LINK_FOCUS_CSS = ".date-session-row:focus-visible{outline:2px solid var(--color-focus);outline-offset:2px}";
 
 const REACT_CSS = `
-  :host,.native-inspector-root{display:block;width:100%;height:100%;min-height:0}.date-session-row{text-decoration:none}.react-action-list{display:grid;max-height:280px;overflow:auto;border-top:1px solid var(--color-border)}.react-action-list .session-tool-row{grid-template-columns:52px minmax(100px,1fr) 74px}.react-diagnostics{margin:10px 12px 0;border:1px solid var(--color-border);border-radius:var(--radius-lg);color:var(--color-text-muted);background:var(--color-surface-subtle);font-size:12px}.react-diagnostics summary{padding:7px 9px;cursor:pointer;font-weight:700}.react-diagnostics ul{margin:0;padding:0 26px 9px}.react-replay-controls{position:sticky;bottom:0;margin-top:14px;padding:10px 12px;display:flex;align-items:center;justify-content:center;gap:12px;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-surface);box-shadow:0 -8px 24px rgba(15,23,42,.08)}.react-replay-controls button{min-height:30px;border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:4px 9px;color:var(--color-text);background:var(--color-surface);cursor:pointer}.react-replay-controls button:disabled{opacity:.45;cursor:not-allowed}.react-replay-controls strong{font-size:12px}
+  ${NARROW_METRIC_CSS}
+  ${LINK_FOCUS_CSS}
+  :host,.native-inspector-root{display:block;width:100%;height:100%;min-height:0}.date-session-row{text-decoration:none}.react-action-list{display:grid;max-height:280px;overflow:auto;border-top:1px solid var(--color-border)}.react-action-list .session-tool-row{grid-template-columns:52px minmax(100px,1fr) 74px}.workbench-unevidenced .workbench-head{border-bottom:0}.workbench-unevidenced-note{margin:0;padding:0 12px 10px 12px;color:var(--color-text-muted);font-size:12px;line-height:16px}.react-diagnostics{margin:10px 12px 0;border:1px solid var(--color-border);border-radius:var(--radius-lg);color:var(--color-text-muted);background:var(--color-surface-subtle);font-size:12px}.react-diagnostics summary{padding:7px 9px;cursor:pointer;font-weight:700}.react-diagnostics ul{margin:0;padding:0 26px 9px}.react-replay-controls{position:sticky;bottom:0;margin-top:14px;padding:10px 12px;display:flex;align-items:center;justify-content:center;gap:12px;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-surface);box-shadow:var(--shadow-popover)}.react-replay-controls button{min-height:30px;border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:4px 9px;color:var(--color-text);background:var(--color-surface);cursor:pointer}.react-replay-controls button:disabled{opacity:.45;cursor:not-allowed}.react-replay-controls strong{font-size:12px}
 `;

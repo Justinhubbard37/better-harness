@@ -480,7 +480,7 @@ function ExecutionTree(props: { session: DebuggerSession; cursor: DebuggerCursor
         })}
       </div>}
     </div>
-    <footer><span><Eye size={12} />Recorded evidence</span><strong>{props.session.events.length} semantic events</strong></footer>
+    <footer><span><Eye size={12} />Recorded evidence</span></footer>
   </aside>;
 }
 
@@ -655,7 +655,7 @@ function TimelineMinimap(props: { session: DebuggerSession; cursor: DebuggerCurs
 }
 
 function LiveExecutionTree({ state, prompt }: { state: AguiRunState; prompt: string }): React.JSX.Element {
-  return <aside className="execution-tree live-tree" aria-label="Execution Tree"><header><div><small>Execution Tree</small><strong>Live observations</strong></div><span>{state.timelineKeys.length} events</span></header><div className="execution-tree-scroll"><TreeRow nodeId="live-session" label="Session" detail={state.runId ?? "starting"} icon={Database} selected={false} depth={0} expandable expanded onSelect={() => undefined} /><TreeRow nodeId="live-turn" label="Turn 1" detail={prompt} icon={GitBranch} selected={false} depth={1} expandable expanded onSelect={() => undefined} /><TreeRow nodeId="live-prompt" label="Prompt" detail={prompt} icon={UserCircle} selected={false} depth={2} onSelect={() => undefined} /><TreeRow nodeId="live-tools" label="Explore / Change / Verify" detail={`${state.toolCallCount} tool calls`} icon={Wrench} selected={false} depth={2} status={state.status} onSelect={() => undefined} /></div><footer><span><Pause size={12} />Soft Pause only</span><strong>Agent may continue</strong></footer></aside>;
+  return <aside className="execution-tree live-tree" aria-label="Execution Tree"><header><div><small>Execution Tree</small><strong>Live observations</strong></div><span>{state.timelineKeys.length} events</span></header><div className="execution-tree-scroll"><TreeRow nodeId="live-session" label="Session" detail={state.runId ?? "starting"} icon={Database} selected={false} depth={0} expandable expanded onSelect={() => undefined} /><TreeRow nodeId="live-turn" label="Turn 1" detail={prompt} icon={GitBranch} selected={false} depth={1} expandable expanded onSelect={() => undefined} /><TreeRow nodeId="live-prompt" label="Prompt" detail={prompt} icon={UserCircle} selected={false} depth={2} onSelect={() => undefined} /><TreeRow nodeId="live-tools" label="Explore / Change / Verify" detail={`${state.toolCallCount} tool calls`} icon={Wrench} selected={false} depth={2} status={state.status} onSelect={() => undefined} /></div></aside>;
 }
 
 function LiveNotebook({ state, prompt, groups }: { state: AguiRunState; prompt: string; groups: LiveTimelineGroup[] }): React.JSX.Element {
@@ -692,5 +692,5 @@ function LiveInspector({ state }: { state: AguiRunState }): React.JSX.Element {
 }
 
 function LiveTimeline({ state, bins, eventCount }: { state: AguiRunState; bins: TimelineBin<DebuggerEventKind>[]; eventCount: number }): React.JSX.Element {
-  return <footer className="timeline-minimap live-minimap"><div className="timeline-range"><span>Live</span><strong>Semantic timeline · fixed 64 bins</strong><span>{state.status}</span></div><div className="timeline-track">{bins.length === 0 ? <span className="live-track-empty">Waiting for events</span> : bins.map((bin) => <span key={bin.index} className={`timeline-segment kind-${bin.kind}`} title={`${bin.count} events`} />)}</div><div className="timeline-footer"><span>Soft Pause does not stop execution.</span><strong>{eventCount} retained events</strong></div></footer>;
+  return <footer className="timeline-minimap live-minimap"><div className="timeline-range"><span>Live</span><strong>Semantic timeline · fixed 64 bins</strong><span>{state.status}</span></div><div className="timeline-track">{bins.length === 0 ? <span className="live-track-empty">Waiting for events</span> : bins.map((bin) => <span key={bin.index} className={`timeline-segment kind-${bin.kind}`} title={`${bin.count} events`} />)}</div><div className="timeline-footer"><strong>{eventCount} retained events</strong></div></footer>;
 }

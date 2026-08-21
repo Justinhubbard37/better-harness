@@ -71,7 +71,7 @@ async function assertRenderedContract(page) {
       .filter((element) => directText(element) && visible(element))
       .map((element) => ({ tag: element.tagName, className: element.className, size: Number.parseFloat(getComputedStyle(element).fontSize), text: element.textContent?.trim().slice(0, 60) }))
       .filter((entry) => entry.size < 12);
-    const dockedShadows = [...document.querySelectorAll(".studio-context-bar,.studio-primary-nav,.control-hero,.control-loop,.control-panel,.builder-primary,.builder-setup,.notebook-context,.notebook-cell-card,.experiment-rail,.execution-tree,.session-notebook,.state-inspector,.decision-summary,.evidence-table-pane")]
+    const dockedShadows = [...document.querySelectorAll(".studio-context-bar,.studio-primary-nav,.control-lead,.control-panel,.input-readiness,.builder-primary,.builder-setup,.notebook-context,.notebook-cell-card,.experiment-rail,.execution-tree,.session-notebook,.session-catalog-pane,.state-inspector,.decision-summary,.evidence-table-pane")]
       .filter(visible)
       .map((element) => ({ className: element.className, shadow: getComputedStyle(element).boxShadow }))
       .filter((entry) => entry.shadow !== "none");
@@ -261,7 +261,7 @@ test("organizes configured surfaces around the Harness control plane", async ({ 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(inspectorStudio.url);
 
-  await expect(page.getByRole("heading", { name: "Harness Control Center" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Sessions");
   await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Debugger");
   await expect(page.getByRole("navigation", { name: "Harness control plane" })).toContainText("Compare");
@@ -387,7 +387,7 @@ test("compares a focused ACP pair across roles, views, filters, and evidence", a
   expect(layout.document).toBe(layout.inner);
   expect(layout.shellWidth).toBe(layout.inner);
   expect(layout.railWidth).toBe(0);
-  expect(layout.workspaceHeaderHeight).toBe(40);
+  expect(layout.workspaceHeaderHeight).toBe(44);
   expect(layout.surfaceTop).toBeLessThanOrEqual(100);
   expect(layout.laneHeaderHeight).toBeLessThanOrEqual(52);
   expect(layout.toolRowHeight).toBeLessThanOrEqual(30);
@@ -421,7 +421,7 @@ test("contains narrow experiment scrolling inside the comparison regions", async
 
   await page.getByRole("button", { name: "Show checkpoints" }).click();
   await expect(page.locator(".experiment-rail")).toBeVisible();
-  await expect(page.locator(".experiment-rail")).toHaveCSS("width", "304px");
+  await expect(page.locator(".experiment-rail")).toHaveCSS("width", "312px");
   const expandedWidth = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(expandedWidth).toBe(390);
   await expect(page.getByRole("navigation", { name: "Compare surfaces" })).toBeVisible();
@@ -439,7 +439,7 @@ test("renders a keyboard-expandable failed and truncated Tool Call at 390px", as
   page.on("pageerror", (error) => browserErrors.push(`page: ${error.message}`));
 
   await page.goto(studio.url);
-  await page.getByRole("button", { name: "Go to Debugger" }).click();
+  await openDestination(page, "Debugger");
   await page.getByRole("button", { name: "New live run" }).click();
   await page.getByPlaceholder("Task prompt for the harness run…").fill("Run the scripted browser fixture");
   await page.getByRole("button", { name: "Run harness" }).click();
@@ -534,7 +534,7 @@ test("renders the shell, local workspace intake, and empty compare surfaces at a
   for (const layout of LAYOUTS) {
     await page.setViewportSize({ width: layout.width, height: layout.height });
     await page.goto(experimentStudio.url);
-    await expect(page.getByRole("heading", { name: "Harness Control Center" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
     await assertRenderedContract(page);
     await page.screenshot({ path: testInfo.outputPath(`overview-${layout.name}.png`) });
 

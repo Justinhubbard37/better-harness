@@ -1,150 +1,179 @@
 ---
-version: alpha
+version: beta
 name: Better Harness Studio
 description: Visual design contract for Studio, interactive reports, and other Better Harness product surfaces.
 colors:
-  primary: "#245CC8"
-  primary-hover: "#1D4FAF"
-  primary-soft: "#EEF4FF"
+  primary: "#1B5CC8"
+  primary-hover: "#164EAD"
+  primary-soft: "#EAF1FE"
   on-primary: "#FFFFFF"
-  text: "#263244"
-  text-muted: "#5F6D82"
-  text-subtle: "#667085"
-  canvas: "#F4F6F8"
-  titlebar: "#F4F6F8"
-  sidebar: "#F8FAFC"
+  text: "#1B2430"
+  text-muted: "#5A6676"
+  text-subtle: "#5C687A"
+  canvas: "#F2F4F7"
+  titlebar: "#FFFFFF"
+  sidebar: "#F7F9FB"
   workspace: "#FFFFFF"
   panel: "#FFFFFF"
   surface: "#FFFFFF"
-  surface-subtle: "#F8FAFC"
-  surface-hover: "#EEF1F5"
-  surface-active: "#E2E8F0"
-  surface-selected: "#E7EFFB"
-  border: "#D7DEE8"
-  border-strong: "#B8C3D1"
-  focus: "#1769D2"
-  success: "#16794E"
-  success-surface: "#E9F7F0"
-  warning: "#8A520F"
-  warning-surface: "#FFF3DF"
-  danger: "#A63D45"
-  danger-surface: "#FDEBED"
-  candidate: "#6D46B5"
-  candidate-surface: "#F5F1FB"
-  categorical-1: "#2C6FA8"
-  categorical-2: "#7658B5"
-  categorical-3: "#4F6275"
-  categorical-4: "#1F7A6B"
-  categorical-5: "#A66A1E"
-  categorical-6: "#5E7F2E"
-  categorical-7: "#7A7385"
+  surface-subtle: "#F6F8FA"
+  surface-hover: "#EFF2F6"
+  surface-active: "#E3E8EF"
+  surface-selected: "#E3EDFD"
+  border: "rgba(15, 23, 42, 0.11)"
+  border-strong: "rgba(15, 23, 42, 0.22)"
+  focus: "#1E6FE0"
+  success: "#0F7048"
+  success-surface: "#E6F6EE"
+  warning: "#85500E"
+  warning-surface: "#FDF0DC"
+  danger: "#B23640"
+  danger-surface: "#FDEAEC"
+  candidate: "#6941B8"
+  candidate-surface: "#F3EFFB"
+  categorical-1: "#1C6699"
+  categorical-2: "#6B4BB0"
+  categorical-3: "#4A5B6E"
+  categorical-4: "#136B5E"
+  categorical-5: "#8A5710"
+  categorical-6: "#4F6E27"
+  categorical-7: "#665D6F"
 
 themes:
   default: dark
   light:
     source: colors
-    overlay: "rgba(38, 50, 68, 0.34)"
-    scrollbar: "#B8C3D1"
-    scrollbar-hover: "#8D9BAD"
-    overlay-shadow: "0 18px 48px rgba(38, 50, 68, 0.2)"
+    selection: "rgba(27, 92, 200, 0.18)"
+    overlay: "rgba(20, 28, 40, 0.40)"
+    scrollbar: "rgba(15, 23, 42, 0.24)"
+    scrollbar-hover: "rgba(15, 23, 42, 0.40)"
+    overlay-shadow: "0 24px 56px -16px rgba(15, 23, 42, 0.24), 0 4px 12px -4px rgba(15, 23, 42, 0.12)"
+    popover-shadow: "0 12px 28px -10px rgba(15, 23, 42, 0.18), 0 2px 6px -2px rgba(15, 23, 42, 0.10)"
   dark:
-    primary: "#79A8FF"
-    primary-hover: "#9ABEFF"
-    primary-soft: "#142B4F"
-    on-primary: "#08111F"
-    text: "#E6EDF7"
-    text-muted: "#A6B2C3"
-    text-subtle: "#8492A6"
-    canvas: "#080C12"
-    titlebar: "#0C121C"
-    sidebar: "#0B1018"
-    workspace: "#111722"
-    panel: "#131A25"
-    surface: "#161F2C"
-    surface-subtle: "#0E141E"
-    surface-hover: "#1D2938"
-    surface-active: "#253348"
-    surface-selected: "#17345F"
-    border: "#2B3647"
-    border-strong: "#3C4B61"
-    focus: "#9FC1FF"
-    success: "#63D7A5"
-    success-surface: "#0E2B22"
-    warning: "#F2B76F"
-    warning-surface: "#352411"
-    danger: "#FF8A94"
-    danger-surface: "#35171D"
-    candidate: "#C5A7FF"
-    candidate-surface: "#251C3B"
-    categorical-1: "#7BB7E7"
-    categorical-2: "#B39AF4"
-    categorical-3: "#9AABC0"
-    categorical-4: "#6FD3BF"
-    categorical-5: "#E3AA61"
-    categorical-6: "#9BC36A"
-    categorical-7: "#B4AABD"
-    overlay: "rgba(2, 6, 12, 0.72)"
-    scrollbar: "#3C4B61"
-    scrollbar-hover: "#56667C"
-    overlay-shadow: "0 18px 48px rgba(0, 0, 0, 0.42)"
+    primary: "#5A97FF"
+    primary-hover: "#7CADFF"
+    primary-soft: "#12233F"
+    on-primary: "#061225"
+    text: "#E8ECF3"
+    text-muted: "#9BA6B7"
+    text-subtle: "#8C97A9"
+    canvas: "#08090C"
+    titlebar: "#0C0E12"
+    sidebar: "#0A0C10"
+    workspace: "#101319"
+    panel: "#14181F"
+    surface: "#191E26"
+    surface-subtle: "#0E1116"
+    surface-hover: "#1F252F"
+    surface-active: "#272E3A"
+    surface-selected: "#14294A"
+    border: "rgba(233, 240, 255, 0.09)"
+    border-strong: "rgba(233, 240, 255, 0.18)"
+    focus: "#7FB4FF"
+    success: "#46D3A3"
+    success-surface: "#0C2A21"
+    warning: "#F0B667"
+    warning-surface: "#33230F"
+    danger: "#FF7B87"
+    danger-surface: "#3A1620"
+    candidate: "#B99CFF"
+    candidate-surface: "#241C3C"
+    categorical-1: "#6FB3E8"
+    categorical-2: "#A98CF5"
+    categorical-3: "#94A6BD"
+    categorical-4: "#5FD0BC"
+    categorical-5: "#E6A85E"
+    categorical-6: "#9DC46B"
+    categorical-7: "#C0A5B6"
+    selection: "rgba(90, 151, 255, 0.28)"
+    overlay: "rgba(3, 5, 9, 0.70)"
+    scrollbar: "rgba(233, 240, 255, 0.16)"
+    scrollbar-hover: "rgba(233, 240, 255, 0.30)"
+    overlay-shadow: "0 24px 56px -16px rgba(0, 0, 0, 0.72), 0 4px 12px -4px rgba(0, 0, 0, 0.56)"
+    popover-shadow: "0 12px 28px -10px rgba(0, 0, 0, 0.66), 0 2px 6px -2px rgba(0, 0, 0, 0.48)"
+
+surface-ramp:
+  order: [canvas, sidebar, titlebar, workspace, panel, surface]
+  rule: >-
+    Surface roles are an ordered elevation ramp read back to front. A region that
+    sits closer to the reader takes a later step; a region never borrows a step
+    to look different. Structure comes from this ramp plus hairlines, never from
+    a new hue.
 
 typography:
   display:
     fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-    fontSize: 32px
+    fontSize: 30px
     fontWeight: 600
-    lineHeight: 40px
-    letterSpacing: -0.6px
+    lineHeight: 38px
+    letterSpacing: -0.022em
   page-title:
     fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-    fontSize: 24px
+    fontSize: 22px
     fontWeight: 600
-    lineHeight: 32px
-    letterSpacing: -0.2px
+    lineHeight: 30px
+    letterSpacing: -0.016em
   section-title:
     fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-    fontSize: 18px
+    fontSize: 17px
     fontWeight: 600
-    lineHeight: 26px
-    letterSpacing: 0px
-  pane-title:
+    lineHeight: 24px
+    letterSpacing: -0.011em
+  subhead:
     fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-    fontSize: 12px
+    fontSize: 15px
     fontWeight: 600
-    lineHeight: 20px
-    letterSpacing: 0px
+    lineHeight: 22px
+    letterSpacing: 0em
   body:
     fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
     fontSize: 14px
     fontWeight: 400
     lineHeight: 20px
-    letterSpacing: 0px
+    letterSpacing: 0em
   label:
     fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
     fontSize: 13px
-    fontWeight: 600
+    fontWeight: 500
     lineHeight: 18px
-    letterSpacing: 0px
+    letterSpacing: 0em
+  pane-title:
+    fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+    fontSize: 12px
+    fontWeight: 600
+    lineHeight: 16px
+    letterSpacing: 0.01em
   metadata:
     fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
     fontSize: 12px
     fontWeight: 400
     lineHeight: 16px
-    letterSpacing: 0px
+    letterSpacing: 0em
   code:
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace"
     fontSize: 13px
     fontWeight: 400
     lineHeight: 20px
-    letterSpacing: 0px
+    letterSpacing: 0em
+
+weights:
+  regular: 400
+  medium: 500
+  semibold: 600
+  bold: 700
 
 rounded:
   none: 0px
-  xs: 2px
-  sm: 3px
-  md: 4px
-  lg: 6px
+  xs: 5px
+  sm: 6px
+  md: 10px
+  lg: 12px
   full: 9999px
+
+elevation:
+  docked: none
+  popover: "{themes.*.popover-shadow}"
+  overlay: "{themes.*.overlay-shadow}"
 
 spacing:
   xs: 4px
@@ -155,28 +184,51 @@ spacing:
   xxl: 32px
   xxxl: 48px
 
+sizing:
+  control-height: 32px
+  toolbar-target: 30px
+  pane-header: 36px
+  row: 30px
+  navigation-row: 46px
+  titlebar: 44px
+  statusbar: 26px
+  sidebar-width: 248px
+  secondary-pane-width: 312px
+  touch-target: 44px
+
+motion:
+  press: 90ms
+  fast: 130ms
+  enter: 180ms
+  layout: 160ms
+
 components:
   button-primary:
     backgroundColor: "{colors.primary}"
     textColor: "{colors.on-primary}"
+    borderColor: "transparent"
     typography: "{typography.label}"
+    fontWeight: "{weights.semibold}"
     rounded: "{rounded.xs}"
     padding: "{spacing.xs} {spacing.md}"
-    height: 30px
+    height: "{sizing.control-height}"
   button-primary-hover:
     backgroundColor: "{colors.primary-hover}"
     textColor: "{colors.on-primary}"
   button-secondary:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.text}"
+    borderColor: "{colors.border-strong}"
     typography: "{typography.label}"
+    fontWeight: "{weights.medium}"
     rounded: "{rounded.xs}"
     padding: "{spacing.xs} {spacing.md}"
-    height: 30px
+    height: "{sizing.control-height}"
   panel:
     backgroundColor: "{colors.panel}"
     textColor: "{colors.text}"
     rounded: "{rounded.none}"
+    elevation: "{elevation.docked}"
     padding: "{spacing.md}"
   segmented-control:
     backgroundColor: "transparent"
@@ -184,14 +236,27 @@ components:
     typography: "{typography.label}"
     rounded: "{rounded.none}"
     padding: "0"
-    height: 30px
+    height: "{sizing.control-height}"
   text-input:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.text}"
+    borderColor: "{colors.border-strong}"
     typography: "{typography.body}"
     rounded: "{rounded.xs}"
     padding: "{spacing.xs} {spacing.sm}"
-    height: 30px
+    height: "{sizing.control-height}"
+  menu:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text}"
+    borderColor: "{colors.border}"
+    rounded: "{rounded.sm}"
+    elevation: "{elevation.popover}"
+  dialog:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.text}"
+    borderColor: "{colors.border-strong}"
+    rounded: "{rounded.md}"
+    elevation: "{elevation.overlay}"
   status-inline:
     backgroundColor: "transparent"
     textColor: "{colors.text-muted}"
@@ -204,28 +269,31 @@ components:
     typography: "{typography.body}"
     rounded: "{rounded.none}"
     padding: "{spacing.sm} {spacing.md}"
+  numeric-cell:
+    textAlign: "right"
+    fontVariantNumeric: "tabular-nums"
   pane-header:
-    backgroundColor: "{colors.panel}"
+    backgroundColor: "{colors.surface-subtle}"
     textColor: "{colors.text}"
     typography: "{typography.pane-title}"
     rounded: "{rounded.none}"
-    padding: "0 {spacing.sm}"
-    height: 32px
+    padding: "0 {spacing.md}"
+    height: "{sizing.pane-header}"
   list-row:
     backgroundColor: "transparent"
     textColor: "{colors.text}"
     typography: "{typography.body}"
     rounded: "{rounded.none}"
     padding: "{spacing.xs} {spacing.sm}"
-    minHeight: 28px
+    minHeight: "{sizing.row}"
   list-row-selected:
     backgroundColor: "{colors.surface-selected}"
     textColor: "{colors.text}"
   focus-indicator:
-    backgroundColor: "{colors.focus}"
-    textColor: "{colors.on-primary}"
+    outlineColor: "{colors.focus}"
+    outlineWidth: 2px
+    outlineOffset: 1px
     rounded: "{rounded.xs}"
-    width: 2px
   application-canvas:
     backgroundColor: "{colors.workspace}"
     textColor: "{colors.text}"
@@ -234,6 +302,7 @@ components:
     backgroundColor: "{colors.surface-selected}"
     textColor: "{colors.primary}"
     typography: "{typography.label}"
+    fontWeight: "{weights.semibold}"
     rounded: "{rounded.none}"
     padding: "{spacing.xs} {spacing.sm}"
   helper-text:
@@ -244,12 +313,10 @@ components:
     padding: "{spacing.xs} {spacing.sm}"
   divider:
     backgroundColor: "{colors.border}"
-    textColor: "{colors.text}"
     height: 1px
   control-outline:
-    backgroundColor: "{colors.border-strong}"
-    textColor: "{colors.text}"
-    rounded: "{rounded.sm}"
+    borderColor: "{colors.border-strong}"
+    rounded: "{rounded.xs}"
     width: 1px
   status-success:
     backgroundColor: "transparent"
@@ -292,8 +359,14 @@ contract. Product semantics and information architecture remain owned by the
 relevant spec and implementation. This contract governs hierarchy, typography,
 color, density, component appearance, interaction states, and visual review.
 
-The current code predates this contract. Treat values in this file as the
-migration target, not as proof that every existing surface is already aligned.
+The `beta` token set replaces the `alpha` palette, type scale, and shape scale.
+The earlier values were structurally correct but rendered as an unfinished
+wireframe: near-identical dark grays separated only by solid mid-gray rules,
+2px radii on every control, and a single 32px display size above an otherwise
+12–14px page. The roles did not change; their values did. `packages/harness-studio`
+implements the `beta` set. Other surfaces — notably the standalone Harness
+Inspector report under `scripts/harness-inspector/ui/` — still carry `alpha`
+values and are migration targets, not evidence of alignment.
 
 ## Reference model: a docked VS Code workbench
 
@@ -337,10 +410,15 @@ Primary references:
   light theme maps the same semantic roles and remains available from a labelled
   title-bar control. Theme choice is local presentation state, not server or
   Session evidence.
-- The visual style is minimal and grid-led: tonal surface steps, neutral 1px
-  dividers, a blue interaction role, and semantic evidence colors. It may borrow
+- The visual style is minimal and grid-led: an ordered surface ramp, alpha
+  hairlines, a blue interaction role, and semantic evidence colors. It may borrow
   the discipline of Swiss minimalism, but it must not turn Studio into a landing
   page, card dashboard, or decorative terminal pastiche.
+- Restraint is not the same as coarseness. Flat, square, and neutral describe the
+  composition, not the craft: a surface step must be visible, a hairline must
+  read as a hairline rather than a drawn box, a control must look deliberately
+  shaped, and the type scale must have a usable middle. A surface that looks
+  unfinished fails this contract as surely as a decorated one.
 - Use the system UI stack in both themes. Generated recommendations for Web fonts
   such as IBM Plex Sans or JetBrains Mono are references only; do not load them
   unless the files are deliberately bundled and cross-platform tested.
@@ -386,11 +464,23 @@ occupy more attention than the active task.
   in the UI font.
 - Do not render meaningful text below `metadata` (12/16). Dense mode reduces
   spacing before it reduces type size.
-- Body copy is regular weight. Labels and section headings are semibold. Reserve
-  bold weight for the verdict, one primary action, or a genuinely exceptional
-  state; do not make every `strong`, button, and navigation item bold.
+- The scale has a usable middle. `subhead` (15/22) carries view titles and pane
+  headings that are more than a label but less than a section; reach for
+  `display` only when a surface genuinely leads with one statement, and never to
+  compensate for a page that is otherwise all 12px.
+- Headings tighten as they grow, using the documented `letterSpacing` per role,
+  so large type reads as one shape rather than spaced letters. Body, label, and
+  metadata roles track at zero; `pane-title` is the one role that opens up,
+  because it is set small and semibold.
+- Weight carries hierarchy before size does. Body copy is regular; a `label` is
+  medium; a selected navigation item, pane title, or section heading is
+  semibold. Reserve bold for the verdict, one primary action, or a genuinely
+  exceptional state; do not make every `strong`, button, and navigation item
+  bold, and do not use semibold as the default weight for ordinary rows.
 - Use sentence case. Uppercase is allowed only for short eyebrows or compact
-  machine-state badges, never for ordinary section titles or paragraphs.
+  machine-state badges, never for ordinary section titles or paragraphs. An
+  eyebrow must earn its line: do not stack an eyebrow, a title, and a trailing
+  caption on a header that describes a six-row list.
 - Do not use a global `!important` rule to force one size onto paragraphs,
   labels, buttons, code, and `strong` elements. Each semantic role owns its
   documented type token.
@@ -411,9 +501,22 @@ occupy more attention than the active task.
   offset from the state hues, and is always redundant with a lane, label, or
   legend. Do not read success, caution, or failure into a categorical color.
 - Use neutral borders and surface shifts for structure. Do not assign a new hue
-  merely to distinguish another panel or hierarchy level.
+  merely to distinguish another panel or hierarchy level. Two lanes that carry
+  no verdict — a left and right Session, an A and B column — are positions, not
+  evidence roles: give them the same neutral surface and let the labels and the
+  column split distinguish them. Reaching for the interaction blue and the
+  Candidate violet to mean "left" and "right" states a judgement the data does
+  not support.
+- Structure is carried by the surface ramp first and a hairline second. Borders
+  are alpha over their surface, not a fixed gray: one divider token then reads
+  correctly on the canvas, on a panel, and on a selected row. Do not give every
+  nested region its own solid rule — if two regions already differ by a ramp
+  step, they usually do not also need a border.
 - Text and controls must meet WCAG 2.2 AA contrast against their actual surface.
   Muted text is supporting content, not a way to hide essential information.
+  Measure `text-subtle` against the busiest surface it lands on — a hovered or
+  selected row — not against the canvas, and re-measure both themes whenever a
+  neutral moves.
 
 ## Spacing, shape, and depth
 
@@ -423,19 +526,31 @@ occupy more attention than the active task.
   panels, rows, and sections with a background shift, a 1px divider, or a resize
   sash; do not place gutters around them to make them look like floating cards.
 - Docked panes, tables, list regions, and editor groups use `rounded.none`.
-  Controls use `xs` or `sm`. `md` and `lg` are reserved for floating dialogs,
-  menus, quick picks, notifications, or exceptional standalone objects.
-- Shadows are forbidden on docked panes, rows, buttons, tabs, tables, empty
-  states, and ordinary content groups. A shadow may only communicate a
-  transient overlay above the workbench; it must disappear with that overlay.
+  Controls use `xs` (5px) or `sm` (6px). `md` (10px) and `lg` (12px) are
+  reserved for floating dialogs, menus, quick picks, notifications, or
+  exceptional standalone objects. The control radius is a deliberate shape, not
+  a hairline chamfer: a 1–2px radius reads as an unstyled default and is below
+  this scale.
+- Depth is a two-step system and both steps belong to transient surfaces.
+  `elevation.popover` lifts a menu, quick pick, or notification; `elevation.overlay`
+  lifts a modal dialog above a dimmed workbench. `elevation.docked` is `none`,
+  and shadows stay forbidden on docked panes, rows, buttons, tabs, tables, empty
+  states, and ordinary content groups. A shadow must disappear with the surface
+  that earned it.
 - A required first-run workspace chooser may use one centered floating dialog
   above the dimmed workbench. It has one primary action, keeps the underlying
   shell inert, cannot be dismissed into an unusable empty application, and
   replaces itself with stable discovery progress until the workspace opens.
 - `full` radius is limited to a numeric count or circular target. Status text,
   evidence roles, filters, and navigation do not become pills by default.
-- Compact desktop text controls are 30px high and toolbar targets are at least
-  28px square. At narrow or touch-oriented layouts, targets are at least 44px.
+- Compact desktop text controls are 32px high and toolbar targets are at least
+  30px square. Pane headers are 36px, dense data rows 30px, navigation rows 46px,
+  and the title bar 44px. At narrow or touch-oriented layouts, targets are at
+  least 44px.
+- Focus is drawn outside the control, at `outlineOffset: 1px`, so it stays
+  visible on a filled primary button and on a row whose own edge is a hairline.
+  An inset focus ring that disappears into a filled control does not satisfy
+  this contract.
 
 ## Layout and density
 
@@ -522,7 +637,17 @@ occupy more attention than the active task.
 - Harness Inspector is a read-only evidence viewer, not a session-resumption
   surface. Do not generate or expose a continuation packet from Session Detail.
 - Empty states name what is missing, why it matters, and the single next action.
-  They should not look like completed results.
+  They should not look like completed results. A missing input reports the flag
+  or command that supplies it; a list of rows that all read "Not supplied" with
+  no remedy is an inventory, not an empty state.
+- An item with nothing retained collapses to its title row. Rendering its lanes
+  as three empty sections repeats a full dashboard for every absent scope, buries
+  the items that do carry evidence, and reads as a completed result.
+- A boundary claim — what a pause does and does not stop, what the viewer may
+  not assume — is stated once, in the pane that owns it. Do not restate it in a
+  tree footer, a timeline footer, and an inspector note; a claim repeated in
+  three chrome slots is decoration, and it is what forces a sentence into a
+  narrow column where it wraps two words at a time.
 
 ### Tables and comparison lanes
 
@@ -532,6 +657,12 @@ occupy more attention than the active task.
 - Keep labels left-aligned and numeric columns right-aligned with tabular
   numerals. Freeze the header in locally scrolling tables when rows exceed the
   visible region.
+- A numeric column is marked, never inferred from its position. A rule such as
+  "every cell after the first is right-aligned" pushes text columns to the wrong
+  edge and leaves headers floating away from their values. Mark the cell and its
+  header with the shared `numeric-cell` role so both align together.
+- Bound a comparison's value columns. Two `1fr` columns spread a three-digit
+  count across half the viewport and stop reading as a pair.
 - Reference, Baseline, and Candidate are evidence roles, not generic container
   colors. Use role labels in addition to blue/violet accents.
 - Truncation must preserve the distinguishing suffix or offer the full value on
@@ -589,6 +720,11 @@ occupy more attention than the active task.
 - Project tokens must be exposed as shared CSS custom properties before adding
   new visual variants. Surface-specific aliases may reference the shared roles;
   they must not fork a second palette or type scale.
+- A standalone report may carry a literal copy of the palette so it opens
+  offline. When that report is embedded in Studio — including inside a shadow
+  root — the host owns the theme: keep only the declarations that already
+  resolve through `var()` and let the literals inherit. An embedded pane that
+  renders its own light palette inside a dark shell is a defect, not a variant.
 - Keep component CSS out of `index.html` as the system is migrated. Split tokens,
   shell primitives, and feature styles into owned files or modules so visual
   rules have an inspectable source.
@@ -624,6 +760,11 @@ occupy more attention than the active task.
 - Make selection, opening, disclosure, and commands visibly distinct.
 - Let users collapse secondary evidence while preserving the current scope.
 - Prefer fewer, stronger labels and larger readable type over dense decoration.
+- Separate regions with a ramp step first and a hairline second.
+- Give an absent input its remedy — the flag, the command, or the control that
+  supplies it — on the same row that reports it missing.
+- Let an embedded surface inherit the active theme instead of shipping its own
+  copy of the palette.
 
 **Do not**
 
@@ -637,3 +778,10 @@ occupy more attention than the active task.
 - Give every nested region a border, radius, shadow, badge, and uppercase label.
 - Present a plain data dump as a decision screen or a decorative dashboard as
   evidence.
+- Open a workbench with a landing-page hero: a display headline and one button
+  filling a region, above rows set at a third of its size.
+- Lead a surface with a slogan. `Observe → Promote`, `Evidence before defaults`,
+  and `Local control plane` state a position, not the state of this workspace.
+- Use the interaction blue or the Candidate violet as a container color for two
+  lanes the data does not rank.
+- Leave a docked region's remaining height as bare canvas below its last row.

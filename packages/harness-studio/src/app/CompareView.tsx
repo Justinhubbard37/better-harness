@@ -39,10 +39,11 @@ export function CompareView(): React.JSX.Element {
   if (state.phase === "missing") {
     return (
       <section className="evidence-empty" role="alert">
-        <p className="warning">No compare evidence loaded: {state.detail}</p>
+        <h1>No compare evidence is loaded</h1>
+        <p className="evidence-empty-reason">{state.detail}</p>
         <p>
-          Produce one with <code>harness-compare run &lt;experiment.json&gt; --out &lt;dir&gt;</code>{" "}
-          and start the studio with <code>--evidence &lt;dir&gt;</code>.
+          Produce a verdict with <code>harness-compare run &lt;experiment.json&gt; --out &lt;dir&gt;</code>,
+          then start the studio with <code>--evidence &lt;dir&gt;</code>.
         </p>
       </section>
     );
@@ -68,26 +69,26 @@ export function CompareView(): React.JSX.Element {
           <thead>
             <tr>
               <th>Variant</th>
-              <th>Passed</th>
-              <th>Pass rate</th>
-              <th>Mean score</th>
-              <th>Infra errors</th>
-              <th>Cost (USD)</th>
-              <th>Cost / trial</th>
-              <th>Credits</th>
+              <th className="numeric">Passed</th>
+              <th className="numeric">Pass rate</th>
+              <th className="numeric">Mean score</th>
+              <th className="numeric">Infra errors</th>
+              <th className="numeric">Cost (USD)</th>
+              <th className="numeric">Cost / trial</th>
+              <th className="numeric">Credits</th>
             </tr>
           </thead>
           <tbody>
             {summary.rows.map((row) => (
               <tr key={row.variant}>
                 <th>{row.label}</th>
-                <td>{row.passedTrials}/{row.completedTrials}</td>
-                <td>{(row.passRate * 100).toFixed(0)}%</td>
-                <td>{row.meanScore}</td>
-                <td>{row.infrastructureErrors}</td>
-                <td>{row.totalCostUsd.toFixed(4)}</td>
-                <td>{row.costPerCompletedTrialUsd.toFixed(4)}</td>
-                <td>{row.totalCredits.toFixed(3)}</td>
+                <td className="numeric">{row.passedTrials}/{row.completedTrials}</td>
+                <td className="numeric">{(row.passRate * 100).toFixed(0)}%</td>
+                <td className="numeric">{row.meanScore}</td>
+                <td className="numeric">{row.infrastructureErrors}</td>
+                <td className="numeric">{row.totalCostUsd.toFixed(4)}</td>
+                <td className="numeric">{row.costPerCompletedTrialUsd.toFixed(4)}</td>
+                <td className="numeric">{row.totalCredits.toFixed(3)}</td>
               </tr>
             ))}
           </tbody>
@@ -101,11 +102,11 @@ export function CompareView(): React.JSX.Element {
           <thead>
             <tr>
               <th>Variant</th>
-              <th>#</th>
+              <th className="numeric">#</th>
               <th>Harness</th>
               <th>Profile</th>
               <th>Outcome</th>
-              <th>Duration</th>
+              <th className="numeric">Duration</th>
               <th>Changed files</th>
             </tr>
           </thead>
@@ -113,11 +114,11 @@ export function CompareView(): React.JSX.Element {
             {summary.trials.map((trial) => (
               <tr key={`${trial.variant}-${trial.trial}`}>
                 <td>{trial.variant}</td>
-                <td>{trial.trial}</td>
+                <td className="numeric">{trial.trial}</td>
                 <td>{trial.harnessId}</td>
                 <td>{trial.runtimeProfile}</td>
-                <td>{trial.classification}</td>
-                <td>{(trial.durationMs / 1000).toFixed(1)}s</td>
+                <td className={trial.classification === "passed" ? "status-success" : trial.classification === "failed" ? "status-danger" : undefined}>{trial.classification}</td>
+                <td className="numeric">{(trial.durationMs / 1000).toFixed(1)}s</td>
                 <td>{trial.changedFiles.join(", ") || "—"}</td>
               </tr>
             ))}

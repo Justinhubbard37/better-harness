@@ -167,10 +167,11 @@
   padding: 0 var(--space-sm);
   display: flex;
   align-items: center;
-  color: var(--color-text-muted);
+  color: var(--color-text-subtle);
   font-size: var(--type-pane-size);
   font-weight: var(--weight-semibold);
   line-height: var(--type-pane-line);
+  letter-spacing: var(--type-pane-track);
 }
 
 .studio-nav-group button {
@@ -197,7 +198,8 @@
 .studio-nav-group button > span { min-width: 0; display: grid; }
 .studio-nav-group button strong,
 .studio-nav-group button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.studio-nav-group button strong { font-size: var(--type-label-size); line-height: var(--type-label-line); }
+.studio-nav-group button strong { font-size: var(--type-label-size); font-weight: var(--weight-medium); line-height: var(--type-label-line); }
+.studio-nav-group button[aria-current="page"] strong { font-weight: var(--weight-semibold); }
 .studio-nav-group button small { color: var(--color-text-muted); }
 
 .availability-dot {
@@ -214,17 +216,6 @@
 .availability-ready { color: var(--color-success); background: var(--color-success); }
 .availability-partial { color: var(--color-warning); background: var(--color-warning); }
 .availability-foundation { color: var(--color-text-subtle); background: transparent; }
-
-.studio-primary-nav > footer {
-  min-height: var(--pane-header-height);
-  padding: var(--space-sm);
-  display: grid;
-  border-top: 1px solid var(--color-border);
-  color: var(--color-text-muted);
-}
-
-.studio-primary-nav > footer strong { font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
-.studio-primary-nav > footer span { font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
 
 .studio-area {
   min-width: 0;
@@ -254,15 +245,15 @@
 }
 
 .studio-context-title { min-width: 0; flex: 1; display: flex; align-items: baseline; gap: var(--space-sm); }
-.studio-context-title small { color: var(--color-primary); font-weight: var(--weight-semibold); }
 .studio-context-title h1 {
   overflow: hidden;
   margin: 0;
   color: var(--color-text);
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--type-label-size);
-  line-height: var(--type-label-line);
+  font-size: var(--type-subhead-size);
+  font-weight: var(--weight-semibold);
+  line-height: var(--type-subhead-line);
 }
 
 .studio-context-navigation { min-width: 0; flex: 1; display: none; }
@@ -339,7 +330,6 @@
 .studio-source-menu span { color: var(--color-text-muted); font-size: var(--type-meta-size); }
 .studio-context-state { display: flex; align-items: center; gap: var(--space-sm); color: var(--color-text-muted); font-size: var(--type-meta-size); }
 .studio-context-state strong { color: var(--color-text); font-size: var(--type-meta-size); }
-.studio-context-state > span:last-child { padding-left: var(--space-sm); border-left: 1px solid var(--color-border); }
 
 .studio-surface { min-width: 0; min-height: 0; overflow: auto; background: var(--color-workspace); }
 .studio-surface-inspector,
@@ -375,28 +365,25 @@
 .studio-tabs button.active { border-bottom-color: var(--color-primary); color: var(--color-primary); background: var(--color-surface); font-weight: var(--weight-semibold); }
 .studio-secondary-tabs { min-width: 276px; }
 
-/* Overview is a flat control room: show configured workspaces first, then inputs. */
+/* Overview is a docked control room: the decision and its one action lead, the
+   input inventory fills the rest of the region so no empty canvas is stranded. */
 .control-overview {
   width: 100%;
+  height: 100%;
   min-height: 100%;
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-rows: auto auto;
-  align-content: start;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
-.control-hero {
-  min-height: 168px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 30%);
+.control-lead {
+  min-width: 0;
+  padding: var(--space-xl);
   border-bottom: 1px solid var(--color-border);
   background: var(--color-workspace);
 }
 
-.control-hero > div { padding: var(--space-xl); align-self: center; }
-.control-hero small,
-.control-panel header small,
 .empty-workspace > small,
 .evidence-results > header small,
 .decision-summary header small {
@@ -406,24 +393,13 @@
   line-height: var(--type-meta-line);
 }
 
-.control-hero h1 { max-width: 28ch; margin: var(--space-xs) 0 var(--space-sm); font-size: var(--type-display-size); line-height: var(--type-display-line); letter-spacing: -0.2px; }
-.control-hero > div > p { max-width: 56ch; margin: 0; color: var(--color-text-muted); }
-.control-hero button { margin-top: var(--space-md); display: inline-flex; align-items: center; gap: var(--space-sm); }
+.control-lead h1 { max-width: 36ch; margin: 0; font-size: var(--type-page-size); line-height: var(--type-page-line); letter-spacing: var(--type-page-track); }
+.control-lead > p { max-width: 70ch; margin: var(--space-sm) 0 0; color: var(--color-text-muted); }
+.control-lead-actions { margin-top: var(--space-lg); display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-md); }
+.control-lead-actions > button { min-height: var(--control-height); display: inline-flex; align-items: center; gap: var(--space-sm); }
+.control-lead-actions > span { color: var(--color-text-subtle); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
 
-.control-actions {
-  min-width: 0;
-  padding: var(--space-lg);
-  border-left: 1px solid var(--color-border);
-  background: var(--color-surface-subtle);
-}
-.control-actions ul { margin: var(--space-sm) 0 0; padding: 0; display: grid; list-style: none; }
-.control-actions li { min-height: var(--navigation-row-height); display: grid; grid-template-columns: var(--space-sm) minmax(0, 1fr) auto; align-items: center; gap: var(--space-sm); border-bottom: 1px solid var(--color-border); }
-.control-actions li:last-child { border-bottom: 0; }
-.control-actions button { margin: 0; padding: 0; border: 0; color: var(--color-primary); background: transparent; font-weight: var(--weight-semibold); text-align: left; }
-.control-actions button:disabled { color: var(--color-text-muted); cursor: default; }
-.control-actions em { color: var(--color-text-muted); font-style: normal; font-size: var(--type-meta-size); }
-
-.control-panel { min-width: 0; background: var(--color-panel); }
+.control-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: var(--pane-header-height) minmax(0, 1fr); background: var(--color-panel); }
 .control-panel > header,
 .evidence-table-pane > header {
   min-height: var(--pane-header-height);
@@ -441,19 +417,24 @@
 .control-panel > header > span,
 .evidence-table-pane > header > span { color: var(--color-text-muted); font-size: var(--type-meta-size); }
 
-.control-grid { min-height: 0; display: grid; grid-template-columns: minmax(280px, 38%) minmax(0, 1fr); }
-.control-panel + .control-panel { border-left: 1px solid var(--color-border); }
-.input-readiness { margin: 0; padding: 0; list-style: none; }
+/* A row names the input, what it unlocks, and its state. The state column is
+   the next action when the input is absent, so nothing repeats a bare
+   "Not supplied" down the whole list. */
+.input-readiness { min-height: 0; margin: 0; padding: 0; overflow: auto; list-style: none; }
 .input-readiness li {
-  min-height: var(--row-height);
-  padding: var(--space-xs) var(--space-md);
+  min-height: var(--navigation-row-height);
+  padding: var(--space-sm) var(--space-lg);
   display: grid;
-  grid-template-columns: var(--space-sm) minmax(0, 1fr) auto;
-  gap: var(--space-sm);
+  grid-template-columns: var(--space-sm) minmax(140px, max-content) minmax(0, 1fr) auto;
+  gap: var(--space-md);
   align-items: center;
   border-bottom: 1px solid var(--color-border);
 }
-.input-readiness em { color: var(--color-text-muted); font-style: normal; }
+.input-readiness strong { font-size: var(--type-label-size); font-weight: var(--weight-medium); line-height: var(--type-label-line); }
+.input-readiness em { min-width: 0; overflow: hidden; color: var(--color-text-muted); font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.input-readiness .input-state { color: var(--color-text-subtle); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
+.input-readiness li[data-connected="true"] .input-state { color: var(--color-success); }
+.input-readiness code { color: var(--color-primary); font-size: var(--type-meta-size); }
 
 .inspector-workspace { width: 100%; height: 100%; display: grid; grid-template-rows: var(--pane-header-height) minmax(0, 1fr); overflow: hidden; }
 .inspector-workspace > header { min-width: 0; padding: 0 var(--space-sm); display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); border-bottom: 1px solid var(--color-border); background: var(--color-surface-subtle); }
@@ -482,8 +463,22 @@
 .evidence-results > header { min-height: var(--pane-header-height); padding: 0 var(--space-md); display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); border-bottom: 1px solid var(--color-border); background: var(--color-surface-subtle); }
 .evidence-results > header > div { display: flex; align-items: baseline; gap: var(--space-sm); }
 .evidence-results > header h1 { margin: 0; font-size: var(--type-label-size); line-height: var(--type-label-line); }
+/* A missing verdict names what is absent, why the pane is blank, and the one
+   command that fills it, so it never reads as a completed result. */
 .evidence-loading,
-.evidence-empty { padding: var(--space-xl); }
+.evidence-empty {
+  width: 100%;
+  padding: var(--space-xxl) var(--space-xl);
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: var(--space-sm);
+}
+.evidence-loading { color: var(--color-text-muted); }
+.evidence-empty h1 { margin: 0; font-size: var(--type-section-size); line-height: var(--type-section-line); letter-spacing: var(--type-section-track); }
+.evidence-empty p { max-width: 72ch; margin: 0; color: var(--color-text-muted); }
+.evidence-empty .evidence-empty-reason { border-left: 2px solid var(--color-warning); padding-left: var(--space-md); color: var(--color-warning); }
+.evidence-empty code { border: 1px solid var(--color-border); border-radius: var(--radius-xs); padding: 0 var(--space-xs); background: var(--color-surface); }
 .evidence-report { min-width: 0; display: grid; }
 .decision-summary { min-width: 0; border-bottom: 1px solid var(--color-border); }
 .decision-summary > header { min-height: 72px; padding: var(--space-md) var(--space-lg); display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); }
@@ -532,26 +527,26 @@
   .studio-workspace-gate-panel > footer { padding-inline: var(--space-lg); }
 
   .studio-context-bar { padding-inline: var(--space-xs); gap: var(--space-sm); }
-  .studio-context-title small,
-  .studio-context-state > span:last-child { display: none; }
-  .studio-context-state strong { max-width: 104px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The view name outranks the surface status here: at this width the status
+     word would otherwise squeeze the title down to a single letter, and the
+     same state is already labelled on the navigation row it came from. */
+  .studio-context-state strong { display: none; }
   .studio-theme-toggle { width: var(--toolbar-target); height: var(--toolbar-target); min-height: var(--toolbar-target); justify-content: center; padding: 0; }
   .studio-theme-toggle span { display: none; }
   .studio-context-bar.has-surface-navigation .studio-context-title { display: none; }
   .studio-context-bar.has-surface-navigation .studio-context-navigation { display: block; }
   .studio-context-bar.has-surface-navigation .studio-context-navigation .studio-secondary-tabs { width: 100%; min-width: 0; }
-  .studio-context-bar.has-surface-navigation .studio-context-state strong { display: none; }
   .studio-secondary-tabs { min-width: 0; }
   .studio-secondary-tabs button { padding-inline: var(--space-xs); }
 
-  .control-hero { grid-template-columns: 1fr; }
-  .control-hero > div,
-  .control-actions { padding: var(--space-lg); }
-  .control-hero h1 { font-size: var(--type-page-size); line-height: var(--type-page-line); letter-spacing: -0.2px; }
-  .control-actions { border-top: 1px solid var(--color-border); border-left: 0; }
+  .control-lead { padding: var(--space-lg); }
+  .control-lead h1 { font-size: var(--type-section-size); line-height: var(--type-section-line); letter-spacing: var(--type-section-track); }
+  .control-lead-actions > button { width: 100%; justify-content: center; }
   .control-panel > header { min-height: 44px; }
-  .control-grid { grid-template-columns: 1fr; }
-  .control-panel + .control-panel { border-top: 1px solid var(--color-border); border-left: 0; }
+  /* The purpose column is the first thing to go: the label and its state stay
+     legible before an explanation has to wrap into narrow words. */
+  .input-readiness li { padding-inline: var(--space-md); grid-template-columns: var(--space-sm) minmax(0, 1fr) auto; }
+  .input-readiness em { display: none; }
   .decision-summary > header { align-items: flex-start; flex-direction: column; }
   .decision-summary dl { grid-template-columns: 1fr 1fr; }
   .decision-summary dl > div:nth-child(2) { border-right: 0; }
