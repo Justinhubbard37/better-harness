@@ -1,7 +1,11 @@
 import { homedir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import { readFile, readdir, stat } from "node:fs/promises";
-import type { ArtifactKind, ArtifactPresentation, ArtifactRenderer } from "../artifact-catalog-contract.js";
+import type {
+  ArtifactCapability,
+  ArtifactKind,
+  ArtifactRendererReference,
+} from "../artifact-model.js";
 import type { ArtifactEntry } from "./artifact-catalog.js";
 
 export interface CanvasViewer {
@@ -26,7 +30,15 @@ interface ViewerManifest {
   overridesBuiltIn?: unknown;
 }
 
-const DIRECT_RENDERERS = new Set<ArtifactRenderer>(["code", "diff", "image", "json", "svg", "text"]);
+export interface ArtifactPluginResolution {
+  adapter: {
+    id: string;
+    version: string;
+    schemaId: string;
+  };
+  renderer: ArtifactRendererReference;
+  capabilities: ArtifactCapability[];
+}
 
 /** Qoder stores provisioned format viewers below the canvas subtree. */
 export function defaultCanvasViewerRoot(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
@@ -83,23 +95,91 @@ export function matchCanvasViewer(entry: ArtifactEntry, viewers: readonly Canvas
   return viewers.find((viewer) => viewer.extensions.includes(extension) || viewer.pathGlobs.some((glob) => matchesPathGlob(fileName, glob)));
 }
 
-export function presentArtifact(entry: ArtifactEntry, viewers: readonly CanvasViewer[]): ArtifactPresentation {
+export function presentArtifact(entry: ArtifactEntry, viewers: readonly CanvasViewer[]): ArtifactPluginResolution {
   const viewer = matchCanvasViewer(entry, viewers);
   if (viewer?.overrideBuiltIn === true) return canvasPresentation(viewer);
-  if (isDirectRenderer(entry.kind)) return { renderer: entry.kind };
+  const native = nativePresentation(entry.kind);
+  if (native !== undefined) return native;
   if (viewer !== undefined) return canvasPresentation(viewer);
-  return { renderer: "unavailable", reason: "No direct renderer or provisioned Canvas viewer matches this file." };
+  return {
+    adapter: { id: "studio.raw", version: "1", schemaId: "artifact/raw-v1" },
+    renderer: {
+      id: "studio.unavailable",
+      label: "Unavailable",
+      provider: "studio",
+      type: "unavailable",
+      status: "unavailable",
+      reason: "No native renderer or provisioned Qoder Canvas viewer matches this file.",
+    },
+    capabilities: [],
+  };
 }
 
-function isDirectRenderer(kind: ArtifactKind): kind is Exclude<ArtifactKind, "unknown"> {
-  return kind !== "unknown" && DIRECT_RENDERERS.has(kind);
-}
-
-function canvasPresentation(viewer: CanvasViewer): ArtifactPresentation {
-  if (viewer.scriptPath === undefined || viewer.dataKey === undefined) {
-    return { renderer: "unavailable", viewerId: viewer.id, viewerLabel: viewer.label, reason: "The matching Canvas viewer has no target-file data adapter." };
+function nativePresentation(kind: ArtifactKind): ArtifactPluginResolution | undefined {
+  if (kind === "pptx") {
+    return {
+      adapter: { id: "studio.pptx-ooxml", version: "1", schemaId: "pptx/v1" },
+      renderer: {
+        id: "studio.pptx-dom",
+        label: "Studio PPTX",
+        provider: "studio",
+        type: "native",
+        status: "ready",
+      },
+      capabilities: ["navigate", "outline", "search", "select", "thumbnail", "zoom"],
+    };
   }
-  return { renderer: "canvas", viewerId: viewer.id, viewerLabel: viewer.label };
+  if (kind === "unknown") return undefined;
+  return {
+    adapter: { id: "studio.raw", version: "1", schemaId: "artifact/raw-v1" },
+    renderer: {
+      id: `studio.${kind}`,
+      label: nativeRendererLabel(kind),
+      provider: "studio",
+      type: "native",
+      status: "ready",
+    },
+    capabilities: kind === "image" || kind === "svg" ? ["select", "zoom"] : ["search", "select"],
+  };
+}
+
+function nativeRendererLabel(kind: Exclude<ArtifactKind, "unknown" | "pptx">): string {
+  return ({
+    code: "Studio code",
+    diff: "Studio diff",
+    image: "Studio image",
+    json: "Studio JSON",
+    svg: "Studio SVG",
+    text: "Studio text",
+  })[kind];
+}
+
+function canvasPresentation(viewer: CanvasViewer): ArtifactPluginResolution {
+  if (viewer.scriptPath === undefined || viewer.dataKey === undefined) {
+    return {
+      adapter: { id: `qoder-canvas.${viewer.id}.sidecar`, version: "1", schemaId: `qoder-canvas/${viewer.id}/v1` },
+      renderer: {
+        id: `qoder-canvas.${viewer.id}`,
+        label: viewer.label,
+        provider: "qoder-canvas",
+        type: "unavailable",
+        status: "unavailable",
+        reason: "The matching Qoder Canvas viewer has no target-file data adapter.",
+      },
+      capabilities: [],
+    };
+  }
+  return {
+    adapter: { id: `qoder-canvas.${viewer.id}.sidecar`, version: "1", schemaId: `qoder-canvas/${viewer.id}/v1` },
+    renderer: {
+      id: `qoder-canvas.${viewer.id}`,
+      label: viewer.label,
+      provider: "qoder-canvas",
+      type: "qoder-canvas",
+      status: "ready",
+    },
+    capabilities: ["navigate", "select", "zoom"],
+  };
 }
 
 function matchesPathGlob(fileName: string, glob: string): boolean {

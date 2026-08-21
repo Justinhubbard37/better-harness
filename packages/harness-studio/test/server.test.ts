@@ -1066,27 +1066,27 @@ describe("harness-studio CLI", () => {
     const catalog: unknown = await (await fetch(`${started.url}/api/artifacts`)).json();
     expect(isArtifactCatalogResponse(catalog)).toBe(true);
     if (!isArtifactCatalogResponse(catalog)) throw new Error("expected typed artifact catalog");
-    expect(catalog.kind).toBe("HarnessStudioArtifactCatalogV1");
+    expect(catalog.kind).toBe("HarnessStudioArtifactCatalogV2");
     expect(catalog.snapshot).toEqual(expect.objectContaining({
       catalogId: "harness-studio-artifacts",
       revision: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
     }));
     const card = catalog.artifacts.find((entry) => entry.label === "card.tsx");
-    expect(card).toEqual(expect.objectContaining({ kind: "code", renderer: "code" }));
-    expect(card?.artifact).toEqual(expect.objectContaining({
+    expect(card).toEqual(expect.objectContaining({ kind: "code", renderer: expect.objectContaining({ id: "studio.code", type: "native" }) }));
+    expect(card?.revision.content).toEqual(expect.objectContaining({
       digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
       uri: "/api/artifacts/card/content",
       mediaType: "text/plain; charset=utf-8",
     }));
     const source = await fetch(`${started.url}/api/artifacts/card/content`);
     expect(source.status).toBe(200);
-    expect(source.headers.get("content-type")).toBe(card?.artifact.mediaType);
+    expect(source.headers.get("content-type")).toBe(card?.revision.content.mediaType);
     expect(await source.text()).toContain("export default");
     expect((await fetch(`${started.url}/api/artifacts/card/module.js`)).status).toBe(404);
 
     for (const descriptor of catalog.artifacts) {
-      const content = await fetch(`${started.url}${descriptor.artifact.uri}`);
-      expect(content.headers.get("content-type"), descriptor.label).toBe(descriptor.artifact.mediaType);
+      const content = await fetch(`${started.url}${descriptor.revision.content.uri}`);
+      expect(content.headers.get("content-type"), descriptor.label).toBe(descriptor.revision.content.mediaType);
       if (descriptor.label === "active.html" || descriptor.label === "diagram.svg") {
         expect(content.headers.get("content-disposition"), descriptor.label).toMatch(/^attachment;/u);
         expect(content.headers.get("content-security-policy"), descriptor.label).toBe("default-src 'none'; sandbox");

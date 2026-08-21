@@ -32,6 +32,11 @@
   --color-surface-active: #272e3a;
   --color-surface-selected: #14294a;
 
+  /* Source-document colors are evidence, not Studio theme surfaces. They stay
+     fixed so a white Office slide does not invert with the workbench theme. */
+  --color-document-paper: #ffffff;
+  --color-document-ink: #000000;
+
   /* Hairlines are alpha so one divider token works on every ramp step. */
   --color-border: rgba(233, 240, 255, 0.09);
   --color-border-strong: rgba(233, 240, 255, 0.18);

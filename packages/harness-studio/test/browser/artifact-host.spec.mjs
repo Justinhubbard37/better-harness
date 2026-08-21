@@ -1,42 +1,25 @@
-import { copyFile, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { HarnessRunEmitter } from "@qoder-ai/harness/exec";
 import { buildHarnessInspectorReport, emptyFeatureTree } from "../../../../scripts/harness-inspector/index.mjs";
-import { resolveCanvasRuntime } from "../../dist/server/artifact-viewer-runtime.js";
-import { discoverCanvasViewers, matchCanvasViewer } from "../../dist/server/artifact-viewers.js";
 import { startHarnessStudioServer } from "../../dist/server/server.js";
 import { sessionFromRetainedRun } from "../../dist/app/session-debugger-model.js";
+import { createPptxFixture } from "../pptx-fixture.ts";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const canvasSdkRoot = process.env.CANVAS_SDK_ROOT ?? resolve(packageRoot, "../../../canvas-sdk");
 const canvasViewerRoot = join(homedir(), ".qoder", "canvas", "canvases");
-const pptxFixture = join(canvasSdkRoot, "packages/viewer-pptx/test/fixtures/officecli-parity/pptx-parity.pptx");
-const PPTX_REQUIREMENT = "needs a provisioned Qoder Canvas pptx viewer, the canvas-sdk runtime, and a real deck fixture";
-
 let studio;
 let emptyStudio;
-let pptxReady = false;
 let selectedWorkspace;
-
-// The PPTX scenarios exercise a real provisioned Canvas viewer, the canvas-sdk
-// checkout hosting it, and a real deck. A clean machine has none of the three,
-// so probe them once and let those scenarios report as skipped instead of
-// failing every artifact test on a missing external file.
-async function detectProvisionedPptx() {
-  const fixtureAvailable = await stat(pptxFixture).then((value) => value.isFile()).catch(() => false);
-  if (!fixtureAvailable) return false;
-  if (resolveCanvasRuntime({ sdkRoot: canvasSdkRoot }) === undefined) return false;
-  const viewers = await discoverCanvasViewers(canvasViewerRoot);
-  return matchCanvasViewer({ label: "deck.pptx", kind: "binary" }, viewers) !== undefined;
-}
+let artifactDirectory;
 
 test.beforeAll(async () => {
-  pptxReady = await detectProvisionedPptx();
-  const artifactDirectory = await mkdtemp(join(tmpdir(), "studio-artifact-browser-"));
-  if (pptxReady) await copyFile(pptxFixture, join(artifactDirectory, "deck.pptx"));
+  artifactDirectory = await mkdtemp(join(tmpdir(), "studio-artifact-browser-"));
+  await writeFile(join(artifactDirectory, "deck.pptx"), createPptxFixture("01"));
   await writeFile(join(artifactDirectory, "component.tsx"), 'export default () => <p data-danger="not-executed">artifact source</p>;\n', "utf8");
   await writeFile(join(artifactDirectory, "change.patch"), [
     "diff --git a/example.ts b/example.ts",
@@ -142,6 +125,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await studio?.close();
   await emptyStudio?.close();
+  if (artifactDirectory) await rm(artifactDirectory, { recursive: true, force: true });
   if (selectedWorkspace) await rm(selectedWorkspace, { recursive: true, force: true });
 });
 
@@ -156,6 +140,8 @@ function watchFailures(page) {
 
 async function openArtifacts(page) {
   await page.goto(`${studio.url}/#/artifacts`);
+  const explorerTab = page.getByRole("tab", { name: "Explorer" });
+  if (await explorerTab.isVisible() && await explorerTab.getAttribute("aria-selected") !== "true") await explorerTab.click();
   // The first viewer discovery can be cold on machines with a provisioned
   // Canvas catalog, so wait for the catalog boundary instead of assuming a
   // five-second filesystem scan.
@@ -177,8 +163,10 @@ test("loads artifact bytes from the catalog content reference", async ({ page })
     const response = await route.fetch();
     const catalog = await response.json();
     const component = catalog.artifacts.find((entry) => entry.label === "component.tsx");
-    component.artifact.uri = "/api/artifacts/change/content";
-    component.artifact.digest = `sha256:${"f".repeat(64)}`;
+    component.revision.content.uri = "/api/artifacts/change/content";
+    component.revision.content.digest = `sha256:${"f".repeat(64)}`;
+    component.revision.digest = component.revision.content.digest;
+    component.revision.id = component.revision.content.digest;
     await route.fulfill({ response, json: catalog });
   });
   await openArtifacts(page);
@@ -188,6 +176,7 @@ test("loads artifact bytes from the catalog content reference", async ({ page })
 });
 
 test("renders code diff and sandboxes SVG without script capability", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   await openArtifacts(page);
   await page.getByRole("button", { name: /change\.patch/ }).click();
   await expect(page.locator('[data-code-diff="pierre"]')).toBeVisible();
@@ -203,19 +192,18 @@ test("renders code diff and sandboxes SVG without script capability", async ({ p
   await expect(page.locator("body")).not.toHaveAttribute("data-svg-executed", "yes");
 });
 
-test("loads deck.pptx through the provisioned Qoder Canvas viewer", async ({ page }) => {
-  test.skip(!pptxReady, PPTX_REQUIREMENT);
+test("renders a PPTX snapshot through Studio without a provisioned Qoder Canvas runtime", async ({ page }) => {
   const failures = watchFailures(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await openArtifacts(page);
   await page.getByRole("button", { name: /deck\.pptx/ }).click();
-  const iframe = page.locator('iframe[title="Artifact preview: deck.pptx"]');
-  await expect(iframe).toHaveAttribute("sandbox", "allow-scripts");
-  const viewer = page.frameLocator('iframe[title="Artifact preview: deck.pptx"]');
-  await page.waitForTimeout(2_000);
+  await expect(page.locator(".pptx-artifact-viewer")).toBeVisible();
+  await expect(page.locator(".pptx-slide-shape")).toContainText("01");
+  await expect(page.locator(".pptx-slide-image")).toHaveCount(1);
+  await expect(page.locator(".pptx-slide-image")).toHaveJSProperty("complete", true);
+  await expect(page.locator(".artifact-editor-header")).toContainText("studio.pptx-ooxml");
+  await expect(page.locator(".artifact-preview-pane iframe")).toHaveCount(0);
   expect(failures).toEqual([]);
-  await expect(viewer.locator("#root")).not.toBeEmpty({ timeout: 30_000 });
-  await expect(viewer.locator("body")).not.toContainText(/No target|error diagnostic|could not/i);
 });
 
 test("keeps the artifact workbench usable at wide, compact, and narrow widths", async ({ page }) => {
@@ -227,8 +215,10 @@ test("keeps the artifact workbench usable at wide, compact, and narrow widths", 
     await page.setViewportSize({ width: layout.width, height: layout.height });
     await openArtifacts(page);
     if (layout.width <= 1080) await expect(page.locator(".studio-primary-nav")).not.toBeInViewport();
-    await page.getByRole("button", { name: /component\.tsx/ }).click();
-    await expect(page.locator(".artifact-code-preview")).toBeVisible();
+    await page.getByRole("button", { name: /deck\.pptx/ }).click();
+    if (layout.width <= 640) await expect(page.getByRole("tab", { name: "Preview" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator(".pptx-artifact-viewer")).toBeVisible();
+    await expect(page.locator(".pptx-slide-shape")).toContainText("01");
     const overflows = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
     expect(overflows, `${layout.name} overflows horizontally`).toBe(false);
     await page.screenshot({ path: `test-results/artifacts-${layout.name}.png`, fullPage: true });

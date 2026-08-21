@@ -58,19 +58,21 @@ import {
   resolveArtifactMediaType,
   type ArtifactEntry,
 } from "./artifact-catalog.js";
-import { compileCanvasViewerModule, formatCanvasViewerCompileError } from "./canvas-viewer-compile.js";
+import { compileTrustedRendererModule, formatTrustedRendererCompileError } from "./trusted-renderer-compiler.js";
 import {
   discoverCanvasViewers,
   matchCanvasViewer,
   presentArtifact,
-  type CanvasViewer,
-} from "./artifact-viewers.js";
+  type QoderCanvasViewerPlugin,
+} from "./artifact-plugin-registry.js";
 import {
-  prepareCanvasViewer,
-  resolveCanvasRuntime,
-  serveRuntimeFile,
-  type CanvasRuntime,
-} from "./artifact-viewer-runtime.js";
+  prepareQoderCanvasViewer,
+  resolveQoderCanvasRuntime,
+  serveQoderCanvasRuntimeFile,
+  type QoderCanvasRuntime,
+} from "./qoder-canvas-viewer-bridge.js";
+import { adaptArtifactData, readArtifactDataResource } from "./artifact-data-adapter.js";
+import type { ArtifactDescriptor } from "../artifact-model.js";
 import {
   DEFAULT_LOCAL_HARNESS_ID,
   DEFAULT_LOCAL_HARNESS_SOURCE,
@@ -506,6 +508,19 @@ async function route(
   if (request.method === "GET" && artifactContent !== null) {
     const id = decodeRouteComponent(response, artifactContent[1]!);
     if (id !== undefined) await serveArtifactContent(response, state.artifactDirectory, id);
+    return;
+  }
+  const artifactSnapshot = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/snapshot$/);
+  if (request.method === "GET" && artifactSnapshot !== null) {
+    const id = decodeRouteComponent(response, artifactSnapshot[1]!);
+    if (id !== undefined) await serveArtifactSnapshot(response, artifactOptions(options, state), id);
+    return;
+  }
+  const artifactSnapshotResource = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/resources\/([^/]+)$/);
+  if (request.method === "GET" && artifactSnapshotResource !== null) {
+    const id = decodeRouteComponent(response, artifactSnapshotResource[1]!);
+    const resourceId = decodeRouteComponent(response, artifactSnapshotResource[2]!);
+    if (id !== undefined && resourceId !== undefined) await serveArtifactSnapshotResource(response, artifactOptions(options, state), id, resourceId);
     return;
   }
   const artifactViewer = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/viewer\/(?:index\.html)?$/);
@@ -1172,6 +1187,7 @@ async function cleanupArtifactImports(state: HarnessStudioState): Promise<void> 
 async function resolveArtifactEntry(
   directory: string | undefined,
   id: string,
+  includeDigests = false,
 ): Promise<{ entry: ArtifactEntry } | { error: string; status: number }> {
   if (directory === undefined) {
     return { error: "No artifact set loaded; choose files or a folder in Artifacts.", status: 404 };
@@ -1183,7 +1199,7 @@ async function resolveArtifactEntry(
   }
   let indexed: ArtifactEntry[];
   try {
-    indexed = await indexArtifactDirectory(directory);
+    indexed = await indexArtifactDirectory(directory, { includeDigests });
   } catch {
     // A directory that vanished or turned unreadable after startup must answer
     // with a status, not reject out of the route handler and take the server
@@ -1197,13 +1213,26 @@ async function resolveArtifactEntry(
   return { entry };
 }
 
+async function resolveArtifactDescriptor(
+  options: HarnessStudioServerOptions,
+  id: string,
+): Promise<{ entry: ArtifactEntry; descriptor: ArtifactDescriptor; viewer?: QoderCanvasViewerPlugin } | { error: string; status: number }> {
+  const resolved = await resolveArtifactEntry(options.artifactDirectory, id, true);
+  if ("error" in resolved) return resolved;
+  const viewers = await discoverCanvasViewers(options.canvasViewerRoot);
+  const descriptor = describeArtifactCatalog([resolved.entry], (entry) => presentArtifact(entry, viewers)).artifacts[0];
+  if (descriptor === undefined) return { error: `No artifact '${id}'.`, status: 404 };
+  const viewer = matchCanvasViewer(resolved.entry, viewers);
+  return { entry: resolved.entry, descriptor, ...(viewer === undefined ? {} : { viewer }) };
+}
+
 async function serveArtifactCatalog(response: ServerResponse, options: HarnessStudioServerOptions): Promise<void> {
   if (options.artifactDirectory === undefined) {
     respondJson(response, 404, { error: "No artifact set loaded; choose files or a folder in Artifacts." });
     return;
   }
   let entries: ArtifactEntry[];
-  let viewers: CanvasViewer[];
+  let viewers: QoderCanvasViewerPlugin[];
   try {
     [entries, viewers] = await Promise.all([
       indexArtifactDirectory(options.artifactDirectory, { includeDigests: true }),
@@ -1271,18 +1300,70 @@ async function serveArtifactContent(
   }
 }
 
+async function serveArtifactSnapshot(
+  response: ServerResponse,
+  options: HarnessStudioServerOptions,
+  id: string,
+): Promise<void> {
+  const resolved = await resolveArtifactDescriptor(options, id);
+  if ("error" in resolved) {
+    respondArtifactJson(response, resolved.status, { error: resolved.error });
+    return;
+  }
+  try {
+    respondArtifactJson(response, 200, await adaptArtifactData(resolved.entry, resolved.descriptor, { canvasViewer: resolved.viewer }));
+  } catch (error) {
+    respondArtifactJson(response, 422, { error: safeArtifactError(error) });
+  }
+}
+
+async function serveArtifactSnapshotResource(
+  response: ServerResponse,
+  options: HarnessStudioServerOptions,
+  id: string,
+  resourceId: string,
+): Promise<void> {
+  const resolved = await resolveArtifactDescriptor(options, id);
+  if ("error" in resolved) {
+    respondArtifactJson(response, resolved.status, { error: resolved.error });
+    return;
+  }
+  try {
+    const resource = await readArtifactDataResource(resolved.entry, resolved.descriptor, resourceId);
+    if (resource === undefined) {
+      respondArtifactJson(response, 404, { error: `No artifact resource '${resourceId}'.` });
+      return;
+    }
+    response.writeHead(200, {
+      "Content-Type": resource.mediaType,
+      "Content-Length": resource.bytes.byteLength,
+      "Cache-Control": "private, max-age=31536000, immutable",
+      "X-Content-Type-Options": "nosniff",
+    });
+    response.end(resource.bytes);
+  } catch (error) {
+    respondArtifactJson(response, 422, { error: safeArtifactError(error) });
+  }
+}
+
+function safeArtifactError(error: unknown): string {
+  const message = error instanceof Error && error.message !== "" ? error.message : "Artifact adaptation failed.";
+  return message.replaceAll(process.cwd(), "<workspace>").slice(0, 1_000);
+}
+
 async function resolveArtifactViewer(
   options: HarnessStudioServerOptions,
   id: string,
-): Promise<{ entry: ArtifactEntry; viewer: CanvasViewer; runtime: CanvasRuntime } | { error: string; status: number }> {
+): Promise<{ entry: ArtifactEntry; viewer: QoderCanvasViewerPlugin; runtime: QoderCanvasRuntime } | { error: string; status: number }> {
   const resolved = await resolveArtifactEntry(options.artifactDirectory, id);
   if ("error" in resolved) return resolved;
   const viewers = await discoverCanvasViewers(options.canvasViewerRoot);
   const viewer = matchCanvasViewer(resolved.entry, viewers);
-  if (viewer === undefined || presentArtifact(resolved.entry, viewers).renderer !== "canvas") {
+  const selected = presentArtifact(resolved.entry, viewers);
+  if (viewer === undefined || selected.renderer.type !== "qoder-canvas" || selected.renderer.status !== "ready") {
     return { error: `Artifact '${id}' has no Canvas viewer.`, status: 415 };
   }
-  const runtime = resolveCanvasRuntime({ sdkRoot: options.canvasSdkRoot, sdkMedia: options.canvasSdkMedia, cwd: options.cwd });
+  const runtime = resolveQoderCanvasRuntime({ sdkRoot: options.canvasSdkRoot, sdkMedia: options.canvasSdkMedia, cwd: options.cwd });
   if (runtime === undefined) return { error: "Canvas SDK runtime is unavailable.", status: 503 };
   return { entry: resolved.entry, viewer, runtime };
 }
@@ -1298,7 +1379,7 @@ async function serveArtifactViewer(
     return;
   }
   try {
-    const prepared = await prepareCanvasViewer(
+    const prepared = await prepareQoderCanvasViewer(
       resolved.entry,
       resolved.viewer,
       resolved.runtime,
@@ -1312,7 +1393,7 @@ async function serveArtifactViewer(
     });
     response.end(prepared.html);
   } catch (error) {
-    respondArtifactJson(response, 422, { error: formatCanvasViewerCompileError(error) });
+    respondArtifactJson(response, 422, { error: formatTrustedRendererCompileError(error) });
   }
 }
 
@@ -1328,7 +1409,7 @@ async function serveArtifactViewerModule(
     return;
   }
   try {
-    const compiled = await compileCanvasViewerModule(resolved.viewer.modulePath);
+    const compiled = await compileTrustedRendererModule(resolved.viewer.modulePath);
     if (map) {
       respondArtifactJson(response, 200, JSON.parse(compiled.map));
       return;
@@ -1341,18 +1422,18 @@ async function serveArtifactViewerModule(
     });
     response.end(`${compiled.code}//# sourceMappingURL=canvas-module.js.map\n`);
   } catch (error) {
-    respondArtifactJson(response, 422, { error: formatCanvasViewerCompileError(error) });
+    respondArtifactJson(response, 422, { error: formatTrustedRendererCompileError(error) });
   }
 }
 
 async function serveCanvasSdk(response: ServerResponse, options: HarnessStudioServerOptions, map: boolean): Promise<void> {
-  const runtime = resolveCanvasRuntime({ sdkRoot: options.canvasSdkRoot, sdkMedia: options.canvasSdkMedia, cwd: options.cwd });
+  const runtime = resolveQoderCanvasRuntime({ sdkRoot: options.canvasSdkRoot, sdkMedia: options.canvasSdkMedia, cwd: options.cwd });
   const path = map ? runtime?.sdkMapPath : runtime?.sdkPath;
   if (path === undefined) {
     respondArtifactJson(response, 404, { error: "Canvas SDK runtime asset is unavailable." });
     return;
   }
-  await serveRuntimeFile(response, path, map ? "application/json" : STATIC_CONTENT_TYPES[".js"]!);
+  await serveQoderCanvasRuntimeFile(response, path, map ? "application/json" : STATIC_CONTENT_TYPES[".js"]!);
 }
 
 async function serveArtifactViewerResource(
@@ -1375,7 +1456,7 @@ async function serveArtifactViewerResource(
   try {
     const physical = await realpath(candidate);
     if (physical !== root && !physical.startsWith(root + sep)) throw new Error("escape");
-    await serveRuntimeFile(response, physical, STATIC_CONTENT_TYPES[extname(physical).toLowerCase()] ?? "application/octet-stream");
+    await serveQoderCanvasRuntimeFile(response, physical, STATIC_CONTENT_TYPES[extname(physical).toLowerCase()] ?? "application/octet-stream");
   } catch {
     respondArtifactJson(response, 404, { error: "Canvas viewer resource is unavailable." });
   }

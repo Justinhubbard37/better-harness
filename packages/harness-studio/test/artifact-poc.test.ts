@@ -13,13 +13,12 @@ import {
   resolveArtifactMediaType,
   resolveArtifactKind,
 } from "../src/server/artifact-catalog.js";
-import type { ArtifactPresentation } from "../src/artifact-catalog-contract.js";
 import { isArtifactCatalogResponse } from "../src/artifact-catalog-contract.js";
+import type { ArtifactEntry } from "../src/server/artifact-catalog.js";
+import { presentArtifact } from "../src/server/artifact-viewers.js";
 
 const fixtures = fileURLToPath(new URL("./fixtures/artifacts/", import.meta.url));
-const presentationFor = (entry: { kind: string }): ArtifactPresentation => ({
-  renderer: entry.kind === "unknown" ? "unavailable" : entry.kind as ArtifactPresentation["renderer"],
-});
+const presentationFor = (entry: ArtifactEntry) => presentArtifact(entry, []);
 
 describe("resolveArtifactKind", () => {
   it("maps known extensions to their renderer tier", () => {
@@ -35,8 +34,8 @@ describe("resolveArtifactKind", () => {
     expect(resolveArtifactKind("Report.TSX")).toBe("code");
   });
 
-  it("returns unknown rather than guessing a renderer", () => {
-    expect(resolveArtifactKind("deck.pptx")).toBe("unknown");
+  it("classifies the native PPTX adapter without guessing unknown binaries", () => {
+    expect(resolveArtifactKind("deck.pptx")).toBe("pptx");
     expect(resolveArtifactKind("archive.bin")).toBe("unknown");
     expect(resolveArtifactKind("noextension")).toBe("unknown");
   });
@@ -109,17 +108,18 @@ describe("indexArtifactDirectory", () => {
       await indexArtifactDirectory(fixtures, { includeDigests: true }),
       presentationFor,
     );
-    expect(catalog.kind).toBe("HarnessStudioArtifactCatalogV1");
+    expect(catalog.kind).toBe("HarnessStudioArtifactCatalogV2");
     expect(isArtifactCatalogResponse(catalog)).toBe(true);
     expect(catalog.artifacts.length).toBeGreaterThan(0);
     for (const descriptor of catalog.artifacts) {
       expect(descriptor).not.toHaveProperty("path");
-      expect(descriptor.artifact.uri).toBe(`/api/artifacts/${descriptor.id}/content`);
-      expect(descriptor.artifact).not.toHaveProperty("role");
-      expect(descriptor.artifact).not.toHaveProperty("data");
+      expect(descriptor.revision.content.uri).toBe(`/api/artifacts/${descriptor.id}/content`);
+      expect(descriptor.adapter.snapshotUri).toBe(`/api/artifacts/${descriptor.id}/snapshot`);
+      expect(descriptor.revision.content).not.toHaveProperty("role");
+      expect(descriptor.revision.content).not.toHaveProperty("data");
     }
     const malformed = structuredClone(catalog);
-    malformed.artifacts[0]!.artifact.uri = "https://untrusted.invalid/artifact";
+    malformed.artifacts[0]!.revision.content.uri = "https://untrusted.invalid/artifact";
     expect(isArtifactCatalogResponse(malformed)).toBe(false);
   });
 
@@ -129,15 +129,13 @@ describe("indexArtifactDirectory", () => {
     await writeFile(path, "first", "utf8");
     await writeFile(join(directory, "stable.txt"), "stable", "utf8");
     const firstEntries = await indexArtifactDirectory(directory, { includeDigests: true });
-    const first = describeArtifactCatalog(firstEntries, (entry) => ({
-      renderer: entry.id === "notes" ? "text" : "code",
-    }));
+    const first = describeArtifactCatalog(firstEntries, presentationFor);
     expect(first.snapshot.catalogId).toBe("harness-studio-artifacts");
     expect(first.snapshot.revision).toMatch(/^sha256:[0-9a-f]{64}$/u);
-    expect(first.artifacts[0]?.artifact.digest).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expect(first.artifacts[0]?.revision.digest).toMatch(/^sha256:[0-9a-f]{64}$/u);
     expect(first.artifacts[0]).not.toHaveProperty("path");
-    expect(first.artifacts.find((entry) => entry.id === "notes")?.renderer).toBe("text");
-    expect(first.artifacts.find((entry) => entry.id === "stable")?.renderer).toBe("code");
+    expect(first.artifacts.find((entry) => entry.id === "notes")?.renderer.id).toBe("studio.text");
+    expect(first.artifacts.find((entry) => entry.id === "stable")?.renderer.id).toBe("studio.text");
     expect(describeArtifactCatalog([...firstEntries].reverse(), presentationFor).snapshot).toEqual(first.snapshot);
 
     await writeFile(path, "second", "utf8");
@@ -146,7 +144,7 @@ describe("indexArtifactDirectory", () => {
       presentationFor,
     );
     expect(second.snapshot.revision).not.toBe(first.snapshot.revision);
-    expect(second.artifacts[0]?.artifact.digest).not.toBe(first.artifacts[0]?.artifact.digest);
+    expect(second.artifacts[0]?.revision.digest).not.toBe(first.artifacts[0]?.revision.digest);
   });
 
   it("refuses to mint a revision snapshot without exact-byte digests", async () => {

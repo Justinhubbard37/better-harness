@@ -13,17 +13,18 @@ describe("Canvas artifact viewers", () => {
     expect(defaultCanvasViewerRoot({}, "/home/test")).toBe(join("/home/test", ".qoder", "canvas", "canvases"));
   });
 
-  it("discovers a viewer and keeps direct rendering ahead of non-overrides", async () => {
+  it("discovers a viewer and keeps native rendering ahead of non-overrides", async () => {
     const root = await fakeViewerRoot(false);
     const viewers = await discoverCanvasViewers(root);
     expect(viewers).toHaveLength(1);
-    expect(presentArtifact(entry("deck.pptx", "unknown"), viewers)).toMatchObject({ renderer: "canvas", viewerId: "pptx" });
-    expect(presentArtifact(entry("diagram.svg", "svg"), viewers)).toEqual({ renderer: "svg" });
+    expect(presentArtifact(entry("deck.pptx", "pptx"), viewers)).toMatchObject({ renderer: { id: "studio.pptx-dom", type: "native" } });
+    expect(presentArtifact(entry("diagram.svg", "svg"), viewers)).toMatchObject({ renderer: { id: "studio.svg", type: "native" } });
+    expect(presentArtifact(entry("archive.bin", "unknown"), viewers)).toMatchObject({ renderer: { id: "qoder-canvas.pptx", type: "qoder-canvas" } });
   });
 
   it("lets an explicit manifest override replace a direct renderer", async () => {
     const viewers = await discoverCanvasViewers(await fakeViewerRoot(true));
-    expect(presentArtifact(entry("diagram.svg", "svg"), viewers)).toMatchObject({ renderer: "canvas", viewerId: "pptx" });
+    expect(presentArtifact(entry("diagram.svg", "svg"), viewers)).toMatchObject({ renderer: { id: "qoder-canvas.pptx", type: "qoder-canvas" } });
   });
 
   it("preserves Canvas SDK imports when compiling trusted viewer code", async () => {
@@ -67,7 +68,7 @@ async function fakeViewerRoot(overrideBuiltIn: boolean): Promise<string> {
   await writeFile(join(viewer, "manifest.json"), JSON.stringify({
     id: "pptx",
     label: "PowerPoint Presentation",
-    extensions: ["pptx", "svg"],
+    extensions: ["pptx", "svg", "bin"],
     dataKey: "officePresentation",
     overrideBuiltIn,
   }), "utf8");

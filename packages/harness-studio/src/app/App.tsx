@@ -3,18 +3,33 @@ import type { Icon } from "@phosphor-icons/react";
 import { ArrowRight } from "@phosphor-icons/react/ArrowRight";
 import { Binoculars } from "@phosphor-icons/react/Binoculars";
 import { BugBeetle } from "@phosphor-icons/react/BugBeetle";
+import { CaretDown } from "@phosphor-icons/react/CaretDown";
+import { CaretRight } from "@phosphor-icons/react/CaretRight";
+import { EyeSlash } from "@phosphor-icons/react/EyeSlash";
+import { File } from "@phosphor-icons/react/File";
+import { FileCode } from "@phosphor-icons/react/FileCode";
+import { FileImage } from "@phosphor-icons/react/FileImage";
+import { FilePpt } from "@phosphor-icons/react/FilePpt";
 import { Flask } from "@phosphor-icons/react/Flask";
 import { FolderOpen } from "@phosphor-icons/react/FolderOpen";
 import { GitBranch } from "@phosphor-icons/react/GitBranch";
 import { Moon } from "@phosphor-icons/react/Moon";
+import { MagnifyingGlass } from "@phosphor-icons/react/MagnifyingGlass";
+import { Minus } from "@phosphor-icons/react/Minus";
 import { Package } from "@phosphor-icons/react/Package";
+import { Plus } from "@phosphor-icons/react/Plus";
 import { SidebarSimple } from "@phosphor-icons/react/SidebarSimple";
 import { SquaresFour } from "@phosphor-icons/react/SquaresFour";
 import { Sun } from "@phosphor-icons/react/Sun";
 import {
   isArtifactCatalogResponse,
+  isArtifactDataSnapshot,
   type ArtifactCatalogResponse,
+  type ArtifactDataSnapshot,
   type ArtifactDescriptor,
+  type ArtifactFamily,
+  type PptxElement,
+  type PptxSlideSnapshot,
 } from "../artifact-catalog-contract.js";
 import { CompareView } from "./CompareView.js";
 import { ExperimentView } from "./ExperimentView.js";
@@ -619,6 +634,10 @@ function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: s
   const [catalog, setCatalog] = useState<ArtifactCatalogResponse | undefined>(undefined);
   const [failure, setFailure] = useState<string | undefined>(undefined);
   const [selected, setSelected] = useState<string | undefined>(undefined);
+  const [query, setQuery] = useState("");
+  const [view, setView] = useState<"grouped" | "flat">("grouped");
+  const [collapsed, setCollapsed] = useState<Set<ArtifactFamily>>(() => new Set());
+  const [narrowSurface, setNarrowSurface] = useState<"explorer" | "preview">("explorer");
 
   useEffect(() => {
     if (!props.config.artifactsEnabled) return;
@@ -656,46 +675,102 @@ function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: s
   }
 
   const active = artifacts.find((entry) => entry.id === selected);
-  return <section className="artifact-workspace" aria-label="Artifacts workspace">
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const visible = artifacts.filter((entry) => entry.label.toLocaleLowerCase().includes(normalizedQuery));
+  const groups = artifactGroups(visible);
+  const selectArtifact = (id: string): void => {
+    setSelected(id);
+    // Wide layouts keep both panes visible; on narrow layouts selecting a row
+    // should reveal the result instead of requiring a second, hidden action.
+    setNarrowSurface("preview");
+  };
+  const toggleGroup = (family: ArtifactFamily): void => setCollapsed((current) => {
+    const next = new Set(current);
+    if (next.has(family)) next.delete(family); else next.add(family);
+    return next;
+  });
+  return <section className="artifact-workspace" data-narrow-surface={narrowSurface} aria-label="Artifacts workspace">
+    <div className="artifact-narrow-tabs" role="tablist" aria-label="Artifact workspace view">
+      <button type="button" role="tab" aria-selected={narrowSurface === "explorer"} onClick={() => setNarrowSurface("explorer")}>Explorer</button>
+      <button type="button" role="tab" aria-selected={narrowSurface === "preview"} disabled={active === undefined} onClick={() => setNarrowSurface("preview")}>Preview</button>
+    </div>
     <div className="artifact-list-pane">
-      <header><div><small>Compatibility preload</small><h2>Artifacts</h2></div><span title={`Catalog revision ${catalog.snapshot.revision}`}>{artifacts.length}</span></header>
-      <ul className="artifact-rows">
-        {artifacts.map((entry) => <li key={entry.id}>
-          <button
-            type="button"
-            className={entry.id === selected ? "selected" : undefined}
-            aria-current={entry.id === selected}
-            onClick={() => setSelected(entry.id)}
-          >
-            <span className="artifact-row-copy"><strong>{entry.label}</strong><small>{entry.kind} · {formatBytes(entry.size)}</small></span>
-          </button>
-        </li>)}
-      </ul>
+      <header><div><small>Revision-bound outputs</small><h2>Artifact Explorer</h2></div><span title={`Catalog revision ${catalog.snapshot.revision}`}>{normalizedQuery === "" ? artifacts.length : `${visible.length}/${artifacts.length}`}</span></header>
+      <div className="artifact-explorer-toolbar">
+        <label><MagnifyingGlass aria-hidden="true" size={14} /><span className="sr-only">Search artifacts</span><input value={query} type="search" placeholder="Search artifacts…" onChange={(event) => setQuery(event.currentTarget.value)} /></label>
+        <div className="artifact-view-switch" role="group" aria-label="Artifact list view">
+          <button type="button" aria-pressed={view === "grouped"} onClick={() => setView("grouped")}>Grouped</button>
+          <button type="button" aria-pressed={view === "flat"} onClick={() => setView("flat")}>Flat</button>
+        </div>
+      </div>
+      <nav className="artifact-rows" aria-label="Artifacts">
+        {visible.length === 0
+          ? <p className="artifact-list-empty">No filenames match “{query}”.</p>
+          : view === "flat"
+            ? visible.map((entry) => <ArtifactRow key={entry.id} artifact={entry} selected={entry.id === selected} onSelect={selectArtifact} />)
+            : groups.map((group) => <section className="artifact-group" key={group.family} aria-label={group.label}>
+              <button type="button" className="artifact-group-header" aria-expanded={!collapsed.has(group.family)} onClick={() => toggleGroup(group.family)}>
+                {collapsed.has(group.family) ? <CaretRight aria-hidden="true" size={14} /> : <CaretDown aria-hidden="true" size={14} />}
+                <span>{group.label}</span><small>{group.artifacts.length}</small>
+              </button>
+              {!collapsed.has(group.family) && group.artifacts.map((entry) => <ArtifactRow key={entry.id} artifact={entry} selected={entry.id === selected} onSelect={selectArtifact} />)}
+            </section>)}
+      </nav>
     </div>
     <div className="artifact-preview-pane">
       {active === undefined
         ? <p className="artifact-status" role="status">Select an artifact to preview it.</p>
-        : <ArtifactPreview artifact={active} />}
+        : <><header className="artifact-editor-header"><div><strong>{active.label}</strong><small>{active.format} · {formatBytes(active.size)} · {shortRevision(active.revision.id)}</small></div><span>{active.adapter.id} → {active.renderer.label}</span></header><ArtifactPreview artifact={active} /></>}
     </div>
   </section>;
 }
 
+const ARTIFACT_GROUPS: Array<{ family: ArtifactFamily; label: string }> = [
+  { family: "documents", label: "Documents" },
+  { family: "images-diagrams", label: "Images & diagrams" },
+  { family: "data", label: "Data" },
+  { family: "source-text", label: "Source & text" },
+  { family: "other", label: "Other" },
+];
+
+function artifactGroups(artifacts: ArtifactDescriptor[]): Array<{ family: ArtifactFamily; label: string; artifacts: ArtifactDescriptor[] }> {
+  return ARTIFACT_GROUPS.map((group) => ({ ...group, artifacts: artifacts.filter((artifact) => artifact.family === group.family) }))
+    .filter((group) => group.artifacts.length > 0);
+}
+
+function ArtifactRow(props: { artifact: ArtifactDescriptor; selected: boolean; onSelect: (id: string) => void }): React.JSX.Element {
+  const ArtifactIcon = props.artifact.kind === "pptx" ? FilePpt : props.artifact.family === "images-diagrams" ? FileImage : props.artifact.family === "source-text" ? FileCode : File;
+  return <button
+    type="button"
+    className={`artifact-row${props.selected ? " selected" : ""}`}
+    aria-current={props.selected ? "true" : undefined}
+    onClick={() => props.onSelect(props.artifact.id)}
+  >
+    <ArtifactIcon aria-hidden="true" size={16} />
+    <span className="artifact-row-copy"><strong>{props.artifact.label}</strong><small>{props.artifact.format} · {formatBytes(props.artifact.size)}</small></span>
+    {props.artifact.renderer.status === "unavailable" && <EyeSlash aria-label={props.artifact.renderer.reason ?? "Preview unavailable"} size={15} />}
+  </button>;
+}
+
 function ArtifactPreview({ artifact }: { artifact: ArtifactDescriptor }): React.JSX.Element {
-  const contentUrl = artifact.artifact.uri;
-  const contentKey = artifact.artifact.digest;
-  if (artifact.renderer === "canvas") {
+  const contentUrl = artifact.revision.content.uri;
+  const contentKey = artifact.revision.digest;
+  if (artifact.renderer.type === "qoder-canvas" && artifact.renderer.status === "ready") {
     return <iframe key={contentKey} className="artifact-frame" title={`Artifact preview: ${artifact.label}`} src={`api/artifacts/${artifact.id}/viewer/`} sandbox="allow-scripts" referrerPolicy="no-referrer" />;
   }
-  if (artifact.renderer === "svg") {
+  if (artifact.kind === "pptx" && artifact.renderer.id === "studio.pptx-dom" && artifact.renderer.status === "ready") {
+    return <PptxArtifactPreview key={contentKey} artifact={artifact} />;
+  }
+  if (artifact.kind === "svg") {
     return <ArtifactSvgPreview key={contentKey} artifact={artifact} />;
   }
-  if (artifact.renderer === "image") {
+  if (artifact.kind === "image") {
     return <div className="artifact-image-stage"><img key={contentKey} src={contentUrl} alt={artifact.label} /></div>;
   }
-  if (["code", "diff", "json", "text"].includes(artifact.renderer)) {
+  if (["code", "diff", "json", "text"].includes(artifact.kind)) {
     return <ArtifactTextPreview key={contentKey} artifact={artifact} url={contentUrl} />;
   }
-  return <p className="artifact-status" role="status">{artifact.reason ?? "No renderer is available for this artifact."}</p>;
+  return <p className="artifact-status" role="status">{artifact.renderer.reason ?? "No renderer is available for this artifact."}</p>;
 }
 
 function ArtifactSvgPreview({ artifact }: { artifact: ArtifactDescriptor }): React.JSX.Element {
@@ -703,14 +778,14 @@ function ArtifactSvgPreview({ artifact }: { artifact: ArtifactDescriptor }): Rea
   const [failure, setFailure] = useState<string>();
   useEffect(() => {
     const controller = new AbortController();
-    void fetch(artifact.artifact.uri, { signal: controller.signal }).then(async (response) => {
+    void fetch(artifact.revision.content.uri, { signal: controller.signal }).then(async (response) => {
       if (!response.ok) throw new Error(`SVG content failed (${response.status}).`);
       setSource(await response.text());
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
     });
     return () => controller.abort();
-  }, [artifact.artifact.uri]);
+  }, [artifact.revision.content.uri]);
   if (failure !== undefined) return <p className="artifact-status" role="alert">{failure}</p>;
   if (source === undefined) return <p className="artifact-status" role="status">Loading SVG preview…</p>;
   const policy = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">`;
@@ -732,10 +807,90 @@ function ArtifactTextPreview({ artifact, url }: { artifact: ArtifactDescriptor; 
   }, [url]);
   if (failure !== undefined) return <p className="artifact-status" role="alert">{failure}</p>;
   if (content === undefined) return <p className="artifact-status" role="status">Loading preview…</p>;
-  if (artifact.renderer === "diff") {
+  if (artifact.kind === "diff") {
     return <Suspense fallback={<pre className="studio-diff-fallback">{content}</pre>}><StudioDiff patch={content} /></Suspense>;
   }
   return <div className="artifact-code-preview"><HighlightedCode code={content} sourceHint={artifact.label} label={`Artifact source: ${artifact.label}`} /></div>;
+}
+
+function PptxArtifactPreview({ artifact }: { artifact: ArtifactDescriptor }): React.JSX.Element {
+  const [snapshot, setSnapshot] = useState<ArtifactDataSnapshot>();
+  const [failure, setFailure] = useState<string>();
+  const [slideIndex, setSlideIndex] = useState(0);
+  const [zoom, setZoom] = useState(100);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(artifact.adapter.snapshotUri, { signal: controller.signal }).then(async (response) => {
+      if (!response.ok) throw new Error(await studioApiError(response));
+      const value: unknown = await response.json();
+      if (!isArtifactDataSnapshot(value) || value.revisionId !== artifact.revision.id || value.payload.kind !== "pptx/v1") {
+        throw new Error("PPTX snapshot contract is unsupported.");
+      }
+      setSnapshot(value);
+      setFailure(undefined);
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
+    });
+    return () => controller.abort();
+  }, [artifact.adapter.snapshotUri, artifact.revision.id]);
+  if (failure !== undefined) return <p className="artifact-status" role="alert">{failure}</p>;
+  if (snapshot === undefined || snapshot.payload.kind !== "pptx/v1") return <p className="artifact-status" role="status">Adapting PPTX revision…</p>;
+  const payload = snapshot.payload;
+  const active = payload.slides[Math.min(slideIndex, payload.slides.length - 1)];
+  if (active === undefined) return <p className="artifact-status" role="alert">The PPTX snapshot has no slides.</p>;
+  return <div className="pptx-artifact-viewer">
+    <nav className="pptx-slide-rail" aria-label="Slides">
+      {payload.slides.map((slide, index) => <button key={slide.id} type="button" className={index === slideIndex ? "selected" : undefined} aria-current={index === slideIndex} onClick={() => setSlideIndex(index)}>
+        <span className="pptx-slide-thumb" aria-hidden="true">{index + 1}</span><small>{slide.label}</small>
+      </button>)}
+    </nav>
+    <section className="pptx-stage-region" aria-label={`${active.label} preview`}>
+      <div className="pptx-view-toolbar">
+        <span>{active.label}{active.notesPresent ? " · Notes" : ""}</span>
+        <div role="group" aria-label="Slide zoom"><button type="button" aria-label="Zoom out" disabled={zoom <= 50} onClick={() => setZoom((value) => Math.max(50, value - 25))}><Minus aria-hidden="true" size={14} /></button><output>{zoom}%</output><button type="button" aria-label="Zoom in" disabled={zoom >= 200} onClick={() => setZoom((value) => Math.min(200, value + 25))}><Plus aria-hidden="true" size={14} /></button></div>
+      </div>
+      <div className="pptx-stage-scroll">
+        <PptxSlide slide={active} width={payload.width} height={payload.height} zoom={zoom} resources={snapshot.resources} />
+      </div>
+      <footer className="pptx-diagnostics"><span>{snapshot.adapter.id}@{snapshot.adapter.version}</span><span>{snapshot.diagnostics.length} diagnostic{snapshot.diagnostics.length === 1 ? "" : "s"}</span></footer>
+    </section>
+  </div>;
+}
+
+function PptxSlide(props: { slide: PptxSlideSnapshot; width: number; height: number; zoom: number; resources: ArtifactDataSnapshot["resources"] }): React.JSX.Element {
+  return <div className="pptx-slide" style={{ aspectRatio: `${props.width} / ${props.height}`, width: `${props.zoom}%`, backgroundColor: props.slide.background ?? "var(--color-document-paper)" }}>
+    {props.slide.elements.map((element) => <PptxSlideElement key={element.id} element={element} slideWidth={props.width} slideHeight={props.height} resources={props.resources} />)}
+  </div>;
+}
+
+function PptxSlideElement(props: { element: PptxElement; slideWidth: number; slideHeight: number; resources: ArtifactDataSnapshot["resources"] }): React.JSX.Element {
+  const element = props.element;
+  const style = {
+    left: `${element.x / props.slideWidth * 100}%`,
+    top: `${element.y / props.slideHeight * 100}%`,
+    width: `${element.width / props.slideWidth * 100}%`,
+    height: `${element.height / props.slideHeight * 100}%`,
+    ...(element.rotation === undefined ? {} : { transform: `rotate(${element.rotation}deg)` }),
+  };
+  if (element.kind === "image") {
+    const resource = props.resources.find((candidate) => candidate.id === element.resourceId);
+    return <img className="pptx-slide-element pptx-slide-image" style={style} src={resource?.uri} alt={element.alt ?? element.name} />;
+  }
+  return <div className="pptx-slide-element pptx-slide-shape" data-artifact-address={element.address} style={{ ...style, backgroundColor: element.fill ?? "transparent", borderColor: element.line ?? "transparent" }}>
+    {element.paragraphs.map((paragraph, paragraphIndex) => <p key={paragraphIndex} style={{ textAlign: paragraph.alignment }}>
+      {paragraph.runs.map((run, runIndex) => <span key={runIndex} style={{
+        ...(run.fontFamily === undefined ? {} : { fontFamily: `${JSON.stringify(run.fontFamily)}, system-ui, sans-serif` }),
+        ...(run.fontSizePoints === undefined ? {} : { fontSize: `${run.fontSizePoints / (props.slideWidth / 12_700) * 100}cqw` }),
+        ...(run.color === undefined ? {} : { color: run.color }),
+        ...(run.bold === true ? { fontWeight: 700 } : {}),
+        ...(run.italic === true ? { fontStyle: "italic" } : {}),
+      }}>{run.text}</span>)}
+    </p>)}
+  </div>;
+}
+
+function shortRevision(value: string): string {
+  return `${value.slice(0, 14)}…${value.slice(-6)}`;
 }
 
 function formatBytes(size: number): string {

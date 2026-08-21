@@ -4,11 +4,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { startHarnessStudioServer } from "./server.js";
 import { readSourceCatalogFile } from "./source-catalog.js";
+import { runWalnutBootstrapCli } from "./walnut-cli.js";
 
 const HELP = `harness-studio — local studio for harness runs and compare evidence
 
 Usage:
   harness-studio [options]
+  harness-studio walnut <probe|install|verify|remove> [options]
   harness-studio --help
 
 Options:
@@ -189,6 +191,7 @@ export function defaultAppDir(): string {
 
 /** In-process CLI entry; returns the exit code (0 keeps the server running). */
 export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo): Promise<number> {
+  if (argv[0] === "walnut") return await runWalnutBootstrapCli(argv.slice(1), io);
   const parsed = parseHarnessStudioArgs(argv);
   if (parsed.help) {
     io.stdout(HELP);

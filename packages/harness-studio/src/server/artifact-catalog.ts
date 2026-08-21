@@ -4,11 +4,12 @@ import { lstat, readdir, realpath } from "node:fs/promises";
 import { basename, extname, normalize, resolve, sep } from "node:path";
 import type {
   ArtifactCatalogResponse,
+  ArtifactFamily,
   ArtifactDigest,
   ArtifactKind,
-  ArtifactPresentation,
 } from "../artifact-catalog-contract.js";
 import { ARTIFACT_CATALOG_RESPONSE_KIND } from "../artifact-catalog-contract.js";
+import type { ArtifactPluginResolution } from "./artifact-plugin-registry.js";
 
 export type { ArtifactKind } from "../artifact-catalog-contract.js";
 
@@ -54,7 +55,7 @@ const FORMAT_BY_EXTENSION = new Map<string, ArtifactFormat>([
   [".patch", { kind: "diff", mediaType: "text/plain; charset=utf-8" }],
   [".pdf", { kind: "unknown", mediaType: "application/pdf" }],
   [".png", { kind: "image", mediaType: "image/png" }],
-  [".pptx", { kind: "unknown", mediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }],
+  [".pptx", { kind: "pptx", mediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }],
   [".sh", { kind: "code", mediaType: "text/plain; charset=utf-8" }],
   [".svg", { kind: "svg", mediaType: "image/svg+xml", active: true }],
   [".ts", { kind: "code", mediaType: "text/plain; charset=utf-8" }],
@@ -133,7 +134,7 @@ function isWithinRoot(root: string, target: string): boolean {
 
 export function describeArtifactCatalog(
   entries: readonly ArtifactEntry[],
-  presentationFor: (entry: ArtifactEntry) => ArtifactPresentation,
+  presentationFor: (entry: ArtifactEntry) => ArtifactPluginResolution,
   catalogId = "harness-studio-artifacts",
 ): ArtifactCatalogResponse {
   if (entries.some((entry) => entry.digest === undefined)) {
@@ -151,19 +152,70 @@ export function describeArtifactCatalog(
       catalogId,
       revision: `sha256:${catalogRevision}`,
     },
-    artifacts: entries.map((entry) => ({
-      id: entry.id,
-      kind: entry.kind,
-      label: entry.label,
-      size: entry.size,
-      artifact: {
-        mediaType: resolveArtifactMediaType(entry.label),
-        uri: `/api/artifacts/${encodeURIComponent(entry.id)}/content`,
-        digest: entry.digest!,
-      },
-      ...presentationFor(entry),
-    })),
+    artifacts: entries.map((entry) => {
+      const selected = presentationFor(entry);
+      const digest = entry.digest!;
+      const snapshotId = `sha256:${createHash("sha256")
+        .update(JSON.stringify([digest, selected.adapter.id, selected.adapter.version, selected.adapter.schemaId]))
+        .digest("hex")}` as ArtifactDigest;
+      return {
+        id: entry.id,
+        threadId: entry.id,
+        kind: entry.kind,
+        family: resolveArtifactFamily(entry.label, entry.kind),
+        format: resolveArtifactFormatLabel(entry.label, entry.kind),
+        backing: "data" as const,
+        label: entry.label,
+        size: entry.size,
+        revision: {
+          id: digest,
+          digest,
+          content: {
+            mediaType: resolveArtifactMediaType(entry.label),
+            uri: `/api/artifacts/${encodeURIComponent(entry.id)}/content`,
+            digest,
+          },
+        },
+        adapter: {
+          ...selected.adapter,
+          snapshotId,
+          snapshotUri: `/api/artifacts/${encodeURIComponent(entry.id)}/snapshot`,
+        },
+        renderer: selected.renderer,
+        capabilities: selected.capabilities,
+      };
+    }),
   };
+}
+
+export function resolveArtifactFamily(path: string, kind = resolveArtifactKind(path)): ArtifactFamily {
+  const extension = extname(path).toLowerCase();
+  if ([".pptx", ".xlsx", ".docx", ".pdf"].includes(extension)) return "documents";
+  if (kind === "image" || kind === "svg") return "images-diagrams";
+  if (kind === "json" || extension === ".lottie") return "data";
+  if (["code", "diff", "text"].includes(kind)) return "source-text";
+  return "other";
+}
+
+export function resolveArtifactFormatLabel(path: string, kind = resolveArtifactKind(path)): string {
+  const extension = extname(path).toLowerCase();
+  const known: Record<string, string> = {
+    ".docx": "Word",
+    ".lottie": "Lottie",
+    ".pdf": "PDF",
+    ".pptx": "PowerPoint",
+    ".xlsx": "Excel",
+  };
+  return known[extension] ?? ({
+    code: "Source",
+    diff: "Diff",
+    image: "Image",
+    json: "JSON",
+    pptx: "PowerPoint",
+    svg: "SVG",
+    text: extension === ".md" ? "Markdown" : "Text",
+    unknown: extension === "" ? "File" : extension.slice(1).toUpperCase(),
+  })[kind];
 }
 
 export function resolveArtifactMediaType(path: string): string {
