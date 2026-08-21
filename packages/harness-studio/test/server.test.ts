@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { HarnessRunEmitter, loadSkillDeliveries, type HarnessExecutor } from "@qoder-ai/harness/exec";
 import { decodeSseStream, type HarnessUiExecutorFactory } from "@qoder-ai/harness-ui";
-import { isArtifactCatalogResponse } from "../src/artifact-catalog-contract.js";
+import { isArtifactCatalogResponse } from "../src/artifact-model.js";
 import { parseHarnessStudioArgs, resolveHarnessStudioSourceRoot, runHarnessStudioCli, discoverDefaultInspectorReport } from "../src/server/cli.js";
 import { parseSourceCatalog } from "../src/server/source-catalog.js";
 import { startHarnessStudioServer, type StartedHarnessStudioServer, type StudioWorkspaceDiscovery } from "../src/server/server.js";
@@ -1068,21 +1068,23 @@ describe("harness-studio CLI", () => {
     if (!isArtifactCatalogResponse(catalog)) throw new Error("expected typed artifact catalog");
     expect(catalog.kind).toBe("HarnessStudioArtifactCatalogV2");
     expect(catalog.snapshot).toEqual(expect.objectContaining({
-      catalogId: "harness-studio-artifacts",
+      catalogId: expect.stringMatching(/^artifacts-[0-9a-f]{16}$/u),
       revision: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
     }));
-    const card = catalog.artifacts.find((entry) => entry.label === "card.tsx");
-    expect(card).toEqual(expect.objectContaining({ kind: "code", renderer: expect.objectContaining({ id: "studio.code", type: "native" }) }));
-    expect(card?.revision.content).toEqual(expect.objectContaining({
+    const card = catalog.artifacts.find((entry) => entry.label === "card.tsx")!;
+    expect(card).toEqual(expect.objectContaining({ format: "tsx", renderer: expect.objectContaining({ id: "studio.code", type: "native" }) }));
+    expect(card.revision.content).toEqual(expect.objectContaining({
       digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
-      uri: "/api/artifacts/card/content",
+      uri: `/api/artifacts/${card.id}/revisions/${card.revision.digest.slice(7)}/content`,
       mediaType: "text/plain; charset=utf-8",
     }));
-    const source = await fetch(`${started.url}/api/artifacts/card/content`);
+    const source = await fetch(`${started.url}${card.revision.content.uri}`);
     expect(source.status).toBe(200);
-    expect(source.headers.get("content-type")).toBe(card?.revision.content.mediaType);
+    expect(source.headers.get("content-type")).toBe(card.revision.content.mediaType);
+    expect(source.headers.get("etag")).toBe(`"${card.revision.digest.slice(7)}"`);
     expect(await source.text()).toContain("export default");
-    expect((await fetch(`${started.url}/api/artifacts/card/module.js`)).status).toBe(404);
+    expect((await fetch(`${started.url}/api/artifacts/${card.id}/module.js`)).status).toBe(404);
+
 
     for (const descriptor of catalog.artifacts) {
       const content = await fetch(`${started.url}${descriptor.revision.content.uri}`);
@@ -1094,6 +1096,23 @@ describe("harness-studio CLI", () => {
         expect(content.headers.get("content-disposition"), descriptor.label).toBeNull();
       }
     }
+
+    // A revision-scoped URL must never answer with different bytes. Once the
+    // file moves on, the stale handle is a conflict the client refetches.
+    await writeFile(join(artifactDirectory, "card.tsx"), "export default () => <p>changed</p>;\n", "utf8");
+    const stale = await fetch(`${started.url}${card.revision.content.uri}`);
+    expect(stale.status).toBe(409);
+    const refreshed: unknown = await (await fetch(`${started.url}/api/artifacts`)).json();
+    if (!isArtifactCatalogResponse(refreshed)) throw new Error("expected typed artifact catalog");
+    const updated = refreshed.artifacts.find((entry) => entry.label === "card.tsx")!;
+    expect(updated.id).toBe(card.id);
+    expect(updated.threadId).toBe(card.threadId);
+    expect(updated.revision.digest).not.toBe(card.revision.digest);
+    expect((await fetch(`${started.url}${updated.revision.content.uri}`)).status).toBe(200);
+    const conditional = await fetch(`${started.url}${updated.revision.content.uri}`, {
+      headers: { "if-none-match": `"${updated.revision.digest.slice(7)}"` },
+    });
+    expect(conditional.status).toBe(304);
   });
 
   it("imports a manually selected artifact set and switches the live catalog atomically", async () => {
@@ -1182,7 +1201,7 @@ describe("harness-studio CLI", () => {
     const artifactDirectory = await makeTempDir("studio-artifacts-");
     await writeFile(join(artifactDirectory, "card.tsx"), "export default () => null;\n", "utf8");
     started = await startHarnessStudioServer({ appDir, artifactDirectory });
-    expect((await fetch(`${started.url}/api/artifacts/%E0%A4%A/content`)).status).toBe(400);
+    expect((await fetch(`${started.url}/api/artifacts/%E0%A4%A/revisions/${"0".repeat(64)}/content`)).status).toBe(400);
     expect((await fetch(`${started.url}/api/config`)).status).toBe(200);
   });
 
@@ -1191,13 +1210,16 @@ describe("harness-studio CLI", () => {
     const artifactDirectory = await makeTempDir("studio-artifacts-");
     await writeFile(join(artifactDirectory, "card.tsx"), "export default () => <p>hi</p>;\n", "utf8");
     started = await startHarnessStudioServer({ appDir, artifactDirectory });
-    expect((await fetch(`${started.url}/api/artifacts/card/content`)).status).toBe(200);
+    const listed: unknown = await (await fetch(`${started.url}/api/artifacts`)).json();
+    if (!isArtifactCatalogResponse(listed)) throw new Error("expected typed artifact catalog");
+    const contentUri = listed.artifacts[0]!.revision.content.uri;
+    expect((await fetch(`${started.url}${contentUri}`)).status).toBe(200);
 
     await rm(artifactDirectory, { recursive: true, force: true });
 
     // An unreadable directory must not reject out of the route handler: that is
     // an unhandled rejection, which takes the whole Studio process down.
-    const response = await fetch(`${started.url}/api/artifacts/card/content`);
+    const response = await fetch(`${started.url}${contentUri}`);
     expect(response.status).toBe(404);
     const body = await response.json() as { error: string };
     expect(body.error).toBe("Cannot read the configured artifact directory.");

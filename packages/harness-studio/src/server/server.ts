@@ -50,19 +50,23 @@ import { sessionFromRetainedRun, type DebuggerSession } from "../app/session-deb
 import { pickLocalWorkspaceDirectory } from "./native-directory-picker.js";
 import {
   ArtifactCatalogContractError,
+  artifactRevisionBase,
   assertArtifactId,
   describeArtifactCatalog,
+  digestHex,
   findArtifact,
   isActiveArtifactContent,
   indexArtifactDirectory,
   resolveArtifactMediaType,
   type ArtifactEntry,
+  type ArtifactIndex,
+  type IndexArtifactDirectoryOptions,
 } from "./artifact-catalog.js";
 import { compileTrustedRendererModule, formatTrustedRendererCompileError } from "./trusted-renderer-compiler.js";
 import {
   discoverCanvasViewers,
-  matchCanvasViewer,
-  presentArtifact,
+  resolveArtifactPlugin,
+  type ArtifactPluginResolution,
   type QoderCanvasViewerPlugin,
 } from "./artifact-plugin-registry.js";
 import {
@@ -71,7 +75,6 @@ import {
   serveQoderCanvasRuntimeFile,
   type QoderCanvasRuntime,
 } from "./qoder-canvas-viewer-bridge.js";
-import { adaptArtifactData, readArtifactDataResource } from "./artifact-data-adapter.js";
 import type { ArtifactDescriptor } from "../artifact-model.js";
 import {
   DEFAULT_LOCAL_HARNESS_ID,
@@ -504,42 +507,44 @@ async function route(
     if (sessionId !== undefined) await abortArtifactImport(request, response, state, sessionId);
     return;
   }
-  const artifactContent = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/content$/);
-  if (request.method === "GET" && artifactContent !== null) {
-    const id = decodeRouteComponent(response, artifactContent[1]!);
-    if (id !== undefined) await serveArtifactContent(response, state.artifactDirectory, id);
-    return;
-  }
-  const artifactSnapshot = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/snapshot$/);
-  if (request.method === "GET" && artifactSnapshot !== null) {
-    const id = decodeRouteComponent(response, artifactSnapshot[1]!);
-    if (id !== undefined) await serveArtifactSnapshot(response, artifactOptions(options, state), id);
-    return;
-  }
-  const artifactSnapshotResource = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/resources\/([^/]+)$/);
-  if (request.method === "GET" && artifactSnapshotResource !== null) {
-    const id = decodeRouteComponent(response, artifactSnapshotResource[1]!);
-    const resourceId = decodeRouteComponent(response, artifactSnapshotResource[2]!);
-    if (id !== undefined && resourceId !== undefined) await serveArtifactSnapshotResource(response, artifactOptions(options, state), id, resourceId);
-    return;
-  }
-  const artifactViewer = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/viewer\/(?:index\.html)?$/);
-  if (request.method === "GET" && artifactViewer !== null) {
-    const id = decodeRouteComponent(response, artifactViewer[1]!);
-    if (id !== undefined) await serveArtifactViewer(response, artifactOptions(options, state), id);
-    return;
-  }
-  const artifactViewerModule = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/viewer\/canvas-module\.js(?:\.map)?$/);
-  if (request.method === "GET" && artifactViewerModule !== null) {
-    const id = decodeRouteComponent(response, artifactViewerModule[1]!);
-    if (id !== undefined) await serveArtifactViewerModule(response, artifactOptions(options, state), id, url.pathname.endsWith(".map"));
-    return;
-  }
-  const artifactViewerResource = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/viewer\/(runtime\/.*)$/);
-  if (request.method === "GET" && artifactViewerResource !== null) {
-    const id = decodeRouteComponent(response, artifactViewerResource[1]!);
-    const resource = decodeRouteComponent(response, artifactViewerResource[2]!);
-    if (id !== undefined && resource !== undefined) await serveArtifactViewerResource(response, artifactOptions(options, state), id, resource);
+  // Every reference the catalog publishes is revision-scoped, so a stale handle
+  // fails loudly instead of quietly resolving to whatever the path holds now.
+  const artifactRevision = url.pathname.match(/^\/api\/artifacts\/([^/]+)\/revisions\/([0-9a-f]{64})\/(.*)$/);
+  if (request.method === "GET" && artifactRevision !== null) {
+    const id = decodeRouteComponent(response, artifactRevision[1]!);
+    const revision = artifactRevision[2]!;
+    const tail = artifactRevision[3]!;
+    if (id === undefined) return;
+    const scoped = artifactOptions(options, state);
+    if (tail === "content") {
+      await serveArtifactContent(response, scoped, id, revision, request.headers["if-none-match"]);
+      return;
+    }
+    if (tail === "snapshot") {
+      await serveArtifactSnapshot(response, scoped, id, revision);
+      return;
+    }
+    const resourceMatch = tail.match(/^resources\/([^/]+)$/);
+    if (resourceMatch !== null) {
+      const resourceId = decodeRouteComponent(response, resourceMatch[1]!);
+      if (resourceId !== undefined) await serveArtifactSnapshotResource(response, scoped, id, revision, resourceId);
+      return;
+    }
+    if (tail === "viewer/" || tail === "viewer/index.html") {
+      await serveArtifactViewer(response, scoped, id, revision);
+      return;
+    }
+    if (tail === "viewer/canvas-module.js" || tail === "viewer/canvas-module.js.map") {
+      await serveArtifactViewerModule(response, scoped, id, revision, tail.endsWith(".map"));
+      return;
+    }
+    const viewerResourceMatch = tail.match(/^viewer\/(runtime\/.*)$/);
+    if (viewerResourceMatch !== null) {
+      const resource = decodeRouteComponent(response, viewerResourceMatch[1]!);
+      if (resource !== undefined) await serveArtifactViewerResource(response, scoped, id, revision, resource);
+      return;
+    }
+    respondArtifactJson(response, 404, { error: "No such artifact revision route." });
     return;
   }
   if (request.method === "GET" && (url.pathname === "/canvas-sdk.js" || url.pathname === "/canvas-sdk.js.map")) {
@@ -1184,68 +1189,75 @@ async function cleanupArtifactImports(state: HarnessStudioState): Promise<void> 
  * Resolve an artifact through the catalog. The client only ever names an opaque
  * id, so no request can turn into a filesystem path of its own choosing.
  */
-async function resolveArtifactEntry(
+async function resolveArtifactIndex(
   directory: string | undefined,
-  id: string,
-  includeDigests = false,
-): Promise<{ entry: ArtifactEntry } | { error: string; status: number }> {
+  options: IndexArtifactDirectoryOptions = {},
+): Promise<ArtifactIndex | { error: string; status: number }> {
   if (directory === undefined) {
     return { error: "No artifact set loaded; choose files or a folder in Artifacts.", status: 404 };
   }
   try {
-    assertArtifactId(id);
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error), status: 400 };
-  }
-  let indexed: ArtifactEntry[];
-  try {
-    indexed = await indexArtifactDirectory(directory, { includeDigests });
+    return await indexArtifactDirectory(directory, options);
   } catch {
     // A directory that vanished or turned unreadable after startup must answer
     // with a status, not reject out of the route handler and take the server
     // down. The message stays generic so no filesystem path reaches the client.
     return { error: "Cannot read the configured artifact directory.", status: 404 };
   }
-  const entry = findArtifact(indexed, id);
+}
+
+async function resolveArtifactRevision(
+  directory: string | undefined,
+  id: string,
+  revision: string,
+): Promise<{ entry: ArtifactEntry; index: ArtifactIndex } | { error: string; status: number }> {
+  try {
+    assertArtifactId(id);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error), status: 400 };
+  }
+  const index = await resolveArtifactIndex(directory, { includeDigests: true });
+  if ("error" in index) return index;
+  const entry = findArtifact(index.entries, id);
   if (entry === undefined) {
     return { error: `No artifact '${id}'.`, status: 404 };
   }
-  return { entry };
+  // The catalog handed out this exact revision. Answering the same URL with
+  // different bytes is the failure the digest exists to prevent, so a file that
+  // moved on is a conflict the client refetches, not a body it cannot verify.
+  if (digestHex(entry.digest!) !== revision) {
+    return { error: `Artifact '${id}' has moved past the requested revision.`, status: 409 };
+  }
+  return { entry, index };
 }
 
-async function resolveArtifactDescriptor(
+async function resolveArtifactRevisionPlugin(
   options: HarnessStudioServerOptions,
   id: string,
-): Promise<{ entry: ArtifactEntry; descriptor: ArtifactDescriptor; viewer?: QoderCanvasViewerPlugin } | { error: string; status: number }> {
-  const resolved = await resolveArtifactEntry(options.artifactDirectory, id, true);
+  revision: string,
+): Promise<{ entry: ArtifactEntry; descriptor: ArtifactDescriptor; resolution: ArtifactPluginResolution } | { error: string; status: number }> {
+  const resolved = await resolveArtifactRevision(options.artifactDirectory, id, revision);
   if ("error" in resolved) return resolved;
   const viewers = await discoverCanvasViewers(options.canvasViewerRoot);
-  const descriptor = describeArtifactCatalog([resolved.entry], (entry) => presentArtifact(entry, viewers)).artifacts[0];
+  const resolution = resolveArtifactPlugin(resolved.entry, { qoderCanvasViewers: viewers });
+  // Project through the same function the catalog uses so a single artifact and
+  // the listing can never describe the same revision differently.
+  const descriptor = describeArtifactCatalog({ ...resolved.index, entries: [resolved.entry] }, () => resolution).artifacts[0];
   if (descriptor === undefined) return { error: `No artifact '${id}'.`, status: 404 };
-  const viewer = matchCanvasViewer(resolved.entry, viewers);
-  return { entry: resolved.entry, descriptor, ...(viewer === undefined ? {} : { viewer }) };
+  return { entry: resolved.entry, descriptor, resolution };
 }
 
 async function serveArtifactCatalog(response: ServerResponse, options: HarnessStudioServerOptions): Promise<void> {
-  if (options.artifactDirectory === undefined) {
-    respondJson(response, 404, { error: "No artifact set loaded; choose files or a folder in Artifacts." });
+  const index = await resolveArtifactIndex(options.artifactDirectory, { includeDigests: true });
+  if ("error" in index) {
+    respondJson(response, index.status, { error: index.error });
     return;
   }
-  let entries: ArtifactEntry[];
-  let viewers: QoderCanvasViewerPlugin[];
-  try {
-    [entries, viewers] = await Promise.all([
-      indexArtifactDirectory(options.artifactDirectory, { includeDigests: true }),
-      discoverCanvasViewers(options.canvasViewerRoot),
-    ]);
-  } catch {
-    respondJson(response, 404, { error: "Cannot read the configured artifact directory." });
-    return;
-  }
+  const viewers = await discoverCanvasViewers(options.canvasViewerRoot);
   try {
     respondJson(response, 200, describeArtifactCatalog(
-      entries,
-      (entry) => presentArtifact(entry, viewers),
+      index,
+      (entry) => resolveArtifactPlugin(entry, { qoderCanvasViewers: viewers }),
     ));
   } catch (error) {
     const message = error instanceof ArtifactCatalogContractError
@@ -1255,12 +1267,6 @@ async function serveArtifactCatalog(response: ServerResponse, options: HarnessSt
   }
 }
 
-/**
- * Artifact module responses are read from an opaque origin, so both the success
- * and the failure body need CORS: without it the host frame sees only a generic
- * "failed to fetch dynamically imported module" and the compile diagnostic is
- * lost before it reaches the reader.
- */
 function respondArtifactJson(response: ServerResponse, status: number, payload: unknown): void {
   response.writeHead(status, {
     "Content-Type": "application/json",
@@ -1270,31 +1276,48 @@ function respondArtifactJson(response: ServerResponse, status: number, payload: 
   response.end(`${JSON.stringify(payload)}\n`);
 }
 
+/** Revision-scoped URLs name exact bytes, so their responses never go stale. */
+const IMMUTABLE_REVISION_CACHE = "private, max-age=31536000, immutable";
+
 async function serveArtifactContent(
   response: ServerResponse,
-  directory: string | undefined,
+  options: HarnessStudioServerOptions,
   id: string,
+  revision: string,
+  ifNoneMatch: string | undefined,
 ): Promise<void> {
-  const resolved = await resolveArtifactEntry(directory, id);
+  const resolved = await resolveArtifactRevision(options.artifactDirectory, id, revision);
   if ("error" in resolved) {
     respondArtifactJson(response, resolved.status, { error: resolved.error });
     return;
   }
+  const entry = resolved.entry;
+  const etag = `"${digestHex(entry.digest!)}"`;
+  if (ifNoneMatch !== undefined && ifNoneMatch.split(",").some((value) => value.trim() === etag)) {
+    response.writeHead(304, { ETag: etag, "Cache-Control": IMMUTABLE_REVISION_CACHE });
+    response.end();
+    return;
+  }
   try {
-    const stats = await stat(resolved.entry.path);
+    const stats = await stat(entry.path);
+    if (stats.size !== entry.size) {
+      respondArtifactJson(response, 409, { error: `Artifact '${id}' has moved past the requested revision.` });
+      return;
+    }
     const headers: Record<string, string | number> = {
-      "Content-Type": resolveArtifactMediaType(resolved.entry.label),
+      "Content-Type": resolveArtifactMediaType(entry.label),
       "Content-Length": stats.size,
-      "Cache-Control": "no-store",
+      ETag: etag,
+      "Cache-Control": IMMUTABLE_REVISION_CACHE,
       "X-Content-Type-Options": "nosniff",
       "Access-Control-Allow-Origin": "*",
     };
-    if (isActiveArtifactContent(resolved.entry.label)) {
-      headers["Content-Disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(resolved.entry.label)}`;
+    if (isActiveArtifactContent(entry.label)) {
+      headers["Content-Disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(entry.label)}`;
       headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
     }
     response.writeHead(200, headers);
-    createReadStream(resolved.entry.path).pipe(response);
+    createReadStream(entry.path).pipe(response);
   } catch {
     respondArtifactJson(response, 404, { error: `Artifact '${id}' is no longer readable.` });
   }
@@ -1304,14 +1327,18 @@ async function serveArtifactSnapshot(
   response: ServerResponse,
   options: HarnessStudioServerOptions,
   id: string,
+  revision: string,
 ): Promise<void> {
-  const resolved = await resolveArtifactDescriptor(options, id);
+  const resolved = await resolveArtifactRevisionPlugin(options, id, revision);
   if ("error" in resolved) {
     respondArtifactJson(response, resolved.status, { error: resolved.error });
     return;
   }
   try {
-    respondArtifactJson(response, 200, await adaptArtifactData(resolved.entry, resolved.descriptor, { canvasViewer: resolved.viewer }));
+    // The registry already chose this adapter; calling it directly is what keeps
+    // selection and execution from drifting into two separate decisions.
+    const snapshot = await resolved.resolution.adapter.adapt({ entry: resolved.entry, descriptor: resolved.descriptor });
+    respondArtifactJson(response, 200, snapshot);
   } catch (error) {
     respondArtifactJson(response, 422, { error: safeArtifactError(error) });
   }
@@ -1321,15 +1348,19 @@ async function serveArtifactSnapshotResource(
   response: ServerResponse,
   options: HarnessStudioServerOptions,
   id: string,
+  revision: string,
   resourceId: string,
 ): Promise<void> {
-  const resolved = await resolveArtifactDescriptor(options, id);
+  const resolved = await resolveArtifactRevisionPlugin(options, id, revision);
   if ("error" in resolved) {
     respondArtifactJson(response, resolved.status, { error: resolved.error });
     return;
   }
   try {
-    const resource = await readArtifactDataResource(resolved.entry, resolved.descriptor, resourceId);
+    const readResource = resolved.resolution.adapter.readResource;
+    const resource = readResource === undefined
+      ? undefined
+      : await readResource({ entry: resolved.entry, descriptor: resolved.descriptor }, resourceId);
     if (resource === undefined) {
       respondArtifactJson(response, 404, { error: `No artifact resource '${resourceId}'.` });
       return;
@@ -1337,7 +1368,7 @@ async function serveArtifactSnapshotResource(
     response.writeHead(200, {
       "Content-Type": resource.mediaType,
       "Content-Length": resource.bytes.byteLength,
-      "Cache-Control": "private, max-age=31536000, immutable",
+      "Cache-Control": IMMUTABLE_REVISION_CACHE,
       "X-Content-Type-Options": "nosniff",
     });
     response.end(resource.bytes);
@@ -1354,13 +1385,12 @@ function safeArtifactError(error: unknown): string {
 async function resolveArtifactViewer(
   options: HarnessStudioServerOptions,
   id: string,
+  revision: string,
 ): Promise<{ entry: ArtifactEntry; viewer: QoderCanvasViewerPlugin; runtime: QoderCanvasRuntime } | { error: string; status: number }> {
-  const resolved = await resolveArtifactEntry(options.artifactDirectory, id);
+  const resolved = await resolveArtifactRevisionPlugin(options, id, revision);
   if ("error" in resolved) return resolved;
-  const viewers = await discoverCanvasViewers(options.canvasViewerRoot);
-  const viewer = matchCanvasViewer(resolved.entry, viewers);
-  const selected = presentArtifact(resolved.entry, viewers);
-  if (viewer === undefined || selected.renderer.type !== "qoder-canvas" || selected.renderer.status !== "ready") {
+  const viewer = resolved.resolution.qoderViewer;
+  if (viewer === undefined || resolved.resolution.renderer.status !== "ready") {
     return { error: `Artifact '${id}' has no Canvas viewer.`, status: 415 };
   }
   const runtime = resolveQoderCanvasRuntime({ sdkRoot: options.canvasSdkRoot, sdkMedia: options.canvasSdkMedia, cwd: options.cwd });
@@ -1372,8 +1402,9 @@ async function serveArtifactViewer(
   response: ServerResponse,
   options: HarnessStudioServerOptions,
   id: string,
+  revision: string,
 ): Promise<void> {
-  const resolved = await resolveArtifactViewer(options, id);
+  const resolved = await resolveArtifactViewer(options, id, revision);
   if ("error" in resolved) {
     respondArtifactJson(response, resolved.status, { error: resolved.error });
     return;
@@ -1383,7 +1414,7 @@ async function serveArtifactViewer(
       resolved.entry,
       resolved.viewer,
       resolved.runtime,
-      `/api/artifacts/${id}/viewer/canvas-module.js?v=1`,
+      `${artifactRevisionBase(id, resolved.entry.digest!)}/viewer/canvas-module.js?v=1`,
     );
     response.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8",
@@ -1401,9 +1432,10 @@ async function serveArtifactViewerModule(
   response: ServerResponse,
   options: HarnessStudioServerOptions,
   id: string,
+  revision: string,
   map: boolean,
 ): Promise<void> {
-  const resolved = await resolveArtifactViewer(options, id);
+  const resolved = await resolveArtifactViewer(options, id, revision);
   if ("error" in resolved) {
     respondArtifactJson(response, resolved.status, { error: resolved.error });
     return;
@@ -1440,9 +1472,10 @@ async function serveArtifactViewerResource(
   response: ServerResponse,
   options: HarnessStudioServerOptions,
   id: string,
+  revision: string,
   resource: string,
 ): Promise<void> {
-  const resolved = await resolveArtifactViewer(options, id);
+  const resolved = await resolveArtifactViewer(options, id, revision);
   if ("error" in resolved) {
     respondArtifactJson(response, resolved.status, { error: resolved.error });
     return;

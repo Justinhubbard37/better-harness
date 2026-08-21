@@ -977,7 +977,7 @@
 .artifact-status { margin: 0; padding: var(--space-md); color: var(--color-text-muted); }
 .artifact-status code { font-family: var(--font-code); }
 
-.pptx-artifact-viewer { min-width: 0; min-height: 0; display: grid; grid-template-columns: 96px minmax(0, 1fr); background: var(--color-workspace); }
+.pptx-artifact-viewer { min-width: 0; min-height: 0; display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; background: var(--color-workspace); }
 .pptx-slide-rail { min-width: 0; overflow-y: auto; padding: var(--space-sm); border-right: 1px solid var(--color-border); background: var(--color-sidebar); }
 .pptx-slide-rail button { width: 100%; min-height: 72px; margin-bottom: var(--space-sm); padding: var(--space-xs); display: grid; gap: var(--space-xs); border: 1px solid var(--color-border-strong); border-radius: var(--radius-xs); color: var(--color-text); background: var(--color-surface); font: inherit; }
 .pptx-slide-rail button:hover { background: var(--color-surface-hover); }
@@ -1002,6 +1002,27 @@
 .pptx-slide-shape p { margin: 0; line-height: 1.15; white-space: pre-wrap; }
 .pptx-diagnostics { min-width: 0; padding: 0 var(--space-sm); display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); border-top: 1px solid var(--color-border); color: var(--color-text-muted); background: var(--color-surface-subtle); font-size: var(--type-meta-size); }
 .pptx-diagnostics span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pptx-diagnostics .artifact-diagnostics { position: relative; min-width: 0; }
+.artifact-diagnostics > summary { cursor: default; white-space: nowrap; }
+.artifact-diagnostics.level-warning > summary { color: var(--color-warning); }
+.artifact-diagnostics.level-error > summary { color: var(--color-danger); }
+.artifact-diagnostics > ul { position: absolute; right: 0; bottom: calc(100% + var(--space-xs)); z-index: 2; width: min(46ch, 70vw); max-height: 40vh; overflow-y: auto; margin: 0; padding: var(--space-sm); display: grid; gap: var(--space-xs); list-style: none; border: 1px solid var(--color-border-strong); border-radius: var(--radius-xs); background: var(--color-surface); box-shadow: var(--shadow-popover); }
+.artifact-diagnostics > ul li { display: grid; gap: 2px; color: var(--color-text); white-space: normal; }
+.artifact-diagnostics > ul li strong { font-family: var(--font-code); font-size: var(--type-meta-size); }
+.artifact-diagnostics > ul li.level-warning strong { color: var(--color-warning); }
+.artifact-diagnostics > ul li.level-error strong { color: var(--color-danger); }
+.artifact-diagnostics > ul li code { color: var(--color-text-muted); font-family: var(--font-code); }
+.pptx-outline-pane { min-width: 0; width: 220px; overflow-y: auto; padding: var(--space-sm); border-left: 1px solid var(--color-border); background: var(--color-sidebar); }
+.pptx-outline-pane h3 { margin: 0 0 var(--space-xs); color: var(--color-text-muted); font-size: var(--type-meta-size); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.pptx-outline-pane ul { margin: 0; padding: 0; display: grid; gap: 2px; list-style: none; }
+.pptx-outline-pane button { width: 100%; padding: var(--space-xs); display: grid; gap: 1px; border: 1px solid transparent; border-radius: var(--radius-xs); color: var(--color-text); background: transparent; font: inherit; text-align: left; }
+.pptx-outline-pane button:hover { background: var(--color-surface-hover); }
+.pptx-outline-pane button.selected { border-color: var(--color-primary); background: var(--color-surface-selected); }
+.pptx-outline-pane button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.pptx-outline-pane strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.pptx-outline-pane small { color: var(--color-text-muted); font-size: var(--type-meta-size); }
+.pptx-slide-element.selected { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+.artifact-omissions { margin: 0; padding: var(--space-sm) var(--space-md); border-top: 1px solid var(--color-border); color: var(--color-text-muted); font-size: var(--type-meta-size); }
 
 /* Project workspace: selected repo -> discovered sessions -> detail. */
 .session-workbench-stack { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; display: grid; grid-template-rows: var(--pane-header-height) minmax(0, 1fr); background: var(--color-workspace); }
@@ -1138,6 +1159,7 @@
   .artifact-workspace[data-narrow-surface="preview"] .artifact-list-pane { display: none; }
   .artifact-editor-header > span { display: none; }
   .pptx-artifact-viewer { grid-template-columns: 72px minmax(0, 1fr); }
+  .pptx-outline-pane { display: none; }
   .pptx-slide-rail { padding: var(--space-xs); }
   .pptx-slide-rail button { min-height: 58px; }
   .pptx-stage-scroll { padding: var(--space-sm); }

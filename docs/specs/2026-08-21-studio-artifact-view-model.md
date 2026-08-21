@@ -31,17 +31,34 @@ Session trace addressing remain future work.
 `HarnessStudioArtifactCatalogV2` remains a read-only, browser-safe catalog. Each
 descriptor contains:
 
-- a stable catalog-local thread id;
+- a thread id and catalog id derived from the artifact's own name;
 - an exact revision id and SHA-256 digest;
-- the bounded content reference;
-- a data-backed family and format;
+- the bounded, revision-scoped content reference;
+- a data-backed family and a stable lowercase format code;
 - the selected adapter id/version/schema and snapshot URI;
-- the selected renderer id/provider/type/status;
+- the selected renderer id/provider/type/status and optional hosted view URI;
 - renderer capabilities and an optional unavailable reason.
 
 The catalog does not inline parsed Office payloads, absolute paths, runtime
 code, UI state, or Session claims. V1 is superseded rather than extended with a
 parallel optional-field vocabulary.
+
+Identity is derived from the artifact path alone. Ids assigned by listing order
+would re-point at a different file as soon as a sibling appeared, and a handle
+the catalog hands out is dereferenced by a later, independent request, so the
+listing-order counter is replaced by a name-derived fingerprint. The catalog id
+is derived from the artifact directory, so switching artifact sets switches the
+identity of the catalog describing them.
+
+The wire carries one classification axis. Server-internal `kind` selects a
+native plugin and stops there; `family` groups, `format` identifies, and
+`renderer` says what Studio decided to do. Display names such as "PowerPoint"
+are resolved by the client, never frozen into the contract.
+
+Forward compatibility is part of the contract. `backing` is `data | code` from
+the start so the code-backed half does not force a V3, and unknown renderer
+types and capabilities are forwarded rather than rejected: a newer server must
+not look like a broken one to an older tab.
 
 ### D-2: ArtifactDataSnapshotV1 is immutable and format-specific
 
@@ -60,13 +77,23 @@ or local executable path.
 
 ### D-3: The plugin registry chooses Adapter and Renderer separately
 
-The trusted registry resolves one data adapter and one renderer for each file.
-Resolution order is:
+The trusted registry is an ordered list of providers, not a branch chain, so a
+new format is added by writing a provider and inserting it. Resolution order is:
 
 1. an operator-provisioned Qoder Canvas viewer with `overrideBuiltIn`;
 2. a Studio-native data-backed plugin;
 3. a matching non-overriding Qoder Canvas viewer;
 4. the raw adapter plus an honest unavailable renderer.
+
+Step 1 searches every viewer that claims the artifact. Inspecting only the first
+match silently discards an operator's override whenever another viewer for the
+same extension sorts earlier in discovery order, which makes the declared
+priority depend on directory names.
+
+The registry hands the selected adapter implementation to its caller. A caller
+that re-derived the adapter from `descriptor.adapter.id` would re-decide what
+the registry already decided, and the two would drift into a silent raw
+fallback the first time an id changed.
 
 Qoder viewer `scripts/index.mjs` is wrapped as a
 `QoderViewerSidecarAdapter`; `index.canvas.tsx` is wrapped as a
@@ -74,7 +101,49 @@ Qoder viewer `scripts/index.mjs` is wrapped as a
 remain the bridge implementation.
 
 The current `esbuild-wasm` transform is a `TrustedRendererCompiler`. It compiles
-only provisioned renderer code and is not an Artifact compiler.
+only provisioned renderer code and is not an Artifact compiler. The rename is a
+file move, not an alias: one implementation keeps one name.
+
+### D-6: Every published reference is revision-scoped
+
+Content, snapshot, embedded resource, and hosted viewer references all hang off
+`/api/artifacts/:id/revisions/:digest/`. A digest that does not match the file
+on disk answers `409`, so a stale handle fails loudly instead of quietly
+resolving to whatever the path holds now. Because the URL names exact bytes,
+those responses carry an `ETag` and an immutable cache directive, and a
+conditional request answers `304`.
+
+Embedded media is addressed by a hash of its own bytes. Addressing it by its
+package path would keep a year-long immutable cache entry pointing at the
+picture that path used to hold after the document replaced it.
+
+The client follows the reference the catalog declared. Validation requires only
+that a reference stay a same-origin Studio API path: pinning the exact route
+shape would make the indirection decorative, since a client that can only
+follow URIs it could have built itself is not following anything.
+
+### D-7: Snapshot revisions cover presentation, and digests are cached on identity
+
+The catalog revision covers adapter, renderer, capability, and omission state as
+well as content digests. Provisioning a renderer rewrites which surface a client
+should open while every byte on disk stays put; a revision that cannot see that
+is useless as a cache or refetch key.
+
+Exact-byte digests are memoised on filesystem identity — device, inode, size,
+mtime, and ctime. ctime moves on every write, so a modified file cannot reuse a
+stale digest unless the filesystem also failed to record the write. Without the
+cache, one embedded image request re-hashed every artifact in the directory.
+
+### D-8: The directory boundary reports what it declines
+
+Symlinks are not followed, and multiply-linked files are declined by default: a
+hard link inside a run-output directory is indistinguishable from an alias to
+arbitrary bytes elsewhere on the same filesystem. `allowLinkedFiles` is the
+explicit opt-out for a build that links its outputs.
+
+Declined entries are published in `omitted` rather than dropped. A file that is
+silently absent from a run's outputs is indistinguishable from one the run never
+produced, and that is the question an artifact catalog exists to answer.
 
 ### D-4: PPTX has a cross-platform native baseline
 
@@ -122,9 +191,10 @@ push the selected document below the fold.
   `HarnessStudioArtifactCatalogV2`; each artifact has an exact revision and
   content digest, adapter reference, snapshot URI, renderer reference, family,
   and capabilities. Absolute filesystem paths never reach the browser.
-- **AC-2:** `/api/artifacts/:id/snapshot` returns a valid
+- **AC-2:** `/api/artifacts/:id/revisions/:digest/snapshot` returns a valid
   `ArtifactDataSnapshotV1` bound to the descriptor revision. A changed source
-  digest cannot reuse the prior snapshot.
+  digest cannot reuse the prior snapshot, and a stale revision digest answers
+  `409` on every revision-scoped route.
 - **AC-3:** Direct code, diff, JSON, text, image, and SVG behavior remains inert
   and readable through native renderers. Arbitrary artifact TSX/JSX is never
   executed.
@@ -132,12 +202,13 @@ push the selected document below the fold.
   shapes, embedded images, notes presence, semantic addresses, and explicit
   diagnostics. Corrupt, oversized, path-traversing, or expansion-heavy OOXML
   fails closed without stopping other Studio routes.
-- **AC-5:** The native PPTX renderer opens the repository's
+- **AC-5:** The native PPTX renderer opens a real local deck such as
   `Better-Harness-one-page.pptx` in Studio, visibly renders its first slide,
   exposes slide navigation and adapter/renderer identity, and has no page or
   console errors.
-- **AC-6:** An overriding Qoder viewer still wins. A non-overriding viewer is a
-  fallback when no native plugin exists. Qoder sidecar adaptation and renderer
+- **AC-6:** An overriding Qoder viewer still wins, including when a
+  non-overriding viewer for the same extension is discovered first. A
+  non-overriding viewer is a fallback when no native plugin exists. Qoder sidecar adaptation and renderer
   compilation retain timeout, size, temp cleanup, path scrubbing, CORS, CSP,
   and opaque-origin iframe boundaries.
 - **AC-7:** Walnut bootstrap remains explicit, content-addressed,
@@ -156,6 +227,18 @@ push the selected document below the fold.
 - **AC-11:** Package typecheck/build/tests, root tests, package audit, Markdown
   link graph, and preview health/runtime smoke checks pass or report an exact
   external Canvas-runtime prerequisite separately.
+- **AC-12:** Catalog ids and thread ids for a file are unchanged by adding or
+  removing unrelated siblings, and survive edits to the file itself.
+- **AC-13:** The catalog revision moves when the selected adapter, renderer, or
+  capabilities change even though no artifact byte changed.
+- **AC-14:** Embedded media keeps a byte-derived id, so replacing a picture at
+  the same package path publishes a different resource URL.
+- **AC-15:** A catalog response carrying an unknown renderer type or capability
+  validates; the client lists the artifact and reports it as unrenderable.
+- **AC-16:** Symlinked and hard-linked directory entries are excluded from
+  `artifacts` and named in `omitted`, and the Explorer says so.
+- **AC-17:** The adapter's published outline and diagnostics are both reachable
+  in the PPTX renderer, rather than shipped and never read.
 
 ## Non-goals
 
@@ -176,10 +259,9 @@ push the selected document below the fold.
    renderer, family, capability, and snapshot contracts.
 2. Introduce an Artifact plugin registry; adapt existing direct renderers and
    Qoder Canvas discovery behind separate adapter/renderer references.
-3. Rename the trusted Canvas TSX transform boundary to
-   `TrustedRendererCompiler` and the host boundary to
-   `QoderCanvasViewerBridge`, retaining compatibility re-exports only where
-   focused tests still need them.
+3. Move the trusted Canvas TSX transform to `TrustedRendererCompiler` and the
+   host boundary to `QoderCanvasViewerBridge` as real file moves, so one
+   implementation carries one name and no alias module survives.
 4. Implement bounded OOXML ZIP/XML parsing, PPTX snapshots, snapshot/resource
    routes, cache identity by source digest plus adapter version, and behavioral
    malformed-input tests.
@@ -193,14 +275,23 @@ push the selected document below the fold.
 
 ## Test and Review Evidence
 
-- AC-1/AC-2/AC-4/AC-10: 137 Studio tests passed across 21 files. Focused PPTX
+- AC-1/AC-2/AC-4/AC-10/AC-12..AC-16: 141 Studio tests passed across 21 files.
+  New behavioral tests cover id and thread stability under sibling churn,
+  revision movement on presentation-only change, stale-revision `409`,
+  `If-None-Match` `304`, byte-derived media ids, forward-compatible renderer
+  types and capabilities, and reported symlink/hard-link omissions. Focused PPTX
   tests cover exact revision and snapshot binding, leading-zero text, positioned
   shapes, embedded resources, notes path redaction, semantic addresses, corrupt
   archives, unsafe ZIP paths, oversized expanded entries, and cache invalidation.
-- AC-3/AC-6: the V2 catalog, direct renderers, Qoder override/fallback registry,
+- AC-3/AC-6: the V2 catalog, direct renderers, ordered plugin registry,
   sidecar freshness, trusted renderer compilation, active-content CSP, SVG
   sandbox, and malformed route behavior all remain covered in that package run.
-- AC-5/AC-8/AC-9: all 17 Playwright scenarios passed. Native PPTX rendering,
+  A regression test drives the override provider from both discovery orders, so
+  the declared priority can no longer depend on viewer directory names.
+- AC-5/AC-8/AC-9/AC-17: all 17 Playwright scenarios passed. One rewrites a
+  descriptor's content reference to a different artifact's revision-scoped URL
+  and proves the client fetches what the catalog declared; another opens the
+  PPTX outline, selects an addressed shape, and expands the diagnostics list. Native PPTX rendering,
   Grouped Explorer, wide 1440x900, compact 1024x768, narrow 390x844, automatic
   Preview navigation, keyboard focus, horizontal overflow, theme contrast, and
   browser errors are verified with screenshots. The live in-app browser also
@@ -212,10 +303,14 @@ push the selected document below the fold.
   read-only real probe found ChatGPT 26.818.22352 and 34 reviewed assets for
   DOCX/PPTX/XLSX. Package dry-run contained 926 files and no ASAR/WASM or
   extracted ChatGPT asset.
-- AC-11: Studio typecheck/build/tests, full browser suite, 1,435 root tests,
-  six Markdown link-graph tests, package dry-run, and `git diff --check` passed.
-  The optional root Canvas preview smoke was not runnable because no Canvas SDK
-  runtime was configured; native PPTX rendering does not use that runtime.
+- AC-11: Studio typecheck, build, 141 package tests, 17 Playwright scenarios,
+  and 1,435 root tests passed. The optional root Canvas preview smoke was not
+  runnable because no Canvas SDK runtime was configured; native PPTX rendering
+  does not use that runtime. Under default parallelism one unrelated pre-existing
+  gate, `session-performance.test.ts`, trips its fixed 1,000 ms wall-clock
+  assertion through CPU contention; it passes in isolation and with
+  `--maxWorkers=1`, where the full 141 tests pass, and it exercises the session
+  timeline model rather than any Artifact View code.
 
 ### Risks
 

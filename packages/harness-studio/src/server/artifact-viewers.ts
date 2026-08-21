@@ -1,11 +1,13 @@
+/**
+ * Discovery for operator-provisioned Qoder Canvas viewers.
+ *
+ * This module knows only how to find and match Qoder viewers. Deciding which
+ * adapter and renderer an artifact gets belongs to the plugin registry, where
+ * Qoder Canvas is one provider among several rather than the host model.
+ */
 import { homedir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import { readFile, readdir, stat } from "node:fs/promises";
-import type {
-  ArtifactCapability,
-  ArtifactKind,
-  ArtifactRendererReference,
-} from "../artifact-model.js";
 import type { ArtifactEntry } from "./artifact-catalog.js";
 
 export interface CanvasViewer {
@@ -28,16 +30,6 @@ interface ViewerManifest {
   dataKey?: unknown;
   overrideBuiltIn?: unknown;
   overridesBuiltIn?: unknown;
-}
-
-export interface ArtifactPluginResolution {
-  adapter: {
-    id: string;
-    version: string;
-    schemaId: string;
-  };
-  renderer: ArtifactRendererReference;
-  capabilities: ArtifactCapability[];
 }
 
 /** Qoder stores provisioned format viewers below the canvas subtree. */
@@ -89,101 +81,28 @@ async function discoverCanvasViewersAt(root: string): Promise<CanvasViewer[]> {
   return viewers;
 }
 
-export function matchCanvasViewer(entry: ArtifactEntry, viewers: readonly CanvasViewer[]): CanvasViewer | undefined {
+/**
+ * Every viewer that claims this artifact, in discovery order.
+ *
+ * Resolution has to see the whole set: an operator's overriding viewer must not
+ * lose to a non-overriding one just because its directory sorts earlier, which
+ * is exactly what happens when only the first match is inspected.
+ */
+export function matchCanvasViewers(entry: ArtifactEntry, viewers: readonly CanvasViewer[]): CanvasViewer[] {
   const extension = normalizeExtension(extname(entry.label));
   const fileName = basename(entry.label);
-  return viewers.find((viewer) => viewer.extensions.includes(extension) || viewer.pathGlobs.some((glob) => matchesPathGlob(fileName, glob)));
+  return viewers.filter((viewer) => viewer.extensions.includes(extension)
+    || viewer.pathGlobs.some((glob) => matchesPathGlob(fileName, glob)));
 }
 
-export function presentArtifact(entry: ArtifactEntry, viewers: readonly CanvasViewer[]): ArtifactPluginResolution {
-  const viewer = matchCanvasViewer(entry, viewers);
-  if (viewer?.overrideBuiltIn === true) return canvasPresentation(viewer);
-  const native = nativePresentation(entry.kind);
-  if (native !== undefined) return native;
-  if (viewer !== undefined) return canvasPresentation(viewer);
-  return {
-    adapter: { id: "studio.raw", version: "1", schemaId: "artifact/raw-v1" },
-    renderer: {
-      id: "studio.unavailable",
-      label: "Unavailable",
-      provider: "studio",
-      type: "unavailable",
-      status: "unavailable",
-      reason: "No native renderer or provisioned Qoder Canvas viewer matches this file.",
-    },
-    capabilities: [],
-  };
-}
-
-function nativePresentation(kind: ArtifactKind): ArtifactPluginResolution | undefined {
-  if (kind === "pptx") {
-    return {
-      adapter: { id: "studio.pptx-ooxml", version: "1", schemaId: "pptx/v1" },
-      renderer: {
-        id: "studio.pptx-dom",
-        label: "Studio PPTX",
-        provider: "studio",
-        type: "native",
-        status: "ready",
-      },
-      capabilities: ["navigate", "outline", "search", "select", "thumbnail", "zoom"],
-    };
-  }
-  if (kind === "unknown") return undefined;
-  return {
-    adapter: { id: "studio.raw", version: "1", schemaId: "artifact/raw-v1" },
-    renderer: {
-      id: `studio.${kind}`,
-      label: nativeRendererLabel(kind),
-      provider: "studio",
-      type: "native",
-      status: "ready",
-    },
-    capabilities: kind === "image" || kind === "svg" ? ["select", "zoom"] : ["search", "select"],
-  };
-}
-
-function nativeRendererLabel(kind: Exclude<ArtifactKind, "unknown" | "pptx">): string {
-  return ({
-    code: "Studio code",
-    diff: "Studio diff",
-    image: "Studio image",
-    json: "Studio JSON",
-    svg: "Studio SVG",
-    text: "Studio text",
-  })[kind];
-}
-
-function canvasPresentation(viewer: CanvasViewer): ArtifactPluginResolution {
-  if (viewer.scriptPath === undefined || viewer.dataKey === undefined) {
-    return {
-      adapter: { id: `qoder-canvas.${viewer.id}.sidecar`, version: "1", schemaId: `qoder-canvas/${viewer.id}/v1` },
-      renderer: {
-        id: `qoder-canvas.${viewer.id}`,
-        label: viewer.label,
-        provider: "qoder-canvas",
-        type: "unavailable",
-        status: "unavailable",
-        reason: "The matching Qoder Canvas viewer has no target-file data adapter.",
-      },
-      capabilities: [],
-    };
-  }
-  return {
-    adapter: { id: `qoder-canvas.${viewer.id}.sidecar`, version: "1", schemaId: `qoder-canvas/${viewer.id}/v1` },
-    renderer: {
-      id: `qoder-canvas.${viewer.id}`,
-      label: viewer.label,
-      provider: "qoder-canvas",
-      type: "qoder-canvas",
-      status: "ready",
-    },
-    capabilities: ["navigate", "select", "zoom"],
-  };
+export function matchCanvasViewer(entry: ArtifactEntry, viewers: readonly CanvasViewer[]): CanvasViewer | undefined {
+  return matchCanvasViewers(entry, viewers)[0];
 }
 
 function matchesPathGlob(fileName: string, glob: string): boolean {
   const normalized = glob.replaceAll("\\", "/");
+  // `**/*.` is five characters; slicing four keeps the dot so the suffix test
+  // cannot match `notes.svg` against a `**/*.g` style pattern.
   if (normalized.startsWith("**/*.")) return fileName.toLowerCase().endsWith(normalized.slice(4).toLowerCase());
   if (normalized.startsWith("**/")) return fileName === normalized.slice(3);
   return fileName === normalized;

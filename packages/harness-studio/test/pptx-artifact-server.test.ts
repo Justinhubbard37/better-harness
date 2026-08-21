@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,6 +6,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { isArtifactCatalogResponse, isArtifactDataSnapshot, type PptxArtifactPayload } from "../src/artifact-model.js";
 import { startHarnessStudioServer, type StartedHarnessStudioServer } from "../src/server/server.js";
 import { createPptxFixture, TINY_PNG } from "./pptx-fixture.js";
+
+/** A second 1x1 PNG, so a replaced picture keeps its package path. */
+const OTHER_PNG = new Uint8Array([...TINY_PNG.slice(0, TINY_PNG.length - 1), (TINY_PNG.at(-1)! ^ 0xff)]);
 
 let server: StartedHarnessStudioServer | undefined;
 const tempDirectories: string[] = [];
@@ -28,8 +32,9 @@ describe("PPTX artifact HTTP boundary", () => {
     if (!isArtifactCatalogResponse(catalogValue)) throw new Error("expected an Artifact Catalog V2 response");
     const descriptor = catalogValue.artifacts[0]!;
     expect(descriptor).toMatchObject({
-      kind: "pptx",
+      format: "pptx",
       family: "documents",
+      backing: "data",
       adapter: { id: "studio.pptx-ooxml", schemaId: "pptx/v1" },
       renderer: { id: "studio.pptx-dom", status: "ready" },
     });
@@ -50,8 +55,26 @@ describe("PPTX artifact HTTP boundary", () => {
     expect(resourceResponse.status).toBe(200);
     expect(resourceResponse.headers.get("content-type")).toBe("image/png");
     expect(new Uint8Array(await resourceResponse.arrayBuffer())).toEqual(TINY_PNG);
-    expect((await fetch(`${server.url}/api/artifacts/deck/resources/not-in-the-snapshot`)).status).toBe(404);
-    expect((await fetch(`${server.url}/api/artifacts/deck/resources/%E0%A4%A`)).status).toBe(400);
+    const revisionBase = `/api/artifacts/${descriptor.id}/revisions/${descriptor.revision.digest.slice(7)}`;
+    expect(resource.uri).toBe(`${revisionBase}/resources/${resource.id}`);
+    // Media is addressed by its bytes, so an immutable cache entry cannot outlive
+    // the picture it describes.
+    expect(resource.id).toBe(`media-${createHash("sha256").update(TINY_PNG).digest("hex").slice(0, 24)}`);
+    expect(resourceResponse.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+    expect((await fetch(`${server.url}${revisionBase}/resources/not-in-the-snapshot`)).status).toBe(404);
+    expect((await fetch(`${server.url}${revisionBase}/resources/%E0%A4%A`)).status).toBe(400);
+
+    // Replacing the picture while keeping its package path must produce a new
+    // resource URL rather than reusing the cached one.
+    await writeFile(join(artifactDirectory, "deck.pptx"), createPptxFixture("02", OTHER_PNG));
+    const nextCatalog: unknown = await (await fetch(`${server.url}/api/artifacts`)).json();
+    if (!isArtifactCatalogResponse(nextCatalog)) throw new Error("expected an Artifact Catalog V2 response");
+    const nextDescriptor = nextCatalog.artifacts[0]!;
+    expect(nextDescriptor.threadId).toBe(descriptor.threadId);
+    const nextSnapshot: unknown = await (await fetch(`${server.url}${nextDescriptor.adapter.snapshotUri}`)).json();
+    if (!isArtifactDataSnapshot(nextSnapshot)) throw new Error("expected an ArtifactDataSnapshot");
+    expect(nextSnapshot.resources[0]!.id).not.toBe(resource.id);
+    expect(nextSnapshot.resources[0]!.uri).not.toBe(resource.uri);
   });
 });
 

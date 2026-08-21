@@ -2,12 +2,13 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { compileCanvasViewerModule } from "../src/server/canvas-viewer-compile.js";
-import type { ArtifactEntry } from "../src/server/artifact-catalog.js";
-import { generateViewerData } from "../src/server/artifact-viewer-runtime.js";
-import { defaultCanvasViewerRoot, discoverCanvasViewers, presentArtifact } from "../src/server/artifact-viewers.js";
+import { compileTrustedRendererModule } from "../src/server/trusted-renderer-compiler.js";
+import { artifactIdForLabel, artifactThreadIdForLabel, type ArtifactEntry } from "../src/server/artifact-catalog.js";
+import { adaptQoderCanvasViewerData } from "../src/server/qoder-canvas-viewer-bridge.js";
+import { defaultCanvasViewerRoot, discoverCanvasViewers, resolveArtifactPlugin } from "../src/server/artifact-plugin-registry.js";
+import type { CanvasViewer } from "../src/server/artifact-viewers.js";
 
-describe("Canvas artifact viewers", () => {
+describe("Artifact plugin registry and the Qoder Canvas provider", () => {
   it("uses the Qoder canvas/canvases directory", () => {
     expect(defaultCanvasViewerRoot({ QODER_HOME: "/qoder-home" }, "/home/test")).toBe(join(resolve("/qoder-home"), "canvas", "canvases"));
     expect(defaultCanvasViewerRoot({}, "/home/test")).toBe(join("/home/test", ".qoder", "canvas", "canvases"));
@@ -17,19 +18,30 @@ describe("Canvas artifact viewers", () => {
     const root = await fakeViewerRoot(false);
     const viewers = await discoverCanvasViewers(root);
     expect(viewers).toHaveLength(1);
-    expect(presentArtifact(entry("deck.pptx", "pptx"), viewers)).toMatchObject({ renderer: { id: "studio.pptx-dom", type: "native" } });
-    expect(presentArtifact(entry("diagram.svg", "svg"), viewers)).toMatchObject({ renderer: { id: "studio.svg", type: "native" } });
-    expect(presentArtifact(entry("archive.bin", "unknown"), viewers)).toMatchObject({ renderer: { id: "qoder-canvas.pptx", type: "qoder-canvas" } });
+    expect(resolve_(entry("deck.pptx", "pptx"), viewers)).toMatchObject({ renderer: { id: "studio.pptx-dom", type: "native" } });
+    expect(resolve_(entry("diagram.svg", "svg"), viewers)).toMatchObject({ renderer: { id: "studio.svg", type: "native" } });
+    expect(resolve_(entry("archive.bin", "unknown"), viewers)).toMatchObject({ renderer: { id: "qoder-canvas.pptx", type: "qoder-canvas" } });
   });
 
   it("lets an explicit manifest override replace a direct renderer", async () => {
     const viewers = await discoverCanvasViewers(await fakeViewerRoot(true));
-    expect(presentArtifact(entry("diagram.svg", "svg"), viewers)).toMatchObject({ renderer: { id: "qoder-canvas.pptx", type: "qoder-canvas" } });
+    expect(resolve_(entry("diagram.svg", "svg"), viewers)).toMatchObject({ renderer: { id: "qoder-canvas.pptx", type: "qoder-canvas" } });
+  });
+
+  it("keeps an explicit override ahead of a non-overriding viewer that sorts first", async () => {
+    // The declared priority puts an operator override above Studio's native
+    // renderer. Inspecting only the first match would silently drop it whenever
+    // another viewer for the same extension came earlier in discovery order.
+    const plain = fakeViewer("a-plain", false);
+    const override = fakeViewer("z-override", true);
+    expect(resolve_(entry("deck.pptx", "pptx"), [plain, override]).renderer.id).toBe("qoder-canvas.z-override");
+    expect(resolve_(entry("deck.pptx", "pptx"), [override, plain]).renderer.id).toBe("qoder-canvas.z-override");
+    expect(resolve_(entry("deck.pptx", "pptx"), [plain]).renderer.id).toBe("studio.pptx-dom");
   });
 
   it("preserves Canvas SDK imports when compiling trusted viewer code", async () => {
     const viewers = await discoverCanvasViewers(await fakeViewerRoot(false));
-    const compiled = await compileCanvasViewerModule(viewers[0]!.modulePath);
+    const compiled = await compileTrustedRendererModule(viewers[0]!.modulePath);
     expect(compiled.code).toContain('from "qoder/canvas"');
   });
 
@@ -39,7 +51,7 @@ describe("Canvas artifact viewers", () => {
     await writeFile(path, "pptx bytes", "utf8");
     await writeFile(join(directory, "deck.canvas.data.json"), JSON.stringify({ officePresentation: { stale: true } }), "utf8");
     const viewer = (await discoverCanvasViewers(await fakeViewerRoot(false)))[0]!;
-    const payload = await generateViewerData({ ...entry("deck.pptx", "unknown"), path, size: 10 }, viewer);
+    const payload = await adaptQoderCanvasViewerData({ ...entry("deck.pptx", "unknown"), path, size: 10 }, viewer);
     expect(payload.officePresentation).toMatchObject({ error: "", generated: true });
     expect(payload.officePresentation).not.toHaveProperty("stale");
   });
@@ -53,12 +65,37 @@ describe("Canvas artifact viewers", () => {
       'import { writeFile } from "node:fs/promises";',
       'await writeFile(process.env.AICODING_CANVAS_DATA, JSON.stringify({ officePresentation: { error: "", sourcePath: "/another/deck.pptx" } }));',
     ].join("\n"), "utf8");
-    await expect(generateViewerData({ ...entry("deck.pptx", "unknown"), path, size: 10 }, viewer)).rejects.toThrow(/does not describe/u);
+    await expect(adaptQoderCanvasViewerData({ ...entry("deck.pptx", "unknown"), path, size: 10 }, viewer)).rejects.toThrow(/does not describe/u);
   });
 });
 
+function resolve_(entry: ArtifactEntry, viewers: readonly CanvasViewer[]) {
+  return resolveArtifactPlugin(entry, { qoderCanvasViewers: viewers });
+}
+
 function entry(label: string, kind: ArtifactEntry["kind"]): ArtifactEntry {
-  return { id: label.split(".")[0]!, kind, label, path: `/artifacts/${label}`, size: 1 };
+  return {
+    id: artifactIdForLabel(label),
+    threadId: artifactThreadIdForLabel(label),
+    kind,
+    label,
+    path: `/artifacts/${label}`,
+    size: 1,
+  };
+}
+
+function fakeViewer(id: string, overrideBuiltIn: boolean): CanvasViewer {
+  return {
+    id,
+    label: id,
+    extensions: ["pptx"],
+    pathGlobs: [],
+    dataKey: "officePresentation",
+    overrideBuiltIn,
+    rootPath: `/viewers/${id}`,
+    modulePath: `/viewers/${id}/index.canvas.tsx`,
+    scriptPath: `/viewers/${id}/scripts/index.mjs`,
+  };
 }
 
 async function fakeViewerRoot(overrideBuiltIn: boolean): Promise<string> {

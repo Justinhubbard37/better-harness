@@ -5,8 +5,9 @@ import { strToU8, zipSync } from "fflate";
 import { afterEach, describe, expect, it } from "vitest";
 import { isArtifactDataSnapshot, type ArtifactDescriptor, type PptxArtifactPayload } from "../src/artifact-model.js";
 import { describeArtifactCatalog, indexArtifactDirectory } from "../src/server/artifact-catalog.js";
-import { adaptPptxArtifact, readPptxSnapshotResource, resetPptxArtifactCache } from "../src/server/pptx-artifact-adapter.js";
-import { presentArtifact } from "../src/server/artifact-viewers.js";
+import { PPTX_ARTIFACT_ADAPTER, resetPptxArtifactCache } from "../src/server/pptx-artifact-adapter.js";
+import { resolveArtifactPlugin } from "../src/server/artifact-plugin-registry.js";
+import type { ArtifactEntry } from "../src/server/artifact-catalog.js";
 import { createPptxFixture, TINY_PNG } from "./pptx-fixture.js";
 
 const tempDirectories: string[] = [];
@@ -20,7 +21,7 @@ describe("PPTX ArtifactDataAdapter", () => {
   it("creates a revision-bound snapshot with text, images, notes, and semantic addresses", async () => {
     const { entry, descriptor } = await writeFixture("01");
 
-    const snapshot = await adaptPptxArtifact(entry, descriptor);
+    const snapshot = await PPTX_ARTIFACT_ADAPTER.adapt({ entry, descriptor });
 
     expect(isArtifactDataSnapshot(snapshot)).toBe(true);
     expect(snapshot).toMatchObject({
@@ -51,23 +52,27 @@ describe("PPTX ArtifactDataAdapter", () => {
 
     const resource = snapshot.resources[0]!;
     expect(resource).toMatchObject({ mediaType: "image/png", size: TINY_PNG.length });
-    expect(resource.uri).toBe(`/api/artifacts/${descriptor.id}/resources/${resource.id}`);
-    expect(await readPptxSnapshotResource(entry, descriptor, resource.id)).toMatchObject({
+    expect(resource.uri).toBe(`/api/artifacts/${descriptor.id}/revisions/${descriptor.revision.digest.slice(7)}/resources/${resource.id}`);
+    expect(await PPTX_ARTIFACT_ADAPTER.readResource!({ entry, descriptor }, resource.id)).toMatchObject({
       mediaType: "image/png",
       label: "image1.png",
     });
-    expect((await readPptxSnapshotResource(entry, descriptor, resource.id))?.bytes).toEqual(TINY_PNG);
-    expect(await readPptxSnapshotResource(entry, descriptor, "../image1")).toBeUndefined();
+    expect((await PPTX_ARTIFACT_ADAPTER.readResource!({ entry, descriptor }, resource.id))?.bytes).toEqual(TINY_PNG);
+    expect(await PPTX_ARTIFACT_ADAPTER.readResource!({ entry, descriptor }, "../image1")).toBeUndefined();
   });
 
   it("invalidates both artifact and snapshot revisions when the deck bytes change", async () => {
     const first = await writeFixture("01");
-    const firstSnapshot = await adaptPptxArtifact(first.entry, first.descriptor);
+    const firstSnapshot = await PPTX_ARTIFACT_ADAPTER.adapt({ entry: first.entry, descriptor: first.descriptor });
 
     await writeFile(first.entry.path, createPptxFixture("02"));
-    const entries = await indexArtifactDirectory(first.directory, { includeDigests: true });
-    const secondDescriptor = describeArtifactCatalog(entries, (entry) => presentArtifact(entry, [])).artifacts[0]!;
-    const secondSnapshot = await adaptPptxArtifact(entries[0]!, secondDescriptor);
+    const index = await indexArtifactDirectory(first.directory, { includeDigests: true });
+    const secondDescriptor = describeArtifactCatalog(index, (entry) => resolveArtifactPlugin(entry, { qoderCanvasViewers: [] })).artifacts[0]!;
+    const secondSnapshot = await PPTX_ARTIFACT_ADAPTER.adapt({ entry: index.entries[0]!, descriptor: secondDescriptor });
+
+    // Identity survives the edit; only the revision moves.
+    expect(secondDescriptor.threadId).toBe(first.descriptor.threadId);
+    expect(secondDescriptor.id).toBe(first.descriptor.id);
 
     expect(secondDescriptor.revision.id).not.toBe(first.descriptor.revision.id);
     expect(secondDescriptor.adapter.snapshotId).not.toBe(first.descriptor.adapter.snapshotId);
@@ -78,10 +83,10 @@ describe("PPTX ArtifactDataAdapter", () => {
   it("rejects malformed archives instead of returning a partial snapshot", async () => {
     const directory = await makeTempDirectory();
     await writeFile(join(directory, "broken.pptx"), "not a zip archive");
-    const entries = await indexArtifactDirectory(directory, { includeDigests: true });
-    const descriptor = describeArtifactCatalog(entries, (entry) => presentArtifact(entry, [])).artifacts[0]!;
+    const index = await indexArtifactDirectory(directory, { includeDigests: true });
+    const descriptor = describeArtifactCatalog(index, (entry) => resolveArtifactPlugin(entry, { qoderCanvasViewers: [] })).artifacts[0]!;
 
-    await expect(adaptPptxArtifact(entries[0]!, descriptor)).rejects.toThrow();
+    await expect(PPTX_ARTIFACT_ADAPTER.adapt({ entry: index.entries[0]!, descriptor })).rejects.toThrow();
   });
 
   it("rejects unsafe package paths and oversized expanded entries", async () => {
@@ -90,12 +95,12 @@ describe("PPTX ArtifactDataAdapter", () => {
   });
 });
 
-async function writeFixture(text: string): Promise<{ directory: string; entry: Awaited<ReturnType<typeof indexArtifactDirectory>>[number]; descriptor: ArtifactDescriptor }> {
+async function writeFixture(text: string): Promise<{ directory: string; entry: ArtifactEntry; descriptor: ArtifactDescriptor }> {
   const directory = await makeTempDirectory();
   await writeFile(join(directory, "deck.pptx"), createPptxFixture(text));
-  const entries = await indexArtifactDirectory(directory, { includeDigests: true });
-  const descriptor = describeArtifactCatalog(entries, (entry) => presentArtifact(entry, [])).artifacts[0]!;
-  return { directory, entry: entries[0]!, descriptor };
+  const index = await indexArtifactDirectory(directory, { includeDigests: true });
+  const descriptor = describeArtifactCatalog(index, (entry) => resolveArtifactPlugin(entry, { qoderCanvasViewers: [] })).artifacts[0]!;
+  return { directory, entry: index.entries[0]!, descriptor };
 }
 
 async function makeTempDirectory(): Promise<string> {
@@ -107,7 +112,7 @@ async function makeTempDirectory(): Promise<string> {
 async function expectRejectedArchive(bytes: Uint8Array, error: RegExp): Promise<void> {
   const directory = await makeTempDirectory();
   await writeFile(join(directory, "hostile.pptx"), bytes);
-  const entries = await indexArtifactDirectory(directory, { includeDigests: true });
-  const descriptor = describeArtifactCatalog(entries, (entry) => presentArtifact(entry, [])).artifacts[0]!;
-  await expect(adaptPptxArtifact(entries[0]!, descriptor)).rejects.toThrow(error);
+  const index = await indexArtifactDirectory(directory, { includeDigests: true });
+  const descriptor = describeArtifactCatalog(index, (entry) => resolveArtifactPlugin(entry, { qoderCanvasViewers: [] })).artifacts[0]!;
+  await expect(PPTX_ARTIFACT_ADAPTER.adapt({ entry: index.entries[0]!, descriptor })).rejects.toThrow(error);
 }

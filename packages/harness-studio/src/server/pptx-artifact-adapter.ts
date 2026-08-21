@@ -18,7 +18,13 @@ import {
   type PptxSlideSnapshot,
   type PptxTextRun,
 } from "../artifact-model.js";
+import { artifactRevisionBase } from "./artifact-catalog.js";
 import type { ArtifactEntry } from "./artifact-catalog.js";
+import type {
+  ArtifactAdaptContext,
+  ArtifactAdapterImplementation,
+  ArtifactResourceBytes,
+} from "./artifact-adapter-contract.js";
 
 const PPTX_ADAPTER_ID = "studio.pptx-ooxml";
 const PPTX_ADAPTER_VERSION = "1";
@@ -32,8 +38,20 @@ const MAX_CACHE_ENTRIES = 8;
 
 interface CachedPptxSnapshot {
   snapshot: ArtifactDataSnapshot;
-  resources: Map<string, { bytes: Uint8Array; mediaType: string; label: string }>;
+  resources: Map<string, ArtifactResourceBytes>;
 }
+
+/** The Studio-native OOXML plugin, selected by the Artifact plugin registry. */
+export const PPTX_ARTIFACT_ADAPTER: ArtifactAdapterImplementation = {
+  id: PPTX_ADAPTER_ID,
+  version: PPTX_ADAPTER_VERSION,
+  schemaId: "pptx/v1",
+  adapt: async (context) => (await loadPptxSnapshot(context)).snapshot,
+  readResource: async (context, resourceId) => {
+    if (!/^[A-Za-z0-9_-]+$/u.test(resourceId)) return undefined;
+    return (await loadPptxSnapshot(context)).resources.get(resourceId);
+  },
+};
 
 const cache = new Map<string, CachedPptxSnapshot>();
 const xmlParser = new XMLParser({
@@ -44,27 +62,11 @@ const xmlParser = new XMLParser({
   trimValues: false,
 });
 
-export async function adaptPptxArtifact(
-  entry: ArtifactEntry,
-  descriptor: ArtifactDescriptor,
-): Promise<ArtifactDataSnapshot> {
-  return (await loadPptxSnapshot(entry, descriptor)).snapshot;
-}
-
-export async function readPptxSnapshotResource(
-  entry: ArtifactEntry,
-  descriptor: ArtifactDescriptor,
-  resourceId: string,
-): Promise<{ bytes: Uint8Array; mediaType: string; label: string } | undefined> {
-  if (!/^[A-Za-z0-9_-]+$/u.test(resourceId)) return undefined;
-  return (await loadPptxSnapshot(entry, descriptor)).resources.get(resourceId);
-}
-
 export function resetPptxArtifactCache(): void {
   cache.clear();
 }
 
-async function loadPptxSnapshot(entry: ArtifactEntry, descriptor: ArtifactDescriptor): Promise<CachedPptxSnapshot> {
+async function loadPptxSnapshot({ entry, descriptor }: ArtifactAdaptContext): Promise<CachedPptxSnapshot> {
   if (descriptor.adapter.id !== PPTX_ADAPTER_ID || descriptor.adapter.version !== PPTX_ADAPTER_VERSION) {
     throw new Error("PPTX snapshot requested with an unsupported adapter.");
   }
@@ -113,8 +115,9 @@ function materializePptxSnapshot(
   if (slideIds.length === 0) throw new Error("PPTX has no slides.");
 
   const diagnostics: ArtifactDiagnostic[] = [];
-  const resources = new Map<string, { bytes: Uint8Array; mediaType: string; label: string }>();
+  const resources = new Map<string, ArtifactResourceBytes>();
   const resourceRows: ArtifactSnapshotResource[] = [];
+  const resourceBase = `${artifactRevisionBase(descriptor.id, descriptor.revision.digest)}/resources`;
   const semanticIndex: ArtifactSemanticIndexEntry[] = [];
   const structure: ArtifactStructureNode[] = [];
   const slides: PptxSlideSnapshot[] = [];
@@ -124,7 +127,7 @@ function materializePptxSnapshot(
     const relationshipId = stringValue(slideId["r:id"]);
     const slidePath = relationshipId === undefined ? undefined : presentationRelationships.get(relationshipId);
     if (slidePath === undefined) throw new Error(`PPTX slide ${index + 1} relationship is missing.`);
-    const parsed = parseSlide(archive, slidePath, index, descriptor.id, diagnostics, resources, resourceRows, semanticIndex);
+    const parsed = parseSlide(archive, slidePath, index, resourceBase, diagnostics, resources, resourceRows, semanticIndex);
     slides.push(parsed.slide);
     structure.push({
       id: parsed.slide.id,
@@ -170,9 +173,9 @@ function parseSlide(
   archive: Record<string, Uint8Array>,
   slidePath: string,
   index: number,
-  artifactId: string,
+  resourceBase: string,
   diagnostics: ArtifactDiagnostic[],
-  resources: Map<string, { bytes: Uint8Array; mediaType: string; label: string }>,
+  resources: Map<string, ArtifactResourceBytes>,
   resourceRows: ArtifactSnapshotResource[],
   semanticIndex: ArtifactSemanticIndexEntry[],
 ): { slide: PptxSlideSnapshot } {
@@ -196,7 +199,7 @@ function parseSlide(
   }
   for (const value of array(shapeTree["p:pic"])) {
     const picture = record(value, "PPTX picture is malformed.");
-    const parsed = parsePicture(picture, slideNumber, relationships, archive, artifactId, resources, resourceRows, diagnostics);
+    const parsed = parsePicture(picture, slideNumber, relationships, archive, resourceBase, resources, resourceRows, diagnostics);
     if (parsed !== undefined) {
       elements.push(parsed);
       semanticIndex.push({ address: parsed.address, label: parsed.name, kind: "image" });
@@ -249,8 +252,8 @@ function parsePicture(
   slideNumber: number,
   relationships: Map<string, string>,
   archive: Record<string, Uint8Array>,
-  artifactId: string,
-  resources: Map<string, { bytes: Uint8Array; mediaType: string; label: string }>,
+  resourceBase: string,
+  resources: Map<string, ArtifactResourceBytes>,
   resourceRows: ArtifactSnapshotResource[],
   diagnostics: ArtifactDiagnostic[],
 ): PptxElement | undefined {
@@ -266,16 +269,20 @@ function parsePicture(
   }
   const rawId = stringValue(props?.id) ?? createHash("sha256").update(mediaPath).digest("hex").slice(0, 12);
   const name = stringValue(props?.name) || posix.basename(mediaPath);
-  const resourceId = `media-${createHash("sha256").update(`${mediaPath}:${rawId}`).digest("hex").slice(0, 12)}`;
+  const bytes = archive[mediaPath]!;
+  // Address media by its bytes, not by its package path. The resource URL is
+  // served immutable, so an id derived from `ppt/media/image1.png` would keep
+  // pointing a year-long cache entry at the picture that path used to hold
+  // after the deck replaced it.
+  const resourceId = `media-${createHash("sha256").update(bytes).digest("hex").slice(0, 24)}`;
   if (!resources.has(resourceId)) {
-    const bytes = archive[mediaPath]!;
     const mediaType = mediaTypeFor(mediaPath);
     resources.set(resourceId, { bytes, mediaType, label: posix.basename(mediaPath) });
     resourceRows.push({
       id: resourceId,
       label: posix.basename(mediaPath),
       mediaType,
-      uri: `/api/artifacts/${encodeURIComponent(artifactId)}/resources/${resourceId}`,
+      uri: `${resourceBase}/${resourceId}`,
       size: bytes.byteLength,
     });
   }

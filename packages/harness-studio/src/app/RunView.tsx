@@ -36,7 +36,7 @@ import { SquaresFour } from "@phosphor-icons/react/SquaresFour";
 import {
   isArtifactCatalogResponse,
   type ArtifactDescriptor,
-} from "../artifact-catalog-contract.js";
+} from "../artifact-model.js";
 import { TerminalWindow } from "@phosphor-icons/react/TerminalWindow";
 import { TestTube } from "@phosphor-icons/react/TestTube";
 import { TreeStructure } from "@phosphor-icons/react/TreeStructure";

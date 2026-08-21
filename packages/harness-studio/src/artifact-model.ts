@@ -3,11 +3,36 @@ export const ARTIFACT_DATA_SNAPSHOT_KIND = "ArtifactDataSnapshotV1" as const;
 
 export type ArtifactDigest = `sha256:${string}`;
 export type ArtifactFamily = "documents" | "images-diagrams" | "data" | "source-text" | "other";
-export type ArtifactBacking = "data";
-export type ArtifactRendererType = "native" | "qoder-canvas" | "unavailable";
+
+/**
+ * Backing decides which half of the Artifact View lifecycle an artifact takes:
+ * `data` goes Adapter -> Snapshot -> Renderer, `code` goes Adapter -> Compile
+ * Runtime -> Build Snapshot -> Preview Runtime. Only `data` is implemented, but
+ * the union is public now so a code-backed descriptor never needs a V3.
+ */
+export type ArtifactBacking = "data" | "code";
+
+/**
+ * Renderer types and capabilities grow as providers are added. Consumers must
+ * treat an unrecognized value as unsupported, never as an invalid response, so
+ * an older Studio tab keeps working against a newer server. The `(string & {})`
+ * arm preserves completion for the known values while admitting future ones.
+ */
+export type KnownArtifactRendererType = "native" | "qoder-canvas" | "sandboxed-web" | "unavailable";
+export type ArtifactRendererType = KnownArtifactRendererType | (string & {});
+export type KnownArtifactCapability =
+  | "compare"
+  | "execute"
+  | "live-update"
+  | "navigate"
+  | "outline"
+  | "search"
+  | "select"
+  | "thumbnail"
+  | "validate"
+  | "zoom";
+export type ArtifactCapability = KnownArtifactCapability | (string & {});
 export type ArtifactRendererStatus = "ready" | "unavailable";
-export type ArtifactCapability = "navigate" | "outline" | "search" | "select" | "thumbnail" | "zoom";
-export type ArtifactKind = "code" | "diff" | "image" | "json" | "pptx" | "svg" | "text" | "unknown";
 
 export interface ArtifactContentReference {
   uri: string;
@@ -32,25 +57,45 @@ export interface ArtifactAdapterReference {
 export interface ArtifactRendererReference {
   id: string;
   label: string;
-  provider: "studio" | "qoder-canvas";
+  provider: string;
   type: ArtifactRendererType;
   status: ArtifactRendererStatus;
+  /** Present when the renderer is hosted by the server rather than by Studio. */
+  viewUri?: string;
   reason?: string;
 }
 
 export interface ArtifactDescriptor {
   id: string;
+  /**
+   * Identity of the logical artifact across revisions. It is derived from the
+   * catalog path alone, so it survives edits to this artifact and additions or
+   * removals of unrelated files in the same directory.
+   */
   threadId: string;
   label: string;
   size: number;
-  kind: ArtifactKind;
   family: ArtifactFamily;
+  /** Stable lowercase format code, for example `pptx`. Never a display label. */
   format: string;
   backing: ArtifactBacking;
   revision: ArtifactRevisionReference;
   adapter: ArtifactAdapterReference;
   renderer: ArtifactRendererReference;
   capabilities: ArtifactCapability[];
+}
+
+export type ArtifactOmissionReason = "not-a-file" | "symlink" | "hard-link" | "outside-root";
+
+/**
+ * A directory entry the catalog declined to publish. Omissions are reported
+ * rather than dropped: a file that vanishes silently from a run's outputs is
+ * indistinguishable from one the run never produced, and that is exactly the
+ * question someone reads an artifact catalog to answer.
+ */
+export interface ArtifactOmission {
+  label: string;
+  reason: ArtifactOmissionReason;
 }
 
 export interface ArtifactCatalogResponse {
@@ -60,6 +105,7 @@ export interface ArtifactCatalogResponse {
     revision: ArtifactDigest;
   };
   artifacts: ArtifactDescriptor[];
+  omitted: ArtifactOmission[];
 }
 
 export type ArtifactDiagnosticLevel = "info" | "warning" | "error";
@@ -184,21 +230,37 @@ export interface ArtifactDataSnapshot {
   payload: ArtifactSnapshotPayload;
 }
 
-const ARTIFACT_KINDS = new Set<ArtifactKind>(["code", "diff", "image", "json", "pptx", "svg", "text", "unknown"]);
 const ARTIFACT_FAMILIES = new Set<ArtifactFamily>(["documents", "images-diagrams", "data", "source-text", "other"]);
-const RENDERER_TYPES = new Set<ArtifactRendererType>(["native", "qoder-canvas", "unavailable"]);
+const ARTIFACT_BACKINGS = new Set<ArtifactBacking>(["data", "code"]);
 const RENDERER_STATUSES = new Set<ArtifactRendererStatus>(["ready", "unavailable"]);
-const CAPABILITIES = new Set<ArtifactCapability>(["navigate", "outline", "search", "select", "thumbnail", "zoom"]);
-const CONTENT_URI = /^\/api\/artifacts\/[A-Za-z0-9_-]+\/content$/u;
-const SNAPSHOT_URI = /^\/api\/artifacts\/[A-Za-z0-9_-]+\/snapshot$/u;
-const RESOURCE_URI = /^\/api\/artifacts\/[A-Za-z0-9_-]+\/resources\/[A-Za-z0-9_-]+$/u;
+
+/**
+ * Every server-declared reference must stay a same-origin Studio API path.
+ *
+ * The check deliberately does not pin the exact route shape: pinning it would
+ * make the declared reference decorative, because a client that can only follow
+ * URIs it could have built itself is not really following anything. What must
+ * hold is the security property — the catalog can never point a fetch, an
+ * `<img>`, or an iframe at another origin.
+ */
+function isStudioArtifactPath(value: unknown): value is string {
+  return typeof value === "string"
+    && value.startsWith("/api/artifacts/")
+    && !value.startsWith("//")
+    && !value.includes("\\")
+    && !value.includes("..");
+}
 
 export function isArtifactCatalogResponse(value: unknown): value is ArtifactCatalogResponse {
   if (!isRecord(value) || value.kind !== ARTIFACT_CATALOG_RESPONSE_KIND) return false;
   if (!isRecord(value.snapshot)
     || typeof value.snapshot.catalogId !== "string"
     || !isDigest(value.snapshot.revision)
-    || !Array.isArray(value.artifacts)) return false;
+    || !Array.isArray(value.artifacts)
+    || !Array.isArray(value.omitted)) return false;
+  if (!value.omitted.every((omission) => isRecord(omission)
+    && typeof omission.label === "string"
+    && typeof omission.reason === "string")) return false;
   return value.artifacts.every(isArtifactDescriptor);
 }
 
@@ -212,26 +274,27 @@ export function isArtifactDataSnapshot(value: unknown): value is ArtifactDataSna
     && typeof resource.id === "string"
     && typeof resource.label === "string"
     && typeof resource.mediaType === "string"
-    && typeof resource.uri === "string" && RESOURCE_URI.test(resource.uri)
+    && isStudioArtifactPath(resource.uri)
     && typeof resource.size === "number" && resource.size >= 0)) return false;
-  return isRecord(value.payload) && (value.payload.kind === "artifact/raw-v1" || value.payload.kind === "pptx/v1" || value.payload.kind === "qoder-canvas/v1");
+  // An unknown payload kind is a renderer-selection problem, not a malformed
+  // response: the envelope is still usable for outline and diagnostics.
+  return isRecord(value.payload) && typeof value.payload.kind === "string";
 }
 
 function isArtifactDescriptor(value: unknown): value is ArtifactDescriptor {
   return isRecord(value)
-    && typeof value.id === "string"
-    && typeof value.threadId === "string"
+    && typeof value.id === "string" && value.id !== ""
+    && typeof value.threadId === "string" && value.threadId !== ""
     && typeof value.label === "string"
     && typeof value.size === "number" && Number.isFinite(value.size) && value.size >= 0
-    && ARTIFACT_KINDS.has(value.kind as ArtifactKind)
     && ARTIFACT_FAMILIES.has(value.family as ArtifactFamily)
-    && typeof value.format === "string"
-    && value.backing === "data"
+    && typeof value.format === "string" && value.format !== ""
+    && ARTIFACT_BACKINGS.has(value.backing as ArtifactBacking)
     && isRevision(value.revision)
     && isAdapter(value.adapter)
     && isRenderer(value.renderer)
     && Array.isArray(value.capabilities)
-    && value.capabilities.every((capability) => CAPABILITIES.has(capability as ArtifactCapability));
+    && value.capabilities.every((capability) => typeof capability === "string" && capability !== "");
 }
 
 function isRevision(value: unknown): value is ArtifactRevisionReference {
@@ -240,7 +303,7 @@ function isRevision(value: unknown): value is ArtifactRevisionReference {
     && isDigest(value.digest)
     && value.id === value.digest
     && isRecord(value.content)
-    && typeof value.content.uri === "string" && CONTENT_URI.test(value.content.uri)
+    && isStudioArtifactPath(value.content.uri)
     && typeof value.content.mediaType === "string" && value.content.mediaType !== ""
     && isDigest(value.content.digest)
     && value.content.digest === value.digest;
@@ -252,16 +315,17 @@ function isAdapter(value: unknown): value is ArtifactAdapterReference {
     && typeof value.version === "string" && value.version !== ""
     && typeof value.schemaId === "string" && value.schemaId !== ""
     && isDigest(value.snapshotId)
-    && typeof value.snapshotUri === "string" && SNAPSHOT_URI.test(value.snapshotUri);
+    && isStudioArtifactPath(value.snapshotUri);
 }
 
 function isRenderer(value: unknown): value is ArtifactRendererReference {
   return isRecord(value)
     && typeof value.id === "string" && value.id !== ""
     && typeof value.label === "string" && value.label !== ""
-    && (value.provider === "studio" || value.provider === "qoder-canvas")
-    && RENDERER_TYPES.has(value.type as ArtifactRendererType)
+    && typeof value.provider === "string" && value.provider !== ""
+    && typeof value.type === "string" && value.type !== ""
     && RENDERER_STATUSES.has(value.status as ArtifactRendererStatus)
+    && (value.viewUri === undefined || isStudioArtifactPath(value.viewUri))
     && (value.reason === undefined || typeof value.reason === "string");
 }
 

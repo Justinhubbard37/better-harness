@@ -30,6 +30,7 @@ test.beforeAll(async () => {
     "+const value = 2;",
   ].join("\n"), "utf8");
   await writeFile(join(artifactDirectory, "diagram.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><script>parent.document.body.dataset.svgExecuted="yes"</script><text x="12" y="44">Safe SVG artifact</text></svg>', "utf8");
+  await writeFile(join(artifactDirectory, "notes.txt"), "followed the declared content reference\n", "utf8");
   studio = await startHarnessStudioServer({
     appDir: join(packageRoot, "dist", "app"),
     artifactDirectory,
@@ -159,19 +160,20 @@ test("keeps generated TSX inert and renders its source", async ({ page }) => {
 });
 
 test("loads artifact bytes from the catalog content reference", async ({ page }) => {
+  // Point one descriptor at a different artifact's revision-scoped URL. The
+  // client must fetch what the catalog declared rather than rebuilding an
+  // address from the id it happens to hold.
   await page.route("**/api/artifacts", async (route) => {
     const response = await route.fetch();
     const catalog = await response.json();
     const component = catalog.artifacts.find((entry) => entry.label === "component.tsx");
-    component.revision.content.uri = "/api/artifacts/change/content";
-    component.revision.content.digest = `sha256:${"f".repeat(64)}`;
-    component.revision.digest = component.revision.content.digest;
-    component.revision.id = component.revision.content.digest;
+    const other = catalog.artifacts.find((entry) => entry.label === "notes.txt");
+    component.revision.content.uri = other.revision.content.uri;
     await route.fulfill({ response, json: catalog });
   });
   await openArtifacts(page);
   await page.getByRole("button", { name: /component\.tsx/ }).click();
-  await expect(page.locator(".artifact-code-preview")).toContainText("const value = 2");
+  await expect(page.locator(".artifact-code-preview")).toContainText("followed the declared content reference");
   await expect(page.locator(".artifact-code-preview")).not.toContainText("data-danger");
 });
 
@@ -185,7 +187,9 @@ test("renders code diff and sandboxes SVG without script capability", async ({ p
   await expect(frame).toHaveAttribute("sandbox", "");
   await expect(frame).toHaveAttribute("srcdoc", /Content-Security-Policy/u);
   await expect(frame).not.toHaveAttribute("src", /api\/artifacts/u);
-  const raw = await page.request.get(`${studio.url}/api/artifacts/diagram/content`);
+  const catalog = await (await page.request.get(`${studio.url}/api/artifacts`)).json();
+  const svg = catalog.artifacts.find((entry) => entry.label === "diagram.svg");
+  const raw = await page.request.get(`${studio.url}${svg.revision.content.uri}`);
   expect(raw.headers()["content-type"]).toBe("image/svg+xml");
   expect(raw.headers()["content-disposition"]).toMatch(/^attachment;/u);
   expect(raw.headers()["content-security-policy"]).toBe("default-src 'none'; sandbox");
@@ -203,6 +207,15 @@ test("renders a PPTX snapshot through Studio without a provisioned Qoder Canvas 
   await expect(page.locator(".pptx-slide-image")).toHaveJSProperty("complete", true);
   await expect(page.locator(".artifact-editor-header")).toContainText("studio.pptx-ooxml");
   await expect(page.locator(".artifact-preview-pane iframe")).toHaveCount(0);
+
+  // The adapter's addressed outline and its diagnostics are both reachable, so
+  // neither ships as payload that nothing reads.
+  const outlineEntry = page.locator(".pptx-outline-pane button").first();
+  await expect(outlineEntry).toBeVisible();
+  await outlineEntry.click();
+  await expect(page.locator(".pptx-slide-element.selected")).toHaveCount(1);
+  await page.locator(".artifact-diagnostics > summary").click();
+  await expect(page.locator(".artifact-diagnostics > ul")).toContainText("PPTX_BASELINE_RENDERER");
   expect(failures).toEqual([]);
 });
 
