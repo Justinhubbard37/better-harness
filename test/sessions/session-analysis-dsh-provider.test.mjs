@@ -9,7 +9,9 @@ import {
   DSH_ADAPTER_VERSION,
   DshSessionAnalyzer,
 } from "../../scripts/session-analysis/platforms/dsh.mjs";
+import { deduplicateLifecycleEvents } from "../../scripts/session-analysis/episode-contract.mjs";
 import { runProviderCommand } from "../../scripts/session-analysis/provider-runner.mjs";
+import { buildToolCallTrace } from "../../scripts/session-analysis/tool-call-trace.mjs";
 import {
   DSH_FIXTURE_SECRET,
   dshProjectKey,
@@ -17,6 +19,8 @@ import {
   makeDshHeader,
   makeDshEvent,
   makeOpenTurnDshRows,
+  makeRc8InterruptedDshSessionRows,
+  makeRc8TeamDshSessionRows,
   makeSupportedDshSessionRows,
   makeTerminalDshSessionRows,
   makeUnknownIgnorableDshEvent,
@@ -96,6 +100,7 @@ function privacyRows(context, sessionId = "dsh-provider-privacy") {
     workspace: context.workspace,
     sessionId,
     parentSession: DSH_FIXTURE_SECRET,
+    seedLength: undefined,
     agentPreset: DSH_FIXTURE_SECRET,
   }));
   rows[3].data.content[0].text = `Run synthetic validation with ${DSH_FIXTURE_SECRET}`;
@@ -124,6 +129,61 @@ function privacyRows(context, sessionId = "dsh-provider-privacy") {
     ],
   });
   return insertProviderRequestHeader(rows);
+}
+
+function seedOwnershipRows({ workspace, sessionId, includeChild }) {
+  const rows = makeSupportedDshSessionRows({
+    workspace,
+    sessionId,
+    parentSession: "fixture-parent",
+    seedLength: undefined,
+    origin: "subagent",
+    delegationDepth: 1,
+    agentPreset: undefined,
+  });
+  const inherited = rows.slice(1);
+  rows[0].seedLength = inherited.length;
+  if (!includeChild) return rows;
+
+  const child = structuredClone(inherited);
+  for (const event of child) {
+    event.seq += inherited.length;
+    event.time += 1_000;
+    if (Object.hasOwn(event.data, "turn")) event.data.turn = 2;
+    if (event.type === "user/message") event.data.id = `child-${event.data.id}`;
+    if (event.type === "assistant/message") event.data.message.id = `child-${event.data.message.id}`;
+    if (event.type === "tool/call") event.data.callId = `child-${event.data.callId}`;
+    if (event.type === "tool/result") {
+      event.data.message.id = `child-${event.data.message.id}`;
+      event.data.message.source.callId = `child-${event.data.message.source.callId}`;
+      event.data.message.content[0].toolCallId = `child-${event.data.message.content[0].toolCallId}`;
+    }
+  }
+  return [rows[0], ...inherited, ...child];
+}
+
+function crossSeedToolLifecycleRows(workspace) {
+  const rows = makeSupportedDshSessionRows({
+    workspace,
+    sessionId: "dsh-cross-seed-tool",
+    parentSession: "fixture-parent",
+    seedLength: 6,
+    origin: "subagent",
+    delegationDepth: 1,
+    agentPreset: undefined,
+  });
+  const call = rows.find((event) => event.type === "tool/call"
+    && event.data.callId === "fixture-call-success");
+  const result = rows.find((event) => event.type === "tool/result"
+    && event.data.message.source.callId === "fixture-call-success");
+  call.data.callId = "cross-seed-call";
+  result.data.message.source.callId = "cross-seed-call";
+  result.data.message.content[0].toolCallId = "cross-seed-call";
+  const filtered = rows.filter((event) => !(event.type === "tool/call"
+    && event.data.callId === "fixture-call-error") && !(event.type === "tool/result"
+    && event.data.message.source.callId === "fixture-call-error"));
+  filtered.slice(1).forEach((event, index) => { event.seq = index; });
+  return filtered;
 }
 
 test("DSH provider reads the pinned headless snapshot-like base flow without widening normalization", async () => {
@@ -212,6 +272,73 @@ test("DSH provider accounts private subagent descriptors without exposing compos
     const facts = await analyzer.analyze({ ...input, command: "facts", limit: 1, ...gate });
     assert.equal(JSON.stringify({ sessions, events, facts }).includes(DSH_FIXTURE_SECRET), false);
   }
+});
+
+test("DSH child projection excludes inherited seed activity while preserving lineage and validation", async () => {
+  const context = await fixtureContext("better-harness-dsh-seed-ownership-");
+  const allSeed = seedOwnershipRows({
+    workspace: context.workspace,
+    sessionId: "dsh-seed-only",
+    includeChild: false,
+  });
+  const mixed = seedOwnershipRows({
+    workspace: context.workspace,
+    sessionId: "dsh-seed-mixed",
+    includeChild: true,
+  });
+  const malformedSeed = seedOwnershipRows({
+    workspace: context.workspace,
+    sessionId: "dsh-seed-malformed",
+    includeChild: true,
+  });
+  malformedSeed[3].data.role = "assistant";
+  await writeRows(context, allSeed);
+  await writeRows(context, mixed);
+  await writeRows(context, malformedSeed);
+
+  const analyzer = new DshSessionAnalyzer();
+  const { scope, sessions } = await discover(analyzer, context);
+  const byId = new Map(sessions.map((session) => [session.sessionId, session]));
+  assert.equal(byId.has("dsh-seed-malformed"), false);
+  assert.equal(analyzer.analysisWarnings.some((warning) => warning.reason === "DSH_EVENT_SHAPE_DRIFT"), true);
+
+  const seedOnlySession = byId.get("dsh-seed-only");
+  assert.deepEqual(seedOnlySession.dshProvenance, {
+    delegationDepth: 1,
+    parentSession: "fixture-parent",
+    seedLength: allSeed.length - 1,
+    origin: "subagent",
+  });
+  assert.deepEqual(await analyzer.readSession(seedOnlySession, scope), []);
+
+  const mixedSession = byId.get("dsh-seed-mixed");
+  const events = await analyzer.readSession(mixedSession, scope);
+  assert.equal(events.every((event) => event.nativeSeq >= mixed[0].seedLength), true);
+  assert.equal(events.filter((event) => event.userPrompt === true).length, 1);
+  assert.equal(events.filter((event) => event.type === "tool.call").length, 2);
+  assert.deepEqual(events.filter((event) => event.type === "tool.result").map((event) => event.success), [true, false]);
+  assert.equal(events.filter((event) => event.type === "model.response.completed").length, 1);
+  assert.equal(events.filter((event) => event.type === "turn.end" && event.success === true).length, 1);
+});
+
+test("DSH seed ownership validates inherited calls before projecting child-owned results", async () => {
+  const context = await fixtureContext("better-harness-dsh-cross-seed-tool-");
+  const rows = crossSeedToolLifecycleRows(context.workspace);
+  await writeRows(context, rows);
+
+  const analyzer = new DshSessionAnalyzer();
+  const { scope, sessions } = await discover(analyzer, context);
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].incomplete, false);
+  assert.equal(Object.hasOwn(sessions[0].diagnostics, "incompleteReason"), false);
+  assert.deepEqual(analyzer.analysisWarnings, []);
+
+  const events = await analyzer.readSession(sessions[0], scope);
+  assert.equal(events.every((event) => event.nativeSeq >= rows[0].seedLength), true);
+  assert.equal(events.filter((event) => event.type === "tool.call").length, 0);
+  const results = events.filter((event) => event.type === "tool.result");
+  assert.equal(results.length, 1);
+  assert.equal(results[0].toolInvocationId, "cross-seed-call");
 });
 
 test("DSH provider projects only the six approved native event types and publishes dsh-v1 evidence", async () => {
@@ -327,9 +454,80 @@ test("DSH assistant usage remains observed only when the native assembled messag
     reasoningTokens: 1,
   });
   assert.equal(usage.usageFieldsObserved, true);
+  assert.equal(Object.hasOwn(observed.find((event) => event.type === "assistant"), "interrupted"), false);
+  assert.equal(Object.hasOwn(usage, "interrupted"), false);
   assert.equal(unobserved.some((event) => event.type === "model.response.completed"), false);
   assert.equal(unobserved.some((event) => Object.hasOwn(event, "modelUsage")), false);
   assert.equal(unobserved.some((event) => Object.hasOwn(event, "usageFieldsObserved")), false);
+});
+
+test("DSH preserves RC8 assistant interruption as bounded structural evidence", async () => {
+  const context = await fixtureContext();
+  const rows = makeRc8InterruptedDshSessionRows({
+    workspace: context.workspace,
+    sessionId: "dsh-rc8-interrupted",
+  });
+  rows.find((event) => event.type === "assistant/message").data.usage = {
+    inputTokens: 5,
+    outputTokens: 2,
+  };
+  await writeRows(context, rows);
+  const analyzer = new DshSessionAnalyzer();
+  const { scope, sessions } = await discover(analyzer, context);
+  assert.equal(sessions.length, 1);
+
+  const events = await analyzer.readSession(sessions[0], scope);
+  const assistant = events.find((event) => event.type === "assistant");
+  assert.equal(assistant.interrupted, true);
+  assert.equal(assistant.incomplete, true);
+  assert.equal(Object.hasOwn(assistant, "content"), false);
+  assert.equal(events.filter((event) => event.type === "assistant").length, 1);
+  assert.equal(JSON.stringify(events).includes("Partial synthetic response."), false);
+  const usage = events.find((event) => event.type === "model.response.completed");
+  assert.equal(usage.interrupted, true);
+  assert.equal(usage.incomplete, true);
+  assert.equal(usage.usageFieldsObserved, true);
+
+  const gated = await analyzer.readSession(sessions[0], scope, { includeContent: true });
+  assert.equal(gated.find((event) => event.type === "assistant").content, "Partial synthetic response.");
+});
+
+test("DSH accounts RC8 team vocabulary without fabricating team analytics or user/tool activity", async () => {
+  const context = await fixtureContext();
+  const rows = makeRc8TeamDshSessionRows({
+    workspace: context.workspace,
+    sessionId: "dsh-rc8-team",
+  });
+  await writeRows(context, rows);
+  const analyzer = new DshSessionAnalyzer();
+  const { scope, sessions } = await discover(analyzer, context);
+  assert.equal(sessions.length, 1);
+  assert.deepEqual(sessions[0].diagnostics.knownUnsupportedTypes, [
+    "team/member", "team/message/delivered", "team/message/queued", "team/task",
+  ]);
+  assert.equal(sessions[0].diagnostics.knownUnsupportedCount, 4);
+  assert.deepEqual(await analyzer.readSession(sessions[0], scope), []);
+});
+
+test("DSH tool result outcomes remain unobserved when native isError is omitted", async () => {
+  const context = await fixtureContext();
+  const rows = makeSupportedDshSessionRows({
+    workspace: context.workspace,
+    sessionId: "dsh-tool-outcome-unobserved",
+  });
+  const nativeResult = rows.find((row) => row.type === "tool/result" && row.data.message.content[0].isError === false);
+  delete nativeResult.data.message.content[0].isError;
+  await writeRows(context, rows);
+  const analyzer = new DshSessionAnalyzer();
+  const { scope, sessions } = await discover(analyzer, context);
+  const events = await analyzer.readSession(sessions[0], scope);
+  const call = events.find((event) => event.type === "tool.call");
+  const result = events.find((event) => event.type === "tool.result");
+
+  assert.equal(result.toolInvocationId, call.toolInvocationId);
+  assert.equal(Object.hasOwn(result, "success"), false);
+  assert.equal(Object.hasOwn(result, "hasError"), false);
+  assert.equal(Object.hasOwn(result, "internalError"), false);
 });
 
 test("DSH tool requests and results correlate while content, arguments, meta, and internal errors stay bounded", async () => {
@@ -346,6 +544,7 @@ test("DSH tool requests and results correlate while content, arguments, meta, an
   const results = events.filter((event) => event.type === "tool.result");
   assert.deepEqual(calls.map((event) => event.toolInvocationId), results.map((event) => event.toolInvocationId));
   assert.deepEqual(results.map((event) => event.success), [true, false]);
+  assert.deepEqual(results.map((event) => event.hasError), [false, true]);
   assert.equal(results[0].internalError, false);
   assert.equal(results[1].internalError, true);
   assert.equal(results[1].internalErrorCode, "FIXTURE_TOOL_FAILURE");
@@ -529,7 +728,8 @@ test("DSH provider admits open-step and pending-call crash prefixes without synt
   const context = await fixtureContext();
   const time = Date.parse("2026-08-18T00:00:00.000Z");
   const openStepRows = [
-    makeDshHeader({ workspace: context.workspace, sessionId: "dsh-open-step", createdAt: time }),
+    makeDshHeader({ workspace: context.workspace, sessionId: "dsh-open-step", createdAt: time,
+      parentSession: undefined, seedLength: undefined, origin: undefined, delegationDepth: 0, agentPreset: undefined }),
     makeDshEvent("turn/start", { turn: 1 }, { seq: 0, time: time + 1 }),
     makeDshEvent("step/start", { turn: 1, step: 1 }, { seq: 1, time: time + 2 }),
   ];
@@ -669,6 +869,49 @@ function reusedCallAcrossTurnsRows(workspace) {
   return rows;
 }
 
+function reusedCallAcrossStepsRows(workspace) {
+  const source = makeSupportedDshSessionRows({ workspace });
+  const header = makeDshHeader({
+    workspace,
+    sessionId: "dsh-provider-reused-call-steps",
+    parentSession: undefined,
+    seedLength: undefined,
+    origin: undefined,
+    delegationDepth: 0,
+    agentPreset: undefined,
+  });
+  const firstCall = structuredClone(source.find((row) => row.type === "tool/call"));
+  const firstResult = structuredClone(source.find((row) => row.type === "tool/result"));
+  const eventTime = header.createdAt + 1_000;
+  firstCall.seq = 2;
+  firstCall.time = eventTime + 20;
+  firstResult.seq = 3;
+  firstResult.time = eventTime + 40;
+  const secondCall = structuredClone(firstCall);
+  secondCall.seq = 6;
+  secondCall.time = eventTime + 30;
+  secondCall.data.step = 2;
+  const secondResult = structuredClone(firstResult);
+  secondResult.seq = 7;
+  secondResult.time = eventTime + 50;
+  secondResult.data.step = 2;
+  secondResult.data.message.id = "fixture-tool-reused-step-result";
+  const rows = [
+    header,
+    makeDshEvent("turn/start", { turn: 1 }, { seq: 0, time: eventTime }),
+    makeDshEvent("step/start", { turn: 1, step: 1 }, { seq: 1, time: eventTime + 10 }),
+    firstCall,
+    firstResult,
+    makeDshEvent("step/end", { turn: 1, step: 1 }, { seq: 4, time: eventTime + 40 }),
+    makeDshEvent("step/start", { turn: 1, step: 2 }, { seq: 5, time: eventTime + 50 }),
+    secondCall,
+    secondResult,
+    makeDshEvent("step/end", { turn: 1, step: 2 }, { seq: 8, time: eventTime + 80 }),
+    makeDshEvent("turn/end", { turn: 1, reason: { kind: "completed" } }, { seq: 9, time: eventTime + 90 }),
+  ];
+  return rows;
+}
+
 test("DSH normalization projects final canonical surface nodes and preserves callId reuse across turns", async () => {
   const context = await fixtureContext();
   await writeRows(context, surfaceReplacementRows(context.workspace));
@@ -696,6 +939,27 @@ test("DSH normalization projects final canonical surface nodes and preserves cal
     && event.toolInvocationId === "fixture-call-success").length, 2);
   assert.equal(reused.filter((event) => event.type === "tool.result"
     && event.toolInvocationId === "fixture-call-success").length, 2);
+});
+
+test("DSH repeated callId occurrences survive timestamp drift through lifecycle deduplication and tool tracing", async () => {
+  const context = await fixtureContext();
+  await writeRows(context, reusedCallAcrossStepsRows(context.workspace));
+  const analyzer = new DshSessionAnalyzer();
+  const { scope, sessions } = await discover(analyzer, context);
+  const session = sessions.find((candidate) => candidate.sessionId === "dsh-provider-reused-call-steps");
+  const events = await analyzer.readSession(session, scope);
+  const calls = events.filter((event) => event.type === "tool.call");
+  const results = events.filter((event) => event.type === "tool.result");
+  const canonical = deduplicateLifecycleEvents(events);
+  const occurrences = canonical.filter((event) => event.category === "tool"
+    && event.toolInvocationId === "fixture-call-success");
+  assert.equal(calls.length, 2);
+  assert.equal(results.length, 2);
+  assert.deepEqual(calls.map((event) => [event.step, event.toolInvocationId]),
+    results.map((event) => [event.step, event.toolInvocationId]));
+  assert.equal(occurrences.length, 2);
+  assert.deepEqual(occurrences.map((event) => event.step), [1, 2]);
+  assert.equal(buildToolCallTrace(events).totalCalls, 2);
 });
 
 test("DSH provider reads concatenated Zstd evidence and reports unavailable compression without hiding raw sessions", async () => {

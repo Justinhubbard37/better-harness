@@ -60,6 +60,69 @@ function syntheticOpenAiKey() {
   ].join("-");
 }
 
+function withFileIdentity(stats, identity) {
+  return new Proxy(stats, {
+    get(target, property) {
+      if (Object.hasOwn(identity, property)) return identity[property];
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+function identityForStats(identity, options) {
+  if (options?.bigint === true) return identity;
+  return Object.fromEntries(
+    Object.entries(identity).map(([key, value]) => [key, Number(value)]),
+  );
+}
+
+async function scanWithFileIdentities(beforeIdentity, openedIdentity) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-secret-scan-identity-"));
+  const workspace = path.join(root, "workspace");
+  const configPath = path.join(workspace, "config.yaml");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(configPath, "name: safe\n");
+
+  const originalLstat = fsPromises.lstat;
+  const originalOpen = fsPromises.open;
+  fsPromises.lstat = async (target, ...args) => {
+    const stats = await originalLstat.call(fsPromises, target, ...args);
+    return path.resolve(String(target)) === configPath
+      ? withFileIdentity(stats, identityForStats(beforeIdentity, args[0]))
+      : stats;
+  };
+  fsPromises.open = async (target, ...args) => {
+    const handle = await originalOpen.call(fsPromises, target, ...args);
+    if (path.resolve(String(target)) !== configPath) return handle;
+    return new Proxy(handle, {
+      get(targetHandle, property) {
+        if (property === "stat") {
+          return async (...statArgs) => withFileIdentity(
+            await targetHandle.stat(...statArgs),
+            identityForStats(openedIdentity, statArgs[0]),
+          );
+        }
+        const value = Reflect.get(targetHandle, property, targetHandle);
+        return typeof value === "function" ? value.bind(targetHandle) : value;
+      },
+    });
+  };
+
+  try {
+    return await scanPaths(["config.yaml"], {
+      cwd: workspace,
+      containmentRoot: workspace,
+      failOn: "high",
+      redact: true,
+    });
+  } finally {
+    fsPromises.lstat = originalLstat;
+    fsPromises.open = originalOpen;
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
 test("secret guard platform registry owns host-specific install paths", () => {
   assert.deepEqual(supportedSecretGuardPlatforms(), ["codex", "qoder"]);
   assert.deepEqual(validateSecretGuardPlatforms(), []);
@@ -198,6 +261,91 @@ test("workspace-contained scanning refuses a swap to an external symlink at read
   assert.equal(report.coverageStatus, "failed");
   assert.ok(report.stats.errors.length > 0);
   assert.doesNotMatch(JSON.stringify(report.findings), new RegExp(outsideKey));
+});
+
+test("workspace-contained scanning rejects distinct full-width identities that collide as Numbers", async () => {
+  const firstInode = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
+  const secondInode = firstInode + 1n;
+  assert.notEqual(firstInode, secondInode);
+  assert.equal(Number(firstInode), Number(secondInode));
+
+  const report = await scanWithFileIdentities(
+    { dev: 7n, ino: firstInode },
+    { dev: 7n, ino: secondInode },
+  );
+
+  assert.equal(report.stats.scannedFiles, 0);
+  assert.equal(report.coverageStatus, "failed");
+  assert.ok(report.stats.errors.length > 0);
+});
+
+test("workspace-contained scanning accepts an identical full-width identity", async () => {
+  const inode = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
+  const report = await scanWithFileIdentities(
+    { dev: 7n, ino: inode },
+    { dev: 7n, ino: inode },
+  );
+
+  assert.equal(report.stats.scannedFiles, 1);
+  assert.equal(report.coverageStatus, "complete");
+  assert.equal(report.stats.errors.length, 0);
+});
+
+test("workspace-contained scanning rejects ordinary device and inode mismatches", async () => {
+  const deviceMismatch = await scanWithFileIdentities(
+    { dev: 7n, ino: 101n },
+    { dev: 8n, ino: 101n },
+  );
+  const inodeMismatch = await scanWithFileIdentities(
+    { dev: 7n, ino: 101n },
+    { dev: 7n, ino: 102n },
+  );
+
+  for (const report of [deviceMismatch, inodeMismatch]) {
+    assert.equal(report.stats.scannedFiles, 0);
+    assert.equal(report.coverageStatus, "failed");
+    assert.ok(report.stats.errors.length > 0);
+  }
+});
+
+test("workspace-contained scanning preserves sub-millisecond fallback precision when inode is unavailable", async () => {
+  const before = {
+    dev: 0n,
+    ino: 0n,
+    size: 11n,
+    mtimeMs: 1_000n,
+    birthtimeMs: 500n,
+    mtimeNs: 1_000_000_001n,
+    birthtimeNs: 500_000_000n,
+  };
+  const opened = {
+    ...before,
+    mtimeNs: before.mtimeNs + 1n,
+  };
+
+  const report = await scanWithFileIdentities(before, opened);
+
+  assert.equal(report.stats.scannedFiles, 0);
+  assert.equal(report.coverageStatus, "failed");
+  assert.ok(report.stats.errors.length > 0);
+});
+
+test("workspace-contained scanning accepts identical metadata when inode is unavailable", async () => {
+  const identity = {
+    dev: 0n,
+    ino: 0n,
+    size: 11n,
+    mtimeMs: 1_000n,
+    birthtimeMs: 500n,
+    mtimeNs: 1_000_000_001n,
+    birthtimeNs: 500_000_000n,
+  };
+
+  const report = await scanWithFileIdentities(identity, identity);
+
+  assert.equal(report.stats.scannedFiles, 1);
+  assert.equal(report.coverageStatus, "complete");
+  assert.equal(report.stats.errors.length, 0);
 });
 
 test("UserPromptSubmit hook blocks secrets without echoing the value", async () => {

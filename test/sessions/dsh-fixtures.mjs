@@ -7,6 +7,10 @@ import * as zlib from "node:zlib";
 // packages/core/session/src/{types,invariant,chunk-rows,known-event-types}.ts,
 // packages/llm/llm/src/{message,types}.ts, and
 // packages/session/session-persistence-jsonl/src/{format,zstd}.ts.
+// RC8 compatibility fixtures additionally mirror deepseek-harness commit
+// 141eb6fef83422698aef7a981029e843e8161534:
+// packages/core/session/src/types.ts and
+// packages/experimental/agent-team/src/{types,fold,task-graph}.ts.
 
 export const DSH_FORMAT_VERSION = 0;
 export const DSH_FIXTURE_SECRET = "sk-dsh_fixture_secret_NEVER_EXPOSE";
@@ -166,6 +170,93 @@ export function makeSupportedDshSessionRows(options = {}) {
     }),
   ];
   return fresh([header, ...events]);
+}
+
+export function makeRc8InterruptedDshSessionRows(options = {}) {
+  const header = makeDshHeader({
+    ...options,
+    parentSession: Object.hasOwn(options, "parentSession") ? options.parentSession : undefined,
+    seedLength: Object.hasOwn(options, "seedLength") ? options.seedLength : undefined,
+    origin: Object.hasOwn(options, "origin") ? options.origin : undefined,
+    delegationDepth: options.delegationDepth ?? 0,
+    agentPreset: Object.hasOwn(options, "agentPreset") ? options.agentPreset : undefined,
+  });
+  const time = header.createdAt + 1_000;
+  return fresh([
+    header,
+    makeDshEvent("turn/start", { turn: 1 }, { seq: 0, time }),
+    makeDshEvent("step/start", { turn: 1, step: 1 }, { seq: 1, time: time + 1 }),
+    makeDshEvent("assistant/message", {
+      turn: 1,
+      step: 1,
+      message: assistantMessage("fixture-rc8-interrupted", "Partial synthetic response."),
+      interrupted: true,
+    }, { seq: 2, time: time + 2, sourceEventSeqs: [], surfaceOp: "append" }),
+    makeDshEvent("step/end", { turn: 1, step: 1 }, { seq: 3, time: time + 3 }),
+    makeDshEvent("turn/end", {
+      turn: 1,
+      reason: { kind: "aborted", reason: { kind: "user" } },
+    }, { seq: 4, time: time + 4 }),
+  ]);
+}
+
+export function makeRc8TeamDshSessionRows(options = {}) {
+  const header = makeDshHeader({
+    ...options,
+    parentSession: Object.hasOwn(options, "parentSession") ? options.parentSession : undefined,
+    seedLength: Object.hasOwn(options, "seedLength") ? options.seedLength : undefined,
+    origin: Object.hasOwn(options, "origin") ? options.origin : undefined,
+    delegationDepth: options.delegationDepth ?? 0,
+    agentPreset: Object.hasOwn(options, "agentPreset") ? options.agentPreset : undefined,
+  });
+  const time = header.createdAt + 1_000;
+  const teamId = header.id;
+  return fresh([
+    header,
+    makeDshEvent("team/member", {
+      version: 1,
+      teamId,
+      member: {
+        id: "fixture-team-member",
+        name: "fixture-member",
+        description: "Synthetic teammate.",
+        provider: "fixture-provider",
+        context: "fresh",
+        phase: "provisioning",
+      },
+    }, { seq: 0, time }),
+    makeDshEvent("team/task", {
+      version: 1,
+      teamId,
+      task: {
+        id: "task-1",
+        revision: 1,
+        subject: "Inspect synthetic evidence",
+        description: "Validate the RC8 fixture.",
+        status: "pending",
+        blockedBy: [],
+        writeScopes: [],
+      },
+    }, { seq: 1, time: time + 1 }),
+    makeDshEvent("team/message/queued", {
+      version: 1,
+      teamId,
+      message: {
+        id: "fixture-team-message",
+        senderId: teamId,
+        senderName: "fixture-lead",
+        targetId: "fixture-team-member",
+        delivery: "quiet",
+        content: [{ type: "text", text: "Synthetic peer message." }],
+      },
+    }, { seq: 2, time: time + 2 }),
+    makeDshEvent("team/message/delivered", {
+      version: 1,
+      teamId,
+      messageId: "fixture-team-message",
+      targetId: "fixture-team-member",
+    }, { seq: 3, time: time + 3 }),
+  ]);
 }
 
 // Mirrors examples/headless-agent/tests/snapshots/headless-profile/session.expected.jsonl

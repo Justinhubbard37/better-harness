@@ -121,12 +121,15 @@ smoke is observed.
 ### DeepSeek Harness (DSH) {#deepseek-harness-dsh}
 
 DSH coverage is a developer-preview, JSONL-only session slice, with Better
-Harness adapter metadata `dsh-v1` and native session format `0` pinned to DSH
-`dsh-v0.1.0-rc.7`. Home resolution is strictly `--dsh-home` over `DSH_HOME`
-over `~/.dsh`; the only source root is `<home>/sessions`. The adapter reads the
-fixed nested `session.jsonl` or `session.jsonl.zstd` layout without writing or
-repairing artifacts, and it qualifies a workspace only from the header's
-absolute `cwd`. DSH is registered only for the `sessionAnalysis` capability.
+Harness adapter metadata `dsh-v1`. Its format-0 session-evidence slice is
+validated against DSH `dsh-v0.1.0-rc.7` and `dsh-v0.1.0-rc.8`, including RC8
+interrupted assistant messages and required team-event vocabulary. Team events
+are validated and accounted, not projected as team analytics. Home resolution
+is strictly `--dsh-home` over `DSH_HOME` over `~/.dsh`; the only source root is
+`<home>/sessions`. The adapter reads the fixed nested `session.jsonl` or
+`session.jsonl.zstd` layout without writing or repairing artifacts, and it
+qualifies a workspace only from the header's absolute `cwd`. DSH is registered
+only for the `sessionAnalysis` capability.
 
 Compressed artifacts are concatenated independently checksummed Zstandard
 frames and are validated and decompressed one complete frame at a time. The
@@ -135,9 +138,11 @@ feature-detected. When it is unavailable, including Node.js 23.0 through 23.7,
 compressed evidence is reported unavailable while independent raw JSONL
 evidence remains readable; no fallback dependency is installed.
 Known-but-unsupported and unknown ignorable events are accounted
-for, while unknown required events, malformed data, identity drift, and
-unsupported versions fail closed. Open trailing turns remain incomplete, and
-the adapter does not infer plugin ownership, causality, or faults.
+for, while unknown required events, committed corruption, identity drift, and
+unsupported versions fail closed. Uncommitted final raw rows and structurally
+incomplete final Zstandard frames preserve only the prior committed prefix and
+remain incomplete. The adapter does not infer plugin ownership, causality, or
+faults.
 
 The implemented source-checkout smoke boundary is read-only:
 

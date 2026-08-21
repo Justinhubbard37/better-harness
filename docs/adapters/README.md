@@ -44,7 +44,7 @@ project `.kimi-code/skills/`), then runs `/skill:better-harness`.
 | Kimi Code | Analysis-capable source-local host | `.kimi-plugin/plugin.json` | `scripts/agent-customize/providers/kimi.mjs` | `scripts/session-analysis/platforms/kimi.mjs` | self-contained HTML + Markdown | `AGENTS.md` + `~/.kimi-code/skills` + project `.kimi-code/skills`/`.kimi/skills` + `~/.kimi-code/mcp.json` | `harness evidence-bundle --platform kimi` -> validated `html` render |
 | WorkBuddy | Analysis-capable source-local host | none (skills install into `~/.workbuddy/skills`) | `scripts/agent-customize/providers/workbuddy.mjs` | `scripts/session-analysis/platforms/workbuddy.mjs` | self-contained HTML + Markdown | `~/.workbuddy` `AGENTS.md` + identity files + `.agents` + `AGENTS.md` | `session-analysis --platform workbuddy sources` -> validated `html` render |
 | Grok | Analysis-capable source-local host | none (skills install into `~/.grok/skills`) | `scripts/agent-customize/providers/grok.mjs` | `scripts/session-analysis/platforms/grok.mjs` | self-contained HTML + Markdown | `~/.grok` + `.grok` + `.agents` + `AGENTS.md` | `session-analysis --platform grok sources` -> skill symlink -> validated `html` render |
-| DeepSeek Harness (DSH) | Partial session-evidence adapter (developer preview) | none / unavailable | unavailable | `scripts/session-analysis/platforms/dsh.mjs`; `dsh-v1` for DSH `dsh-v0.1.0-rc.7` session format `0`, raw `.jsonl` and feature-detected `.jsonl.zstd` | unavailable; no report route | unavailable | read-only `node scripts/session-analysis.mjs sources --platform dsh --workspace <path> [--dsh-home <dir>]` or `node scripts/session-analysis.mjs facts --platform dsh --workspace <path> [--dsh-home <dir>]` |
+| DeepSeek Harness (DSH) | Partial session-evidence adapter (developer preview) | none / unavailable | unavailable | `scripts/session-analysis/platforms/dsh.mjs`; `dsh-v1` for the audited format-0 session-evidence slice from DSH `dsh-v0.1.0-rc.7` and `dsh-v0.1.0-rc.8`, raw `.jsonl` and feature-detected `.jsonl.zstd` | unavailable; no report route | unavailable | read-only `node scripts/session-analysis.mjs sources --platform dsh --workspace <path> [--dsh-home <dir>]` or `node scripts/session-analysis.mjs facts --platform dsh --workspace <path> [--dsh-home <dir>]` |
 
 ## Read-only Plugin Lifecycle
 
@@ -198,13 +198,17 @@ edit host settings, or register an `apply` path.
   `<home>/sessions`. Discovery is read-only and accepts only the fixed nested
   `session.jsonl` or `session.jsonl.zstd` layout. Workspace qualification uses
   only the format-0 header's absolute `cwd`; the lossy project directory is not
-  workspace evidence. Better Harness reports adapter metadata `dsh-v1` and
-  supports native DSH session format `0` pinned to `dsh-v0.1.0-rc.7`. The host
-  is registered only for the `sessionAnalysis` capability.
+  workspace evidence. Better Harness reports adapter metadata `dsh-v1`; its
+  format-0 session-evidence slice is validated against `dsh-v0.1.0-rc.7` and
+  `dsh-v0.1.0-rc.8`, including RC8 interrupted assistant messages and the
+  required team-event vocabulary. The host is registered only for the
+  `sessionAnalysis` capability; team events are validated and accounted, not
+  projected as team analytics.
   Known-but-unsupported events and unknown ignorable events are explicitly
   accounted for. Unknown required events, malformed records, identity drift,
-  and unsupported versions fail closed; an open trailing turn remains
-  incomplete. Bounded source distinctions are retained without copying
+  committed corruption, and unsupported versions fail closed; an uncommitted
+  raw row or incomplete final Zstandard frame preserves only the prior
+  committed prefix and remains incomplete. Bounded source distinctions are retained without copying
   arbitrary plugin data or inferring plugin ownership, causality, or faults.
   Compressed artifacts are concatenated independently checksummed Zstandard
   frames and are scanned and decompressed one complete frame at a time. The
