@@ -12,7 +12,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, posix, resolve, sep, win32 } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { spawn } from "node:child_process";
 
@@ -116,14 +116,19 @@ export function defaultWalnutCacheRoot(
   platform: NodeJS.Platform = process.platform,
   home = homedir(),
 ): string {
-  if (env.HARNESS_STUDIO_CACHE_HOME !== undefined) return resolve(env.HARNESS_STUDIO_CACHE_HOME);
-  if (platform === "darwin") return join(home, "Library", "Caches", "QoderAI", "HarnessStudio");
+  const platformPath = platform === "win32" ? win32 : posix;
+  if (env.HARNESS_STUDIO_CACHE_HOME !== undefined) return platformPath.resolve(env.HARNESS_STUDIO_CACHE_HOME);
+  if (platform === "darwin") return platformPath.join(home, "Library", "Caches", "QoderAI", "HarnessStudio");
   if (platform === "win32") {
-    const local = env.LOCALAPPDATA === undefined ? join(home, "AppData", "Local") : resolve(env.LOCALAPPDATA);
-    return join(local, "QoderAI", "HarnessStudio", "Cache");
+    const local = env.LOCALAPPDATA === undefined
+      ? platformPath.join(home, "AppData", "Local")
+      : platformPath.resolve(env.LOCALAPPDATA);
+    return platformPath.join(local, "QoderAI", "HarnessStudio", "Cache");
   }
-  const xdg = env.XDG_CACHE_HOME === undefined ? join(home, ".cache") : resolve(env.XDG_CACHE_HOME);
-  return join(xdg, "harness-studio");
+  const xdg = env.XDG_CACHE_HOME === undefined
+    ? platformPath.join(home, ".cache")
+    : platformPath.resolve(env.XDG_CACHE_HOME);
+  return platformPath.join(xdg, "harness-studio");
 }
 
 export async function probeWalnutApplication(options: ProbeWalnutOptions = {}): Promise<WalnutProbe> {
@@ -147,7 +152,7 @@ export async function probeWalnutApplication(options: ProbeWalnutOptions = {}): 
     for (const asset of selected) {
       assets.push({
         sourcePath: asset.path,
-        relativePath: join("runtime", basename(asset.path)),
+        relativePath: posix.join("runtime", posix.basename(asset.path)),
         role: asset.role,
         size: asset.entry.size,
         digest: await digestAsarEntry(archivePath, index.contentOffset, asset.entry),
@@ -331,7 +336,7 @@ function selectWalnutAssets(index: AsarIndex): Array<{ path: string; entry: Asar
 
 function walnutAssetRole(path: string): WalnutAssetRole | undefined {
   if (!path.startsWith("webview/assets/")) return undefined;
-  const name = basename(path);
+  const name = posix.basename(path);
   if (/^Walnut\.[A-Za-z0-9_-]+\.wasm$/u.test(name)) return "walnut";
   if (/^DocumentFormat\.OpenXml(?:\.Framework)?\.[A-Za-z0-9_-]+\.wasm$/u.test(name)) return "openxml";
   if (/^Google\.Protobuf\.[A-Za-z0-9_-]+\.wasm$/u.test(name)) return "protobuf";
@@ -510,7 +515,7 @@ function isAssetReceipt(value: unknown): value is WalnutAssetReceipt {
     || !isDigest(value.digest)) return false;
   const role = walnutAssetRole(value.sourcePath);
   return role === value.role
-    && value.relativePath === `runtime/${basename(value.sourcePath)}`
+    && value.relativePath === posix.join("runtime", posix.basename(value.sourcePath))
     && value.size >= 0;
 }
 

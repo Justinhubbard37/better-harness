@@ -65,6 +65,7 @@ describe("Studio-private Walnut bootstrap", () => {
       "dotnet-runtime",
     ]));
     expect(probe.assets.every((asset) => asset.digest === digest(RUNTIME_FILES[asset.sourcePath]!))).toBe(true);
+    expect(probe.assets.every((asset) => asset.relativePath === `runtime/${asset.sourcePath.split("/").at(-1)}`)).toBe(true);
     expect(probe.assets.some((asset) => asset.sourcePath.endsWith("unrelated.js"))).toBe(false);
   });
 
@@ -147,7 +148,8 @@ describe("Studio-private Walnut bootstrap", () => {
   it("derives a Studio-owned cache root on every supported platform", () => {
     expect(defaultWalnutCacheRoot({}, "darwin", "/users/me")).toBe("/users/me/Library/Caches/QoderAI/HarnessStudio");
     expect(defaultWalnutCacheRoot({ XDG_CACHE_HOME: "/cache" }, "linux", "/users/me")).toBe("/cache/harness-studio");
-    expect(defaultWalnutCacheRoot({ LOCALAPPDATA: "C:\\cache" }, "win32", "C:\\users\\me")).toContain("QoderAI");
+    expect(defaultWalnutCacheRoot({ LOCALAPPDATA: "C:\\cache" }, "win32", "C:\\users\\me"))
+      .toBe("C:\\cache\\QoderAI\\HarnessStudio\\Cache");
   });
 });
 
