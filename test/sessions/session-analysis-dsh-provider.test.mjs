@@ -996,6 +996,62 @@ test("DSH provider reads concatenated Zstd evidence and reports unavailable comp
   assert.equal(JSON.stringify(roots[0].warnings).includes(DSH_FIXTURE_SECRET), false);
 });
 
+test("DSH discovery accepts the pinned rc1 permission preset origin", async () => {
+  const context = await fixtureContext("better-harness-dsh-rc1-origin-");
+  const rows = makeNativeSnapshotDshSessionRows({
+    workspace: context.workspace,
+    sessionId: "dsh-rc1-origin-default",
+  });
+  const preset = rows.find((row) => row.type === "permission/preset");
+  assert.ok(preset);
+  preset.data = { preset: "danger-full-access", origin: "default" };
+  await writeRows(context, rows);
+
+  const analyzer = new DshSessionAnalyzer();
+  const { scope, sessions } = await discover(analyzer, context);
+  assert.equal(sessions.length, 1, JSON.stringify(analyzer.analysisWarnings));
+  const events = await analyzer.readSession(sessions[0], scope);
+  assert.equal(events.length > 0, true);
+  assert.equal(JSON.stringify(events).includes('"origin"'), false);
+});
+
+test("DSH permission preset origin contract stays closed and validation-only", () => {
+  const analyzer = new DshSessionAnalyzer();
+  const ref = {
+    kind: "dsh-session-jsonl",
+    role: "session-transcript",
+    path: path.join(os.tmpdir(), "synthetic-session.jsonl"),
+    sessionId: "dsh-rc1-origin-contract",
+    cwd: path.resolve(os.tmpdir(), "synthetic-workspace"),
+    dshProvenance: { delegationDepth: 0 },
+  };
+  const event = (data) => makeDshEvent("permission/preset", data, { seq: 0 });
+
+  for (const origin of [undefined, "default", "selection", "inferred"]) {
+    const data = { preset: "danger-full-access", ...(origin === undefined ? {} : { origin }) };
+    assert.equal(analyzer.normalizeEvent(event(data), ref), null);
+  }
+
+  for (const origin of [null, "", "other", 1, true, {}, []]) {
+    assert.throws(
+      () => analyzer.normalizeEvent(event({ preset: "danger-full-access", origin }), ref),
+      (error) => error?.code === "DSH_EVENT_SHAPE_DRIFT",
+    );
+  }
+  assert.throws(
+    () => analyzer.normalizeEvent(event({
+      preset: "danger-full-access",
+      origin: "default",
+      futureField: "synthetic",
+    }), ref),
+    (error) => error?.code === "DSH_EVENT_SHAPE_DRIFT",
+  );
+  assert.throws(
+    () => analyzer.normalizeEvent(event({ preset: 1 }), ref),
+    (error) => error?.code === "DSH_EVENT_SHAPE_DRIFT",
+  );
+});
+
 test("DSH public normalization entry validates event shape and re-sanitizes provenance", () => {
   const analyzer = new DshSessionAnalyzer();
   const event = makeDshEvent("turn/start", { turn: 1 }, { seq: 0 });
