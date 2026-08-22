@@ -74,12 +74,16 @@ describe("Artifact provider activation", () => {
     expect(parseArtifactProviderArgs(["activate", "--lane", "highest"]).error).toContain("--lane");
   });
 
-  it("refuses an explicit external override for a protected dynamic format", async () => {
+  it("allows document overrides but refuses authored-code overrides", async () => {
     const root = await mkdtemp(join(tmpdir(), "artifact-provider-protected-"));
+    const activated = await activateArtifactContribution(
+      fixtureProvider(DIGEST_A), "svg", "external-override", { formats: ["svg", "mermaid"] }, { root },
+    );
+    expect(activated.activations).toMatchObject([{ lane: "external-override", matcher: { formats: ["mermaid", "svg"] } }]);
     await expect(activateArtifactContribution(
-      fixtureProvider(DIGEST_A), "svg", "external-override", { formats: ["svg"] }, { root },
-    )).rejects.toThrow("Protected TSX, JSX, SVG, and Mermaid");
-    expect((await readArtifactProviderActivationState({ root })).activations).toEqual([]);
+      fixtureProvider(DIGEST_A), "svg", "external-override", { formats: ["tsx"] }, { root },
+    )).rejects.toThrow("Protected authored TSX and JSX");
+    expect((await readArtifactProviderActivationState({ root })).activations).toEqual(activated.activations);
   });
 
   it("lists and deactivates through path-redacted CLI operations", async () => {

@@ -1,6 +1,6 @@
 {
   "name": "@qoder-ai/harness-studio",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "React studio for @qoder-ai/harness: live AG-UI run view plus harness-compare evidence explorer.",
   "license": "MIT",
   "type": "module",

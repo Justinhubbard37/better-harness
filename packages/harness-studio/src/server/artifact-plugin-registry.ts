@@ -177,10 +177,10 @@ function nativeRendererLabel(kind: Exclude<ArtifactKind, "unknown" | "pptx" | "m
 
 const PROTECTED_PLUGINS: readonly ArtifactPlugin[] = Object.freeze([
   { id: "studio-code-preview", resolve: studioCodePreviewResolution },
-  { id: "studio-document-preview", resolve: studioDocumentPreviewResolution },
 ]);
 
 const NATIVE_PLUGINS: readonly ArtifactPlugin[] = Object.freeze([
+  { id: "studio-document-preview", resolve: studioDocumentPreviewResolution },
   { id: "studio-native", resolve: (entry) => nativeResolution(entry.kind) },
 ]);
 

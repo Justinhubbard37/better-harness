@@ -82,8 +82,8 @@ export async function activateArtifactContribution(
   const contribution = provider.contributions.find((candidate) => candidate.id === contributionId);
   if (contribution === undefined) throw new Error(`Provider '${provider.id}' has no contribution '${contributionId}'.`);
   assertMatcher(matcher);
-  if (lane === "external-override" && matcherNamesProtectedFormat(matcher)) {
-    throw new Error("Protected TSX, JSX, SVG, and Mermaid formats cannot be activated as external overrides.");
+  if (lane === "external-override" && matcherNamesAuthoredCodeFormat(matcher)) {
+    throw new Error("Protected authored TSX and JSX formats cannot be activated as external overrides.");
   }
   return await updateState(options, (state) => ({
     ...state,
@@ -283,8 +283,8 @@ function legacyDataMatcher(matcher: ArtifactMatcher): ArtifactMatcher | undefine
   });
 }
 
-function matcherNamesProtectedFormat(matcher: ArtifactMatcher): boolean {
-  const protectedValues = new Set(["tsx", "jsx", "svg", "mmd", "mermaid"]);
+function matcherNamesAuthoredCodeFormat(matcher: ArtifactMatcher): boolean {
+  const protectedValues = new Set(["tsx", "jsx"]);
   if ([...(matcher.formats ?? []), ...(matcher.extensions ?? [])]
     .some((value) => protectedValues.has(value.replace(/^\./u, "").toLowerCase()))) return true;
   return (matcher.pathGlobs ?? []).some((value) => {

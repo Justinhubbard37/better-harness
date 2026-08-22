@@ -27,10 +27,11 @@ Walnut invocation is inferred or executed.
   hosted-runtime operations without importing `CanvasViewer`. One immutable
   composition root resolves an Artifact; common callers no longer pass
   `qoderCanvasViewers` or read `qoderViewer`.
-- **AC-2:** Authored TSX/JSX and Studio SVG/Beautiful Mermaid virtual runtimes
-  resolve before every external lane. An activated Qoder override cannot claim
-  those protected code-backed formats. Eligible data formats resolve in the
-  order external override, Studio built-in, external fallback, unavailable.
+- **AC-2:** Authored TSX/JSX runtimes resolve before every external lane and
+  cannot be claimed by a Provider. SVG and Mermaid remain Studio-owned defaults,
+  but an explicitly activated, fingerprint-bound external override may replace
+  their virtual runtimes. Eligible data formats resolve in the order external
+  override, Studio built-in, external fallback, unavailable.
   Same-lane conflicts fail closed rather than using discovery order.
 - **AC-3:** Each ready Qoder viewer is translated into a receipt-covered
   external provider contribution. Its fingerprint covers the normalized
@@ -137,8 +138,12 @@ Walnut invocation is inferred or executed.
 ## Implementation Evidence
 
 - `npm run typecheck --workspace @qoder-ai/harness-studio` passed.
-- `npm test --workspace @qoder-ai/harness-studio -- --run` passed with 32
-  files and 199 tests.
+- `npm test --workspace @qoder-ai/harness-studio -- --maxWorkers=1` passed with
+  32 files and 201 tests.
+- The local `@homology/harness-artifact-provider` smoke selected Structurizr
+  DSL and D2 through `external-fallback`, Mermaid through explicit
+  `external-override`, and returned HTTP 200 for all three catalog, snapshot,
+  SVG resource, and opaque hosted-viewer routes under Node 24.19.0.
 - `npm run test:browser --workspace @qoder-ai/harness-studio` passed all 26
   Playwright scenarios, including TSX, diff, SVG, Beautiful Mermaid, Markdown,
   PPTX, keyboard focus, and wide/compact/narrow Artifact layouts.

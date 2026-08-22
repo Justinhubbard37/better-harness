@@ -23,7 +23,8 @@ describe("Artifact plugin registry and the Qoder Canvas provider", () => {
     const provider = await createQoderArtifactProvider(viewers[0]!, await fakeRuntime(root));
     expect(viewers).toHaveLength(1);
     expect(resolve_(entry("deck.pptx", "pptx"), [provider], "external-fallback")).toMatchObject({ renderer: { id: "studio.pptx-dom", type: "native" } });
-    expect(resolve_(entry("diagram.svg", "svg"), [provider], "external-override")).toMatchObject({
+    expect(resolve_(entry("diagram.svg", "svg"), [provider], "external-override")).toMatchObject({ renderer: { id: "qoder-canvas.pptx" } });
+    expect(resolve_(entry("diagram.svg", "svg"), [provider], "external-fallback")).toMatchObject({
       backing: "code",
       buildRuntime: { id: "studio.svg-react" },
       renderer: { id: "studio.svg-react-preview", type: "sandboxed-web" },
@@ -37,7 +38,7 @@ describe("Artifact plugin registry and the Qoder Canvas provider", () => {
     const provider = await createQoderArtifactProvider(viewers[0]!, await fakeRuntime(root));
     expect(provider.contributions[0]?.legacyOverrideRequested).toBe(true);
     expect(resolve_(entry("deck.pptx", "pptx"), [provider], "external-override")).toMatchObject({ renderer: { id: "qoder-canvas.pptx", type: "qoder-canvas" } });
-    expect(resolve_(entry("diagram.svg", "svg"), [provider], "external-override")).toMatchObject({ renderer: { id: "studio.svg-react-preview" } });
+    expect(resolve_(entry("diagram.svg", "svg"), [provider], "external-override")).toMatchObject({ renderer: { id: "qoder-canvas.pptx" } });
   });
 
   it("keeps an explicit override ahead of a non-overriding viewer that sorts first", async () => {

@@ -274,10 +274,12 @@ change.
 
 Dynamic Artifact rendering uses the Studio compile and preview lifecycle. It is
 not delegated to Qoder Canvas and it is not executed in the Studio document.
-Authored TSX/JSX and the Studio-owned SVG and Mermaid virtual runtimes are
-protected code-backed plugins: they resolve before every external lane and are
-not eligible for external override. External overrides are limited to
-Studio-declared data-backed formats.
+Authored TSX/JSX are protected code-backed plugins: they resolve before every
+external lane and are not eligible for external override. SVG and Mermaid use
+Studio-owned virtual runtimes by default, but are document formats rather than
+artifact-authored programs; an explicit fingerprint-bound `external-override`
+may therefore select a Provider projection for them. Without that consent the
+Studio runtime remains ahead of every external fallback.
 
 - Authored `.tsx` and `.jsx` projects compile from a confined Artifact root.
   Relative imports cannot escape the root; symlinks, hard links, ambiguous
@@ -493,7 +495,7 @@ escapes, missing assets, size changes, and digest changes before activation.
 
 The server resolves one contribution through named lanes:
 
-1. a matching protected Studio code-backed plugin;
+1. a matching protected Studio authored-code plugin;
 2. an explicitly activated `external-override` contribution for an eligible
    data-backed format;
 3. a matching Studio built-in plugin;
