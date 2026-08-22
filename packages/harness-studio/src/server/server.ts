@@ -64,6 +64,7 @@ import {
 } from "./artifact-catalog.js";
 import { formatTrustedRendererCompileError } from "./trusted-renderer-compiler.js";
 import {
+  type ArtifactCompileLimits,
   artifactPreviewHtml,
   compileArtifactPreview,
   findCompiledArtifactPreview,
@@ -71,6 +72,7 @@ import {
 import {
   type ArtifactBuildRuntimeImplementation,
   type ArtifactPluginResolution,
+  type ExternalArtifactProvider,
 } from "./artifact-plugin-registry.js";
 import {
   resolveQoderCanvasRuntime,
@@ -210,6 +212,10 @@ export interface HarnessStudioServerOptions {
   canvasSdkMedia?: string;
   /** Studio-private external Artifact activation state root. */
   artifactProviderStateRoot?: string;
+  /** Explicit local Provider implementations supplied by an embedding application. */
+  artifactProviders?: readonly ExternalArtifactProvider[];
+  /** Bounded numeric policy overrides for Studio-owned code compilation. */
+  artifactCompileLimits?: Partial<ArtifactCompileLimits>;
   /** Studio-owned Walnut cache root; defaults to the platform cache location. */
   walnutCacheRoot?: string;
   /** Additional bounded source candidates selectable from inside Studio. */
@@ -1705,6 +1711,7 @@ async function serveArtifactBuild(
       entry: resolved.entry,
       descriptor: resolved.descriptor,
       buildRuntime: resolved.buildRuntime,
+      limits: options.artifactCompileLimits,
     });
     respondArtifactJson(response, 200, compiled.snapshot);
   } catch (error) {
@@ -1733,6 +1740,7 @@ async function serveArtifactBuildPreview(
         entry: resolved.entry,
         descriptor: resolved.descriptor,
         buildRuntime: resolved.buildRuntime,
+        limits: options.artifactCompileLimits,
       });
       if (digestHex(current.snapshot.buildId) === buildId) compiled = current;
     }

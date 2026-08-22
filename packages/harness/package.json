@@ -1,6 +1,6 @@
 {
   "name": "@qoder-ai/harness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Harness as Code: a parseable, lockable, explainable assembly language for coding-agent harnesses.",
   "license": "MIT",
   "type": "module",
@@ -60,6 +60,10 @@
     "./highlight": {
       "types": "./dist/highlight/shiki.d.ts",
       "import": "./dist/highlight/shiki.js"
+    },
+    "./artifacts": {
+      "types": "./dist/artifacts/index.d.ts",
+      "import": "./dist/artifacts/index.js"
     }
   },
   "files": [

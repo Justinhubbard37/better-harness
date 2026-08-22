@@ -8,16 +8,17 @@ import {
   artifactPreviewHtml,
   compileArtifactPreview,
   resetArtifactCompileRuntime,
+  resolveArtifactCompileLimits,
 } from "../src/server/artifact-compile-runtime.js";
 import { resolveArtifactPlugin } from "../src/server/artifact-plugin-registry.js";
 
-async function compileEntry(directory: string, label: string) {
+async function compileEntry(directory: string, label: string, limits?: Parameters<typeof compileArtifactPreview>[0]["limits"]) {
   const index = await indexArtifactDirectory(directory, { includeDigests: true });
   const entry = index.entries.find((candidate) => candidate.label === label)!;
   const resolution = resolveArtifactPlugin(entry);
   const descriptor = describeArtifactCatalog(index, (candidate) => resolveArtifactPlugin(candidate))
     .artifacts.find((candidate) => candidate.id === entry.id)!;
-  return compileArtifactPreview({ artifactRoot: directory, entry, descriptor, buildRuntime: resolution.buildRuntime });
+  return compileArtifactPreview({ artifactRoot: directory, entry, descriptor, buildRuntime: resolution.buildRuntime, limits });
 }
 
 describe("ArtifactCompileRuntime", () => {
@@ -117,5 +118,21 @@ describe("ArtifactCompileRuntime", () => {
     const build = await compileEntry(directory, "package.tsx");
     expect(build.snapshot.status).toBe("failed");
     expect(build.snapshot.diagnostics[0]?.message).toContain("is not available in Artifact Preview");
+  });
+
+  it("binds bounded host limit overrides into build and cache identity", async () => {
+    resetArtifactCompileRuntime();
+    const directory = await mkdtemp(join(tmpdir(), "artifact-limits-"));
+    await writeFile(join(directory, "limited.tsx"), 'export default () => <p>bounded</p>;\n', "utf8");
+
+    const first = await compileEntry(directory, "limited.tsx", { maxSourceBytes: 1_024 });
+    const second = await compileEntry(directory, "limited.tsx", { maxSourceBytes: 2_048 });
+    expect(first.snapshot.status).toBe("ready");
+    expect(second.snapshot.status).toBe("ready");
+    expect(second.snapshot.buildId).not.toBe(first.snapshot.buildId);
+    expect(artifactCompileCount()).toBe(2);
+
+    expect(() => resolveArtifactCompileLimits({ maxSourceFiles: 513 })).toThrow("no greater than 512");
+    expect(() => resolveArtifactCompileLimits({ timeoutMs: 0 })).toThrow("positive integer");
   });
 });

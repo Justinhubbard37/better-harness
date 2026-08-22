@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { isArtifactCatalogResponse, isArtifactDataSnapshot } from "../src/artifact-model.js";
 import { activateArtifactContribution } from "../src/server/artifact-provider-activation.js";
 import { discoverCanvasViewers } from "../src/server/artifact-viewers.js";
+import { envelopeSnapshot, type ExternalArtifactProvider } from "../src/server/artifact-plugin-registry.js";
 import { createQoderArtifactProvider } from "../src/server/qoder-artifact-provider.js";
 import { startHarnessStudioServer, type HarnessStudioServerHandle } from "../src/server/server.js";
 
@@ -18,6 +20,47 @@ afterEach(async () => {
 });
 
 describe("generic external hosted Artifact routes", () => {
+  it("accepts an explicitly injected fingerprint-bound Provider", async () => {
+    const root = await temp("artifact-injected-provider-");
+    const appDir = join(root, "app");
+    const artifactDirectory = join(root, "artifacts");
+    const stateRoot = join(root, "state");
+    await Promise.all([mkdir(appDir), mkdir(artifactDirectory)]);
+    await writeFile(join(appDir, "index.html"), "<!doctype html><title>fixture</title>", "utf8");
+    await writeFile(join(artifactDirectory, "diagram.dsl"), "workspace {}", "utf8");
+    const provider = injectedProvider();
+    await activateArtifactContribution(provider, "dsl", "external-fallback", { extensions: ["dsl"] }, { root: stateRoot });
+
+    server = await startHarnessStudioServer({
+      appDir,
+      artifactDirectory,
+      artifactProviderStateRoot: stateRoot,
+      artifactProviders: [provider],
+      walnutCacheRoot: join(root, "walnut-cache"),
+    });
+
+    const status = await (await fetch(`${server.url}/api/artifact-providers`)).json() as {
+      providers: Array<{ id: string; status: string; receiptVerified: boolean; contributions: Array<{ active: boolean }> }>;
+    };
+    expect(status.providers.find((candidate) => candidate.id === provider.id)).toMatchObject({
+      status: "ready",
+      receiptVerified: true,
+      contributions: [{ active: true }],
+    });
+    const catalogValue: unknown = await (await fetch(`${server.url}/api/artifacts`)).json();
+    expect(isArtifactCatalogResponse(catalogValue)).toBe(true);
+    if (!isArtifactCatalogResponse(catalogValue)) throw new Error("expected Artifact catalog");
+    expect(catalogValue.artifacts[0]?.renderer).toMatchObject({
+      id: "fixture.dsl",
+      provider: "fixture",
+      status: "ready",
+      viewUri: expect.any(String),
+    });
+    const viewer = await fetch(`${server.url}${catalogValue.artifacts[0]!.renderer.viewUri}`);
+    expect(viewer.status).toBe(200);
+    expect(await viewer.text()).toContain("injected provider");
+  });
+
   it("serves an activated Qoder contribution without Qoder fields in the common binding", async () => {
     const root = await temp("artifact-provider-server-");
     const appDir = join(root, "app");
@@ -91,6 +134,54 @@ describe("generic external hosted Artifact routes", () => {
     expect(refreshed.artifacts[0]!.renderer.status).toBe("unavailable");
   });
 });
+
+function injectedProvider(): ExternalArtifactProvider {
+  const receipt: ExternalArtifactProvider["receipt"] = {
+    kind: "HarnessStudioExternalArtifactProviderReceiptV1",
+    providerId: "fixture.injected",
+    providerVersion: "1",
+    providerDescriptorDigest: `sha256:${"b".repeat(64)}`,
+    assets: [],
+    driverVersions: { fixture: "1" },
+  };
+  const fingerprint = `sha256:${createHash("sha256").update(JSON.stringify(receipt)).digest("hex")}` as const;
+  return {
+    id: receipt.providerId,
+    label: "Injected fixture",
+    version: receipt.providerVersion,
+    acquisition: "operator-provisioned",
+    fingerprint,
+    receipt,
+    contributions: [{
+      id: "dsl",
+      label: "Fixture DSL",
+      matcher: { extensions: ["dsl"] },
+      adapter: {
+        id: "fixture.dsl.adapter",
+        version: "1",
+        schemaId: "fixture/dsl-v1",
+        adapt: async (context) => await envelopeSnapshot(context, { kind: "fixture/dsl-v1" }),
+      },
+      renderer: { id: "fixture.dsl", label: "Fixture DSL", provider: "fixture", type: "external-hosted", status: "ready" },
+      surface: {
+        kind: "external-hosted",
+        rendererId: "fixture.dsl",
+        runtimeId: "fixture.dsl.runtime",
+        securityProfileId: "opaque-web-v1",
+        runtime: {
+          id: "fixture.dsl.runtime",
+          version: "1",
+          prepareDocument: async () => "<!doctype html><title>injected provider</title>",
+          readModule: async () => "export {};",
+          readResource: async () => undefined,
+        },
+      },
+      capabilities: ["navigate"],
+      support: "experimental-local",
+      adapterExecutionProfile: "trusted-local-process",
+    }],
+  };
+}
 
 async function temp(prefix: string): Promise<string> {
   const path = await mkdtemp(join(tmpdir(), prefix));

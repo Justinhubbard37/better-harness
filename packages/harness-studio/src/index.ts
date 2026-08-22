@@ -50,3 +50,15 @@ export {
   runHarnessStudioCli,
   type HarnessStudioCliIo,
 } from "./server/cli.js";
+export {
+  activateArtifactContribution,
+  deactivateArtifactContribution,
+  readArtifactProviderActivationState,
+  type ArtifactProviderActivationState,
+  type ArtifactProviderActivationStoreOptions,
+} from "./server/artifact-provider-activation.js";
+export {
+  DEFAULT_ARTIFACT_COMPILE_LIMITS,
+  resolveArtifactCompileLimits,
+  type ArtifactCompileLimits,
+} from "./server/artifact-compile-runtime.js";

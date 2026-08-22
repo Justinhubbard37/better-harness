@@ -16,9 +16,6 @@ import { REACT_SOURCE_BUILD_RUNTIME } from "./artifact-build-runtimes.js";
 import { digestHex, type ArtifactEntry } from "./artifact-catalog.js";
 
 const COMPILE_RUNTIME_VERSION = "2";
-const MAX_SOURCE_FILES = 64;
-const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
-const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MAX_DIAGNOSTICS = 32;
 const MAX_DIAGNOSTIC_LENGTH = 600;
 const MAX_RETAINED_BUILDS = 64;
@@ -28,7 +25,6 @@ const MAX_RETAINED_BUILDS = 64;
  * pathological project holds its HTTP request open forever, so the build fails
  * with a diagnostic instead and the next request is free to try again.
  */
-const COMPILE_TIMEOUT_MS = 20_000;
 const SOURCE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mjs", ".json", ".css"] as const;
 const ALLOWED_PACKAGES = new Set(["react", "react/jsx-runtime", "react/jsx-dev-runtime", "react-dom/client"]);
 
@@ -49,6 +45,41 @@ export interface CompileArtifactPreviewOptions {
   entry: ArtifactEntry;
   descriptor: ArtifactDescriptor;
   buildRuntime?: ArtifactBuildRuntimeImplementation;
+  limits?: Partial<ArtifactCompileLimits>;
+}
+
+export interface ArtifactCompileLimits {
+  maxSourceFiles: number;
+  maxSourceBytes: number;
+  maxOutputBytes: number;
+  timeoutMs: number;
+}
+
+export const DEFAULT_ARTIFACT_COMPILE_LIMITS: Readonly<ArtifactCompileLimits> = Object.freeze({
+  maxSourceFiles: 64,
+  maxSourceBytes: 2 * 1024 * 1024,
+  maxOutputBytes: 4 * 1024 * 1024,
+  timeoutMs: 20_000,
+});
+
+const HARD_ARTIFACT_COMPILE_LIMITS: Readonly<ArtifactCompileLimits> = Object.freeze({
+  maxSourceFiles: 512,
+  maxSourceBytes: 16 * 1024 * 1024,
+  maxOutputBytes: 16 * 1024 * 1024,
+  timeoutMs: 60_000,
+});
+
+export function resolveArtifactCompileLimits(
+  overrides: Partial<ArtifactCompileLimits> = {},
+): Readonly<ArtifactCompileLimits> {
+  const resolved = { ...DEFAULT_ARTIFACT_COMPILE_LIMITS, ...overrides };
+  for (const key of Object.keys(resolved) as Array<keyof ArtifactCompileLimits>) {
+    const value = resolved[key];
+    if (!Number.isSafeInteger(value) || value <= 0 || value > HARD_ARTIFACT_COMPILE_LIMITS[key]) {
+      throw new RangeError(`Artifact compile limit '${key}' must be a positive integer no greater than ${HARD_ARTIFACT_COMPILE_LIMITS[key]}.`);
+    }
+  }
+  return Object.freeze(resolved);
 }
 
 const latestByEntry = new Map<string, CompiledArtifactPreview>();
@@ -82,7 +113,9 @@ class ArtifactCompileTimeout extends Error {}
  */
 export async function compileArtifactPreview(options: CompileArtifactPreviewOptions): Promise<CompiledArtifactPreview> {
   const buildRuntime = options.buildRuntime ?? REACT_SOURCE_BUILD_RUNTIME;
-  const entryKey = `${options.entry.path}\u0000${buildRuntime.id}@${buildRuntime.version}`;
+  const limits = resolveArtifactCompileLimits(options.limits);
+  const limitKey = JSON.stringify(limits);
+  const entryKey = `${options.entry.path}\u0000${buildRuntime.id}@${buildRuntime.version}\u0000${limitKey}`;
   const cached = latestByEntry.get(entryKey);
   if (cached !== undefined
     && cached.snapshot.revisionId === options.descriptor.revision.id
@@ -91,7 +124,7 @@ export async function compileArtifactPreview(options: CompileArtifactPreviewOpti
   const key = `${entryKey}\u0000${options.descriptor.revision.id}`;
   const pending = inflightByRevision.get(key);
   if (pending !== undefined) return pending;
-  const compiling = compileArtifactRevision(options, buildRuntime, entryKey).finally(() => inflightByRevision.delete(key));
+  const compiling = compileArtifactRevision(options, buildRuntime, limits, entryKey).finally(() => inflightByRevision.delete(key));
   inflightByRevision.set(key, compiling);
   return compiling;
 }
@@ -99,6 +132,7 @@ export async function compileArtifactPreview(options: CompileArtifactPreviewOpti
 async function compileArtifactRevision(
   options: CompileArtifactPreviewOptions,
   buildRuntime: ArtifactBuildRuntimeImplementation,
+  limits: Readonly<ArtifactCompileLimits>,
   entryKey: string,
 ): Promise<CompiledArtifactPreview> {
   compileCount += 1;
@@ -128,16 +162,16 @@ async function compileArtifactRevision(
       logLevel: "silent",
       define: { "process.env.NODE_ENV": '"production"' },
       minify: buildRuntime.module.kind === "virtual" && buildRuntime.module.minify === true,
-      plugins: [confinedArtifactPlugin(root, entryPath, sources, buildRuntime)],
-    }));
+      plugins: [confinedArtifactPlugin(root, entryPath, sources, buildRuntime, limits)],
+    }), limits.timeoutMs);
     diagnostics = result.warnings.map((message) => diagnosticFromMessage(message, root, "warning"));
     for (const output of result.outputFiles) {
       if (output.path.endsWith(".css")) css = output.text;
       else if (output.path.endsWith(".js")) code = output.text;
     }
     if (code === undefined) throw new Error("Artifact compiler produced no JavaScript output.");
-    if (Buffer.byteLength(code) + Buffer.byteLength(css) > MAX_OUTPUT_BYTES) {
-      throw new Error(`Artifact build exceeds the ${MAX_OUTPUT_BYTES}-byte output limit.`);
+    if (Buffer.byteLength(code) + Buffer.byteLength(css) > limits.maxOutputBytes) {
+      throw new Error(`Artifact build exceeds the ${limits.maxOutputBytes}-byte output limit.`);
     }
   } catch (error) {
     status = "failed";
@@ -145,7 +179,7 @@ async function compileArtifactRevision(
     diagnostics = diagnosticsFromError(error, root);
   }
 
-  const buildId = digestBuild(root, options.descriptor, sources, code, css, diagnostics, buildRuntime);
+  const buildId = digestBuild(root, options.descriptor, sources, code, css, diagnostics, buildRuntime, limits);
   const base = `/api/artifacts/${encodeURIComponent(options.descriptor.id)}/revisions/${digestHex(options.descriptor.revision.id)}`;
   const snapshot: ArtifactBuildSnapshot = {
     kind: ARTIFACT_BUILD_SNAPSHOT_KIND,
@@ -251,6 +285,7 @@ function confinedArtifactPlugin(
   entryPath: string,
   sources: Map<string, SourceStamp>,
   buildRuntime: ArtifactBuildRuntimeImplementation,
+  limits: Readonly<ArtifactCompileLimits>,
 ): Plugin {
   let sourceBytes = 0;
   const virtualModule = buildRuntime.module.kind === "virtual" ? buildRuntime.module : undefined;
@@ -312,8 +347,8 @@ function confinedArtifactPlugin(
         const contents = await readFile(args.path);
         if (!sources.has(args.path)) {
           sourceBytes += contents.byteLength;
-          if (sources.size + 1 > MAX_SOURCE_FILES) return { errors: [{ text: `Artifact project exceeds the ${MAX_SOURCE_FILES}-file limit.` }] };
-          if (sourceBytes > MAX_SOURCE_BYTES) return { errors: [{ text: `Artifact project exceeds the ${MAX_SOURCE_BYTES}-byte source limit.` }] };
+          if (sources.size + 1 > limits.maxSourceFiles) return { errors: [{ text: `Artifact project exceeds the ${limits.maxSourceFiles}-file limit.` }] };
+          if (sourceBytes > limits.maxSourceBytes) return { errors: [{ text: `Artifact project exceeds the ${limits.maxSourceBytes}-byte source limit.` }] };
           sources.set(args.path, {
             signature: sourceSignature(stats),
             digest: createHash("sha256").update(contents).digest("hex"),
@@ -383,13 +418,13 @@ function loaderFor(path: string): "tsx" | "ts" | "jsx" | "js" | "json" | "css" {
  * build's eventual rejection, so a late failure cannot surface as an unhandled
  * rejection that takes the Studio process down.
  */
-async function withCompileTimeout<T>(work: Promise<T>): Promise<T> {
+async function withCompileTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([work, new Promise<never>((_, reject) => {
       timer = setTimeout(
-        () => reject(new ArtifactCompileTimeout(`Artifact build exceeded the ${COMPILE_TIMEOUT_MS}ms compile limit.`)),
-        COMPILE_TIMEOUT_MS,
+        () => reject(new ArtifactCompileTimeout(`Artifact build exceeded the ${timeoutMs}ms compile limit.`)),
+        timeoutMs,
       );
     })]);
   } finally {
@@ -420,6 +455,7 @@ function digestBuild(
   css: string,
   diagnostics: ArtifactBuildDiagnostic[],
   buildRuntime: ArtifactBuildRuntimeImplementation,
+  limits: Readonly<ArtifactCompileLimits>,
 ): ArtifactDigest {
   const sourceDigests = [...sources]
     .map(([path, stamp]) => [relative(root, path).split(sep).join("/"), stamp.digest] as const)
@@ -428,6 +464,7 @@ function digestBuild(
     COMPILE_RUNTIME_VERSION,
     buildRuntime.id,
     buildRuntime.version,
+    limits,
     descriptor.id,
     descriptor.revision.id,
     sourceDigests,

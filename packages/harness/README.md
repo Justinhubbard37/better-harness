@@ -207,6 +207,26 @@ for callers that identify a harness. It succeeds only when that selection maps
 to exactly one declared deployment; `resolveDeployment` is the unambiguous v0.3
 entrypoint.
 
+## Artifact Provider SDK
+
+External Artifact implementations import the host-neutral contract from the
+dedicated subpath:
+
+```ts
+import {
+  defineArtifactProvider,
+  type ArtifactAdaptContext,
+  type ExternalArtifactProvider,
+} from "@qoder-ai/harness/artifacts";
+```
+
+The subpath owns descriptor and snapshot envelopes, source entries, adapter and
+hosted-runtime bindings, matchers, receipts, and Provider types. It does not own
+Studio's React `ArtifactView`, directory catalog, HTTP routes, activation
+storage, compile execution, CSP, or iframe host. Provider-owned payload kinds
+use the `external:<provider>/<schema>` namespace so built-in payloads remain a
+discriminated TypeScript union.
+
 ## Shipped adapter facts
 
 | Adapter | Skills | Tools | MCP | Workflows |

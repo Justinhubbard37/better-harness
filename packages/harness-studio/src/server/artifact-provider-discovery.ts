@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ArtifactProviderStatus } from "../artifact-model.js";
 import type { ArtifactPluginRegistry, ExternalArtifactProvider } from "./artifact-adapter-contract.js";
 import {
@@ -19,6 +20,8 @@ export interface DiscoverArtifactProviderRuntimeOptions {
   cwd?: string;
   artifactProviderStateRoot?: string;
   walnutCacheRoot?: string;
+  /** Providers supplied explicitly by an embedding application. */
+  artifactProviders?: readonly ExternalArtifactProvider[];
 }
 
 export interface ArtifactProviderRuntime {
@@ -64,11 +67,76 @@ export async function discoverArtifactProviderRuntime(
   const walnut = await discoverWalnutArtifactProvider(options.walnutCacheRoot);
   if (walnut.provider !== undefined) providers.push(walnut.provider);
   statuses.push(walnut.status);
+  const discoveredIds = new Set(providers.map((provider) => provider.id));
+  for (const provider of options.artifactProviders ?? []) {
+    const invalidReason = validateInjectedProvider(provider);
+    if (invalidReason !== undefined) {
+      statuses.push(unavailableInjectedStatus(provider, invalidReason));
+      continue;
+    }
+    if (discoveredIds.has(provider.id)) {
+      statuses.push(unavailableInjectedStatus(provider, "Another discovered Artifact provider already uses this id."));
+      continue;
+    }
+    discoveredIds.add(provider.id);
+    providers.push(provider);
+    statuses.push(providerStatus(provider, activations, activationFailure));
+  }
   return {
     providers: Object.freeze(providers),
     statuses: Object.freeze(statuses),
     registry: createArtifactPluginRegistry({ externalProviders: providers, activations }),
   };
+}
+
+function validateInjectedProvider(provider: ExternalArtifactProvider): string | undefined {
+  if (provider.id.trim() === "" || provider.version.trim() === "" || provider.label.trim() === "") {
+    return "The injected Artifact provider identity is incomplete.";
+  }
+  if (provider.receipt.kind !== "HarnessStudioExternalArtifactProviderReceiptV1"
+    || provider.receipt.providerId !== provider.id
+    || provider.receipt.providerVersion !== provider.version
+    || digestJson(provider.receipt) !== provider.fingerprint) {
+    return "The injected Artifact provider receipt does not match its identity and fingerprint.";
+  }
+  const contributionIds = new Set<string>();
+  for (const contribution of provider.contributions) {
+    if (contribution.id.trim() === "" || contributionIds.has(contribution.id)) {
+      return "The injected Artifact provider has an empty or duplicate contribution id.";
+    }
+    contributionIds.add(contribution.id);
+    if ((contribution.matcher.formats?.length ?? 0)
+      + (contribution.matcher.extensions?.length ?? 0)
+      + (contribution.matcher.pathGlobs?.length ?? 0) === 0) {
+      return `Artifact provider contribution '${contribution.id}' has no matcher.`;
+    }
+    if (contribution.surface.kind === "external-hosted"
+      && (contribution.surface.rendererId !== contribution.renderer.id
+        || contribution.surface.runtimeId !== contribution.surface.runtime.id)) {
+      return `Artifact provider contribution '${contribution.id}' has inconsistent hosted surface identity.`;
+    }
+  }
+  return undefined;
+}
+
+function unavailableInjectedStatus(
+  provider: ExternalArtifactProvider,
+  reason: string,
+): ArtifactProviderStatus {
+  return {
+    id: provider.id,
+    label: provider.label,
+    version: provider.version,
+    acquisition: provider.acquisition,
+    status: "unavailable",
+    receiptVerified: false,
+    contributions: [],
+    reason,
+  };
+}
+
+function digestJson(value: unknown): `sha256:${string}` {
+  return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
 }
 
 function providerStatus(

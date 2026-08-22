@@ -5,11 +5,15 @@ import { basename, extname, normalize, resolve, sep } from "node:path";
 import type {
   ArtifactCatalogResponse,
   ArtifactDigest,
+  ArtifactEntry,
   ArtifactFamily,
+  ArtifactKind,
   ArtifactOmission,
 } from "../artifact-model.js";
 import { ARTIFACT_CATALOG_RESPONSE_KIND } from "../artifact-model.js";
 import type { ArtifactPluginResolution } from "./artifact-adapter-contract.js";
+
+export type { ArtifactEntry, ArtifactKind } from "@qoder-ai/harness/artifacts";
 
 /**
  * Server-internal format classification. It selects a native adapter/renderer
@@ -18,18 +22,6 @@ import type { ArtifactPluginResolution } from "./artifact-adapter-contract.js";
  * Studio actually decided to do. Keeping one classification axis on the wire is
  * what stops `kind` from drifting into a second, competing renderer name.
  */
-export type ArtifactKind = "code" | "diff" | "image" | "json" | "markdown" | "mermaid" | "pptx" | "svg" | "text" | "unknown";
-
-export interface ArtifactEntry {
-  id: string;
-  threadId: string;
-  kind: ArtifactKind;
-  label: string;
-  path: string;
-  size: number;
-  digest?: ArtifactDigest;
-}
-
 export interface ArtifactIndex {
   catalogId: string;
   entries: ArtifactEntry[];

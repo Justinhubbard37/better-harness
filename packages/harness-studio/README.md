@@ -71,6 +71,38 @@ only by Run. Other providers, including versioned document or presentation
 systems, can inject the same server adapter interface without adopting the
 catalog's storage format.
 
+An embedding application can install an Artifact Provider implemented against
+`@qoder-ai/harness/artifacts`, activate one exact fingerprint-bound
+contribution, and inject it explicitly:
+
+```ts
+import {
+  activateArtifactContribution,
+  startHarnessStudioServer,
+} from "@qoder-ai/harness-studio";
+
+await activateArtifactContribution(
+  provider,
+  "my-format",
+  "external-fallback",
+  { extensions: ["my-format"] },
+  { root: stateRoot },
+);
+
+await startHarnessStudioServer({
+  appDir,
+  artifactDirectory,
+  artifactProviderStateRoot: stateRoot,
+  artifactProviders: [provider],
+  artifactCompileLimits: { maxSourceFiles: 128 },
+});
+```
+
+Numeric compile limits may be adjusted only within Studio's hard ceilings and
+are part of build/cache identity. They do not expand the package allowlist.
+Injected Provider receipts are fingerprint-checked, and an inactive or changed
+fingerprint never enters selection.
+
 ## Architecture
 
 ```text

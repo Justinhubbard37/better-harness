@@ -15,6 +15,7 @@
   - [Render SVG and Mermaid artifacts through the React preview runtime](../specs/2026-08-22-studio-react-document-artifacts.md)
   - [Keep Walnut bootstrap receipts portable across platforms](../specs/2026-08-21-walnut-cross-platform-paths.md)
   - [Implement external Artifact providers in Harness Studio](../specs/2026-08-22-studio-external-artifact-provider-runtime.md)
+  - [Extract the Artifact provider SDK and prove it with Structurizr](../specs/2026-08-22-artifact-provider-sdk-and-structurizr.md)
 
 ## Context
 
@@ -175,12 +176,16 @@ type ArtifactSurfaceBinding =
   | { kind: "unavailable"; reason: string };
 ```
 
-All TypeScript shapes in this ADR are conceptual ownership contracts until a
-dated implementation spec freezes their internal names and validators; they are
-not a new public package API. The current V2 catalog may continue to project
-them through `backing`, `build`, and `renderer`. A later wire-format revision is
-justified only when a client needs information that cannot be represented
-safely and additively.
+The host-neutral descriptor, snapshot, source-entry, adapter, surface, and
+external Provider shapes are a public package API under
+`@qoder-ai/harness/artifacts`. Studio keeps compatibility re-exports while the
+core subpath is their sole source owner. React views, catalog discovery and
+classification, HTTP routes, activation storage, provider selection, compile
+execution, CSP, and iframe hosting stay in `@qoder-ai/harness-studio`; they are
+not SDK abstractions. The current V2 catalog continues to project the public
+contract through `backing`, `build`, and `renderer`. A later wire-format
+revision is justified only when a client needs information that cannot be
+represented safely and additively.
 
 The V2 compatibility projection is explicit:
 
@@ -252,6 +257,13 @@ Build runtimes are registry-selected contributions. The single compile runtime
 executes the selected contribution and enforces project, dependency, time, and
 output bounds. Adding an SVG-like virtual document edits the build-runtime
 composition, not the compiler implementation.
+
+Numeric compile limits are Studio host policy. An embedder may lower them or
+raise them within Studio-owned hard ceilings; the effective policy participates
+in cache and build identity. Package permissions are not a numeric limit and
+remain owned by the selected trusted build-runtime contribution. A Provider
+that needs repository libraries performs a declared adapter transform instead
+of granting artifact-authored source arbitrary workspace imports.
 
 Build and snapshot identities include the source revision, adapter or build
 runtime id and version, schema version, and any external provider fingerprint
@@ -550,24 +562,26 @@ must show that compare or replay is unavailable.
 
 ### Keep ownership narrow and discoverable
 
-Current source ownership remains:
+Current source ownership is:
 
 | Concern | Owner |
 | --- | --- |
-| Browser-safe catalog, descriptor, snapshot, and build protocols | `packages/harness-studio/src/artifact-model.ts` |
+| Host-neutral descriptor, snapshot, source-entry, adapter, surface, and Provider contracts | `packages/harness/src/artifacts/`, published as `@qoder-ai/harness/artifacts` |
+| Browser-safe compatibility re-export | `packages/harness-studio/src/artifact-model.ts` |
 | Directory discovery, classification, revision hashing, and catalog projection | `packages/harness-studio/src/server/artifact-catalog.ts` |
-| Adapter/build/plugin contracts and ordered server selection | `packages/harness-studio/src/server/artifact-adapter-contract.ts` and `artifact-plugin-registry.ts` |
+| Ordered server selection, receipt verification, activation, and embedded Provider injection | `packages/harness-studio/src/server/artifact-plugin-registry.ts`, `artifact-provider-discovery.ts`, and `artifact-provider-activation.ts` |
 | Format parsing and semantic projection | Format-owned adapter modules such as `pptx-artifact-adapter.ts` and `markdown-artifact-adapter.ts` |
 | Studio compile/build lifecycle | `artifact-build-runtimes.ts` and `artifact-compile-runtime.ts` |
 | Browser renderer composition | `packages/harness-studio/src/app/ArtifactView.tsx` |
 | Opaque-origin Studio preview lifecycle | `packages/harness-studio/src/app/ArtifactPreviewHost.tsx` |
 | External acquisition and verification | Provider-owned server modules, currently `packages/harness-studio/src/server/artifact-viewers.ts`, `qoder-canvas-viewer-bridge.ts`, and `walnut-bootstrap.ts` |
 
-The first external-provider implementation spec will choose the exact module
-split. It must move vendor translation and execution behind a provider-owned
-boundary rather than creating a global service locator. Core catalog, common
-server routes, and browser mounting must not gain another vendor branch when a
-provider is added.
+External-provider implementations keep vendor translation and execution behind
+a provider-owned boundary rather than creating a global service locator. An
+embedding application supplies installed Providers explicitly to server
+startup; activation still binds one contribution, fingerprint, lane, matcher,
+adapter profile, and surface profile. Core catalog, common server routes, and
+browser mounting do not gain another vendor branch when a provider is added.
 
 After that migration, `artifact-plugin-registry.ts` is the server composition
 root: a `createArtifactPluginRegistry({ builtIns, externalProviders })`-shaped
