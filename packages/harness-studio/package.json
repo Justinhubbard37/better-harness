@@ -16,7 +16,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "harness-studio": "./dist/server/cli.js"
+    "harness-studio": "dist/server/cli.js"
   },
   "exports": {
     ".": {
