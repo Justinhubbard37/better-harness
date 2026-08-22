@@ -17,6 +17,7 @@ deprecated.
 | `ADR-0004` | [Harness Checkpoint Experiment Compare](harness-checkpoint-experiment-compare.md) | Proposed | 2026-08-17 | Checkpoint-anchored mixed-origin experiments, derived treatment axes, per-contrast verdicts, and the Studio experiment lifecycle |
 | `ADR-0005` | [Checkpoint-backed Compare Sources and Materialization](checkpoint-backed-compare-sources.md) | Proposed | 2026-08-17 | Source-neutral checkpoint discovery, request provenance, adapter projections, and per-lane materialization |
 | `ADR-0006` | [Session Notebook Trace and Outcome Projection](session-notebook-evidence-projection.md) | Proposed | 2026-08-18 | Ordered Turn evidence, response availability, evidence-bounded outcomes, and session-scoped patch requirements |
+| `ADR-0007` | [Harness Studio Artifact Runtime and Provider Architecture](studio-artifact-runtime-and-providers.md) | Proposed | 2026-08-22 | Revision-bound data and code lifecycles, renderer surfaces, external providers, and retained trace boundaries |
 
 ## Lifecycle
 
