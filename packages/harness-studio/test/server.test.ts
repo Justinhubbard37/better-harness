@@ -13,6 +13,7 @@ import { startHarnessStudioServer, type StartedHarnessStudioServer, type StudioW
 import { sessionFromRetainedRun } from "../src/app/session-debugger-model.js";
 import { extractInspectorReportJson } from "../src/server/query/inspector-query.js";
 import { DEFAULT_LOCAL_HARNESS_ID, DEFAULT_LOCAL_RUNTIME_ID } from "../src/server/default-local-harness.js";
+import type { IntentCorrelationPacketV1 } from "../src/intent-correlation-model.js";
 import type { CheckpointHistoryAdapter } from "../src/server/query/checkpoint-history.js";
 import { FIXTURE_VERDICT } from "./compare-model.test.js";
 
@@ -141,6 +142,39 @@ function retainedRunFixture(id: string, savedAt: string, prompt: string, tools: 
   };
 }
 
+function proposedIntentFixture(packet: IntentCorrelationPacketV1) {
+  const input = packet.inputs[0]!;
+  const edge = packet.observedEdges.find((candidate) => candidate.predicate === "contains")!;
+  return {
+    kind: "IntentCorrelationAnalysisV1",
+    schemaVersion: 1,
+    packetDigest: packet.packetDigest,
+    intentProposals: [{
+      id: "intent:proposed:trace-user-inputs",
+      title: "Trace user inputs",
+      summary: "Connect the retained user input to observed repository activity without promoting edit targets.",
+      sourceRefs: [input.ref],
+      reviewStatus: "proposed",
+    }],
+    claims: [{
+      id: "claim:input-creates-trace-intent",
+      subjectRef: input.ref,
+      predicate: "creates",
+      objectRef: "intent:proposed:trace-user-inputs",
+      evidenceRefs: [edge.ref],
+      counterEvidenceRefs: [],
+      alternatives: [],
+      evidenceStrength: "direct",
+      confidence: { semanticFit: "high", temporalFit: "high", changeFit: "low", acceptanceFit: "low" },
+      reason: "The retained prompt begins the bounded execution slice that contains the observed activity.",
+      limitations: ["The packet contains no verified content delta or commit evidence."],
+      reviewStatus: "proposed",
+    }],
+    unassignedRefs: packet.changeUnits.map(({ ref }) => ref),
+    unresolved: [],
+  };
+}
+
 describe("harness-studio server", () => {
   it("reports which surfaces are enabled through /api/config", async () => {
     const appDir = await makeAppDir();
@@ -163,7 +197,10 @@ describe("harness-studio server", () => {
       workspaceDiscoveryEnabled: false,
       workspaceConnected: false,
       sessionCount: 0,
+      inputCount: 0,
+      intentAnalysisEnabled: false,
     });
+    expect((await fetch(`${started.url}/api/inputs`)).status).toBe(404);
   });
 
   it("opens a project workspace and serves provider-discovered Sessions without exposing its path", async () => {
@@ -190,8 +227,22 @@ describe("harness-studio server", () => {
           ],
           inspectorReport: {
             kind: "HarnessInspectorReportV1",
+            workspace: { name: "fixture-repository" },
             featureTree: { nodes: [], roots: [] },
-            sessions: [{ sessionId: "session-structured" }],
+            sessions: [{
+              sessionId: "session-structured",
+              platform: "codex",
+              dialogue: {
+                turns: [{
+                  index: 1,
+                  prompt: { text: "Trace this input", timestamp: "2026-08-20T12:00:00.000Z" },
+                  steps: [
+                    { kind: "tool", callId: "read-1", operation: "read-files", filePaths: ["packages/harness-studio/src/server/server.ts"] },
+                    { kind: "tool", callId: "edit-1", operation: "edit-files", filePaths: ["packages/harness-studio/src/server/server.ts"] },
+                  ],
+                }],
+              },
+            }],
             days: [{ date: "2026-08-20", sessionIds: ["session-structured"], commitHashes: [] }],
           },
           sessions: records.map((record, index) => ({
@@ -249,13 +300,25 @@ describe("harness-studio server", () => {
     expect(JSON.stringify(workspaceState)).not.toContain(workspace);
 
     const connectedConfig = await (await fetch(`${started.url}/api/config`)).json();
-    expect(connectedConfig).toMatchObject({ workspaceWorkbenchEnabled: true });
+    expect(connectedConfig).toMatchObject({ workspaceWorkbenchEnabled: true, inputCount: 1 });
     const inspectorReport = await fetch(`${started.url}/api/workspace-inspector-report`);
     expect(inspectorReport.status).toBe(200);
     expect(inspectorReport.headers.get("cache-control")).toBe("no-store");
     expect(await inspectorReport.json()).toMatchObject({
       kind: "HarnessInspectorReportV1",
       sessions: [{ sessionId: "session-structured" }],
+    });
+    const inputTrace = await fetch(`${started.url}/api/inputs`);
+    expect(inputTrace.status).toBe(200);
+    expect(inputTrace.headers.get("cache-control")).toBe("no-store");
+    expect(await inputTrace.json()).toMatchObject({
+      kind: "UserInputTraceV1",
+      workspace: { label: "fixture-repository" },
+      summary: { inputCount: 1, readCount: 1, editTargetCount: 1, fileCount: 1 },
+      inputs: [{ text: "Trace this input", links: [
+        { path: "packages/harness-studio/src/server/server.ts", activity: "edit-targeted" },
+        { path: "packages/harness-studio/src/server/server.ts", activity: "read" },
+      ] }],
     });
 
     const catalog = await (await fetch(`${started.url}/api/sessions`)).json() as { sessions: Array<{ id: string; provider: string }> };
@@ -268,6 +331,62 @@ describe("harness-studio server", () => {
       left: { prompt: "Inspect Qoder session", status: "observed", toolSequence: ["Read", "Bash"] },
       right: { prompt: "Inspect Codex session", status: "observed", toolSequence: ["Read"] },
     });
+  });
+
+  it("serves online Intent proposals only after local evidence validation", async () => {
+    const appDir = await makeAppDir();
+    const workspace = await makeTempDir("studio-intent-workspace-");
+    let observedPacket: IntentCorrelationPacketV1 | undefined;
+    let invalid = false;
+    started = await startHarnessStudioServer({
+      appDir,
+      workspaceDirectoryPicker: async () => workspace,
+      workspaceSessionProvider: {
+        discover: async () => ({
+          label: "intent-fixture",
+          sessions: [],
+          inspectorReport: {
+            kind: "HarnessInspectorReportV1",
+            workspace: { name: "intent-fixture" },
+            featureTree: { nodes: [], roots: [] },
+            days: [],
+            sessions: [{
+              sessionId: "session-intent",
+              platform: "codex",
+              dialogue: { turns: [{
+                index: 1,
+                prompt: { text: "Connect this prompt to repository activity", timestamp: "2026-08-22T12:00:00.000Z" },
+                steps: [{ kind: "tool", callId: "edit-1", operation: "edit-files", filePaths: ["src/view.tsx"] }],
+              }] },
+            }],
+          },
+        }),
+      },
+      intentAnalyzer: {
+        analyze: async (packet) => {
+          observedPacket = packet;
+          const proposed = proposedIntentFixture(packet);
+          return invalid ? { ...proposed, claims: [{ ...proposed.claims[0], reviewStatus: "confirmed" }] } : proposed;
+        },
+      },
+    });
+    expect((await fetch(`${started.url}/api/workspace/open`, { method: "POST" })).status).toBe(200);
+    expect(await (await fetch(`${started.url}/api/config`)).json()).toMatchObject({ intentAnalysisEnabled: true });
+
+    const analyzed = await fetch(`${started.url}/api/intent-analysis`, { method: "POST" });
+    expect(analyzed.status).toBe(200);
+    expect(analyzed.headers.get("cache-control")).toBe("no-store");
+    expect(await analyzed.json()).toMatchObject({ kind: "IntentCorrelationAnalysisV1", claims: [{ reviewStatus: "proposed" }] });
+    expect(observedPacket?.changeUnits).toEqual([expect.objectContaining({ path: "src/view.tsx", changeState: "edit-targeted" })]);
+    expect(JSON.stringify(observedPacket)).not.toContain(workspace);
+
+    invalid = true;
+    const rejected = await fetch(`${started.url}/api/intent-analysis`, { method: "POST" });
+    expect(rejected.status).toBe(502);
+    expect(await rejected.json()).toEqual({ error: "The Intent analyzer returned claims that failed local evidence validation." });
+
+    const crossOrigin = await fetch(`${started.url}/api/intent-analysis`, { method: "POST", headers: { Origin: "https://example.test" } });
+    expect(crossOrigin.status).toBe(403);
   });
 
   it("provides a default local harness and runs it inside the selected workspace", async () => {

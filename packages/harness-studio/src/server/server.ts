@@ -95,6 +95,14 @@ import {
   readGitRefsAtRoot,
   resolveGitRepositoryRoot,
 } from "./git-history.js";
+import { isUserInputTrace, projectUserInputTrace, type UserInputTraceV1 } from "../input-trace-model.js";
+import {
+  IntentCorrelationContractError,
+  validateIntentCorrelationAnalysis,
+  type IntentCorrelationAnalysisV1,
+  type IntentCorrelationPacketV1,
+} from "../intent-correlation-model.js";
+import { buildIntentCorrelationPacket } from "./intent-correlation.js";
 
 const builtInExecutorFactory: HarnessUiExecutorFactory = (context) => {
   if (context.runtimeId === "qoder") {
@@ -171,6 +179,10 @@ export interface StudioWorkspaceSessionProvider {
   discover(workspacePath: string): Promise<StudioWorkspaceDiscovery>;
 }
 
+export interface StudioIntentAnalyzer {
+  analyze(packet: IntentCorrelationPacketV1): Promise<unknown>;
+}
+
 export interface HarnessStudioServerOptions {
   /** Directory holding the built React app (index.html + assets/). */
   appDir: string;
@@ -220,6 +232,8 @@ export interface HarnessStudioServerOptions {
   workspaceSessionProvider?: StudioWorkspaceSessionProvider;
   /** Test/embedder seam for the server-owned native working-directory chooser. */
   workspaceDirectoryPicker?: () => Promise<string | undefined>;
+  /** Optional semantic claim provider. Results are accepted only after local contract validation. */
+  intentAnalyzer?: StudioIntentAnalyzer;
 }
 
 /**
@@ -257,6 +271,7 @@ export function createHarnessStudioServer(options: HarnessStudioServerOptions): 
     artifactImports: new Map(),
     workspaceImports: new Map(),
     workspaceOpenStage: "idle",
+    intentAnalysisRunning: false,
   };
   const server = createServer((request, response) => {
     void route(request, response, resolvedOptions, state, experimentRuns).catch((error: unknown) => {
@@ -311,6 +326,7 @@ interface StudioWorkspace {
   sessions: Map<string, StoredWorkspaceSession>;
   providers: StudioWorkspaceProviderDiagnostic[];
   inspectorReport?: Record<string, unknown>;
+  inputTrace?: UserInputTraceV1;
   /** Server-only execution root for the selected local project. Never serialized. */
   localDirectory?: string;
   /** Canonical server-only repository root. Never serialized. */
@@ -341,6 +357,7 @@ interface HarnessStudioState {
   workspace?: StudioWorkspace;
   workspaceImports: Map<string, WorkspaceImportSession>;
   workspaceOpenStage: "idle" | "choosing" | "discovering";
+  intentAnalysisRunning: boolean;
 }
 
 function artifactOptions(options: HarnessStudioServerOptions, state: HarnessStudioState): HarnessStudioServerOptions {
@@ -371,6 +388,8 @@ async function route(
       workspaceDiscoveryEnabled: options.workspaceSessionProvider !== undefined,
       workspaceConnected: state.workspace !== undefined,
       sessionCount: state.workspace?.sessionCount ?? 0,
+      inputCount: state.workspace?.inputTrace?.summary.inputCount ?? 0,
+      intentAnalysisEnabled: options.intentAnalyzer !== undefined,
     });
     return;
   }
@@ -416,6 +435,14 @@ async function route(
   }
   if (request.method === "GET" && url.pathname === "/api/sessions") {
     await serveWorkspaceSessions(response, state);
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/inputs") {
+    serveWorkspaceInputs(response, state);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/intent-analysis") {
+    await analyzeWorkspaceIntent(request, response, options, state);
     return;
   }
   const workspaceSession = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(debugger))?$/);
@@ -718,6 +745,12 @@ async function openWorkspace(
       included: boundedNonNegativeInteger(provider.included),
       ...(provider.status === "error" ? { message: "Provider discovery failed." } : {}),
     }));
+    const inspectorReport = discovered.inspectorReport === undefined
+      ? undefined
+      : validWorkspaceInspectorReport(discovered.inspectorReport)
+        ? discovered.inspectorReport
+        : (() => { throw new Error("Workspace Inspector report is malformed."); })();
+    const inputTrace = inspectorReport === undefined ? undefined : projectUserInputTrace(inspectorReport);
     const previous = state.workspace?.ownedDirectory;
     const gitRoot = await resolveGitRepositoryRoot(workspacePath);
     state.workspace = {
@@ -726,7 +759,7 @@ async function openWorkspace(
       omittedCount: Math.max(0, discovered.sessions.length - sessions.size),
       sessions,
       providers,
-      ...(validWorkspaceInspectorReport(discovered.inspectorReport) ? { inspectorReport: discovered.inspectorReport } : {}),
+      ...(inspectorReport === undefined ? {} : { inspectorReport, inputTrace }),
       localDirectory: workspacePath,
       ...(gitRoot === undefined ? {} : { gitRoot, gitCommitCache: new Map<string, GitCommitDetail>() }),
     };
@@ -998,6 +1031,61 @@ async function serveWorkspaceSessions(response: ServerResponse, state: HarnessSt
     sessions: [...state.workspace.sessions.values()].map((session) => session.summary)
       .sort((left, right) => right.savedAt.localeCompare(left.savedAt)),
   });
+}
+
+function serveWorkspaceInputs(response: ServerResponse, state: HarnessStudioState): void {
+  if (state.workspace === undefined) {
+    respondJson(response, 404, { error: "No project workspace is open." });
+    return;
+  }
+  if (state.workspace.inputTrace === undefined) {
+    respondJson(response, 404, { error: "The current workspace has no retained user input trace." });
+    return;
+  }
+  if (!isUserInputTrace(state.workspace.inputTrace)) {
+    respondJson(response, 500, { error: "The current workspace input trace failed contract validation." });
+    return;
+  }
+  respondJson(response, 200, state.workspace.inputTrace, { "Cache-Control": "no-store" });
+}
+
+async function analyzeWorkspaceIntent(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: HarnessStudioServerOptions,
+  state: HarnessStudioState,
+): Promise<void> {
+  if (!sameOriginRequest(request)) {
+    respondJson(response, 403, { error: "Cross-origin Intent analysis is not allowed." });
+    return;
+  }
+  if (options.intentAnalyzer === undefined) {
+    respondJson(response, 501, { error: "This Studio launcher does not provide online Intent analysis." });
+    return;
+  }
+  if (state.workspace?.inputTrace === undefined) {
+    respondJson(response, 404, { error: "The current workspace has no retained user input trace." });
+    return;
+  }
+  if (state.intentAnalysisRunning) {
+    respondJson(response, 409, { error: "An Intent analysis is already running." });
+    return;
+  }
+  state.intentAnalysisRunning = true;
+  try {
+    const packet = buildIntentCorrelationPacket(state.workspace.inputTrace);
+    const proposed = await options.intentAnalyzer.analyze(packet);
+    const analysis: IntentCorrelationAnalysisV1 = validateIntentCorrelationAnalysis(packet, proposed);
+    respondJson(response, 200, analysis, { "Cache-Control": "no-store" });
+  } catch (error) {
+    respondJson(response, error instanceof IntentCorrelationContractError ? 502 : 503, {
+      error: error instanceof IntentCorrelationContractError
+        ? "The Intent analyzer returned claims that failed local evidence validation."
+        : "The Intent analyzer could not complete this request.",
+    }, { "Cache-Control": "no-store" });
+  } finally {
+    state.intentAnalysisRunning = false;
+  }
 }
 
 async function serveWorkspaceSession(

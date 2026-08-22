@@ -1,5 +1,6 @@
 export type StudioArea =
   | "overview"
+  | "inputs"
   | "sessions"
   | "commits"
   | "artifacts"
@@ -22,6 +23,8 @@ export interface StudioConfig {
   workspaceDiscoveryEnabled: boolean;
   workspaceConnected: boolean;
   sessionCount: number;
+  inputCount: number;
+  intentAnalysisEnabled: boolean;
 }
 
 export type StudioAvailability = "ready" | "partial" | "foundation";
@@ -38,6 +41,17 @@ export function studioDestinations(config: StudioConfig): readonly StudioDestina
   const compareAvailable = config.experimentEnabled || config.evidenceEnabled;
   return [
     { id: "overview", label: "Overview", group: "Control", availability: "ready", status: "Control plane" },
+    {
+      id: "inputs",
+      label: "Inputs",
+      group: "Observe",
+      availability: config.workspaceWorkbenchEnabled ? "ready" : config.workspaceConnected ? "partial" : "foundation",
+      status: config.workspaceWorkbenchEnabled
+        ? `${config.inputCount} input${config.inputCount === 1 ? "" : "s"}`
+        : config.workspaceConnected
+          ? "No retained trace"
+          : "Workspace required",
+    },
     {
       id: "sessions",
       label: "Sessions",

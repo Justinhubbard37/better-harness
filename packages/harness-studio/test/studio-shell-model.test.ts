@@ -20,14 +20,17 @@ const EMPTY: StudioConfig = {
   workspaceDiscoveryEnabled: false,
   workspaceConnected: false,
   sessionCount: 0,
+  inputCount: 0,
+  intentAnalysisEnabled: false,
 };
 
 describe("Studio control-plane navigation", () => {
-  it("offers exactly the six workbenches with honest availability", () => {
+  it("offers the seven workbenches with honest availability", () => {
     const destinations = studioDestinations(EMPTY);
 
     expect(destinations.map((destination) => destination.id)).toEqual([
       "overview",
+      "inputs",
       "sessions",
       "commits",
       "artifacts",
@@ -38,6 +41,10 @@ describe("Studio control-plane navigation", () => {
     expect(destinations.find((destination) => destination.id === "sessions")).toMatchObject({
       availability: "partial",
       status: "Open workspace",
+    });
+    expect(destinations.find((destination) => destination.id === "inputs")).toMatchObject({
+      availability: "foundation",
+      status: "Workspace required",
     });
     expect(destinations.find((destination) => destination.id === "artifacts")).toMatchObject({
       availability: "foundation",
@@ -55,7 +62,7 @@ describe("Studio control-plane navigation", () => {
       availability: "foundation",
       status: "Workspace required",
     });
-    expect(capabilitySummary(EMPTY)).toEqual({ ready: 1, partial: 1, foundation: 4 });
+    expect(capabilitySummary(EMPTY)).toEqual({ ready: 1, partial: 1, foundation: 5 });
   });
 
   it("routes configured artifacts to Debugger, Compare, and Inspector surfaces", () => {
@@ -72,6 +79,8 @@ describe("Studio control-plane navigation", () => {
       workspaceDiscoveryEnabled: true,
       workspaceConnected: true,
       sessionCount: 3,
+      inputCount: 8,
+      intentAnalysisEnabled: true,
     };
 
     expect(compareSurfaces(config)).toEqual(["sessions", "bench", "results"]);
@@ -80,7 +89,7 @@ describe("Studio control-plane navigation", () => {
       availability: "ready",
       status: "Live runs",
     });
-    expect(capabilitySummary(config)).toEqual({ ready: 6, partial: 0, foundation: 0 });
+    expect(capabilitySummary(config)).toEqual({ ready: 7, partial: 0, foundation: 0 });
   });
 
   it("treats an artifact directory as independent of every other input", () => {

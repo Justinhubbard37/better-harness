@@ -28,8 +28,22 @@ export {
   createHarnessStudioServer,
   startHarnessStudioServer,
   type HarnessStudioServerOptions,
+  type StudioIntentAnalyzer,
   type StartedHarnessStudioServer,
 } from "./server/server.js";
+export { createQoderCliIntentAnalyzer, type QoderCliIntentAnalyzerOptions } from "./server/qoder-intent-analyzer.js";
+export {
+  INTENT_CORRELATION_ANALYSIS_KIND,
+  INTENT_CORRELATION_PACKET_KIND,
+  IntentCorrelationContractError,
+  isIntentCorrelationAnalysis,
+  parseIntentCorrelationAnalysis,
+  validateIntentCorrelationAnalysis,
+  type CorrelationClaim,
+  type IntentCorrelationAnalysisV1,
+  type IntentCorrelationPacketV1,
+  type IntentProposal,
+} from "./intent-correlation-model.js";
 export {
   defaultAppDir,
   parseHarnessStudioArgs,

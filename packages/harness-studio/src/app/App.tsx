@@ -5,6 +5,7 @@ import { Binoculars } from "@phosphor-icons/react/Binoculars";
 import { BugBeetle } from "@phosphor-icons/react/BugBeetle";
 import { CaretDown } from "@phosphor-icons/react/CaretDown";
 import { CaretRight } from "@phosphor-icons/react/CaretRight";
+import { ChatText } from "@phosphor-icons/react/ChatText";
 import { EyeSlash } from "@phosphor-icons/react/EyeSlash";
 import { File } from "@phosphor-icons/react/File";
 import { FileCode } from "@phosphor-icons/react/FileCode";
@@ -29,6 +30,7 @@ import { ArtifactView } from "./ArtifactView.js";
 import { CompareView } from "./CompareView.js";
 import { ExperimentView } from "./ExperimentView.js";
 import { GitHistoryView } from "./GitHistoryView.js";
+import { InputTraceView } from "./InputTraceView.js";
 import { RunView } from "./RunView.js";
 import type { DebuggerSession } from "./session-debugger-model.js";
 import { useRovingFocus } from "./roving-tablist.js";
@@ -48,6 +50,7 @@ import {
 
 const NAV_ICONS: Record<StudioArea, Icon> = {
   overview: SquaresFour,
+  inputs: ChatText,
   sessions: Binoculars,
   commits: GitBranch,
   artifacts: Package,
@@ -59,6 +62,7 @@ const NAV_ICONS: Record<StudioArea, Icon> = {
 // view name alone rather than repeating the group as an eyebrow.
 const AREA_COPY: Record<StudioArea, string> = {
   overview: "Overview",
+  inputs: "Inputs",
   sessions: "Sessions",
   commits: "Commits",
   artifacts: "Artifacts",
@@ -87,6 +91,8 @@ const EMPTY_CONFIG: StudioConfig = {
   workspaceDiscoveryEnabled: false,
   workspaceConnected: false,
   sessionCount: 0,
+  inputCount: 0,
+  intentAnalysisEnabled: false,
 };
 
 function initialStudioTheme(): StudioTheme {
@@ -256,6 +262,7 @@ export function App(): React.JSX.Element {
       </header>
       <div className={`studio-surface studio-surface-${area}`}>
         {area === "overview" && <Overview config={config} onOpen={openArea} />}
+        {area === "inputs" && (config.workspaceWorkbenchEnabled ? <InputTraceView key={`inputs-${workspaceRevision}`} intentAnalysisEnabled={config.intentAnalysisEnabled} /> : <EmptyWorkspace eyebrow="User input trace" title={config.workspaceConnected ? "No retained input trace is available" : "Open a project workspace"} detail={config.workspaceConnected ? "This workspace source does not include structured Inspector dialogue evidence." : "Choose the project directory in Sessions before browsing retained user inputs and exact file operations."} />)}
         {area === "sessions" && <SessionsWorkspace key={`sessions-${dataRevision}-${workspaceRevision}`} config={config} onWorkspaceChanged={workspaceChanged} onSelectSession={setSelectedSessionId} onCompare={(ids) => { setSessionCompareIds(ids); setCompareSurface("sessions"); openArea("compare"); }} />}
         {area === "commits" && (config.gitEnabled ? <GitHistoryView key={`commits-${workspaceRevision}`} /> : <EmptyWorkspace eyebrow="Repository history" title={config.workspaceConnected ? "The open workspace is not a Git repository" : "Open a project workspace"} detail={config.workspaceConnected ? "Commit history is available only for a local workspace backed by Git." : "Choose the project directory in Sessions before browsing its local commit history."} />)}
         {area === "artifacts" && <ArtifactsWorkspace key={`artifacts-${dataRevision}-${config.artifactsEnabled}-${selectedSessionId ?? "none"}`} config={config} selectedSessionId={selectedSessionId} />}
@@ -275,7 +282,7 @@ function WorkspaceGate(props: { onWorkspaceChanged: () => Promise<void> }): Reac
   return <section className="studio-workspace-gate" role="dialog" aria-modal="true" aria-labelledby="workspace-gate-title" aria-describedby="workspace-gate-description">
     <div className="studio-workspace-gate-panel">
       <header><span><FolderOpen aria-hidden="true" size={22} /></span><div><small>Local Web workspace</small><h1 id="workspace-gate-title">Open a workspace to start</h1></div></header>
-      <p id="workspace-gate-description">Choose the repository or project directory you worked in. Studio will discover matching local agent Sessions before opening the workbench.</p>
+      <p id="workspace-gate-description">Choose the repository or project directory you worked in. Studio will discover matching local agent inputs and Sessions before opening the workbench.</p>
       <WorkspaceFolderControls autoFocus onWorkspaceChanged={props.onWorkspaceChanged} />
       <footer><strong>Workspace-scoped discovery</strong><span>The selected directory scopes Session lookup; Studio does not treat a global Session folder as the project.</span></footer>
     </div>
@@ -361,7 +368,7 @@ function PrimaryNavigation(props: {
 function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => void }): React.JSX.Element {
   const summary = capabilitySummary(props.config);
   const nextArea: StudioArea = props.config.workspaceConnected
-    ? "sessions"
+    ? "inputs"
     : props.config.aguiEnabled
       ? "debugger"
       : props.config.experimentEnabled || props.config.evidenceEnabled
@@ -370,7 +377,7 @@ function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => v
   // Each row states what the input unlocks and how to supply it, so an absent
   // input teaches its own next action instead of only reporting "Not supplied".
   const inputs: Array<{ label: string; connected: boolean; purpose: string; flag?: string }> = [
-    { label: "Project workspace", connected: props.config.workspaceConnected, purpose: "Discovers local agent Sessions" },
+    { label: "Project workspace", connected: props.config.workspaceConnected, purpose: "Discovers local agent inputs and Sessions" },
     { label: "Inspector workbench", connected: props.config.workspaceWorkbenchEnabled || props.config.inspectorEnabled, purpose: "Capability and date evidence", flag: "--inspector" },
     { label: "Harness runtime", connected: props.config.aguiEnabled, purpose: "Live runs in the Debugger", flag: "--harness" },
     { label: "Compare evidence", connected: props.config.evidenceEnabled, purpose: "Frozen verdict and trials", flag: "--evidence" },
@@ -382,13 +389,13 @@ function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => v
   return <main className="control-overview">
     <section className="control-lead">
       <h1>{props.config.workspaceConnected
-        ? `${props.config.sessionCount} Sessions discovered in this workspace.`
+        ? `${props.config.inputCount} retained inputs discovered in this workspace.`
         : "Choose a project workspace to begin."}</h1>
       <p>{props.config.workspaceConnected
-        ? "Open Sessions to read retained prompts, tool calls, and commits, or select two Sessions to compare them."
+        ? "Open Inputs to trace each retained user prompt to exact observed file reads and changes."
         : "Studio discovers agent Sessions for the directory you pick, using the same provider code as Inspector. Nothing is read until you choose."}</p>
       <div className="control-lead-actions">
-        <button className="primary" type="button" onClick={() => props.onOpen(nextArea)}>{props.config.workspaceConnected ? "Open Sessions" : "Open workspace"}<ArrowRight aria-hidden="true" size={15} weight="bold" /></button>
+        <button className="primary" type="button" onClick={() => props.onOpen(nextArea)}>{props.config.workspaceConnected ? "Open Inputs" : "Open workspace"}<ArrowRight aria-hidden="true" size={15} weight="bold" /></button>
         <span>{summary.ready} ready · {summary.partial} partial · {summary.foundation} foundations</span>
       </div>
     </section>
