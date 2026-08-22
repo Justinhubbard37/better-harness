@@ -31,6 +31,7 @@ import {
 
 const StudioDiff = lazy(() => import("./StudioDiff.js"));
 const PAGE_SIZE = 40;
+const GIT_LANE_COLOR_TOKENS = [5, 4, 2, 1, 6, 7, 3] as const;
 type NarrowPane = "refs" | "history" | "detail";
 
 export function GitHistoryView(): React.JSX.Element {
@@ -302,13 +303,14 @@ function CommitGraph(props: { commit: GitHistoryCommit; laneCount: number }): Re
   const laneWidth = 16;
   const height = 32;
   const center = (lane: number): number => lane * laneWidth + 8;
-  const color = (lane: number): string => `var(--color-categorical-${lane % 7 + 1})`;
+  const color = (lane: number): string => `var(--color-categorical-${GIT_LANE_COLOR_TOKENS[lane % GIT_LANE_COLOR_TOKENS.length]})`;
   return <svg className="git-commit-graph" width={props.laneCount * laneWidth + 8} height={height} aria-hidden="true">
-    {props.commit.activeLanes.map((lane) => <line key={`active-${lane}`} x1={center(lane)} y1="0" x2={center(lane)} y2={height} stroke={color(lane)} strokeWidth="1.5" opacity=".48" />)}
+    {props.commit.activeLanes.map((lane) => <line key={`active-${lane}`} x1={center(lane)} y1="0" x2={center(lane)} y2={lane === props.commit.lane ? height / 2 : height} stroke={color(lane)} strokeWidth="1.5" strokeLinecap="round" opacity=".82" />)}
     {props.commit.graphEdges.map((edge, index) => edge.fromLane === edge.toLane
-      ? <line key={index} x1={center(edge.fromLane)} y1={height / 2} x2={center(edge.toLane)} y2={height} stroke={color(edge.toLane)} strokeWidth="1.5" />
-      : <path key={index} d={`M ${center(edge.fromLane)} ${height / 2} C ${center(edge.fromLane)} ${height * .7}, ${center(edge.toLane)} ${height * .72}, ${center(edge.toLane)} ${height}`} fill="none" stroke={color(edge.toLane)} strokeWidth="1.5" />)}
-    <circle cx={center(props.commit.lane)} cy={height / 2} r={props.commit.parents.length > 1 ? 4.5 : 3.5} fill={color(props.commit.lane)} stroke="var(--color-workspace)" strokeWidth="2" />
+      ? <line key={index} x1={center(edge.fromLane)} y1={height / 2} x2={center(edge.toLane)} y2={height} stroke={color(edge.toLane)} strokeWidth="1.5" strokeLinecap="round" opacity=".82" />
+      : <path key={index} d={`M ${center(edge.fromLane)} ${height / 2} C ${center(edge.fromLane)} ${height * .7}, ${center(edge.toLane)} ${height * .72}, ${center(edge.toLane)} ${height}`} fill="none" stroke={color(edge.toLane)} strokeWidth="1.5" strokeLinecap="round" opacity=".82" />)}
+    {props.commit.parents.length > 1 && <circle className="git-commit-merge-ring" cx={center(props.commit.lane)} cy={height / 2} r="5.75" fill="none" stroke={color(props.commit.lane)} strokeWidth="1.25" opacity=".9" />}
+    <circle className="git-commit-node" cx={center(props.commit.lane)} cy={height / 2} r="3.5" fill={color(props.commit.lane)} stroke="var(--git-graph-node-ring)" strokeWidth="1.5" />
   </svg>;
 }
 

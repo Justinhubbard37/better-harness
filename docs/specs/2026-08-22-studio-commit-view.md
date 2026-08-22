@@ -3,7 +3,7 @@
 ## Traceability
 
 - Spec ID: studio-commit-view
-- Status: Implemented (Windows CI receipt pending)
+- Status: Implemented (graph color follow-up; Windows CI receipt pending)
 
 ## Intent
 
@@ -81,6 +81,11 @@ the server-owned open workspace instead of accepting an arbitrary client path.
   basenames with the host path implementation. Windows drive-letter and
   backslash paths never become the full repository label, while browser-facing
   payloads still redact the absolute repository root on every platform.
+- AC-15: Commit topology uses the fixed categorical scale without assigning the
+  primary interaction blue to the default lane. A lane keeps one recognizable
+  color across its line and node, merge nodes remain distinguishable without
+  color alone, and the node cutout follows normal, hover, and selected row
+  surfaces in both dark and light themes.
 
 ## Non-goals
 
@@ -124,6 +129,9 @@ the server-owned open workspace instead of accepting an arbitrary client path.
 10. Remove POSIX-only path splitting from the Git history fixture and document
     the repository-wide boundary between native filesystem paths, portable
     protocol paths, line endings, and shell execution.
+11. Reorder existing categorical tokens for Git lanes, make segment opacity
+    consistent around nodes, render a redundant merge ring, and bind the node
+    cutout to the actual row state rather than the workspace background.
 
 ## Test and Review Evidence
 
@@ -157,6 +165,10 @@ the server-owned open workspace instead of accepting an arbitrary client path.
 - AC-14: run the Git history fixture on the host-native path implementation and
   retain the GitHub Actions Windows job as the authoritative backslash/drive
   receipt; local non-Windows runs are supporting evidence, not Windows proof.
+- AC-15: inspect computed SVG fill/stroke and merge-node structure in Playwright,
+  then review wide, compact, and narrow screenshots plus a light-theme wide
+  screenshot for lane identity, row-state cutouts, contrast, and console/page
+  errors.
 
 ## Implementation Evidence
 
@@ -186,6 +198,14 @@ the server-owned open workspace instead of accepting an arbitrary client path.
   suite passes (`24` files, `151` tests), and the doc-link suite passes (`8`
   tests). A post-change Windows Actions run has not yet been observed, so this
   is implemented locally but not claimed as fresh Windows CI proof.
+- AC-15: the browser verifies that lane zero resolves to categorical amber
+  rather than the primary interaction blue, active and outgoing segments keep
+  at least `0.8` opacity, merge commits render a redundant double ring, and the
+  node cutout exactly matches selected-row backgrounds in dark and light
+  themes. Wide dark/light, compact, and narrow screenshots were reviewed. The
+  clean candidate passes the full Studio suite (`24` files, `151` tests), the
+  focused Git browser scenario, the doc-link suite (`8` tests), and
+  `git diff --check`.
 - `npm run typecheck --workspace @qoder-ai/harness-studio` and
   `npm test --workspace @qoder-ai/harness-studio` pass.
 - `git diff --check` passes.

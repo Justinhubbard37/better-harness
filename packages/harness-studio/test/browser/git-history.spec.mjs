@@ -56,12 +56,39 @@ test("browses refs, commits, changed files, and patches across Studio layouts", 
   await page.goto(`${studio.url}/#/commits`);
   await expect(page.getByRole("main", { name: "" }).filter({ has: page.getByText("Commit history", { exact: true }) })).toBeVisible();
   await expect(page.getByText("main", { exact: true }).first()).toBeVisible();
-  await expect(page.getByRole("row", { name: /merge: history fixture/ })).toBeVisible();
-  await page.getByRole("row", { name: /feat: add filtered branch commit/ }).click();
+  const mergeRow = page.getByRole("row", { name: /merge: history fixture/ });
+  await expect(mergeRow).toBeVisible();
+  const mergeGraph = mergeRow.locator(".git-commit-graph");
+  await expect(mergeGraph.locator("circle")).toHaveCount(2);
+  const graphPalette = await mergeGraph.evaluate((svg) => {
+    const node = svg.querySelector(".git-commit-node");
+    const line = svg.querySelector("line");
+    const resolveColor = (token) => {
+      const sample = document.createElement("span");
+      sample.style.color = `var(${token})`;
+      document.body.append(sample);
+      const color = getComputedStyle(sample).color;
+      sample.remove();
+      return color;
+    };
+    return { fill: getComputedStyle(node).fill, laneZero: resolveColor("--color-categorical-5"), primary: resolveColor("--color-primary"), lineOpacity: Number(getComputedStyle(line).opacity) };
+  });
+  expect(graphPalette.fill).toBe(graphPalette.laneZero);
+  expect(graphPalette.fill).not.toBe(graphPalette.primary);
+  expect(graphPalette.lineOpacity).toBeGreaterThanOrEqual(0.8);
+  const featureRow = page.getByRole("row", { name: /feat: add filtered branch commit/ });
+  await featureRow.click();
+  await expect.poll(async () => featureRow.evaluate((row) => ({ background: getComputedStyle(row).backgroundColor, ring: getComputedStyle(row.querySelector(".git-commit-node")).stroke }))).toEqual(expect.objectContaining({ background: "rgb(20, 41, 74)", ring: "rgb(20, 41, 74)" }));
   await expect(page.getByText("Changed files", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: /feature\.ts/ }).click();
   await expect(page.locator(".git-file-diff")).toContainText("export const feature");
   await page.screenshot({ path: testInfo.outputPath("git-history-wide.png"), fullPage: true });
+  await page.getByRole("button", { name: /Dark theme active/ }).click();
+  await expect(page.getByRole("button", { name: /Light theme active/ })).toBeVisible();
+  await expect.poll(async () => featureRow.evaluate((row) => ({ background: getComputedStyle(row).backgroundColor, ring: getComputedStyle(row.querySelector(".git-commit-node")).stroke }))).toEqual(expect.objectContaining({ background: "rgb(227, 237, 253)", ring: "rgb(227, 237, 253)" }));
+  await page.screenshot({ path: testInfo.outputPath("git-history-wide-light.png"), fullPage: true });
+  await page.getByRole("button", { name: /Light theme active/ }).click();
+  await expect(page.getByRole("button", { name: /Dark theme active/ })).toBeVisible();
 
   const loadMore = page.getByRole("button", { name: /Load more/ });
   await expect(loadMore).toBeVisible();
