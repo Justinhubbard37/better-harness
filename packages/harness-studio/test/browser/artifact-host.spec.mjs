@@ -20,7 +20,8 @@ let artifactDirectory;
 test.beforeAll(async () => {
   artifactDirectory = await mkdtemp(join(tmpdir(), "studio-artifact-browser-"));
   await writeFile(join(artifactDirectory, "deck.pptx"), createPptxFixture("01"));
-  await writeFile(join(artifactDirectory, "component.tsx"), 'export default () => <p data-danger="not-executed">artifact source</p>;\n', "utf8");
+  await writeFile(join(artifactDirectory, "component.tsx"), 'document.body.dataset.moduleEvaluated = "yes"; export default () => <p data-preview="current">first render</p>;\n', "utf8");
+  await writeFile(join(artifactDirectory, "broken.tsx"), 'export default () => <main>broken;\n', "utf8");
   await writeFile(join(artifactDirectory, "change.patch"), [
     "diff --git a/example.ts b/example.ts",
     "--- a/example.ts",
@@ -149,13 +150,64 @@ async function openArtifacts(page) {
   await expect(page.getByRole("button", { name: /component\.tsx/ })).toBeVisible({ timeout: 15_000 });
 }
 
-test("keeps generated TSX inert and renders its source", async ({ page }) => {
+test("renders generated TSX in the sandbox and keeps its source reachable", async ({ page }) => {
   const failures = watchFailures(page);
   await openArtifacts(page);
   await page.getByRole("button", { name: /component\.tsx/ }).click();
-  await expect(page.locator(".artifact-code-preview")).toContainText("data-danger");
-  await expect(page.locator('[data-danger="not-executed"]')).toHaveCount(0);
-  await expect(page.locator(".artifact-preview-pane iframe")).toHaveCount(0);
+  const preview = page.frameLocator('iframe[title="Live artifact preview: component.tsx"]');
+  await expect(preview.locator('[data-preview="current"]')).toHaveText("first render");
+  await expect(preview.locator("body")).toHaveAttribute("data-module-evaluated", "yes");
+  await expect(preview.locator("html")).toHaveAttribute("data-artifact-theme", "dark");
+  const previewContrast = await preview.locator('[data-preview="current"]').evaluate((element) => {
+    const channels = (value) => value.match(/[\d.]+/g).slice(0, 3).map(Number);
+    const luminance = (value) => channels(value).map((channel) => {
+      const normalized = channel / 255;
+      return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+    }).reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
+    const foreground = luminance(getComputedStyle(element).color);
+    const background = luminance(getComputedStyle(document.body).backgroundColor);
+    return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+  });
+  expect(previewContrast).toBeGreaterThanOrEqual(4.5);
+  await expect(page.getByText("Preview rendered from the current build.")).toBeVisible();
+  await expect(page.locator('[data-preview="current"]')).toHaveCount(0);
+  const frame = page.locator('iframe[title="Live artifact preview: component.tsx"]');
+  await expect(frame).toHaveAttribute("sandbox", "allow-scripts");
+  const direct = await page.context().newPage();
+  await direct.goto(`${studio.url}${await frame.getAttribute("src")}`);
+  await expect(direct.locator('[data-preview="current"]')).toHaveCount(0);
+  await expect(direct.locator("body")).not.toHaveAttribute("data-module-evaluated", "yes");
+  await direct.close();
+  await page.getByRole("tab", { name: "Source", exact: true }).click();
+  await expect(page.locator(".artifact-code-preview")).toContainText("data-preview");
+  expect(failures).toEqual([]);
+});
+
+test("reports code Artifact compile diagnostics without executing a partial build", async ({ page }) => {
+  const failures = watchFailures(page);
+  await openArtifacts(page);
+  await page.getByRole("button", { name: /broken\.tsx/ }).click();
+  await expect(page.locator(".artifact-build-diagnostics")).toContainText("Build failed");
+  await expect(page.locator(".artifact-build-diagnostics")).toContainText("closing \"main\" tag");
+  await expect(page.locator('iframe[title="Live artifact preview: broken.tsx"]')).toHaveCount(0);
+  expect(failures).toEqual([]);
+});
+
+test("commits a changed TSX build without reloading Studio", async ({ page }) => {
+  const failures = watchFailures(page);
+  await openArtifacts(page);
+  await page.getByRole("button", { name: /component\.tsx/ }).click();
+  const frame = page.locator('iframe[title="Live artifact preview: component.tsx"]');
+  const preview = page.frameLocator('iframe[title="Live artifact preview: component.tsx"]');
+  await expect(preview.locator('[data-preview="current"]')).toHaveText("first render");
+  const firstBuild = await frame.getAttribute("src");
+  try {
+    await writeFile(join(artifactDirectory, "component.tsx"), 'document.body.dataset.moduleEvaluated = "yes"; export default () => <p data-preview="current">second render</p>;\n', "utf8");
+    await expect(preview.locator('[data-preview="current"]')).toHaveText("second render", { timeout: 10_000 });
+    await expect(frame).not.toHaveAttribute("src", firstBuild);
+  } finally {
+    await writeFile(join(artifactDirectory, "component.tsx"), 'document.body.dataset.moduleEvaluated = "yes"; export default () => <p data-preview="current">first render</p>;\n', "utf8");
+  }
   expect(failures).toEqual([]);
 });
 
@@ -173,8 +225,9 @@ test("loads artifact bytes from the catalog content reference", async ({ page })
   });
   await openArtifacts(page);
   await page.getByRole("button", { name: /component\.tsx/ }).click();
+  await page.getByRole("tab", { name: "Source", exact: true }).click();
   await expect(page.locator(".artifact-code-preview")).toContainText("followed the declared content reference");
-  await expect(page.locator(".artifact-code-preview")).not.toContainText("data-danger");
+  await expect(page.locator(".artifact-code-preview")).not.toContainText("data-preview");
 });
 
 test("renders code diff and sandboxes SVG without script capability", async ({ page }) => {
@@ -235,6 +288,25 @@ test("keeps the artifact workbench usable at wide, compact, and narrow widths", 
     const overflows = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
     expect(overflows, `${layout.name} overflows horizontally`).toBe(false);
     await page.screenshot({ path: `test-results/artifacts-${layout.name}.png`, fullPage: true });
+  }
+});
+
+test("keeps live Artifact Preview primary at wide, compact, and narrow widths", async ({ page }) => {
+  for (const layout of [
+    { name: "wide", width: 1440, height: 900 },
+    { name: "compact", width: 1024, height: 768 },
+    { name: "narrow", width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize({ width: layout.width, height: layout.height });
+    await openArtifacts(page);
+    await page.getByRole("button", { name: /component\.tsx/ }).click();
+    await expect(page.frameLocator('iframe[title="Live artifact preview: component.tsx"]').locator('[data-preview="current"]')).toHaveText("first render");
+    await expect(page.getByText("Preview rendered from the current build.")).toBeVisible();
+    const overflows = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
+    expect(overflows, `${layout.name} live preview overflows horizontally`).toBe(false);
+    await page.locator(".artifact-runtime-tabs").getByRole("tab", { name: "Source" }).focus();
+    expect(Number.parseFloat(await page.locator(".artifact-runtime-tabs").getByRole("tab", { name: "Source" }).evaluate((element) => getComputedStyle(element).outlineWidth))).toBeGreaterThan(0);
+    await page.screenshot({ path: `test-results/artifacts-live-${layout.name}.png`, fullPage: true });
   }
 });
 

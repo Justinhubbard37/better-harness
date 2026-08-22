@@ -32,6 +32,7 @@ import {
   type PptxSlideSnapshot,
 } from "../artifact-model.js";
 import { CompareView } from "./CompareView.js";
+import { ArtifactPreviewHost } from "./ArtifactPreviewHost.js";
 import { ExperimentView } from "./ExperimentView.js";
 import { GitHistoryView } from "./GitHistoryView.js";
 import { HighlightedCode } from "./HighlightedCode.js";
@@ -643,24 +644,37 @@ function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: s
   const [view, setView] = useState<"grouped" | "flat">("grouped");
   const [collapsed, setCollapsed] = useState<Set<ArtifactFamily>>(() => new Set());
   const [narrowSurface, setNarrowSurface] = useState<"explorer" | "preview">("explorer");
+  const [liveGeneration, setLiveGeneration] = useState(0);
 
   useEffect(() => {
     if (!props.config.artifactsEnabled) return;
     let cancelled = false;
-    void (async () => {
+    let requestSequence = 0;
+    const refreshCatalog = async (liveUpdate = false): Promise<void> => {
+      const request = ++requestSequence;
       try {
         const response = await fetch("/api/artifacts");
         if (!response.ok) throw new Error(`Artifact catalog failed (${response.status}).`);
         const payload: unknown = await response.json();
         if (!isArtifactCatalogResponse(payload)) throw new Error("Artifact catalog contract is unsupported.");
-        if (cancelled) return;
+        if (cancelled || request !== requestSequence) return;
         setFailure(undefined);
         setCatalog(payload);
+        if (liveUpdate) setLiveGeneration((value) => value + 1);
       } catch (error) {
-        if (!cancelled) setFailure(error instanceof Error ? error.message : String(error));
+        if (!cancelled && request === requestSequence) setFailure(error instanceof Error ? error.message : String(error));
       }
-    })();
-    return () => { cancelled = true; };
+    };
+    void refreshCatalog();
+    const events = new EventSource("/api/artifacts/events");
+    const invalidate = (): void => {
+      // Refetch the authoritative descriptor before asking the active Host to
+      // rebuild. Starting from the stale descriptor would intentionally hit the
+      // revision route's 409 guard during every ordinary file update.
+      void refreshCatalog(true);
+    };
+    events.addEventListener("artifacts.invalidated", invalidate);
+    return () => { cancelled = true; events.close(); };
   }, [props.config.artifactsEnabled]);
 
   if (!props.config.artifactsEnabled) {
@@ -728,7 +742,7 @@ function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: s
     <div className="artifact-preview-pane">
       {active === undefined
         ? <p className="artifact-status" role="status">Select an artifact to preview it.</p>
-        : <><header className="artifact-editor-header"><div><strong>{active.label}</strong><small>{formatLabel(active.format)} · {formatBytes(active.size)} · {shortRevision(active.revision.id)}</small></div><span>{active.adapter.id} → {active.renderer.label}</span></header><ArtifactPreview artifact={active} /></>}
+        : <><header className="artifact-editor-header"><div><strong>{active.label}</strong><small>{formatLabel(active.format)} · {formatBytes(active.size)} · {shortRevision(active.revision.id)}</small></div><span>{active.adapter.id} → {active.renderer.label}</span></header><ArtifactPreview artifact={active} liveGeneration={liveGeneration} /></>}
     </div>
   </section>;
 }
@@ -783,10 +797,13 @@ function ArtifactRow(props: { artifact: ArtifactDescriptor; selected: boolean; o
  * a format that Studio classifies one way and renders another cannot exist.
  * An unrecognised renderer falls through to the honest unavailable state.
  */
-function ArtifactPreview({ artifact }: { artifact: ArtifactDescriptor }): React.JSX.Element {
+function ArtifactPreview({ artifact, liveGeneration }: { artifact: ArtifactDescriptor; liveGeneration: number }): React.JSX.Element {
   const contentUrl = artifact.revision.content.uri;
   const contentKey = artifact.revision.digest;
   if (artifact.renderer.status === "ready") {
+    if (artifact.renderer.id === "studio.react-preview" && artifact.backing === "code") {
+      return <ArtifactPreviewHost artifact={artifact} liveGeneration={liveGeneration} />;
+    }
     if (artifact.renderer.type === "qoder-canvas" && artifact.renderer.viewUri !== undefined) {
       return <iframe key={contentKey} className="artifact-frame" title={`Artifact preview: ${artifact.label}`} src={artifact.renderer.viewUri} sandbox="allow-scripts" referrerPolicy="no-referrer" />;
     }

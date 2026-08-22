@@ -1,5 +1,6 @@
 export const ARTIFACT_CATALOG_RESPONSE_KIND = "HarnessStudioArtifactCatalogV2" as const;
 export const ARTIFACT_DATA_SNAPSHOT_KIND = "ArtifactDataSnapshotV1" as const;
+export const ARTIFACT_BUILD_SNAPSHOT_KIND = "ArtifactBuildSnapshotV1" as const;
 
 export type ArtifactDigest = `sha256:${string}`;
 export type ArtifactFamily = "documents" | "images-diagrams" | "data" | "source-text" | "other";
@@ -65,6 +66,11 @@ export interface ArtifactRendererReference {
   reason?: string;
 }
 
+export interface ArtifactBuildReference {
+  /** Mutable resolver for the latest build of this exact entry revision. */
+  snapshotUri: string;
+}
+
 export interface ArtifactDescriptor {
   id: string;
   /**
@@ -81,6 +87,7 @@ export interface ArtifactDescriptor {
   backing: ArtifactBacking;
   revision: ArtifactRevisionReference;
   adapter: ArtifactAdapterReference;
+  build?: ArtifactBuildReference;
   renderer: ArtifactRendererReference;
   capabilities: ArtifactCapability[];
 }
@@ -230,6 +237,30 @@ export interface ArtifactDataSnapshot {
   payload: ArtifactSnapshotPayload;
 }
 
+export interface ArtifactBuildDiagnostic {
+  level: "warning" | "error";
+  message: string;
+  source?: string;
+  line?: number;
+  column?: number;
+}
+
+/** Immutable result of compiling one code-backed Artifact project. */
+export interface ArtifactBuildSnapshot {
+  kind: typeof ARTIFACT_BUILD_SNAPSHOT_KIND;
+  artifactId: string;
+  revisionId: ArtifactDigest;
+  buildId: ArtifactDigest;
+  sequence: number;
+  status: "ready" | "failed";
+  runtime: {
+    id: "studio.sandboxed-react";
+    version: string;
+  };
+  previewUri?: string;
+  diagnostics: ArtifactBuildDiagnostic[];
+}
+
 const ARTIFACT_FAMILIES = new Set<ArtifactFamily>(["documents", "images-diagrams", "data", "source-text", "other"]);
 const ARTIFACT_BACKINGS = new Set<ArtifactBacking>(["data", "code"]);
 const RENDERER_STATUSES = new Set<ArtifactRendererStatus>(["ready", "unavailable"]);
@@ -281,6 +312,24 @@ export function isArtifactDataSnapshot(value: unknown): value is ArtifactDataSna
   return isRecord(value.payload) && typeof value.payload.kind === "string";
 }
 
+export function isArtifactBuildSnapshot(value: unknown): value is ArtifactBuildSnapshot {
+  if (!isRecord(value) || value.kind !== ARTIFACT_BUILD_SNAPSHOT_KIND) return false;
+  if (typeof value.artifactId !== "string" || !isDigest(value.revisionId) || !isDigest(value.buildId)) return false;
+  if (typeof value.sequence !== "number" || !Number.isSafeInteger(value.sequence) || value.sequence < 1) return false;
+  if (value.status !== "ready" && value.status !== "failed") return false;
+  if (!isRecord(value.runtime)
+    || value.runtime.id !== "studio.sandboxed-react"
+    || typeof value.runtime.version !== "string") return false;
+  if (value.previewUri !== undefined && !isStudioArtifactPath(value.previewUri)) return false;
+  if (value.status === "ready" && value.previewUri === undefined) return false;
+  return Array.isArray(value.diagnostics) && value.diagnostics.every((diagnostic) => isRecord(diagnostic)
+    && (diagnostic.level === "warning" || diagnostic.level === "error")
+    && typeof diagnostic.message === "string"
+    && (diagnostic.source === undefined || typeof diagnostic.source === "string")
+    && (diagnostic.line === undefined || typeof diagnostic.line === "number")
+    && (diagnostic.column === undefined || typeof diagnostic.column === "number"));
+}
+
 function isArtifactDescriptor(value: unknown): value is ArtifactDescriptor {
   return isRecord(value)
     && typeof value.id === "string" && value.id !== ""
@@ -292,6 +341,8 @@ function isArtifactDescriptor(value: unknown): value is ArtifactDescriptor {
     && ARTIFACT_BACKINGS.has(value.backing as ArtifactBacking)
     && isRevision(value.revision)
     && isAdapter(value.adapter)
+    && (value.build === undefined || (isRecord(value.build) && isStudioArtifactPath(value.build.snapshotUri)))
+    && (value.backing !== "code" || value.build !== undefined)
     && isRenderer(value.renderer)
     && Array.isArray(value.capabilities)
     && value.capabilities.every((capability) => typeof capability === "string" && capability !== "");

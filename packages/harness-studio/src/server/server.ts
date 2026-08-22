@@ -1,4 +1,4 @@
-import { createReadStream } from "node:fs";
+import { createReadStream, watch as watchDirectory } from "node:fs";
 import { mkdir, mkdtemp, open, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -63,6 +63,11 @@ import {
   type IndexArtifactDirectoryOptions,
 } from "./artifact-catalog.js";
 import { compileTrustedRendererModule, formatTrustedRendererCompileError } from "./trusted-renderer-compiler.js";
+import {
+  artifactPreviewHtml,
+  compileArtifactPreview,
+  findCompiledArtifactPreview,
+} from "./artifact-compile-runtime.js";
 import {
   discoverCanvasViewers,
   resolveArtifactPlugin,
@@ -510,6 +515,10 @@ async function route(
     await serveEvidence(response, activeSourcePath(state.sourceCatalog, state.activeSources, "evidence"));
     return;
   }
+  if (request.method === "GET" && url.pathname === "/api/artifacts/events") {
+    serveArtifactEvents(request, response, artifactOptions(options, state));
+    return;
+  }
   if (request.method === "GET" && url.pathname === "/api/artifacts") {
     await serveArtifactCatalog(response, artifactOptions(options, state));
     return;
@@ -551,6 +560,15 @@ async function route(
     }
     if (tail === "snapshot") {
       await serveArtifactSnapshot(response, scoped, id, revision);
+      return;
+    }
+    if (tail === "build") {
+      await serveArtifactBuild(response, scoped, id, revision);
+      return;
+    }
+    const previewBuildMatch = tail.match(/^builds\/([0-9a-f]{64})\/preview$/);
+    if (previewBuildMatch !== null) {
+      await serveArtifactBuildPreview(response, scoped, id, revision, previewBuildMatch[1]!);
       return;
     }
     const resourceMatch = tail.match(/^resources\/([^/]+)$/);
@@ -1358,6 +1376,56 @@ async function serveArtifactCatalog(response: ServerResponse, options: HarnessSt
   }
 }
 
+/** Advisory invalidation stream; catalog and revision routes remain authoritative. */
+function serveArtifactEvents(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: HarnessStudioServerOptions,
+): void {
+  if (options.artifactDirectory === undefined) {
+    respondJson(response, 404, { error: "No artifact directory configured." });
+    return;
+  }
+  let watcher: ReturnType<typeof watchDirectory>;
+  try {
+    watcher = watchDirectory(options.artifactDirectory, { recursive: true });
+  } catch {
+    respondJson(response, 404, { error: "Cannot observe the configured artifact directory." });
+    return;
+  }
+  response.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  response.write("retry: 1000\n\n");
+  let sequence = 0;
+  let closed = false;
+  let debounce: NodeJS.Timeout | undefined;
+  const emitInvalidation = (): void => {
+    sequence += 1;
+    response.write(`id: ${sequence}\nevent: artifacts.invalidated\ndata: ${JSON.stringify({ type: "artifacts.invalidated", sequence })}\n\n`);
+  };
+  watcher.on("change", () => {
+    if (debounce !== undefined) clearTimeout(debounce);
+    debounce = setTimeout(emitInvalidation, 75);
+  });
+  const heartbeat = setInterval(() => response.write(": keepalive\n\n"), 15_000);
+  const cleanup = (): void => {
+    if (closed) return;
+    closed = true;
+    if (debounce !== undefined) clearTimeout(debounce);
+    clearInterval(heartbeat);
+    watcher.close();
+  };
+  request.once("close", cleanup);
+  watcher.once("error", () => {
+    cleanup();
+    response.end();
+  });
+}
+
 function respondArtifactJson(response: ServerResponse, status: number, payload: unknown): void {
   response.writeHead(status, {
     "Content-Type": "application/json",
@@ -1430,6 +1498,87 @@ async function serveArtifactSnapshot(
     // selection and execution from drifting into two separate decisions.
     const snapshot = await resolved.resolution.adapter.adapt({ entry: resolved.entry, descriptor: resolved.descriptor });
     respondArtifactJson(response, 200, snapshot);
+  } catch (error) {
+    respondArtifactJson(response, 422, { error: safeArtifactError(error) });
+  }
+}
+
+async function resolveArtifactCodePreview(
+  options: HarnessStudioServerOptions,
+  id: string,
+  revision: string,
+): Promise<
+  | { entry: ArtifactEntry; descriptor: ArtifactDescriptor; resolution: ArtifactPluginResolution; artifactRoot: string }
+  | { error: string; status: number }
+> {
+  const resolved = await resolveArtifactRevisionPlugin(options, id, revision);
+  if ("error" in resolved) return resolved;
+  if (options.artifactDirectory === undefined
+    || resolved.resolution.backing !== "code"
+    || resolved.resolution.renderer.id !== "studio.react-preview") {
+    return { error: `Artifact '${id}' has no Studio code preview.`, status: 415 } as const;
+  }
+  return { ...resolved, artifactRoot: options.artifactDirectory };
+}
+
+async function serveArtifactBuild(
+  response: ServerResponse,
+  options: HarnessStudioServerOptions,
+  id: string,
+  revision: string,
+): Promise<void> {
+  const resolved = await resolveArtifactCodePreview(options, id, revision);
+  if ("error" in resolved) {
+    respondArtifactJson(response, resolved.status, { error: resolved.error });
+    return;
+  }
+  try {
+    const compiled = await compileArtifactPreview({
+      artifactRoot: resolved.artifactRoot,
+      entry: resolved.entry,
+      descriptor: resolved.descriptor,
+    });
+    respondArtifactJson(response, 200, compiled.snapshot);
+  } catch (error) {
+    respondArtifactJson(response, 422, { error: safeArtifactError(error) });
+  }
+}
+
+async function serveArtifactBuildPreview(
+  response: ServerResponse,
+  options: HarnessStudioServerOptions,
+  id: string,
+  revision: string,
+  buildId: string,
+): Promise<void> {
+  const resolved = await resolveArtifactCodePreview(options, id, revision);
+  if ("error" in resolved) {
+    respondArtifactJson(response, resolved.status, { error: resolved.error });
+    return;
+  }
+  try {
+    const revisionId = resolved.descriptor.revision.id;
+    let compiled = findCompiledArtifactPreview(buildId, id, revisionId);
+    if (compiled === undefined) {
+      const current = await compileArtifactPreview({
+        artifactRoot: resolved.artifactRoot,
+        entry: resolved.entry,
+        descriptor: resolved.descriptor,
+      });
+      if (digestHex(current.snapshot.buildId) === buildId) compiled = current;
+    }
+    if (compiled === undefined) {
+      respondArtifactJson(response, 410, { error: "The requested Artifact build is no longer retained." });
+      return;
+    }
+    response.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": IMMUTABLE_REVISION_CACHE,
+      "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; media-src data: blob:; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+    });
+    response.end(artifactPreviewHtml(compiled));
   } catch (error) {
     respondArtifactJson(response, 422, { error: safeArtifactError(error) });
   }

@@ -1055,7 +1055,7 @@ describe("harness-studio CLI", () => {
     expect(await discoverDefaultInspectorReport(cwd)).toBe(join(reportDir, "inspector.html"));
   });
 
-  it("serves TSX as inert source instead of executing it as an artifact module", async () => {
+  it("serves TSX through a revision-bound sandboxed build while preserving source", async () => {
     const appDir = await makeAppDir();
     const artifactDirectory = await makeTempDir("studio-artifacts-");
     await writeFile(join(artifactDirectory, "card.tsx"), "export default () => <p>hi</p>;\n", "utf8");
@@ -1073,7 +1073,13 @@ describe("harness-studio CLI", () => {
       revision: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
     }));
     const card = catalog.artifacts.find((entry) => entry.label === "card.tsx")!;
-    expect(card).toEqual(expect.objectContaining({ format: "tsx", renderer: expect.objectContaining({ id: "studio.code", type: "native" }) }));
+    expect(card).toEqual(expect.objectContaining({
+      format: "tsx",
+      backing: "code",
+      build: { snapshotUri: expect.stringMatching(/\/build$/u) },
+      renderer: expect.objectContaining({ id: "studio.react-preview", type: "sandboxed-web" }),
+      capabilities: expect.arrayContaining(["execute", "live-update"]),
+    }));
     expect(card.revision.content).toEqual(expect.objectContaining({
       digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
       uri: `/api/artifacts/${card.id}/revisions/${card.revision.digest.slice(7)}/content`,
@@ -1085,6 +1091,22 @@ describe("harness-studio CLI", () => {
     expect(source.headers.get("etag")).toBe(`"${card.revision.digest.slice(7)}"`);
     expect(await source.text()).toContain("export default");
     expect((await fetch(`${started.url}/api/artifacts/${card.id}/module.js`)).status).toBe(404);
+
+    const buildResponse = await fetch(`${started.url}${card.build!.snapshotUri}`);
+    expect(buildResponse.status).toBe(200);
+    const build = await buildResponse.json();
+    expect(build).toEqual(expect.objectContaining({
+      kind: "ArtifactBuildSnapshotV1",
+      artifactId: card.id,
+      revisionId: card.revision.id,
+      buildId: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+      status: "ready",
+      previewUri: expect.stringMatching(/\/builds\/[0-9a-f]{64}\/preview$/u),
+    }));
+    const preview = await fetch(`${started.url}${build.previewUri}`);
+    expect(preview.status).toBe(200);
+    expect(preview.headers.get("content-security-policy")).toContain("connect-src 'none'");
+    expect(await preview.text()).toContain("runtime.init");
 
 
     for (const descriptor of catalog.artifacts) {

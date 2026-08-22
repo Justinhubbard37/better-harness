@@ -141,7 +141,13 @@ describe("indexArtifactDirectory", () => {
       const base = `/api/artifacts/${descriptor.id}/revisions/${descriptor.revision.digest.slice(7)}`;
       expect(descriptor.revision.content.uri).toBe(`${base}/content`);
       expect(descriptor.adapter.snapshotUri).toBe(`${base}/snapshot`);
-      expect(descriptor.backing).toBe("data");
+      if (descriptor.format === "tsx" || descriptor.format === "jsx") {
+        expect(descriptor.backing).toBe("code");
+        expect(descriptor.build?.snapshotUri).toBe(`${base}/build`);
+      } else {
+        expect(descriptor.backing).toBe("data");
+        expect(descriptor.build).toBeUndefined();
+      }
     }
     const malformed = structuredClone(catalog);
     malformed.artifacts[0]!.revision.content.uri = "https://untrusted.invalid/artifact";
@@ -162,6 +168,7 @@ describe("indexArtifactDirectory", () => {
           content: { uri: "/api/artifacts/deck-0/revisions/x/content", mediaType: "application/octet-stream", digest: `sha256:${"1".repeat(64)}` },
         },
         adapter: { id: "future.adapter", version: "9", schemaId: "future/v9", snapshotId: `sha256:${"2".repeat(64)}`, snapshotUri: "/api/artifacts/deck-0/revisions/x/snapshot" },
+        build: { snapshotUri: "/api/artifacts/deck-0/revisions/x/build" },
         renderer: { id: "future.renderer", label: "Future", provider: "future", type: "holographic", status: "ready" },
         capabilities: ["teleport"],
       }],

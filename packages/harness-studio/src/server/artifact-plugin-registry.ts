@@ -6,6 +6,7 @@
  * is two of those providers; it is not the host abstraction, and nothing in the
  * registry's shape assumes a Canvas surface.
  */
+import { extname } from "node:path";
 import {
   ARTIFACT_DATA_SNAPSHOT_KIND,
   type ArtifactDataSnapshot,
@@ -124,7 +125,7 @@ function nativeResolution(kind: ArtifactKind): ArtifactPluginResolution | undefi
       backing: "data",
       adapter: PPTX_ARTIFACT_ADAPTER,
       renderer: { id: "studio.pptx-dom", label: "Studio PPTX", provider: "studio", type: "native", status: "ready" },
-      capabilities: ["navigate", "outline", "search", "select", "thumbnail", "zoom"],
+      capabilities: ["navigate", "outline", "select", "zoom"],
     };
   }
   if (kind === "unknown") return undefined;
@@ -133,6 +134,22 @@ function nativeResolution(kind: ArtifactKind): ArtifactPluginResolution | undefi
     adapter: RAW_ARTIFACT_ADAPTER,
     renderer: { id: `studio.${kind}`, label: nativeRendererLabel(kind), provider: "studio", type: "native", status: "ready" },
     capabilities: kind === "image" || kind === "svg" ? ["select", "zoom"] : ["search", "select"],
+  };
+}
+
+function studioCodePreviewResolution(entry: ArtifactEntry): ArtifactPluginResolution | undefined {
+  if (entry.kind !== "code" || ![".tsx", ".jsx"].includes(extname(entry.label).toLowerCase())) return undefined;
+  return {
+    backing: "code",
+    adapter: RAW_ARTIFACT_ADAPTER,
+    renderer: {
+      id: "studio.react-preview",
+      label: "Studio React Preview",
+      provider: "studio",
+      type: "sandboxed-web",
+      status: "ready",
+    },
+    capabilities: ["execute", "live-update", "select"],
   };
 }
 
@@ -162,6 +179,10 @@ export const ARTIFACT_RENDERER_PROVIDERS: readonly ArtifactRendererProvider[] = 
       const override = matchCanvasViewers(entry, context.qoderCanvasViewers).find((viewer) => viewer.overrideBuiltIn);
       return override === undefined ? undefined : qoderCanvasResolution(override);
     },
+  },
+  {
+    id: "studio-code-preview",
+    resolve: studioCodePreviewResolution,
   },
   {
     id: "studio-native",
