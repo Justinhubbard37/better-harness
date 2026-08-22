@@ -625,6 +625,8 @@ function formatSessionTime(value: string): string {
  * The preview frame withholds `allow-same-origin`, so artifact code runs on an
  * opaque origin and cannot reach the Studio shell.
  */
+type ArtifactNarrowSurface = "explorer" | "preview";
+
 function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: string }): React.JSX.Element {
   const [catalog, setCatalog] = useState<ArtifactCatalogResponse | undefined>(undefined);
   const [failure, setFailure] = useState<string | undefined>(undefined);
@@ -632,8 +634,9 @@ function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: s
   const [query, setQuery] = useState("");
   const [view, setView] = useState<"grouped" | "flat">("grouped");
   const [collapsed, setCollapsed] = useState<Set<ArtifactFamily>>(() => new Set());
-  const [narrowSurface, setNarrowSurface] = useState<"explorer" | "preview">("explorer");
+  const [narrowSurface, setNarrowSurface] = useState<ArtifactNarrowSurface>("explorer");
   const [liveGeneration, setLiveGeneration] = useState(0);
+  const [liveUpdates, setLiveUpdates] = useState(true);
 
   useEffect(() => {
     if (!props.config.artifactsEnabled) return;
@@ -663,8 +666,18 @@ function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: s
       void refreshCatalog(true);
     };
     events.addEventListener("artifacts.invalidated", invalidate);
+    events.addEventListener("open", () => { if (!cancelled) setLiveUpdates(true); });
+    events.addEventListener("error", () => {
+      // EventSource retries a dropped transport on its own, but gives up for
+      // good when the route answers with something that is not an event stream.
+      // Only that second case is worth telling an operator about, because the
+      // catalog on screen then stops tracking the directory silently.
+      if (!cancelled && events.readyState === EventSource.CLOSED) setLiveUpdates(false);
+    });
     return () => { cancelled = true; events.close(); };
   }, [props.config.artifactsEnabled]);
+
+  const narrowTabs = useRovingFocus<ArtifactNarrowSurface>({ ids: ["explorer", "preview"], active: narrowSurface, onSelect: setNarrowSurface });
 
   if (!props.config.artifactsEnabled) {
     return props.config.workspaceConnected
@@ -700,11 +713,11 @@ function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: s
     return next;
   });
   return <section className="artifact-workspace" data-narrow-surface={narrowSurface} aria-label="Artifacts workspace">
-    <div className="artifact-narrow-tabs" role="tablist" aria-label="Artifact workspace view">
-      <button type="button" role="tab" aria-selected={narrowSurface === "explorer"} onClick={() => setNarrowSurface("explorer")}>Explorer</button>
-      <button type="button" role="tab" aria-selected={narrowSurface === "preview"} disabled={active === undefined} onClick={() => setNarrowSurface("preview")}>Preview</button>
+    <div className="artifact-narrow-tabs" role="tablist" aria-label="Artifact workspace view" onKeyDown={narrowTabs.onKeyDown}>
+      <button type="button" role="tab" id="artifact-tab-explorer" aria-controls="artifact-explorer-pane" aria-selected={narrowSurface === "explorer"} ref={narrowTabs.itemRef("explorer")} tabIndex={narrowTabs.tabIndexFor("explorer")} onClick={() => setNarrowSurface("explorer")}>Explorer</button>
+      <button type="button" role="tab" id="artifact-tab-preview" aria-controls="artifact-preview-pane" aria-selected={narrowSurface === "preview"} disabled={active === undefined} ref={narrowTabs.itemRef("preview")} tabIndex={narrowTabs.tabIndexFor("preview")} onClick={() => setNarrowSurface("preview")}>Preview</button>
     </div>
-    <div className="artifact-list-pane">
+    <div className="artifact-list-pane" id="artifact-explorer-pane" role="tabpanel" aria-labelledby="artifact-tab-explorer">
       <header><div><small>Revision-bound outputs</small><h2>Artifact Explorer</h2></div><span title={`Catalog revision ${catalog.snapshot.revision}`}>{normalizedQuery === "" ? artifacts.length : `${visible.length}/${artifacts.length}`}</span></header>
       <div className="artifact-explorer-toolbar">
         <label><MagnifyingGlass aria-hidden="true" size={14} /><span className="sr-only">Search artifacts</span><input value={query} type="search" placeholder="Search artifacts…" onChange={(event) => setQuery(event.currentTarget.value)} /></label>
@@ -727,8 +740,9 @@ function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: s
             </section>)}
       </nav>
       {catalog.omitted.length > 0 && <p className="artifact-omissions" role="note">Not listed: {describeOmissions(catalog.omitted)}.</p>}
+      {!liveUpdates && <p className="artifact-omissions" role="note">Live updates stopped. Reopen Artifacts to resume tracking this directory.</p>}
     </div>
-    <div className="artifact-preview-pane">
+    <div className="artifact-preview-pane" id="artifact-preview-pane" role="tabpanel" aria-labelledby="artifact-tab-preview">
       {active === undefined
         ? <p className="artifact-status" role="status">Select an artifact to preview it.</p>
         : <><header className="artifact-editor-header"><div><strong>{active.label}</strong><small>{formatLabel(active.format)} · {formatBytes(active.size)} · {shortRevision(active.revision.id)}</small></div><span>{active.adapter.id} → {active.renderer.label}</span></header><ArtifactView artifact={active} liveGeneration={liveGeneration} /></>}

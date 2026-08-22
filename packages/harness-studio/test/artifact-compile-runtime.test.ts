@@ -54,6 +54,24 @@ describe("ArtifactCompileRuntime", () => {
     expect(artifactCompileCount()).toBe(2);
   });
 
+  it("compiles one revision once when its build is requested concurrently", async () => {
+    resetArtifactCompileRuntime();
+    const directory = await mkdtemp(join(tmpdir(), "artifact-compile-"));
+    await writeFile(join(directory, "concurrent.tsx"), 'export default () => <p>shared</p>;\n', "utf8");
+
+    // The build route and the preview route both compile on demand, so two
+    // Studio tabs opening the same artifact would otherwise run esbuild twice
+    // over identical bytes.
+    const [first, second] = await Promise.all([
+      compileEntry(directory, "concurrent.tsx"),
+      compileEntry(directory, "concurrent.tsx"),
+    ]);
+    expect(first.snapshot.status).toBe("ready");
+    expect(second.snapshot.buildId).toBe(first.snapshot.buildId);
+    expect(second.snapshot.sequence).toBe(first.snapshot.sequence);
+    expect(artifactCompileCount()).toBe(1);
+  });
+
   it("fails closed for package imports and filesystem escapes", async () => {
     resetArtifactCompileRuntime();
     const directory = await mkdtemp(join(tmpdir(), "artifact-compile-"));

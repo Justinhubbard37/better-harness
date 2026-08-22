@@ -38,16 +38,37 @@ export function defaultCanvasViewerRoot(env: NodeJS.ProcessEnv = process.env, ho
   return join(qoderHome, "canvas", "canvases");
 }
 
+/**
+ * Discovery reads and parses every provisioned viewer's manifest, and the
+ * catalog resolves viewers on every request. Live updates turn each artifact
+ * write into another catalog request, so an uncached scan re-walks the
+ * operator's whole viewer tree on every save. Provisioning is a rare, manual
+ * act, so a short time bound is enough to keep a newly provisioned viewer
+ * appearing on its own without paying for the scan repeatedly.
+ */
+const VIEWER_DISCOVERY_TTL_MS = 5_000;
+const viewerDiscoveryCache = new Map<string, { expiresAt: number; viewers: CanvasViewer[] }>();
+
+export function resetCanvasViewerDiscoveryCache(): void {
+  viewerDiscoveryCache.clear();
+}
+
 export async function discoverCanvasViewers(root?: string): Promise<CanvasViewer[]> {
   const roots = root === undefined
     ? [...new Set([defaultCanvasViewerRoot(), join(homedir(), ".qoder", "canvas", "canvases")])]
     : [root];
+  const key = JSON.stringify(roots);
+  const now = Date.now();
+  const cached = viewerDiscoveryCache.get(key);
+  if (cached !== undefined && cached.expiresAt > now) return [...cached.viewers];
   const merged = new Map<string, CanvasViewer>();
   for (const candidate of roots) {
     const viewers = await discoverCanvasViewersAt(candidate);
     for (const viewer of viewers) if (!merged.has(viewer.id)) merged.set(viewer.id, viewer);
   }
-  return [...merged.values()];
+  const discovered = [...merged.values()];
+  viewerDiscoveryCache.set(key, { expiresAt: now + VIEWER_DISCOVERY_TTL_MS, viewers: discovered });
+  return [...discovered];
 }
 
 async function discoverCanvasViewersAt(root: string): Promise<CanvasViewer[]> {

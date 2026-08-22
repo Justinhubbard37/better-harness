@@ -208,12 +208,57 @@ export interface PptxArtifactPayload {
   slides: PptxSlideSnapshot[];
 }
 
+export type MarkdownInline =
+  | { kind: "text"; text: string }
+  | { kind: "code"; text: string }
+  | { kind: "break" }
+  | { kind: "emphasis" | "strong" | "strike"; children: MarkdownInline[] }
+  | { kind: "link"; href: string; title?: string; children: MarkdownInline[] }
+  | { kind: "image"; alt: string; title?: string; resourceId?: string };
+
+export type MarkdownTableAlignment = "left" | "center" | "right";
+
+export interface MarkdownListItem {
+  /** Present only for task list items, so an unchecked box stays distinct from a plain item. */
+  checked?: boolean;
+  blocks: MarkdownBlock[];
+}
+
+export type MarkdownBlock =
+  | { kind: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; id: string; address: string; children: MarkdownInline[] }
+  | { kind: "paragraph"; children: MarkdownInline[] }
+  | { kind: "code"; language?: string; text: string }
+  | { kind: "quote"; blocks: MarkdownBlock[] }
+  | { kind: "list"; ordered: boolean; tight: boolean; start?: number; items: MarkdownListItem[] }
+  | { kind: "table"; alignments: MarkdownTableAlignment[]; head: MarkdownInline[][]; rows: MarkdownInline[][][] }
+  | { kind: "thematicBreak" }
+  /** Verbatim source Studio declined to interpret, carried as text so nothing disappears. */
+  | { kind: "rawHtml"; text: string };
+
+/**
+ * A parsed Markdown document.
+ *
+ * The payload is a block tree rather than an HTML string precisely because the
+ * bytes are untrusted: a renderer that receives elements instead of markup has
+ * no injection surface to get wrong, and every construct Studio does not
+ * support is visible here as its own node rather than as markup it silently
+ * passed through.
+ */
+export interface MarkdownArtifactPayload {
+  kind: "markdown/v1";
+  blocks: MarkdownBlock[];
+}
+
 export interface QoderCanvasArtifactPayload {
   kind: "qoder-canvas/v1";
   data: Record<string, unknown>;
 }
 
-export type ArtifactSnapshotPayload = RawArtifactPayload | PptxArtifactPayload | QoderCanvasArtifactPayload;
+export type ArtifactSnapshotPayload =
+  | RawArtifactPayload
+  | PptxArtifactPayload
+  | MarkdownArtifactPayload
+  | QoderCanvasArtifactPayload;
 
 export interface ArtifactDataSnapshot {
   kind: typeof ARTIFACT_DATA_SNAPSHOT_KIND;

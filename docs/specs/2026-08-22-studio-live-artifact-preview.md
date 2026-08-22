@@ -62,6 +62,24 @@ preview executes only after that handshake and reports `renderCompleted` or
 status only for the latest requested build, so a slow older build cannot replace
 a newer revision.
 
+A completed mount is not the same claim as a successful render. A concurrent
+React root schedules its work, and its default handling of an uncaught render
+error reports that error out of band, so a runtime that watched only the mount
+call would report a ready preview over an empty frame. The preview document
+therefore owns an explicit failure channel: React's `onUncaughtError`, a bundle
+that will not start, a window error, and an unhandled rejection all resolve to
+the first `renderFailed` the document sends, and `renderCompleted` is claimed
+only when none arrived. Because a preview can break after it mounts, the host
+accepts a failure that arrives after it already committed a ready state.
+
+Silence is a third outcome the protocol has to name. The host bounds the
+handshake: a preview that never answers — most often because the build it names
+was evicted and the route answered with JSON the frame cannot reply from —
+resolves to a runtime failure with an operator-driven retry rather than a
+permanent starting state. Theme travels over the same channel, since a frame
+told the theme once at startup would otherwise keep rendering against the
+palette that was current when it started.
+
 ### D-4: Catalog changes are streamed, builds stay revision-scoped
 
 `/api/artifacts/events` is a server-sent event stream. The server observes the
@@ -73,6 +91,44 @@ entry revision stable while producing a new build id.
 
 The stream is advisory and reconnectable. The catalog and revision-scoped
 routes remain the authority, so a missed event cannot weaken correctness.
+
+A stream watches the directory it was opened against. Importing a new artifact
+set replaces that directory, so a stream whose directory is no longer active
+ends and lets the client's own reconnect re-open it against the current one.
+Streams are capped, because each one holds a recursive filesystem watcher.
+
+### D-5: Artifact reads are same-origin
+
+Studio binds to loopback, which stops another machine from reaching it but does
+nothing about a page the operator is already browsing: that page runs in the
+same browser and can address `127.0.0.1` freely. Catalog, content, snapshot,
+build, preview, and resource reads therefore require a same-origin request and
+send no permissive CORS header. Qoder Canvas viewer documents are the single
+exception, because they run at an opaque origin and must fetch their own
+compiled module; they serve operator-provisioned renderer code, not artifact
+bytes.
+
+### D-6: Compilation is bounded in time and shared across callers
+
+Source and output budgets bound what a build may read and produce, but nothing
+bounded how long it took, so a pathological project held its request open
+indefinitely. A build now fails with a diagnostic once it exceeds its wall
+clock, and its partial record is not cached, so the next request is free to try
+again. Concurrent requests for the same revision share one compilation: the
+build and preview routes both compile on demand, and the key carries the
+revision as well as the path so a caller asking for a newer revision is never
+handed a snapshot stamped with the older one.
+
+Viewer discovery is cached for a short interval. Live updates turn every
+artifact write into another catalog request, and an uncached scan re-walked the
+operator's whole viewer tree each time.
+
+### D-7: A directory is not a declined artifact
+
+Code-backed artifacts import their own subdirectories, so reporting one as an
+omission tells an operator that a normal part of the project was refused. The
+`not-a-file` reason stays for entries that really did present themselves as
+candidate files.
 
 ## Acceptance Scenarios
 
@@ -89,13 +145,21 @@ routes remain the authority, so a missed event cannot weaken correctness.
 - **AC-4:** Preview code cannot read the parent DOM or make network requests,
   and it starts only after a matching `runtime.init` handshake. The host exposes
   compiling, ready, compile-failed, and runtime-failed states with accessible
-  text.
+  text. A component that throws during render, and one that throws after it
+  mounts, both reach runtime-failed with a retry rather than a ready status; an
+  unanswered handshake times out into the same state, and a Studio theme change
+  reaches a preview that is already running.
 - **AC-5:** Rewriting a selected component emits a changed catalog revision,
   refreshes the descriptor, compiles the new revision, and visibly commits the
   new render without a page reload. A stale build completion is ignored.
-- **AC-6:** Preview and Source are keyboard-reachable pane controls at wide,
-  compact, and narrow layouts; the preview has bounded overflow, visible focus,
-  no document-level horizontal overflow, and no unexpected console/page errors.
+- **AC-6:** Preview and Source are one tab stop with Arrow/Home/End roving
+  focus over a labelled `tabpanel`, at wide, compact, and narrow layouts; the
+  preview has bounded overflow, visible focus, no document-level horizontal
+  overflow, and no unexpected console/page errors.
+- **AC-8:** Artifact reads answer Studio's own origin and refuse another one,
+  and no artifact response advertises permissive CORS. A code artifact's own
+  subdirectory is not reported as a declined catalog entry, and one revision
+  compiles once when two callers request its build at the same time.
 - **AC-7:** Existing PPTX, SVG, image, text/diff, Qoder Canvas, immutable content,
   and stale-revision behavior remain covered and unchanged.
 
@@ -163,6 +227,26 @@ Implementation evidence captured on 2026-08-22:
   full package rerun passed 24 files and 148 tests, and all 21 Playwright
   scenarios passed. This includes the final handshake and symlink-confinement
   hardening as well as the Git History regression surface.
+
+Hardening pass captured on 2026-08-22, after a review of the shipped
+increment found `runtime-failed` unreachable in practice:
+
+- A `.tsx` that throws during render used to report "Preview rendered from the
+  current build." over an empty root, and a throw after mount was not reported
+  at all. Both now resolve to runtime-failed; `artifact-host.spec.mjs` covers
+  the render-time throw, the post-mount throw, the retry control, and recovery
+  to a working artifact without a page reload.
+- The Preview/Source strip is one tab stop over a labelled `tabpanel`, and the
+  build identity moved out of the `tablist`, which may only contain tabs. The
+  narrow Explorer/Preview switcher got the same treatment.
+- `artifact-access.test.ts` covers the same-origin read boundary and the absent
+  CORS header, plus a code artifact whose subdirectory stays out of `omitted`.
+- `artifact-compile-runtime.test.ts` covers one compilation for two concurrent
+  requests against the same revision.
+- `npm run typecheck`, `npm run build`, 172 package tests across 28 files, and
+  all 24 Playwright scenarios passed. The root suite passed 1,472 tests, with
+  the doc link graph at 8; one unrelated failure comes from an in-progress
+  skills-docs test file owned by concurrent work in the same worktree.
 
 Risk review:
 

@@ -20,6 +20,13 @@ const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MAX_DIAGNOSTICS = 32;
 const MAX_DIAGNOSTIC_LENGTH = 600;
 const MAX_RETAINED_BUILDS = 64;
+/**
+ * Source and output budgets bound how much a build may read and produce, but
+ * nothing bounds how long esbuild spends producing it. Without a wall clock a
+ * pathological project holds its HTTP request open forever, so the build fails
+ * with a diagnostic instead and the next request is free to try again.
+ */
+const COMPILE_TIMEOUT_MS = 20_000;
 const SOURCE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mjs", ".json", ".css"] as const;
 const ALLOWED_PACKAGES = new Set(["react", "react/jsx-runtime", "react/jsx-dev-runtime", "react-dom/client"]);
 
@@ -43,6 +50,7 @@ export interface CompileArtifactPreviewOptions {
 
 const latestByEntry = new Map<string, CompiledArtifactPreview>();
 const retainedByBuild = new Map<string, CompiledArtifactPreview>();
+const inflightByRevision = new Map<string, Promise<CompiledArtifactPreview>>();
 let buildSequence = 0;
 let compileCount = 0;
 
@@ -53,16 +61,37 @@ export function artifactCompileCount(): number {
 export function resetArtifactCompileRuntime(): void {
   latestByEntry.clear();
   retainedByBuild.clear();
+  inflightByRevision.clear();
   buildSequence = 0;
   compileCount = 0;
 }
 
+class ArtifactCompileTimeout extends Error {}
+
+/**
+ * Compile one revision at a time.
+ *
+ * Two Studio tabs, or a build request racing the preview route's own
+ * recompilation, otherwise start the same esbuild run twice. The key carries
+ * the revision as well as the path: sharing purely by path would hand a caller
+ * asking for the newer revision a snapshot stamped with the older one, which
+ * its contract check then rejects.
+ */
 export async function compileArtifactPreview(options: CompileArtifactPreviewOptions): Promise<CompiledArtifactPreview> {
   const cached = latestByEntry.get(options.entry.path);
   if (cached !== undefined
     && cached.snapshot.revisionId === options.descriptor.revision.id
     && await sourcesStillCurrent(cached.sources)) return cached;
 
+  const key = `${options.entry.path}\u0000${options.descriptor.revision.id}`;
+  const pending = inflightByRevision.get(key);
+  if (pending !== undefined) return pending;
+  const compiling = compileArtifactRevision(options).finally(() => inflightByRevision.delete(key));
+  inflightByRevision.set(key, compiling);
+  return compiling;
+}
+
+async function compileArtifactRevision(options: CompileArtifactPreviewOptions): Promise<CompiledArtifactPreview> {
   compileCount += 1;
   const root = await realpath(options.artifactRoot);
   const entryPath = await realpath(options.entry.path);
@@ -73,8 +102,9 @@ export async function compileArtifactPreview(options: CompileArtifactPreviewOpti
   let css = "";
   let diagnostics: ArtifactBuildDiagnostic[] = [];
   let status: ArtifactBuildSnapshot["status"] = "ready";
+  let timedOut = false;
   try {
-    const result = await build({
+    const result = await withCompileTimeout(build({
       absWorkingDir: root,
       entryPoints: ["artifact-runtime:entry"],
       bundle: true,
@@ -89,7 +119,7 @@ export async function compileArtifactPreview(options: CompileArtifactPreviewOpti
       logLevel: "silent",
       define: { "process.env.NODE_ENV": '"production"' },
       plugins: [confinedArtifactPlugin(root, entryPath, sources)],
-    });
+    }));
     diagnostics = result.warnings.map((message) => diagnosticFromMessage(message, root, "warning"));
     for (const output of result.outputFiles) {
       if (output.path.endsWith(".css")) css = output.text;
@@ -101,6 +131,7 @@ export async function compileArtifactPreview(options: CompileArtifactPreviewOpti
     }
   } catch (error) {
     status = "failed";
+    timedOut = error instanceof ArtifactCompileTimeout;
     diagnostics = diagnosticsFromError(error, root);
   }
 
@@ -118,7 +149,9 @@ export async function compileArtifactPreview(options: CompileArtifactPreviewOpti
     diagnostics: diagnostics.slice(0, MAX_DIAGNOSTICS),
   };
   const compiled = { snapshot, ...(code === undefined ? {} : { code }), css, sources };
-  latestByEntry.set(options.entry.path, compiled);
+  // An abandoned build is still running and still mutating `sources`, so its
+  // partial record must not become the answer every later request reuses.
+  if (!timedOut) latestByEntry.set(options.entry.path, compiled);
   retainedByBuild.delete(buildId);
   retainedByBuild.set(buildId, compiled);
   while (retainedByBuild.size > MAX_RETAINED_BUILDS) retainedByBuild.delete(retainedByBuild.keys().next().value!);
@@ -145,7 +178,62 @@ export function artifactPreviewHtml(compiled: CompiledArtifactPreview): string {
   });
   const code = escapeInlineScript(compiled.code);
   const css = compiled.css.replaceAll("</style", "<\\/style");
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>:root{color-scheme:light;--artifact-canvas:#fff;--artifact-text:#1b2430}:root[data-artifact-theme="dark"]{color-scheme:dark;--artifact-canvas:#101319;--artifact-text:#e8ecf3}html,body,#artifact-root{box-sizing:border-box;width:100%;min-height:100%;margin:0}body{color:var(--artifact-text);background:var(--artifact-canvas);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}*,*::before,*::after{box-sizing:inherit}${css}</style></head><body><div id="artifact-root"></div><script type="application/x-artifact-bundle" id="artifact-bundle">${code}</script><script>(()=>{const expected=${identity};let started=false;const executeBundle=()=>new Promise((resolveBundle,rejectBundle)=>{const source=document.getElementById("artifact-bundle").textContent;const url=URL.createObjectURL(new Blob([source],{type:"text/javascript"}));const script=document.createElement("script");script.src=url;script.onload=()=>{URL.revokeObjectURL(url);resolveBundle()};script.onerror=()=>{URL.revokeObjectURL(url);rejectBundle(new Error("Artifact bundle could not start."))};document.head.append(script)});addEventListener("message",event=>{const message=event.data;const port=event.ports&&event.ports[0];if(started||!port||!message||message.type!=="runtime.init")return;if(message.artifactId!==expected.artifactId||message.revisionId!==expected.revisionId||message.buildId!==expected.buildId||message.runtimeId!==expected.runtimeId)return;started=true;if(message.theme==="dark"||message.theme==="light")document.documentElement.dataset.artifactTheme=message.theme;port.start();executeBundle().then(()=>globalThis.__HARNESS_ARTIFACT_MOUNT__(document.getElementById("artifact-root"),expected)).then(()=>new Promise(resolveFrame=>requestAnimationFrame(()=>requestAnimationFrame(resolveFrame)))).then(()=>port.postMessage({...expected,type:"renderCompleted"})).catch(error=>port.postMessage({...expected,type:"renderFailed",message:String(error&&error.message||error).slice(0,600)}));},{once:false});})();</script></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>:root{color-scheme:light;--artifact-canvas:#fff;--artifact-text:#1b2430}:root[data-artifact-theme="dark"]{color-scheme:dark;--artifact-canvas:#101319;--artifact-text:#e8ecf3}html,body,#artifact-root{box-sizing:border-box;width:100%;min-height:100%;margin:0}body{color:var(--artifact-text);background:var(--artifact-canvas);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}*,*::before,*::after{box-sizing:inherit}${css}</style></head><body><div id="artifact-root"></div><script type="application/x-artifact-bundle" id="artifact-bundle">${code}</script><script>${previewBootstrap(identity)}</script></body></html>`;
+}
+
+/**
+ * The preview document's own half of the runtime protocol.
+ *
+ * A completed mount is not the same claim as a successful render, so the
+ * document reports the first failure it observes from any source — React's
+ * uncaught render errors, a bundle that will not start, a throw after mount, or
+ * a rejected promise — and only claims `renderCompleted` when none arrived.
+ * Reporting nothing on a post-mount throw would leave the host showing a ready
+ * preview over an empty or broken frame.
+ */
+function previewBootstrap(identity: string): string {
+  return [
+    "(()=>{",
+    `const expected=${identity};`,
+    "let port;let started=false;let reported=false;",
+    "const fail=(error)=>{",
+    "if(reported||port===undefined)return;",
+    "reported=true;",
+    "const detail=(error&&error.message)||error;",
+    'port.postMessage({...expected,type:"renderFailed",message:String(detail===undefined||detail===null?"Artifact preview failed at runtime.":detail).slice(0,600)});',
+    "};",
+    "globalThis.__HARNESS_ARTIFACT_FAIL__=fail;",
+    'addEventListener("error",(event)=>fail(event.error||event.message));',
+    'addEventListener("unhandledrejection",(event)=>fail(event.reason));',
+    "const applyTheme=(theme)=>{",
+    'if(theme==="dark"||theme==="light")document.documentElement.dataset.artifactTheme=theme;',
+    "};",
+    "const executeBundle=()=>new Promise((resolveBundle,rejectBundle)=>{",
+    'const source=document.getElementById("artifact-bundle").textContent;',
+    'const url=URL.createObjectURL(new Blob([source],{type:"text/javascript"}));',
+    'const script=document.createElement("script");',
+    "script.src=url;",
+    "script.onload=()=>{URL.revokeObjectURL(url);resolveBundle()};",
+    'script.onerror=()=>{URL.revokeObjectURL(url);rejectBundle(new Error("Artifact bundle could not start."))};',
+    "document.head.append(script)",
+    "});",
+    'addEventListener("message",(event)=>{',
+    "const message=event.data;const incoming=event.ports&&event.ports[0];",
+    'if(started||!incoming||!message||message.type!=="runtime.init")return;',
+    "if(message.artifactId!==expected.artifactId||message.revisionId!==expected.revisionId",
+    "||message.buildId!==expected.buildId||message.runtimeId!==expected.runtimeId)return;",
+    "started=true;port=incoming;",
+    "applyTheme(message.theme);",
+    'port.onmessage=(update)=>{if(update.data&&update.data.type==="runtime.theme")applyTheme(update.data.theme)};',
+    "port.start();",
+    "executeBundle()",
+    '.then(()=>globalThis.__HARNESS_ARTIFACT_MOUNT__(document.getElementById("artifact-root"),expected))',
+    ".then(()=>new Promise(resolveFrame=>requestAnimationFrame(()=>requestAnimationFrame(resolveFrame))))",
+    '.then(()=>{if(!reported)port.postMessage({...expected,type:"renderCompleted"})})',
+    ".catch(fail);",
+    "},{once:false});",
+    "})();",
+  ].join("");
 }
 
 function confinedArtifactPlugin(root: string, entryPath: string, sources: Map<string, SourceStamp>): Plugin {
@@ -162,11 +250,19 @@ function confinedArtifactPlugin(root: string, entryPath: string, sources: Map<st
           'import React from "react";',
           'import { createRoot } from "react-dom/client";',
           'import Artifact from "artifact-entry";',
-          "globalThis.__HARNESS_ARTIFACT_MOUNT__=async(root,context)=>{",
+          // Mount resolves from a committed effect rather than from render(),
+          // because a concurrent root schedules its work: returning as soon as
+          // render() is called would report a completed render before React had
+          // produced any DOM. `onUncaughtError` replaces React's default
+          // rethrow, so a component that throws reaches the host as a runtime
+          // failure instead of a silently empty frame.
+          "globalThis.__HARNESS_ARTIFACT_MOUNT__=(root,context)=>new Promise((settle)=>{",
           "const rendered=typeof Artifact==='function'?React.createElement(Artifact,context):Artifact;",
           "if(rendered==null)throw new Error('Artifact must default-export a React component or element.');",
-          "createRoot(root).render(rendered);",
-          "};",
+          "const Committed=()=>{React.useEffect(()=>{settle();},[]);return rendered;};",
+          "createRoot(root,{onUncaughtError:(error)=>{globalThis.__HARNESS_ARTIFACT_FAIL__(error);settle();}})",
+          ".render(React.createElement(Committed));",
+          "});",
         ].join("\n"),
       }));
       buildApi.onResolve({ filter: /^artifact-entry$/ }, () => ({ path: entryPath }));
@@ -246,6 +342,27 @@ function loaderFor(path: string): "tsx" | "ts" | "jsx" | "js" | "json" | "css" {
   if (extension === ".json") return "json";
   if (extension === ".css") return "css";
   return "js";
+}
+
+/**
+ * esbuild offers no cancellation, so the loser of this race keeps running. That
+ * is acceptable because its result is discarded and never cached; what matters
+ * is that the request stops waiting. `Promise.race` also observes the abandoned
+ * build's eventual rejection, so a late failure cannot surface as an unhandled
+ * rejection that takes the Studio process down.
+ */
+async function withCompileTimeout<T>(work: Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([work, new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new ArtifactCompileTimeout(`Artifact build exceeded the ${COMPILE_TIMEOUT_MS}ms compile limit.`)),
+        COMPILE_TIMEOUT_MS,
+      );
+    })]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 async function sourcesStillCurrent(sources: Map<string, SourceStamp>): Promise<boolean> {

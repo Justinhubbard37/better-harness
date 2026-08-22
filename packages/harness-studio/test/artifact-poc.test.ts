@@ -30,7 +30,8 @@ describe("resolveArtifactKind", () => {
     expect(resolveArtifactKind("fix.patch")).toBe("diff");
     expect(resolveArtifactKind("verdict.json")).toBe("json");
     expect(resolveArtifactKind("diagram.svg")).toBe("svg");
-    expect(resolveArtifactKind("notes.md")).toBe("text");
+    expect(resolveArtifactKind("notes.md")).toBe("markdown");
+    expect(resolveArtifactKind("notes.txt")).toBe("text");
   });
 
   it("is case-insensitive on the extension", () => {

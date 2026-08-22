@@ -21,6 +21,7 @@ import type {
 } from "./artifact-adapter-contract.js";
 import type { ArtifactEntry, ArtifactKind } from "./artifact-catalog.js";
 import { matchCanvasViewers, type CanvasViewer } from "./artifact-viewers.js";
+import { MARKDOWN_ARTIFACT_ADAPTER } from "./markdown-artifact-adapter.js";
 import { PPTX_ARTIFACT_ADAPTER } from "./pptx-artifact-adapter.js";
 import { adaptQoderCanvasViewerData } from "./qoder-canvas-viewer-bridge.js";
 
@@ -29,6 +30,7 @@ export {
   discoverCanvasViewers,
   matchCanvasViewer,
   matchCanvasViewers,
+  resetCanvasViewerDiscoveryCache,
 } from "./artifact-viewers.js";
 export type {
   ArtifactAdaptContext,
@@ -120,6 +122,16 @@ function qoderCanvasResolution(viewer: CanvasViewer): ArtifactPluginResolution {
 }
 
 function nativeResolution(kind: ArtifactKind): ArtifactPluginResolution | undefined {
+  if (kind === "markdown") {
+    return {
+      backing: "data",
+      adapter: MARKDOWN_ARTIFACT_ADAPTER,
+      renderer: { id: "studio.markdown", label: "Studio Markdown", provider: "studio", type: "native", status: "ready" },
+      // Only what the renderer actually does: an outline built from the
+      // document's headings, and navigation to the one a reader picks.
+      capabilities: ["navigate", "outline"],
+    };
+  }
   if (kind === "pptx") {
     return {
       backing: "data",
@@ -159,6 +171,7 @@ function nativeRendererLabel(kind: Exclude<ArtifactKind, "unknown" | "pptx">): s
     diff: "Studio diff",
     image: "Studio image",
     json: "Studio JSON",
+    markdown: "Studio Markdown",
     svg: "Studio SVG",
     text: "Studio text",
   })[kind];

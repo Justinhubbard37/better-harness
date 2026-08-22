@@ -139,6 +139,8 @@ const STATIC_CONTENT_TYPES: Record<string, string> = {
 const MAX_IMPORT_FILES = 256;
 const MAX_IMPORT_BYTES = 128 * 1024 * 1024;
 const MAX_IMPORT_SESSIONS = 4;
+/** Each artifact event stream owns a recursive filesystem watcher. */
+const MAX_ARTIFACT_EVENT_STREAMS = 8;
 const IMPORT_SESSION_TTL_MS = 10 * 60 * 1000;
 const MAX_WORKSPACE_FILES = 512;
 const MAX_WORKSPACE_SESSIONS = 200;
@@ -269,6 +271,7 @@ export function createHarnessStudioServer(options: HarnessStudioServerOptions): 
     observedIndexes: new Map(),
     artifactDirectory: resolvedOptions.artifactDirectory,
     artifactImports: new Map(),
+    artifactEventStreams: 0,
     workspaceImports: new Map(),
     workspaceOpenStage: "idle",
     intentAnalysisRunning: false,
@@ -354,6 +357,7 @@ interface HarnessStudioState {
   artifactDirectory?: string;
   ownedArtifactDirectory?: string;
   artifactImports: Map<string, ArtifactImportSession>;
+  artifactEventStreams: number;
   workspace?: StudioWorkspace;
   workspaceImports: Map<string, WorkspaceImportSession>;
   workspaceOpenStage: "idle" | "choosing" | "discovering";
@@ -548,10 +552,12 @@ async function route(
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/artifacts/events") {
-    serveArtifactEvents(request, response, artifactOptions(options, state));
+    if (!allowArtifactRead(request, response)) return;
+    serveArtifactEvents(request, response, state, artifactOptions(options, state));
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/artifacts") {
+    if (!allowArtifactRead(request, response)) return;
     await serveArtifactCatalog(response, artifactOptions(options, state));
     return;
   }
@@ -585,6 +591,10 @@ async function route(
     const revision = artifactRevision[2]!;
     const tail = artifactRevision[3]!;
     if (id === undefined) return;
+    // Viewer documents run at an opaque origin and must fetch their own module,
+    // so they are the one artifact surface that stays cross-origin readable.
+    // Everything below carries artifact bytes and answers same-origin only.
+    if (!tail.startsWith("viewer/") && !allowArtifactRead(request, response)) return;
     const scoped = artifactOptions(options, state);
     if (tail === "content") {
       await serveArtifactContent(response, scoped, id, revision, request.headers["if-none-match"]);
@@ -1494,19 +1504,28 @@ async function serveArtifactCatalog(response: ServerResponse, options: HarnessSt
 function serveArtifactEvents(
   request: IncomingMessage,
   response: ServerResponse,
+  state: HarnessStudioState,
   options: HarnessStudioServerOptions,
 ): void {
-  if (options.artifactDirectory === undefined) {
+  const watched = options.artifactDirectory;
+  if (watched === undefined) {
     respondJson(response, 404, { error: "No artifact directory configured." });
+    return;
+  }
+  // Each stream holds an open recursive watcher, so the count is a real
+  // resource, not just a connection tally.
+  if (state.artifactEventStreams >= MAX_ARTIFACT_EVENT_STREAMS) {
+    respondJson(response, 503, { error: "Too many artifact event streams are open." });
     return;
   }
   let watcher: ReturnType<typeof watchDirectory>;
   try {
-    watcher = watchDirectory(options.artifactDirectory, { recursive: true });
+    watcher = watchDirectory(watched, { recursive: true });
   } catch {
     respondJson(response, 404, { error: "Cannot observe the configured artifact directory." });
     return;
   }
+  state.artifactEventStreams += 1;
   response.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache, no-transform",
@@ -1525,10 +1544,23 @@ function serveArtifactEvents(
     if (debounce !== undefined) clearTimeout(debounce);
     debounce = setTimeout(emitInvalidation, 75);
   });
-  const heartbeat = setInterval(() => response.write(": keepalive\n\n"), 15_000);
+  const heartbeat = setInterval(() => {
+    // A stream watches the directory it was opened against. Importing a new
+    // artifact set replaces that directory, and a watcher left on the old one
+    // reports changes nobody is looking at while missing every change to the
+    // set now on screen. Ending the response lets the client's own reconnect
+    // re-open the stream against the active directory.
+    if (state.artifactDirectory !== watched) {
+      cleanup();
+      response.end();
+      return;
+    }
+    response.write(": keepalive\n\n");
+  }, 15_000);
   const cleanup = (): void => {
     if (closed) return;
     closed = true;
+    state.artifactEventStreams -= 1;
     if (debounce !== undefined) clearTimeout(debounce);
     clearInterval(heartbeat);
     watcher.close();
@@ -1540,11 +1572,25 @@ function serveArtifactEvents(
   });
 }
 
+/**
+ * Artifact reads are same-origin only.
+ *
+ * Studio binds to the loopback interface, which stops another machine from
+ * reaching it but does nothing about a page the operator is already browsing:
+ * that page runs inside the same browser and can address `127.0.0.1` freely.
+ * Without this check — and with the permissive CORS header these routes used to
+ * send — any site the operator visited could read a run's entire output set.
+ */
+function allowArtifactRead(request: IncomingMessage, response: ServerResponse): boolean {
+  if (sameOriginRequest(request)) return true;
+  respondArtifactJson(response, 403, { error: "Cross-origin artifact reads are not allowed." });
+  return false;
+}
+
 function respondArtifactJson(response: ServerResponse, status: number, payload: unknown): void {
   response.writeHead(status, {
     "Content-Type": "application/json",
     "Cache-Control": "no-store",
-    "Access-Control-Allow-Origin": "*",
   });
   response.end(`${JSON.stringify(payload)}\n`);
 }
@@ -1583,7 +1629,6 @@ async function serveArtifactContent(
       ETag: etag,
       "Cache-Control": IMMUTABLE_REVISION_CACHE,
       "X-Content-Type-Options": "nosniff",
-      "Access-Control-Allow-Origin": "*",
     };
     if (isActiveArtifactContent(entry.label)) {
       headers["Content-Disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(entry.label)}`;

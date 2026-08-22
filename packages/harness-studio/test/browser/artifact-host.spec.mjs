@@ -10,6 +10,7 @@ import { sessionFromRetainedRun } from "../../dist/app/session-debugger-model.js
 import { createPptxFixture } from "../pptx-fixture.ts";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const ARTIFACT_PREVIEW_PANEL_ID = "artifact-preview-panel";
 const canvasSdkRoot = process.env.CANVAS_SDK_ROOT ?? resolve(packageRoot, "../../../canvas-sdk");
 const canvasViewerRoot = join(homedir(), ".qoder", "canvas", "canvases");
 let studio;
@@ -22,6 +23,14 @@ test.beforeAll(async () => {
   await writeFile(join(artifactDirectory, "deck.pptx"), createPptxFixture("01"));
   await writeFile(join(artifactDirectory, "component.tsx"), 'document.body.dataset.moduleEvaluated = "yes"; export default () => <p data-preview="current">first render</p>;\n', "utf8");
   await writeFile(join(artifactDirectory, "broken.tsx"), 'export default () => <main>broken;\n', "utf8");
+  await writeFile(join(artifactDirectory, "throws.tsx"), 'export default function Boom() { throw new Error("render exploded"); }\n', "utf8");
+  await writeFile(join(artifactDirectory, "late-throw.tsx"), [
+    'import { useEffect } from "react";',
+    "export default function Late() {",
+    '  useEffect(() => { setTimeout(() => { throw new Error("late boom"); }, 0); }, []);',
+    '  return <p data-preview="late">mounted</p>;',
+    "}",
+  ].join("\n"), "utf8");
   await writeFile(join(artifactDirectory, "change.patch"), [
     "diff --git a/example.ts b/example.ts",
     "--- a/example.ts",
@@ -38,6 +47,35 @@ test.beforeAll(async () => {
   ].join("\n"), "utf8");
   await writeFile(join(artifactDirectory, "diagram.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><script>parent.document.body.dataset.svgExecuted="yes"</script><text x="12" y="44">Safe SVG artifact</text></svg>', "utf8");
   await writeFile(join(artifactDirectory, "notes.txt"), "followed the declared content reference\n", "utf8");
+  await writeFile(join(artifactDirectory, "badge.png"), Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAFUlEQVR42mNk+M9QzzCKRsEoGgWjAABtVwPTBxjKUAAAAABJRU5ErkJggg==",
+    "base64",
+  ));
+  await writeFile(join(artifactDirectory, "report.md"), [
+    "# Run report",
+    "",
+    "A paragraph with **bold**, `code`, a [safe link](https://example.com/page),",
+    "a [blocked link](javascript:alert(1)) and an ![inline badge](./badge.png).",
+    "",
+    "## Findings",
+    "",
+    "- [x] closed the loop",
+    "- [ ] still open",
+    "",
+    "| Check | Result |",
+    "| :---- | -----: |",
+    "| parse | 12 |",
+    "",
+    "```ts",
+    "const finding = 1;",
+    "```",
+    "",
+    '<img src=x onerror="document.body.dataset.markdownExecuted = \'yes\'">',
+    "",
+    "### Deep detail",
+    "",
+    "Back to [Findings](#findings).",
+  ].join("\n"), "utf8");
   studio = await startHarnessStudioServer({
     appDir: join(packageRoot, "dist", "app"),
     artifactDirectory,
@@ -177,6 +215,12 @@ test("renders generated TSX in the sandbox and keeps its source reachable", asyn
   expect(previewContrast).toBeGreaterThanOrEqual(4.5);
   await expect(page.getByText("Preview rendered from the current build.")).toBeVisible();
   await expect(page.locator('[data-preview="current"]')).toHaveCount(0);
+  // The frame learns the theme once during the handshake, so a later toggle has
+  // to reach it over the same channel rather than leaving it on the old palette.
+  await page.getByRole("button", { name: /Dark theme active/ }).click();
+  await expect(preview.locator("html")).toHaveAttribute("data-artifact-theme", "light");
+  await page.getByRole("button", { name: /Light theme active/ }).click();
+  await expect(preview.locator("html")).toHaveAttribute("data-artifact-theme", "dark");
   const frame = page.locator('iframe[title="Live artifact preview: component.tsx"]');
   await expect(frame).toHaveAttribute("sandbox", "allow-scripts");
   const direct = await page.context().newPage();
@@ -205,6 +249,51 @@ test("reports code Artifact compile diagnostics without executing a partial buil
   await expect(page.locator(".artifact-build-diagnostics")).toContainText("Build failed");
   await expect(page.locator(".artifact-build-diagnostics")).toContainText("closing \"main\" tag");
   await expect(page.locator('iframe[title="Live artifact preview: broken.tsx"]')).toHaveCount(0);
+  expect(failures).toEqual([]);
+});
+
+test("reports a runtime failure instead of claiming a completed render", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openArtifacts(page);
+
+  // A component that throws while rendering commits nothing. React reports the
+  // error out of band, so a host that only watched the mount call would show a
+  // ready status over an empty frame.
+  await page.getByRole("button", { name: /throws\.tsx/ }).click();
+  const status = page.locator(".artifact-runtime-status");
+  await expect(status).toContainText("render exploded");
+  await expect(status).toHaveClass(/state-runtime-failed/);
+  await expect(page.frameLocator('iframe[title="Live artifact preview: throws.tsx"]').locator("#artifact-root")).toBeEmpty();
+
+  // A preview can also break after it mounts, and the host has to leave the
+  // ready state it already committed.
+  await page.getByRole("button", { name: /late-throw\.tsx/ }).click();
+  const late = page.frameLocator('iframe[title="Live artifact preview: late-throw.tsx"]');
+  await expect(late.locator('[data-preview="late"]')).toHaveText("mounted");
+  await expect(status).toContainText("late boom");
+  await expect(status).toHaveClass(/state-runtime-failed/);
+  await expect(status.getByRole("button", { name: "Retry" })).toBeVisible();
+
+  // Recovering must not need a page reload.
+  await page.getByRole("button", { name: /component\.tsx/ }).click();
+  await expect(page.frameLocator('iframe[title="Live artifact preview: component.tsx"]').locator('[data-preview="current"]')).toHaveText("first render");
+  await expect(page.getByText("Preview rendered from the current build.")).toBeVisible();
+});
+
+test("moves between Preview and Source with arrow keys from one tab stop", async ({ page }) => {
+  const failures = watchFailures(page);
+  await openArtifacts(page);
+  await page.getByRole("button", { name: /component\.tsx/ }).click();
+  const tabs = page.locator(".artifact-runtime-tabs");
+  await expect(page.locator(`#${ARTIFACT_PREVIEW_PANEL_ID}`)).toHaveAttribute("role", "tabpanel");
+  await expect(tabs.locator("span")).toHaveCount(0);
+  await tabs.getByRole("tab", { name: "Preview" }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(tabs.getByRole("tab", { name: "Source" })).toBeFocused();
+  await expect(tabs.getByRole("tab", { name: "Source" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".artifact-code-preview")).toContainText("data-preview");
+  await page.keyboard.press("Home");
+  await expect(tabs.getByRole("tab", { name: "Preview" })).toBeFocused();
   expect(failures).toEqual([]);
 });
 
@@ -267,6 +356,73 @@ test("renders code diff and sandboxes SVG without script capability", async ({ p
   expect(raw.headers()["content-disposition"]).toMatch(/^attachment;/u);
   expect(raw.headers()["content-security-policy"]).toBe("default-src 'none'; sandbox");
   await expect(page.locator("body")).not.toHaveAttribute("data-svg-executed", "yes");
+});
+
+test("renders Markdown as elements and refuses to execute what it carries", async ({ page }, testInfo) => {
+  const failures = watchFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openArtifacts(page);
+  await page.getByRole("button", { name: /report\.md/ }).click();
+
+  const document = page.locator(".markdown-document");
+  await expect(document.getByRole("heading", { name: "Run report", level: 1 })).toBeVisible();
+  await expect(document.locator("strong")).toHaveText("bold");
+  await expect(document.locator(".markdown-inline-code")).toHaveText("code");
+  await expect(document.locator("table td").first()).toHaveText("parse");
+  await expect(document.locator(".markdown-table-scroll th").nth(1)).toHaveCSS("text-align", "right");
+  await expect(document.locator('input[type="checkbox"]')).toHaveCount(2);
+  await expect(document.locator('input[type="checkbox"]').first()).toBeChecked();
+  await expect(document.locator('input[type="checkbox"]').first()).toBeDisabled();
+
+  // Fenced code reaches the shared highlighter rather than a bare <pre>.
+  await expect(document.locator('.markdown-code-block[data-md-language="ts"] [data-highlight-state="highlighted"]')).toBeVisible();
+
+  // A local image is served from the snapshot's own revision-scoped resource.
+  const image = document.locator("img.markdown-image");
+  await expect(image).toHaveAttribute("src", /\/api\/artifacts\/[^/]+\/revisions\/[0-9a-f]{64}\/resources\/media-/u);
+  await expect(image).toHaveJSProperty("complete", true);
+
+  // Markup inside the document is text, and it never ran.
+  await expect(document.locator("[data-md-raw-html]")).toContainText("onerror");
+  await expect(page.locator("body")).not.toHaveAttribute("data-markdown-executed", "yes");
+  await expect(document.locator("img[src='x']")).toHaveCount(0);
+
+  // Only a followable scheme becomes an anchor; the rest survives as its label.
+  const link = document.getByRole("link", { name: "safe link" });
+  await expect(link).toHaveAttribute("href", "https://example.com/page");
+  await expect(link).toHaveAttribute("rel", "noreferrer noopener");
+  await expect(document.getByRole("link", { name: "blocked link" })).toHaveCount(0);
+  await expect(document).toContainText("blocked link");
+
+  // The outline navigates the document without touching Studio's hash route.
+  const outline = page.locator(".markdown-outline-rail");
+  await expect(outline.getByRole("button", { name: "Deep detail" })).toBeVisible();
+  await outline.getByRole("button", { name: "Deep detail" }).click();
+  await expect(document.locator('[data-md-heading="deep-detail"]')).toBeInViewport();
+  expect(new URL(page.url()).hash).toBe("#/artifacts");
+  await document.getByRole("button", { name: "Findings" }).click();
+  await expect(document.locator('[data-md-heading="findings"]')).toBeInViewport();
+  expect(new URL(page.url()).hash).toBe("#/artifacts");
+
+  await expect(page.locator(".artifact-editor-header")).toContainText("studio.markdown-commonmark");
+  await page.screenshot({ path: testInfo.outputPath("artifact-markdown-wide.png"), fullPage: true });
+  expect(failures).toEqual([]);
+});
+
+test("keeps the Markdown document readable at compact and narrow widths", async ({ page }, testInfo) => {
+  const failures = watchFailures(page);
+  for (const layout of [{ name: "compact", width: 1024, height: 768 }, { name: "narrow", width: 390, height: 844 }]) {
+    await page.setViewportSize({ width: layout.width, height: layout.height });
+    await openArtifacts(page);
+    await page.getByRole("button", { name: /report\.md/ }).click();
+    await expect(page.locator(".markdown-document").getByRole("heading", { name: "Run report" })).toBeVisible();
+    // The outline rail is the first thing to go; the document itself never is.
+    await expect(page.locator(".markdown-outline-rail")).toBeVisible({ visible: layout.width > 760 });
+    const overflows = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
+    expect(overflows, `${layout.name} markdown overflows horizontally`).toBe(false);
+    await page.screenshot({ path: testInfo.outputPath(`artifact-markdown-${layout.name}.png`), fullPage: true });
+  }
+  expect(failures).toEqual([]);
 });
 
 test("renders a PPTX snapshot through Studio without a provisioned Qoder Canvas runtime", async ({ page }) => {

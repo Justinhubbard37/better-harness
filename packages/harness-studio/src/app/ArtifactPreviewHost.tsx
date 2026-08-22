@@ -5,29 +5,48 @@ import {
   type ArtifactDescriptor,
 } from "../artifact-model.js";
 import { ArtifactCodeView } from "./ArtifactCodeView.js";
+import { useRovingTablist } from "./roving-tablist.js";
+import { studioApiError } from "./studio-api.js";
+import { useStudioTheme } from "./studio-theme.js";
 
 type PreviewState = "compiling" | "starting" | "ready" | "compile-failed" | "runtime-failed";
+type PreviewSurface = "preview" | "source";
+
+/**
+ * How long the host waits for the preview document to answer `runtime.init`.
+ *
+ * Compilation has already finished by then, so the only work left is loading a
+ * retained build and executing it. Silence past this point means the frame will
+ * never answer — most often because the build it names was evicted and the
+ * route returned a JSON error the frame cannot respond from — and an unbounded
+ * wait would leave "Starting…" on screen permanently.
+ */
+const PREVIEW_HANDSHAKE_TIMEOUT_MS = 10_000;
+
+const ARTIFACT_PREVIEW_PANEL_ID = "artifact-preview-panel";
 
 export function ArtifactPreviewHost(props: {
   artifact: ArtifactDescriptor;
   liveGeneration: number;
 }): React.JSX.Element {
-  const [surface, setSurface] = useState<"preview" | "source">("preview");
+  const [surface, setSurface] = useState<PreviewSurface>("preview");
   const [build, setBuild] = useState<ArtifactBuildSnapshot>();
   const [previewState, setPreviewState] = useState<PreviewState>("compiling");
   const [failure, setFailure] = useState<string>();
   const [source, setSource] = useState<string>();
+  const [attempt, setAttempt] = useState(0);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const channelRef = useRef<MessageChannel | undefined>(undefined);
+  const handshakeRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const requestRef = useRef(0);
+  const theme = useStudioTheme();
+  const tablist = useRovingTablist<PreviewSurface>({ ids: ["preview", "source"], active: surface, onSelect: setSurface, panelId: ARTIFACT_PREVIEW_PANEL_ID });
 
   useEffect(() => {
     const buildUri = props.artifact.build?.snapshotUri;
     const request = ++requestRef.current;
     const controller = new AbortController();
-    channelRef.current?.port1.close();
-    channelRef.current?.port2.close();
-    channelRef.current = undefined;
+    closeChannel(channelRef, handshakeRef);
     setPreviewState("compiling");
     setFailure(undefined);
     setBuild(undefined);
@@ -37,7 +56,7 @@ export function ArtifactPreviewHost(props: {
       return () => controller.abort();
     }
     void fetch(buildUri, { signal: controller.signal, cache: "no-store" }).then(async (response) => {
-      if (!response.ok) throw new Error(await studioBuildError(response));
+      if (!response.ok) throw new Error(await studioApiError(response));
       const value: unknown = await response.json();
       if (!isArtifactBuildSnapshot(value)
         || value.artifactId !== props.artifact.id
@@ -59,7 +78,7 @@ export function ArtifactPreviewHost(props: {
       }
     });
     return () => controller.abort();
-  }, [props.artifact.build?.snapshotUri, props.artifact.id, props.artifact.revision.id, props.liveGeneration]);
+  }, [props.artifact.build?.snapshotUri, props.artifact.id, props.artifact.revision.id, props.liveGeneration, attempt]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -73,16 +92,19 @@ export function ArtifactPreviewHost(props: {
     return () => controller.abort();
   }, [props.artifact.revision.content.uri]);
 
-  useEffect(() => () => {
-    channelRef.current?.port1.close();
-    channelRef.current?.port2.close();
-  }, []);
+  // The preview learns the theme once at handshake time, so a later Studio
+  // toggle has to be pushed down the same channel or the frame keeps rendering
+  // against the palette that was current when it started.
+  useEffect(() => {
+    channelRef.current?.port1.postMessage({ type: "runtime.theme", theme });
+  }, [theme]);
+
+  useEffect(() => () => closeChannel(channelRef, handshakeRef), []);
 
   const initializePreview = (): void => {
     const frame = frameRef.current;
     if (build?.status !== "ready" || build.previewUri === undefined || frame?.contentWindow == null) return;
-    channelRef.current?.port1.close();
-    channelRef.current?.port2.close();
+    closeChannel(channelRef, handshakeRef);
     const channel = new MessageChannel();
     channelRef.current = channel;
     const expected = {
@@ -94,46 +116,75 @@ export function ArtifactPreviewHost(props: {
     channel.port1.onmessage = (event: MessageEvent<unknown>) => {
       const message = event.data;
       if (!isRuntimeMessage(message, expected)) return;
+      clearTimeout(handshakeRef.current);
+      handshakeRef.current = undefined;
       if (message.type === "renderCompleted") {
         setPreviewState("ready");
         setFailure(undefined);
       } else {
+        // A failure can arrive long after a completed render, because a throw
+        // in an effect or a handler breaks a preview that already mounted.
         setPreviewState("runtime-failed");
         setFailure(message.message ?? "Artifact preview failed at runtime.");
       }
     };
     channel.port1.start();
     setPreviewState("starting");
-    const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+    handshakeRef.current = setTimeout(() => {
+      setPreviewState("runtime-failed");
+      setFailure("The sandboxed Preview did not report a render. Its build may no longer be retained — retry to rebuild this revision.");
+    }, PREVIEW_HANDSHAKE_TIMEOUT_MS);
     frame.contentWindow.postMessage({ ...expected, type: "runtime.init", theme }, "*", [channel.port2]);
   };
 
   return <section className="artifact-runtime-host" aria-label={`Artifact view: ${props.artifact.label}`}>
-    <div className="artifact-runtime-tabs" role="tablist" aria-label="Artifact view mode">
-      <button type="button" role="tab" aria-selected={surface === "preview"} onClick={() => setSurface("preview")}>Preview</button>
-      <button type="button" role="tab" aria-selected={surface === "source"} onClick={() => setSurface("source")}>Source</button>
+    <div className="artifact-runtime-header">
+      {/* A tablist may only contain tabs, so the build identity sits beside the
+          strip rather than inside it. */}
+      <div className="artifact-runtime-tabs" aria-label="Artifact view mode" {...tablist.tablistProps}>
+        <button type="button" {...tablist.getTabProps("preview")} onClick={() => setSurface("preview")}>Preview</button>
+        <button type="button" {...tablist.getTabProps("source")} onClick={() => setSurface("source")}>Source</button>
+      </div>
       <span>{build === undefined ? "No build" : `${shortBuild(build.buildId)} · build ${build.sequence}`}</span>
     </div>
-    {surface === "source"
-      ? source === undefined
-        ? <p className="artifact-status" role="status">Loading source…</p>
-        : <ArtifactCodeView mode="source" content={source} sourceHint={props.artifact.label} className="artifact-code-preview" label={`Artifact source: ${props.artifact.label}`} />
-      : build?.status === "ready" && build.previewUri !== undefined
-        ? <iframe
-          key={build.buildId}
-          ref={frameRef}
-          className="artifact-frame artifact-runtime-frame"
-          title={`Live artifact preview: ${props.artifact.label}`}
-          src={build.previewUri}
-          sandbox="allow-scripts"
-          referrerPolicy="no-referrer"
-          onLoad={initializePreview}
-        />
-        : <ArtifactBuildFailure build={build} failure={failure} state={previewState} />}
-    <p className={`artifact-runtime-status state-${previewState}`} role={previewState.endsWith("failed") ? "alert" : "status"} aria-live="polite">
-      {previewStatus(previewState, failure)}
-    </p>
+    <div className="artifact-runtime-panel" id={ARTIFACT_PREVIEW_PANEL_ID} role="tabpanel">
+      {surface === "source"
+        ? source === undefined
+          ? <p className="artifact-status" role="status">Loading source…</p>
+          : <ArtifactCodeView mode="source" content={source} sourceHint={props.artifact.label} className="artifact-code-preview" label={`Artifact source: ${props.artifact.label}`} />
+        : build?.status === "ready" && build.previewUri !== undefined
+          ? <iframe
+            key={build.buildId}
+            ref={frameRef}
+            className="artifact-frame artifact-runtime-frame"
+            title={`Live artifact preview: ${props.artifact.label}`}
+            src={build.previewUri}
+            sandbox="allow-scripts"
+            referrerPolicy="no-referrer"
+            onLoad={initializePreview}
+          />
+          : <ArtifactBuildFailure build={build} failure={failure} state={previewState} />}
+    </div>
+    <div
+      className={`artifact-runtime-status state-${previewState}`}
+      role={previewState.endsWith("failed") ? "alert" : "status"}
+      aria-live="polite"
+    >
+      <span>{previewStatus(previewState, failure)}</span>
+      {previewState.endsWith("failed") && <button type="button" className="artifact-runtime-retry" onClick={() => setAttempt((value) => value + 1)}>Retry</button>}
+    </div>
   </section>;
+}
+
+function closeChannel(
+  channelRef: React.RefObject<MessageChannel | undefined>,
+  handshakeRef: React.RefObject<ReturnType<typeof setTimeout> | undefined>,
+): void {
+  clearTimeout(handshakeRef.current);
+  handshakeRef.current = undefined;
+  channelRef.current?.port1.close();
+  channelRef.current?.port2.close();
+  channelRef.current = undefined;
 }
 
 function ArtifactBuildFailure(props: {
@@ -177,16 +228,4 @@ function previewStatus(state: PreviewState, failure?: string): string {
 
 function shortBuild(value: string): string {
   return `${value.slice(7, 15)}…`;
-}
-
-async function studioBuildError(response: Response): Promise<string> {
-  try {
-    const payload: unknown = await response.json();
-    if (typeof payload === "object" && payload !== null && typeof (payload as { error?: unknown }).error === "string") {
-      return (payload as { error: string }).error;
-    }
-  } catch {
-    // Fall through to the bounded status text.
-  }
-  return `Artifact build failed (${response.status}).`;
 }

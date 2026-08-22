@@ -10,6 +10,7 @@ import {
 } from "../artifact-model.js";
 import { ArtifactCodeView } from "./ArtifactCodeView.js";
 import { ArtifactPreviewHost } from "./ArtifactPreviewHost.js";
+import { MarkdownArtifactView } from "./MarkdownArtifactView.js";
 import { studioApiError } from "./studio-api.js";
 
 export interface ArtifactViewProviderContext {
@@ -36,6 +37,11 @@ export const ARTIFACT_VIEW_PROVIDERS: readonly ArtifactViewProvider[] = Object.f
     id: "qoder-canvas",
     matches: (artifact) => artifact.renderer.type === "qoder-canvas" && artifact.renderer.viewUri !== undefined,
     render: ({ artifact }) => <iframe key={artifact.revision.digest} className="artifact-frame" title={`Artifact preview: ${artifact.label}`} src={artifact.renderer.viewUri} sandbox="allow-scripts" referrerPolicy="no-referrer" />,
+  },
+  {
+    id: "studio.markdown",
+    matches: (artifact) => artifact.renderer.id === "studio.markdown",
+    render: ({ artifact }) => <MarkdownArtifactView key={artifact.revision.digest} artifact={artifact} />,
   },
   {
     id: "studio.pptx-dom",

@@ -13,6 +13,7 @@ describe("Artifact View provider registry", () => {
     expect(ARTIFACT_VIEW_PROVIDERS.map((provider) => provider.id)).toEqual([
       "studio.react-preview",
       "qoder-canvas",
+      "studio.markdown",
       "studio.pptx-dom",
       "studio.svg",
       "studio.image",
@@ -23,6 +24,7 @@ describe("Artifact View provider registry", () => {
   it.each([
     ["dynamic React", descriptor({ id: "studio.react-preview", type: "sandboxed-web" }, { backing: "code", format: "tsx" }), "studio.react-preview"],
     ["Qoder Canvas", descriptor({ id: "qoder-canvas.deck", type: "qoder-canvas", viewUri: "/api/artifacts/deck/view" }), "qoder-canvas"],
+    ["Markdown", descriptor({ id: "studio.markdown" }, { format: "md" }), "studio.markdown"],
     ["PPTX", descriptor({ id: "studio.pptx-dom" }, { format: "pptx" }), "studio.pptx-dom"],
     ["SVG", descriptor({ id: "studio.svg" }, { format: "svg" }), "studio.svg"],
     ["image", descriptor({ id: "studio.image" }, { format: "png" }), "studio.image"],
