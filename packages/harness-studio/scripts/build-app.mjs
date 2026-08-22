@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild-wasm";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const repositoryRoot = join(packageRoot, "..", "..");
 const appDir = join(packageRoot, "dist", "app");
 const inspectorAssetRoot = join(packageRoot, "..", "..", "scripts", "harness-inspector", "ui");
 
@@ -23,6 +24,19 @@ await build({
   minify: true,
   sourcemap: true,
   define: { "process.env.NODE_ENV": '"production"' },
+  logLevel: "warning",
+});
+// Studio owns the on-demand collection lifecycle, while the existing MJS
+// capability remains the no-install public entrypoint. Bundle that capability
+// into the server distribution so the npm package and direct scripts share the
+// same provider implementations without making browser code import them.
+await build({
+  entryPoints: [join(repositoryRoot, "scripts", "agent-customize", "index.mjs")],
+  outfile: join(packageRoot, "dist", "server", "runtime", "agent-customize-runtime.mjs"),
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: "node22",
   logLevel: "warning",
 });
 await Promise.all([

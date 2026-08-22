@@ -6,6 +6,7 @@ import { startHarnessStudioServer } from "./server.js";
 import { readSourceCatalogFile } from "./source-catalog.js";
 import { runWalnutBootstrapCli } from "./walnut-cli.js";
 import { runArtifactProviderCli } from "./artifact-provider-cli.js";
+import { createBundledAgentCustomizationCollector } from "./customization-collector.js";
 
 const HELP = `harness-studio — local studio for harness runs and compare evidence
 
@@ -231,6 +232,7 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     port: parsed.port,
     host: parsed.host,
     allowRemote: parsed.allowRemote,
+    customizationCollector: createBundledAgentCustomizationCollector(),
     ...(inspectorPath !== undefined ? { inspectorReportPath: resolve(inspectorPath) } : {}),
     ...(parsed.evidence !== undefined ? { evidenceDir: resolve(parsed.evidence) } : {}),
     ...(harnessSource !== undefined ? { harnessSource } : {}),

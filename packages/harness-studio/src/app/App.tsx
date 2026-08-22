@@ -17,6 +17,7 @@ import { GitBranch } from "@phosphor-icons/react/GitBranch";
 import { Moon } from "@phosphor-icons/react/Moon";
 import { MagnifyingGlass } from "@phosphor-icons/react/MagnifyingGlass";
 import { Package } from "@phosphor-icons/react/Package";
+import { PuzzlePiece } from "@phosphor-icons/react/PuzzlePiece";
 import { SidebarSimple } from "@phosphor-icons/react/SidebarSimple";
 import { SquaresFour } from "@phosphor-icons/react/SquaresFour";
 import { Sun } from "@phosphor-icons/react/Sun";
@@ -28,6 +29,7 @@ import {
 } from "../artifact-model.js";
 import { ArtifactView } from "./ArtifactView.js";
 import { CompareView } from "./CompareView.js";
+import { CustomizationView } from "./CustomizationView.js";
 import { ExperimentView } from "./ExperimentView.js";
 import { GitHistoryView } from "./GitHistoryView.js";
 import { InputTraceView } from "./InputTraceView.js";
@@ -50,6 +52,7 @@ import {
 
 const NAV_ICONS: Record<StudioArea, Icon> = {
   overview: SquaresFour,
+  customizations: PuzzlePiece,
   inputs: ChatText,
   sessions: Binoculars,
   commits: GitBranch,
@@ -62,6 +65,7 @@ const NAV_ICONS: Record<StudioArea, Icon> = {
 // view name alone rather than repeating the group as an eyebrow.
 const AREA_COPY: Record<StudioArea, string> = {
   overview: "Overview",
+  customizations: "Customizations",
   inputs: "Inputs",
   sessions: "Sessions",
   commits: "Commits",
@@ -93,6 +97,9 @@ const EMPTY_CONFIG: StudioConfig = {
   sessionCount: 0,
   inputCount: 0,
   intentAnalysisEnabled: false,
+  customizationAnalysisEnabled: false,
+  customizationAnalyzed: false,
+  customizationDefinitionCount: 0,
 };
 
 function initialStudioTheme(): StudioTheme {
@@ -222,6 +229,14 @@ export function App(): React.JSX.Element {
     setWorkspaceRevision((revision) => revision + 1);
   }
 
+  function customizationAnalyzed(definitionCount: number): void {
+    setConfig((current) => current === undefined ? current : {
+      ...current,
+      customizationAnalyzed: true,
+      customizationDefinitionCount: definitionCount,
+    });
+  }
+
   if (config === undefined) {
     return <main className="studio-loading"><span className="studio-loading-mark"><GitBranch aria-hidden="true" size={18} weight="bold" /></span><p>Loading Harness control plane…</p></main>;
   }
@@ -262,6 +277,9 @@ export function App(): React.JSX.Element {
       </header>
       <div className={`studio-surface studio-surface-${area}`}>
         {area === "overview" && <Overview config={config} onOpen={openArea} />}
+        {area === "customizations" && (config.customizationAnalysisEnabled
+          ? <CustomizationView key={`customizations-${workspaceRevision}`} analyzed={config.customizationAnalyzed} onAnalyzed={customizationAnalyzed} />
+          : <EmptyWorkspace eyebrow="Customization catalog" title={config.workspaceConnected ? "Customization analysis is unavailable" : "Open a project workspace"} detail={config.workspaceConnected ? "This Studio launcher does not include the local customization collector." : "Choose the project directory in Sessions before analyzing Host customizations."} />)}
         {area === "inputs" && (config.workspaceWorkbenchEnabled ? <InputTraceView key={`inputs-${workspaceRevision}`} intentAnalysisEnabled={config.intentAnalysisEnabled} /> : <EmptyWorkspace eyebrow="User input trace" title={config.workspaceConnected ? "No retained input trace is available" : "Open a project workspace"} detail={config.workspaceConnected ? "This workspace source does not include structured Inspector dialogue evidence." : "Choose the project directory in Sessions before browsing retained user inputs and exact file operations."} />)}
         {area === "sessions" && <SessionsWorkspace key={`sessions-${dataRevision}-${workspaceRevision}`} config={config} onWorkspaceChanged={workspaceChanged} onSelectSession={setSelectedSessionId} onCompare={(ids) => { setSessionCompareIds(ids); setCompareSurface("sessions"); openArea("compare"); }} />}
         {area === "commits" && (config.gitEnabled ? <GitHistoryView key={`commits-${workspaceRevision}`} /> : <EmptyWorkspace eyebrow="Repository history" title={config.workspaceConnected ? "The open workspace is not a Git repository" : "Open a project workspace"} detail={config.workspaceConnected ? "Commit history is available only for a local workspace backed by Git." : "Choose the project directory in Sessions before browsing its local commit history."} />)}
@@ -378,6 +396,7 @@ function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => v
   // input teaches its own next action instead of only reporting "Not supplied".
   const inputs: Array<{ label: string; connected: boolean; purpose: string; flag?: string }> = [
     { label: "Project workspace", connected: props.config.workspaceConnected, purpose: "Discovers local agent inputs and Sessions" },
+    { label: "Customization collector", connected: props.config.customizationAnalysisEnabled, purpose: "Analyzes Codex, Claude, and Qoder only on request" },
     { label: "Inspector workbench", connected: props.config.workspaceWorkbenchEnabled || props.config.inspectorEnabled, purpose: "Capability and date evidence", flag: "--inspector" },
     { label: "Harness runtime", connected: props.config.aguiEnabled, purpose: "Live runs in the Debugger", flag: "--harness" },
     { label: "Compare evidence", connected: props.config.evidenceEnabled, purpose: "Frozen verdict and trials", flag: "--evidence" },

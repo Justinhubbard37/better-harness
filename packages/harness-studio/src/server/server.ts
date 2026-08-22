@@ -11,6 +11,7 @@ import {
   type HarnessUiExecutorFactory,
 } from "@qoder-ai/harness-ui";
 import { PiSdkExecutor, QoderSdkExecutor } from "@qoder-ai/harness/exec";
+import type { CustomizationAnalysisResponseV1 } from "@qoder-ai/harness/customization";
 import {
   loadHarnessExperimentManifest,
   runHarnessExperiment,
@@ -102,6 +103,7 @@ import {
   type IntentCorrelationPacketV1,
 } from "../intent-correlation-model.js";
 import { buildIntentCorrelationPacket } from "./intent-correlation.js";
+import { validateStudioCustomizationAnalysis, type StudioCustomizationCollector } from "./customization-collector.js";
 
 const builtInExecutorFactory: HarnessUiExecutorFactory = (context) => {
   if (context.runtimeId === "qoder") {
@@ -243,6 +245,8 @@ export interface HarnessStudioServerOptions {
   workspaceDirectoryPicker?: () => Promise<string | undefined>;
   /** Optional semantic claim provider. Results are accepted only after local contract validation. */
   intentAnalyzer?: StudioIntentAnalyzer;
+  /** On-demand local customization collector. Constructing the server never invokes it. */
+  customizationCollector?: StudioCustomizationCollector;
 }
 
 /**
@@ -282,6 +286,7 @@ export function createHarnessStudioServer(options: HarnessStudioServerOptions): 
     workspaceImports: new Map(),
     workspaceOpenStage: "idle",
     intentAnalysisRunning: false,
+    customizationAnalysisRunning: false,
   };
   const server = createServer((request, response) => {
     void route(request, response, resolvedOptions, state, experimentRuns).catch((error: unknown) => {
@@ -369,6 +374,8 @@ interface HarnessStudioState {
   workspaceImports: Map<string, WorkspaceImportSession>;
   workspaceOpenStage: "idle" | "choosing" | "discovering";
   intentAnalysisRunning: boolean;
+  customizationAnalysisRunning: boolean;
+  customizationAnalysis?: CustomizationAnalysisResponseV1;
 }
 
 function artifactOptions(options: HarnessStudioServerOptions, state: HarnessStudioState): HarnessStudioServerOptions {
@@ -401,6 +408,9 @@ async function route(
       sessionCount: state.workspace?.sessionCount ?? 0,
       inputCount: state.workspace?.inputTrace?.summary.inputCount ?? 0,
       intentAnalysisEnabled: options.intentAnalyzer !== undefined,
+      customizationAnalysisEnabled: options.customizationCollector !== undefined,
+      customizationAnalyzed: state.customizationAnalysis !== undefined,
+      customizationDefinitionCount: state.customizationAnalysis?.summary.definitionCount ?? 0,
     });
     return;
   }
@@ -450,6 +460,14 @@ async function route(
   }
   if (request.method === "GET" && url.pathname === "/api/inputs") {
     serveWorkspaceInputs(response, state);
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/customizations") {
+    serveWorkspaceCustomizations(response, state);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/customizations/analyze") {
+    await analyzeWorkspaceCustomizations(request, response, options, state);
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/intent-analysis") {
@@ -787,6 +805,7 @@ async function openWorkspace(
       localDirectory: workspacePath,
       ...(gitRoot === undefined ? {} : { gitRoot, gitCommitCache: new Map<string, GitCommitDetail>() }),
     };
+    state.customizationAnalysis = undefined;
     if (previous !== undefined) await rm(previous, { recursive: true, force: true }).catch(() => undefined);
     respondJson(response, 200, {
       opened: true,
@@ -965,6 +984,7 @@ async function commitWorkspaceImport(
     providers: [{ provider: "Harness Studio", status: "ok", discovered: accepted.size, included: accepted.size }],
     ownedDirectory: session.directory,
   };
+  state.customizationAnalysis = undefined;
   if (previous !== undefined && previous !== session.directory) {
     await rm(previous, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -1000,6 +1020,7 @@ async function disconnectWorkspace(
   }
   const workspace = state.workspace;
   state.workspace = undefined;
+  state.customizationAnalysis = undefined;
   if (workspace?.ownedDirectory !== undefined) await rm(workspace.ownedDirectory, { recursive: true, force: true });
   respondJson(response, 200, { disconnected: workspace !== undefined });
 }
@@ -1043,6 +1064,7 @@ async function cleanupWorkspaceImports(state: HarnessStudioState): Promise<void>
   await Promise.all([...state.workspaceImports.keys()].map((sessionId) => removeWorkspaceImport(state, sessionId)));
   if (state.workspace?.ownedDirectory !== undefined) await rm(state.workspace.ownedDirectory, { recursive: true, force: true });
   state.workspace = undefined;
+  state.customizationAnalysis = undefined;
 }
 
 async function serveWorkspaceSessions(response: ServerResponse, state: HarnessStudioState): Promise<void> {
@@ -1071,6 +1093,54 @@ function serveWorkspaceInputs(response: ServerResponse, state: HarnessStudioStat
     return;
   }
   respondJson(response, 200, state.workspace.inputTrace, { "Cache-Control": "no-store" });
+}
+
+function serveWorkspaceCustomizations(response: ServerResponse, state: HarnessStudioState): void {
+  if (state.customizationAnalysis === undefined) {
+    respondJson(response, 404, { error: "Customizations have not been analyzed for this workspace." });
+    return;
+  }
+  respondJson(response, 200, state.customizationAnalysis, { "Cache-Control": "no-store" });
+}
+
+async function analyzeWorkspaceCustomizations(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: HarnessStudioServerOptions,
+  state: HarnessStudioState,
+): Promise<void> {
+  if (!sameOriginRequest(request)) {
+    respondJson(response, 403, { error: "Cross-origin customization analysis is not allowed." });
+    return;
+  }
+  if (options.customizationCollector === undefined) {
+    respondJson(response, 501, { error: "This Studio launcher does not provide customization analysis." });
+    return;
+  }
+  const workspacePath = state.workspace === undefined
+    ? resolve(options.cwd ?? process.cwd())
+    : state.workspace.localDirectory;
+  if (workspacePath === undefined) {
+    respondJson(response, 422, { error: "An imported run folder cannot be used as a local customization workspace." });
+    return;
+  }
+  if (state.customizationAnalysisRunning) {
+    respondJson(response, 409, { error: "Customization analysis is already running." });
+    return;
+  }
+  state.customizationAnalysisRunning = true;
+  try {
+    const analysis = validateStudioCustomizationAnalysis(
+      await options.customizationCollector.analyze(workspacePath),
+      [workspacePath],
+    );
+    state.customizationAnalysis = analysis;
+    respondJson(response, 200, analysis, { "Cache-Control": "no-store" });
+  } catch {
+    respondJson(response, 503, { error: "Customization analysis could not complete for this workspace." }, { "Cache-Control": "no-store" });
+  } finally {
+    state.customizationAnalysisRunning = false;
+  }
 }
 
 async function analyzeWorkspaceIntent(

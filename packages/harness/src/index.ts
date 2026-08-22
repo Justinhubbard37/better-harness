@@ -43,3 +43,4 @@ export {
   describeBuiltInAdapter,
 } from "./resolver/adapter-registry.js";
 export { createHarnessServices, type HarnessServices } from "./language/harness-module.js";
+export * from "./customization/index.js";

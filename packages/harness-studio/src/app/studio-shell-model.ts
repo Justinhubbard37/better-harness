@@ -1,5 +1,6 @@
 export type StudioArea =
   | "overview"
+  | "customizations"
   | "inputs"
   | "sessions"
   | "commits"
@@ -25,6 +26,9 @@ export interface StudioConfig {
   sessionCount: number;
   inputCount: number;
   intentAnalysisEnabled: boolean;
+  customizationAnalysisEnabled: boolean;
+  customizationAnalyzed: boolean;
+  customizationDefinitionCount: number;
 }
 
 export type StudioAvailability = "ready" | "partial" | "foundation";
@@ -41,6 +45,17 @@ export function studioDestinations(config: StudioConfig): readonly StudioDestina
   const compareAvailable = config.experimentEnabled || config.evidenceEnabled;
   return [
     { id: "overview", label: "Overview", group: "Control", availability: "ready", status: "Control plane" },
+    {
+      id: "customizations",
+      label: "Customizations",
+      group: "Control",
+      availability: config.customizationAnalysisEnabled ? "ready" : "foundation",
+      status: config.customizationAnalyzed
+        ? `${config.customizationDefinitionCount} definition${config.customizationDefinitionCount === 1 ? "" : "s"}`
+        : config.customizationAnalysisEnabled
+          ? "Analyze local Hosts"
+          : "Collector unavailable",
+    },
     {
       id: "inputs",
       label: "Inputs",

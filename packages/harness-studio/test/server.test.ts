@@ -199,6 +199,9 @@ describe("harness-studio server", () => {
       sessionCount: 0,
       inputCount: 0,
       intentAnalysisEnabled: false,
+      customizationAnalysisEnabled: false,
+      customizationAnalyzed: false,
+      customizationDefinitionCount: 0,
     });
     expect((await fetch(`${started.url}/api/inputs`)).status).toBe(404);
   });

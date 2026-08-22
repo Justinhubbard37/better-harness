@@ -22,14 +22,18 @@ const EMPTY: StudioConfig = {
   sessionCount: 0,
   inputCount: 0,
   intentAnalysisEnabled: false,
+  customizationAnalysisEnabled: false,
+  customizationAnalyzed: false,
+  customizationDefinitionCount: 0,
 };
 
 describe("Studio control-plane navigation", () => {
-  it("offers the seven workbenches with honest availability", () => {
+  it("offers the eight workbenches with honest availability", () => {
     const destinations = studioDestinations(EMPTY);
 
     expect(destinations.map((destination) => destination.id)).toEqual([
       "overview",
+      "customizations",
       "inputs",
       "sessions",
       "commits",
@@ -62,7 +66,7 @@ describe("Studio control-plane navigation", () => {
       availability: "foundation",
       status: "Workspace required",
     });
-    expect(capabilitySummary(EMPTY)).toEqual({ ready: 1, partial: 1, foundation: 5 });
+    expect(capabilitySummary(EMPTY)).toEqual({ ready: 1, partial: 1, foundation: 6 });
   });
 
   it("routes configured artifacts to Debugger, Compare, and Inspector surfaces", () => {
@@ -81,6 +85,9 @@ describe("Studio control-plane navigation", () => {
       sessionCount: 3,
       inputCount: 8,
       intentAnalysisEnabled: true,
+      customizationAnalysisEnabled: true,
+      customizationAnalyzed: true,
+      customizationDefinitionCount: 12,
     };
 
     expect(compareSurfaces(config)).toEqual(["sessions", "bench", "results"]);
@@ -89,7 +96,11 @@ describe("Studio control-plane navigation", () => {
       availability: "ready",
       status: "Live runs",
     });
-    expect(capabilitySummary(config)).toEqual({ ready: 7, partial: 0, foundation: 0 });
+    expect(studioDestinations(config).find((destination) => destination.id === "customizations")).toMatchObject({
+      availability: "ready",
+      status: "12 definitions",
+    });
+    expect(capabilitySummary(config)).toEqual({ ready: 8, partial: 0, foundation: 0 });
   });
 
   it("treats an artifact directory as independent of every other input", () => {

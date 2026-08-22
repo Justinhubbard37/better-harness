@@ -64,6 +64,10 @@
     "./artifacts": {
       "types": "./dist/artifacts/index.d.ts",
       "import": "./dist/artifacts/index.js"
+    },
+    "./customization": {
+      "types": "./dist/customization/index.d.ts",
+      "import": "./dist/customization/index.js"
     }
   },
   "files": [

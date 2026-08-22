@@ -33,6 +33,13 @@ export {
 } from "./server/server.js";
 export { createQoderCliIntentAnalyzer, type QoderCliIntentAnalyzerOptions } from "./server/qoder-intent-analyzer.js";
 export {
+  createAgentCustomizationCollector,
+  createBundledAgentCustomizationCollector,
+  validateStudioCustomizationAnalysis,
+  type AgentCustomizationCollectorOptions,
+  type StudioCustomizationCollector,
+} from "./server/customization-collector.js";
+export {
   INTENT_CORRELATION_ANALYSIS_KIND,
   INTENT_CORRELATION_PACKET_KIND,
   IntentCorrelationContractError,
