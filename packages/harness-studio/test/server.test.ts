@@ -155,6 +155,7 @@ describe("harness-studio server", () => {
       artifactsEnabled: false,
       evidenceEnabled: true,
       experimentEnabled: false,
+      gitEnabled: false,
       harnessMode: "none",
       historyEnabled: false,
       inspectorEnabled: false,

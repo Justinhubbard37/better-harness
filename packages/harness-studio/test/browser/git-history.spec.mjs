@@ -1,0 +1,96 @@
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { expect, test } from "@playwright/test";
+import { startHarnessStudioServer } from "../../dist/server/server.js";
+
+const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+let studio;
+let workspace;
+
+test.beforeAll(async () => {
+  workspace = await mkdtemp(join(tmpdir(), "studio-git-browser-"));
+  git("init", "-b", "main");
+  git("config", "user.name", "Studio Browser");
+  git("config", "user.email", "browser@example.com");
+  await writeFile(join(workspace, "README.md"), "# Commit view\n", "utf8");
+  git("add", "README.md");
+  git("commit", "-m", "docs: add commit view fixture", "-m", "The full body remains visible in details.");
+  git("tag", "v1.0.0");
+  git("switch", "-c", "feature/history-filter");
+  await writeFile(join(workspace, "feature.ts"), "export const feature = true;\n", "utf8");
+  git("add", "feature.ts");
+  git("commit", "-m", "feat: add filtered branch commit");
+  git("switch", "main");
+  await mkdir(join(workspace, "docs"));
+  await writeFile(join(workspace, "docs", "guide.md"), "Guide\n", "utf8");
+  git("add", "docs/guide.md");
+  git("commit", "-m", "docs: add main guide");
+  git("merge", "--no-ff", "feature/history-filter", "-m", "merge: history fixture");
+  git("update-ref", "refs/remotes/origin/main", "HEAD");
+  studio = await startHarnessStudioServer({
+    appDir: join(packageRoot, "dist", "app"),
+    port: 0,
+    workspaceDirectoryPicker: async () => workspace,
+    workspaceSessionProvider: { discover: async () => ({ label: "commit-view-fixture", sessions: [] }) },
+  });
+  const opened = await fetch(`${studio.url}/api/workspace/open`, { method: "POST" });
+  if (!opened.ok) throw new Error(`Could not open Git fixture: ${await opened.text()}`);
+});
+
+test.afterAll(async () => {
+  await studio?.close();
+  if (workspace) await rm(workspace, { recursive: true, force: true });
+});
+
+test("browses refs, commits, changed files, and patches across Studio layouts", async ({ page }, testInfo) => {
+  const failures = [];
+  page.on("console", (message) => { if (message.type() === "error") failures.push(message.text()); });
+  page.on("pageerror", (error) => failures.push(error.message));
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto(`${studio.url}/#/commits`);
+  await expect(page.getByRole("main", { name: "" }).filter({ has: page.getByText("Commit history", { exact: true }) })).toBeVisible();
+  await expect(page.getByText("main", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("row", { name: /merge: history fixture/ })).toBeVisible();
+  await page.getByRole("row", { name: /feat: add filtered branch commit/ }).click();
+  await expect(page.getByText("Changed files", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /feature\.ts/ }).click();
+  await expect(page.locator(".git-file-diff")).toContainText("export const feature");
+  await page.screenshot({ path: testInfo.outputPath("git-history-wide.png"), fullPage: true });
+
+  const localGroup = page.getByRole("button", { name: /Local branches/ });
+  await expect(localGroup).toHaveAttribute("aria-expanded", "true");
+  await page.getByRole("button", { name: /feature\/history-filter/ }).click();
+  await expect(page.getByRole("row", { name: /docs: add main guide/ })).toHaveCount(0);
+  await expect(page.getByRole("row", { name: /feat: add filtered branch commit/ })).toBeVisible();
+  await page.getByLabel("Filter commit history").fill("browser@example.com");
+  await expect(page.getByRole("row", { name: /feat: add filtered branch commit/ })).toBeVisible();
+
+  await page.setViewportSize({ width: 900, height: 760 });
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: testInfo.outputPath("git-history-compact.png"), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(250);
+  await expect(page.getByRole("navigation", { name: "Commit workbench panes" })).toBeVisible();
+  await page.getByRole("button", { name: "Refs", exact: true }).click();
+  await expect(page.getByRole("complementary", { name: "Repository refs" })).toBeVisible();
+  await page.getByRole("button", { name: "History", exact: true }).click();
+  await expect(page.getByRole("button", { name: "History", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("button", { name: "History", exact: true })).toHaveCSS("background-color", "rgb(20, 41, 74)");
+  await expect(page.getByRole("button", { name: "Details", exact: true })).not.toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("button", { name: "Details", exact: true })).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(page.getByRole("region", { name: "Commit history" })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("git-history-narrow.png"), fullPage: true });
+  expect(failures).toEqual([]);
+});
+
+function git(...args) {
+  return execFileSync("git", args, {
+    cwd: workspace,
+    encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C" },
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}

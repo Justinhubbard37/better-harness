@@ -33,6 +33,7 @@ import {
 } from "../artifact-model.js";
 import { CompareView } from "./CompareView.js";
 import { ExperimentView } from "./ExperimentView.js";
+import { GitHistoryView } from "./GitHistoryView.js";
 import { HighlightedCode } from "./HighlightedCode.js";
 import { RunView } from "./RunView.js";
 import type { DebuggerSession } from "./session-debugger-model.js";
@@ -53,6 +54,7 @@ import {
 const NAV_ICONS: Record<StudioArea, Icon> = {
   overview: SquaresFour,
   sessions: Binoculars,
+  commits: GitBranch,
   artifacts: Package,
   debugger: BugBeetle,
   compare: Flask,
@@ -63,6 +65,7 @@ const NAV_ICONS: Record<StudioArea, Icon> = {
 const AREA_COPY: Record<StudioArea, string> = {
   overview: "Overview",
   sessions: "Sessions",
+  commits: "Commits",
   artifacts: "Artifacts",
   debugger: "Debugger",
   compare: "Compare",
@@ -83,6 +86,7 @@ const EMPTY_CONFIG: StudioConfig = {
   artifactsEnabled: false,
   evidenceEnabled: false,
   experimentEnabled: false,
+  gitEnabled: false,
   harnessMode: "none",
   historyEnabled: false,
   inspectorEnabled: false,
@@ -260,6 +264,7 @@ export function App(): React.JSX.Element {
       <div className={`studio-surface studio-surface-${area}`}>
         {area === "overview" && <Overview config={config} onOpen={openArea} />}
         {area === "sessions" && <SessionsWorkspace key={`sessions-${dataRevision}-${workspaceRevision}`} config={config} onWorkspaceChanged={workspaceChanged} onSelectSession={setSelectedSessionId} onCompare={(ids) => { setSessionCompareIds(ids); setCompareSurface("sessions"); openArea("compare"); }} />}
+        {area === "commits" && (config.gitEnabled ? <GitHistoryView key={`commits-${workspaceRevision}`} /> : <EmptyWorkspace eyebrow="Repository history" title={config.workspaceConnected ? "The open workspace is not a Git repository" : "Open a project workspace"} detail={config.workspaceConnected ? "Commit history is available only for a local workspace backed by Git." : "Choose the project directory in Sessions before browsing its local commit history."} />)}
         {area === "artifacts" && <ArtifactsWorkspace key={`artifacts-${dataRevision}-${config.artifactsEnabled}-${selectedSessionId ?? "none"}`} config={config} selectedSessionId={selectedSessionId} />}
         {area === "debugger" && <DebuggerWorkspace config={config} />}
         {area === "compare" && <CompareWorkspace key={`compare-${dataRevision}-${workspaceRevision}-${config.experimentEnabled}-${config.evidenceEnabled}`} config={config} surface={compareSurface} navigation={compareNavigation} sessionIds={sessionCompareIds} />}

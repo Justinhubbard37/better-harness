@@ -12,6 +12,7 @@ const EMPTY: StudioConfig = {
   artifactsEnabled: false,
   evidenceEnabled: false,
   experimentEnabled: false,
+  gitEnabled: false,
   harnessMode: "none",
   historyEnabled: false,
   inspectorEnabled: false,
@@ -22,12 +23,13 @@ const EMPTY: StudioConfig = {
 };
 
 describe("Studio control-plane navigation", () => {
-  it("offers exactly the five workbenches with honest availability", () => {
+  it("offers exactly the six workbenches with honest availability", () => {
     const destinations = studioDestinations(EMPTY);
 
     expect(destinations.map((destination) => destination.id)).toEqual([
       "overview",
       "sessions",
+      "commits",
       "artifacts",
       "debugger",
       "compare",
@@ -41,6 +43,10 @@ describe("Studio control-plane navigation", () => {
       availability: "foundation",
       status: "Workspace required",
     });
+    expect(destinations.find((destination) => destination.id === "commits")).toMatchObject({
+      availability: "foundation",
+      status: "Workspace required",
+    });
     expect(destinations.find((destination) => destination.id === "debugger")).toMatchObject({
       availability: "foundation",
       status: "Harness required",
@@ -49,7 +55,7 @@ describe("Studio control-plane navigation", () => {
       availability: "foundation",
       status: "Workspace required",
     });
-    expect(capabilitySummary(EMPTY)).toEqual({ ready: 1, partial: 1, foundation: 3 });
+    expect(capabilitySummary(EMPTY)).toEqual({ ready: 1, partial: 1, foundation: 4 });
   });
 
   it("routes configured artifacts to Debugger, Compare, and Inspector surfaces", () => {
@@ -58,6 +64,7 @@ describe("Studio control-plane navigation", () => {
       artifactsEnabled: true,
       evidenceEnabled: true,
       experimentEnabled: true,
+      gitEnabled: true,
       harnessMode: "configured",
       historyEnabled: true,
       inspectorEnabled: true,
@@ -73,7 +80,7 @@ describe("Studio control-plane navigation", () => {
       availability: "ready",
       status: "Live runs",
     });
-    expect(capabilitySummary(config)).toEqual({ ready: 5, partial: 0, foundation: 0 });
+    expect(capabilitySummary(config)).toEqual({ ready: 6, partial: 0, foundation: 0 });
   });
 
   it("treats an artifact directory as independent of every other input", () => {

@@ -1,6 +1,7 @@
 export type StudioArea =
   | "overview"
   | "sessions"
+  | "commits"
   | "artifacts"
   | "debugger"
   | "compare";
@@ -13,6 +14,7 @@ export interface StudioConfig {
   artifactsEnabled: boolean;
   evidenceEnabled: boolean;
   experimentEnabled: boolean;
+  gitEnabled: boolean;
   harnessMode: "none" | "configured" | "workspace-default";
   historyEnabled: boolean;
   inspectorEnabled: boolean;
@@ -42,6 +44,13 @@ export function studioDestinations(config: StudioConfig): readonly StudioDestina
       group: "Observe",
       availability: config.workspaceConnected ? "ready" : "partial",
       status: config.workspaceConnected ? `${config.sessionCount} session${config.sessionCount === 1 ? "" : "s"}` : "Open workspace",
+    },
+    {
+      id: "commits",
+      label: "Commits",
+      group: "Observe",
+      availability: config.gitEnabled ? "ready" : config.workspaceConnected ? "partial" : "foundation",
+      status: config.gitEnabled ? "Repository history" : config.workspaceConnected ? "Not a Git repository" : "Workspace required",
     },
     {
       id: "artifacts",
