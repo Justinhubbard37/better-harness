@@ -542,7 +542,7 @@ test("renders the shell, local workspace intake, and empty compare surfaces at a
       const current = page.getByRole("button", { name: /^Overview/ });
       await current.focus();
       await page.keyboard.press("ArrowDown");
-      await expect(page.getByRole("button", { name: /^Inputs/ })).toBeFocused();
+      await expect(page.getByRole("button", { name: /^Customizations/ })).toBeFocused();
     } else {
       await page.emulateMedia({ reducedMotion: "reduce" });
       await expect(page.locator(".studio-primary-nav")).toHaveCSS("transition-duration", "0s");

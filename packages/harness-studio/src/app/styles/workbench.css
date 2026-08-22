@@ -1189,7 +1189,7 @@
 .customization-hosts > header span,
 .customization-definitions > header span { color: var(--color-text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
 .customization-detail-tabs { height: 100%; display: flex; align-items: stretch; gap: var(--space-sm); }
-.customization-detail-tabs button { min-height: var(--toolbar-target); padding: 0 var(--space-xs); border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--color-text-muted); background: transparent; transition: none; }
+.customization-detail-tabs button { min-height: var(--toolbar-target); padding: 0 var(--space-xs); border: 0; border-bottom: 2px solid transparent; border-radius: var(--radius-none); color: var(--color-text-muted); background: transparent; transition: none; }
 .customization-detail-tabs[data-active="definitions"] button:first-child,
 .customization-detail-tabs[data-active="installations"] button:last-child { border-bottom-color: currentColor; color: var(--color-primary); }
 .customization-hosts > ul { min-height: 0; margin: 0; padding: 0; overflow: auto; list-style: none; }
