@@ -33,8 +33,9 @@ Studio packages.
   viewer routes.
 - AC-5: focused tests, package dry-runs, the serial Better Harness checks, and
   Structurizr provider tests pass before publication. Publication uses the
-  repository's GitHub Actions workflow; registry reads and a clean-consumer
-  install verify the released versions separately from local tests.
+  repository's GitHub Actions workflow in dependency order for Harness, UI, and
+  Studio; registry reads and a clean-consumer install verify the released
+  versions separately from local tests.
 
 ## Non-goals
 
@@ -56,8 +57,9 @@ Studio packages.
    focused tests in structurizr4js.
 4. Run focused and package checks in both repositories, then run Better Harness
    generated/Harness/UI/Studio checks serially.
-5. Perform Review Readiness Check, commit exact paths, push, dispatch releases,
-   and verify npm plus a clean consumer.
+5. Perform Review Readiness Check, commit exact paths, push, dispatch Harness,
+   UI, and Studio releases in dependency order, and verify npm plus a clean
+   consumer.
 
 ## Test and Review Evidence
 
@@ -67,7 +69,7 @@ Studio packages.
   rejection, and cache/build identity separation.
 - AC-4: Structurizr Provider tests cover valid DSL, invalid DSL, exact revision
   envelope/resource identity, hosted document safety, and real Studio routes.
-- AC-5: `npm pack --dry-run --json` for both packages, serial workspace checks,
+- AC-5: `npm pack --dry-run --json` for the three packages, serial workspace checks,
   GitHub Actions run URLs, `npm view`, and an isolated install/import receipt.
 - Risk: provider code is trusted local code. The initial contribution therefore
   stays `experimental-local`, uses `trusted-local-process`, and never weakens the

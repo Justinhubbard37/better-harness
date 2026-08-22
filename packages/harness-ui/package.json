@@ -1,6 +1,6 @@
 {
   "name": "@qoder-ai/harness-ui",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AG-UI protocol adapter for @qoder-ai/harness: stream harness runs to any AG-UI-compatible frontend over SSE.",
   "license": "MIT",
   "type": "module",
@@ -43,7 +43,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@qoder-ai/harness": "0.1.0"
+    "@qoder-ai/harness": "0.2.0"
   },
   "devDependencies": {
     "@types/node": "26.2.0",
