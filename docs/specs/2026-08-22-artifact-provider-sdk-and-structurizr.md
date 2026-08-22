@@ -3,7 +3,7 @@
 ## Traceability
 
 - Spec ID: artifact-provider-sdk-and-structurizr
-- Status: Accepted
+- Status: Implemented
 
 ## Intent
 
@@ -26,11 +26,13 @@ Studio packages.
   budgets are an explicit host policy with bounded overrides. Effective limits
   participate in build/cache identity. Package imports remain restricted to the
   selected trusted build runtime.
-- AC-4: Structurizr4js provides an experimental-local `.dsl` contribution using
-  the published SDK shape, runs parsing/layout in a bounded child process, and
-  renders the generated SVG through Studio's common opaque-origin hosted
-  surface. A cross-repository test exercises catalog, snapshot, resource, and
-  viewer routes.
+- AC-4: Structurizr4js keeps its domain package and host-neutral
+  `@homology/structurizr-artifact` projection independent of Harness, then
+  provides an experimental-local `.dsl` Harness adapter using the published SDK
+  shape. The adapter runs projection in a bounded child process and renders the
+  generated SVG through Studio's common opaque-origin hosted surface. A
+  cross-repository test exercises catalog, snapshot, resource, and viewer
+  routes.
 - AC-5: focused tests, package dry-runs, the serial Better Harness checks, and
   Structurizr provider tests pass before publication. Publication uses the
   repository's GitHub Actions workflow in dependency order for Harness, UI, and
@@ -71,6 +73,14 @@ Studio packages.
   envelope/resource identity, hosted document safety, and real Studio routes.
 - AC-5: `npm pack --dry-run --json` for the three packages, serial workspace checks,
   GitHub Actions run URLs, `npm view`, and an isolated install/import receipt.
+- Release: commit `341f43c` published `@qoder-ai/harness@0.2.0`,
+  `@qoder-ai/harness-ui@0.1.1`, and `@qoder-ai/harness-studio@0.1.0` through
+  Actions runs `32558304947`, `32558407687`, and `32558682123`; all three
+  registry records bind the same `gitHead`.
+- Clean consumer: version-only npm install completed with 0 vulnerabilities;
+  Node 24.19.0 imported the Artifact provider API, UI, and Studio, and the
+  external Structurizr Provider returned 200 for catalog, snapshot, SVG
+  resource, and CSP-protected viewer routes.
 - Risk: provider code is trusted local code. The initial contribution therefore
   stays `experimental-local`, uses `trusted-local-process`, and never weakens the
   opaque-origin surface or artifact-authored package allowlist.
