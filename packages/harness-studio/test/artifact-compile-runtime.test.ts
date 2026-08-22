@@ -17,7 +17,7 @@ async function compileEntry(directory: string, label: string) {
   const resolution = resolveArtifactPlugin(entry, { qoderCanvasViewers: [] });
   const descriptor = describeArtifactCatalog(index, (candidate) => resolveArtifactPlugin(candidate, { qoderCanvasViewers: [] }))
     .artifacts.find((candidate) => candidate.id === entry.id)!;
-  return compileArtifactPreview({ artifactRoot: directory, entry, descriptor });
+  return compileArtifactPreview({ artifactRoot: directory, entry, descriptor, buildRuntime: resolution.buildRuntime });
 }
 
 describe("ArtifactCompileRuntime", () => {
@@ -87,5 +87,35 @@ describe("ArtifactCompileRuntime", () => {
     expect(escapeBuild.snapshot.status).toBe("failed");
     expect(escapeBuild.snapshot.diagnostics[0]?.message).toContain("escapes the artifact directory");
     expect(JSON.stringify(escapeBuild.snapshot)).not.toContain(directory);
+  });
+
+  it("compiles SVG and Beautiful Mermaid through trusted virtual React modules", async () => {
+    resetArtifactCompileRuntime();
+    const directory = await mkdtemp(join(tmpdir(), "artifact-documents-"));
+    await writeFile(join(directory, "diagram.svg"), '<svg xmlns="http://www.w3.org/2000/svg"><text>safe</text></svg>', "utf8");
+    await writeFile(join(directory, "diagram.mmd"), "graph TD\n  Start --> Finish\n", "utf8");
+
+    const svg = await compileEntry(directory, "diagram.svg");
+    const mermaid = await compileEntry(directory, "diagram.mmd");
+
+    expect(svg.snapshot.status).toBe("ready");
+    expect(svg.code).toContain("image/svg+xml");
+    expect(mermaid.snapshot.status).toBe("ready");
+    expect(mermaid.code?.length).toBeGreaterThan(1_000);
+    expect(mermaid.code?.length).toBeLessThan(4 * 1024 * 1024);
+    expect(mermaid.snapshot.buildId).not.toBe(svg.snapshot.buildId);
+  });
+
+  it("keeps Beautiful Mermaid private to Studio-generated modules", async () => {
+    resetArtifactCompileRuntime();
+    const directory = await mkdtemp(join(tmpdir(), "artifact-packages-"));
+    await writeFile(join(directory, "package.tsx"), [
+      'import { renderMermaidSVG } from "beautiful-mermaid";',
+      'export default () => <p>{renderMermaidSVG("graph TD\\nA-->B")}</p>;',
+    ].join("\n"), "utf8");
+
+    const build = await compileEntry(directory, "package.tsx");
+    expect(build.snapshot.status).toBe("failed");
+    expect(build.snapshot.diagnostics[0]?.message).toContain("is not available in Artifact Preview");
   });
 });

@@ -20,6 +20,11 @@ import type {
   ArtifactRendererProvider,
 } from "./artifact-adapter-contract.js";
 import type { ArtifactEntry, ArtifactKind } from "./artifact-catalog.js";
+import {
+  MERMAID_REACT_BUILD_RUNTIME,
+  REACT_SOURCE_BUILD_RUNTIME,
+  SVG_REACT_BUILD_RUNTIME,
+} from "./artifact-build-runtimes.js";
 import { matchCanvasViewers, type CanvasViewer } from "./artifact-viewers.js";
 import { MARKDOWN_ARTIFACT_ADAPTER } from "./markdown-artifact-adapter.js";
 import { PPTX_ARTIFACT_ADAPTER } from "./pptx-artifact-adapter.js";
@@ -35,6 +40,7 @@ export {
 export type {
   ArtifactAdaptContext,
   ArtifactAdapterImplementation,
+  ArtifactBuildRuntimeImplementation,
   ArtifactPluginContext,
   ArtifactPluginResolution,
   ArtifactRendererProvider,
@@ -140,7 +146,7 @@ function nativeResolution(kind: ArtifactKind): ArtifactPluginResolution | undefi
       capabilities: ["navigate", "outline", "select", "zoom"],
     };
   }
-  if (kind === "unknown") return undefined;
+  if (kind === "unknown" || kind === "mermaid") return undefined;
   return {
     backing: "data",
     adapter: RAW_ARTIFACT_ADAPTER,
@@ -154,6 +160,7 @@ function studioCodePreviewResolution(entry: ArtifactEntry): ArtifactPluginResolu
   return {
     backing: "code",
     adapter: RAW_ARTIFACT_ADAPTER,
+    buildRuntime: REACT_SOURCE_BUILD_RUNTIME,
     renderer: {
       id: "studio.react-preview",
       label: "Studio React Preview",
@@ -165,7 +172,28 @@ function studioCodePreviewResolution(entry: ArtifactEntry): ArtifactPluginResolu
   };
 }
 
-function nativeRendererLabel(kind: Exclude<ArtifactKind, "unknown" | "pptx">): string {
+function studioDocumentPreviewResolution(entry: ArtifactEntry): ArtifactPluginResolution | undefined {
+  const buildRuntime = entry.kind === "svg"
+    ? SVG_REACT_BUILD_RUNTIME
+    : entry.kind === "mermaid" ? MERMAID_REACT_BUILD_RUNTIME : undefined;
+  if (buildRuntime === undefined) return undefined;
+  const label = entry.kind === "svg" ? "Studio SVG Preview" : "Studio Mermaid Preview";
+  return {
+    backing: "code",
+    adapter: RAW_ARTIFACT_ADAPTER,
+    buildRuntime,
+    renderer: {
+      id: entry.kind === "svg" ? "studio.svg-react-preview" : "studio.mermaid-react-preview",
+      label,
+      provider: "studio",
+      type: "sandboxed-web",
+      status: "ready",
+    },
+    capabilities: ["execute", "live-update"],
+  };
+}
+
+function nativeRendererLabel(kind: Exclude<ArtifactKind, "unknown" | "pptx" | "mermaid">): string {
   return ({
     code: "Studio code",
     diff: "Studio diff",
@@ -196,6 +224,10 @@ export const ARTIFACT_RENDERER_PROVIDERS: readonly ArtifactRendererProvider[] = 
   {
     id: "studio-code-preview",
     resolve: studioCodePreviewResolution,
+  },
+  {
+    id: "studio-document-preview",
+    resolve: studioDocumentPreviewResolution,
   },
   {
     id: "studio-native",

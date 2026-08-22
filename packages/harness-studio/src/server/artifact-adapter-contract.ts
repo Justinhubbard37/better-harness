@@ -42,9 +42,33 @@ export interface ArtifactAdapterImplementation {
   readResource?(context: ArtifactAdaptContext, resourceId: string): Promise<ArtifactResourceBytes | undefined>;
 }
 
+/**
+ * Trusted compile contribution selected by the Artifact plugin registry.
+ *
+ * A source module compiles the artifact as authored. A virtual module is
+ * Studio-owned React code that consumes the artifact's exact bytes through the
+ * `artifact-source` import. Artifact bytes never provide module source,
+ * package permissions, or build options.
+ */
+export interface ArtifactBuildRuntimeImplementation {
+  id: string;
+  version: string;
+  module:
+    | { kind: "source" }
+    | {
+      kind: "virtual";
+      source: string;
+      sourceLoader: "text";
+      runtimePackages: readonly string[];
+      minify?: boolean;
+    };
+}
+
 export interface ArtifactPluginResolution {
   backing: ArtifactBacking;
   adapter: ArtifactAdapterImplementation;
+  /** Present only when the selected plugin owns a code-backed build lifecycle. */
+  buildRuntime?: ArtifactBuildRuntimeImplementation;
   renderer: ArtifactRendererReference;
   capabilities: ArtifactCapability[];
   /** The server hosts this renderer's surface, so the catalog publishes a viewUri. */

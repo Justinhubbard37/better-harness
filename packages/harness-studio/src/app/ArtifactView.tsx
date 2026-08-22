@@ -29,8 +29,8 @@ const TEXT_RENDERER_IDS = new Set(["studio.code", "studio.diff", "studio.json", 
 
 export const ARTIFACT_VIEW_PROVIDERS: readonly ArtifactViewProvider[] = Object.freeze([
   {
-    id: "studio.react-preview",
-    matches: (artifact) => artifact.renderer.id === "studio.react-preview" && artifact.backing === "code",
+    id: "studio.sandboxed-preview",
+    matches: (artifact) => artifact.renderer.type === "sandboxed-web" && artifact.backing === "code",
     render: ({ artifact, liveGeneration }) => <ArtifactPreviewHost artifact={artifact} liveGeneration={liveGeneration} />,
   },
   {
@@ -47,11 +47,6 @@ export const ARTIFACT_VIEW_PROVIDERS: readonly ArtifactViewProvider[] = Object.f
     id: "studio.pptx-dom",
     matches: (artifact) => artifact.renderer.id === "studio.pptx-dom",
     render: ({ artifact }) => <PptxArtifactView key={artifact.revision.digest} artifact={artifact} />,
-  },
-  {
-    id: "studio.svg",
-    matches: (artifact) => artifact.renderer.id === "studio.svg",
-    render: ({ artifact }) => <SvgArtifactView key={artifact.revision.digest} artifact={artifact} />,
   },
   {
     id: "studio.image",
@@ -79,25 +74,6 @@ export function ArtifactView(props: ArtifactViewProviderContext): React.JSX.Elem
     if (provider !== undefined) return provider.render(props);
   }
   return <p className="artifact-status" role="status">{props.artifact.renderer.reason ?? `No renderer is available for this artifact (${props.artifact.renderer.id}).`}</p>;
-}
-
-function SvgArtifactView({ artifact }: { artifact: ArtifactDescriptor }): React.JSX.Element {
-  const [source, setSource] = useState<string>();
-  const [failure, setFailure] = useState<string>();
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch(artifact.revision.content.uri, { signal: controller.signal }).then(async (response) => {
-      if (!response.ok) throw new Error(`SVG content failed (${response.status}).`);
-      setSource(await response.text());
-    }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
-    });
-    return () => controller.abort();
-  }, [artifact.revision.content.uri]);
-  if (failure !== undefined) return <p className="artifact-status" role="alert">{failure}</p>;
-  if (source === undefined) return <p className="artifact-status" role="status">Loading SVG preview…</p>;
-  const policy = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">`;
-  return <iframe className="artifact-frame" title={`SVG preview: ${artifact.label}`} srcDoc={`${policy}${source}`} sandbox="" referrerPolicy="no-referrer" />;
 }
 
 function TextArtifactView({ artifact }: { artifact: ArtifactDescriptor }): React.JSX.Element {

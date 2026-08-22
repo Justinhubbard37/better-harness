@@ -800,6 +800,8 @@ const FORMAT_LABELS: Record<string, string> = {
   file: "File",
   lottie: "Lottie",
   md: "Markdown",
+  mermaid: "Mermaid",
+  mmd: "Mermaid",
   pdf: "PDF",
   pptx: "PowerPoint",
   xlsx: "Excel",

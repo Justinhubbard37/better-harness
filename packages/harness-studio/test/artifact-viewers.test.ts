@@ -19,7 +19,11 @@ describe("Artifact plugin registry and the Qoder Canvas provider", () => {
     const viewers = await discoverCanvasViewers(root);
     expect(viewers).toHaveLength(1);
     expect(resolve_(entry("deck.pptx", "pptx"), viewers)).toMatchObject({ renderer: { id: "studio.pptx-dom", type: "native" } });
-    expect(resolve_(entry("diagram.svg", "svg"), viewers)).toMatchObject({ renderer: { id: "studio.svg", type: "native" } });
+    expect(resolve_(entry("diagram.svg", "svg"), viewers)).toMatchObject({
+      backing: "code",
+      buildRuntime: { id: "studio.svg-react" },
+      renderer: { id: "studio.svg-react-preview", type: "sandboxed-web" },
+    });
     expect(resolve_(entry("archive.bin", "unknown"), viewers)).toMatchObject({ renderer: { id: "qoder-canvas.pptx", type: "qoder-canvas" } });
   });
 

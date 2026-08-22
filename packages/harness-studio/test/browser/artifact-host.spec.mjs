@@ -46,6 +46,8 @@ test.beforeAll(async () => {
     "+Second file remains visible.",
   ].join("\n"), "utf8");
   await writeFile(join(artifactDirectory, "diagram.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><script>parent.document.body.dataset.svgExecuted="yes"</script><text x="12" y="44">Safe SVG artifact</text></svg>', "utf8");
+  await writeFile(join(artifactDirectory, "diagram.mmd"), "graph TD\n  Start --> Finish\n", "utf8");
+  await writeFile(join(artifactDirectory, "invalid.mmd"), "not a supported diagram\n", "utf8");
   await writeFile(join(artifactDirectory, "notes.txt"), "followed the declared content reference\n", "utf8");
   await writeFile(join(artifactDirectory, "badge.png"), Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAFUlEQVR42mNk+M9QzzCKRsEoGgWjAABtVwPTBxjKUAAAAABJRU5ErkJggg==",
@@ -334,7 +336,8 @@ test("loads artifact bytes from the catalog content reference", async ({ page })
   await expect(page.locator(".artifact-code-preview")).not.toContainText("data-preview");
 });
 
-test("renders code diff and sandboxes SVG without script capability", async ({ page }, testInfo) => {
+test("renders diff, SVG, and Beautiful Mermaid through the shared sandbox", async ({ page }, testInfo) => {
+  const failures = watchFailures(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await openArtifacts(page);
   await page.getByRole("button", { name: /change\.patch/ }).click();
@@ -345,17 +348,52 @@ test("renders code diff and sandboxes SVG without script capability", async ({ p
   await expect(diff).toContainText("Second file remains visible.");
   await page.screenshot({ path: testInfo.outputPath("artifact-multi-file-diff.png"), fullPage: true });
   await page.getByRole("button", { name: /diagram\.svg/ }).click();
-  const frame = page.locator('iframe[title="SVG preview: diagram.svg"]');
-  await expect(frame).toHaveAttribute("sandbox", "");
-  await expect(frame).toHaveAttribute("srcdoc", /Content-Security-Policy/u);
-  await expect(frame).not.toHaveAttribute("src", /api\/artifacts/u);
+  const frame = page.locator('iframe[title="Live artifact preview: diagram.svg"]');
+  await expect(frame).toHaveAttribute("sandbox", "allow-scripts");
+  await expect(page.frameLocator('iframe[title="Live artifact preview: diagram.svg"]').getByRole("img", { name: "SVG artifact" })).toBeVisible();
   const catalog = await (await page.request.get(`${studio.url}/api/artifacts`)).json();
   const svg = catalog.artifacts.find((entry) => entry.label === "diagram.svg");
+  expect(svg).toMatchObject({ backing: "code", renderer: { id: "studio.svg-react-preview", type: "sandboxed-web" } });
   const raw = await page.request.get(`${studio.url}${svg.revision.content.uri}`);
   expect(raw.headers()["content-type"]).toBe("image/svg+xml");
   expect(raw.headers()["content-disposition"]).toMatch(/^attachment;/u);
   expect(raw.headers()["content-security-policy"]).toBe("default-src 'none'; sandbox");
   await expect(page.locator("body")).not.toHaveAttribute("data-svg-executed", "yes");
+
+  await page.getByRole("button", { name: /diagram\.mmd/ }).click();
+  const mermaidFrame = page.frameLocator('iframe[title="Live artifact preview: diagram.mmd"]');
+  const diagram = mermaidFrame.getByRole("img", { name: "Mermaid diagram" });
+  await expect(diagram).toBeVisible();
+  expect(await diagram.evaluate((image) => ({ width: image.naturalWidth, height: image.naturalHeight })))
+    .toMatchObject({ width: expect.any(Number), height: expect.any(Number) });
+  expect(await diagram.evaluate((image) => image.naturalWidth)).toBeGreaterThan(0);
+  await expect(page.getByText("Preview rendered from the current build.")).toBeVisible();
+  for (const layout of [
+    { name: "wide", width: 1440, height: 900 },
+    { name: "compact", width: 1024, height: 768 },
+    { name: "narrow", width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize({ width: layout.width, height: layout.height });
+    await expect(diagram).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `${layout.name} Mermaid preview overflows horizontally`).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`beautiful-mermaid-${layout.name}.png`), fullPage: true });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const mermaidFrameElement = page.locator('iframe[title="Live artifact preview: diagram.mmd"]');
+  const firstMermaidBuild = await mermaidFrameElement.getAttribute("src");
+  try {
+    await writeFile(join(artifactDirectory, "diagram.mmd"), "graph LR\n  Updated --> Diagram\n", "utf8");
+    await expect(mermaidFrameElement).not.toHaveAttribute("src", firstMermaidBuild, { timeout: 10_000 });
+    await expect(mermaidFrame.getByRole("img", { name: "Mermaid diagram" })).toBeVisible();
+    await expect(page.getByText("Preview rendered from the current build.")).toBeVisible();
+  } finally {
+    await writeFile(join(artifactDirectory, "diagram.mmd"), "graph TD\n  Start --> Finish\n", "utf8");
+  }
+
+  await page.getByRole("button", { name: /invalid\.mmd/ }).click();
+  await expect(page.getByText(/Invalid mermaid header/u)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  expect(failures).toEqual([]);
 });
 
 test("renders Markdown as elements and refuses to execute what it carries", async ({ page }, testInfo) => {

@@ -30,6 +30,8 @@ describe("resolveArtifactKind", () => {
     expect(resolveArtifactKind("fix.patch")).toBe("diff");
     expect(resolveArtifactKind("verdict.json")).toBe("json");
     expect(resolveArtifactKind("diagram.svg")).toBe("svg");
+    expect(resolveArtifactKind("diagram.mmd")).toBe("mermaid");
+    expect(resolveArtifactKind("diagram.mermaid")).toBe("mermaid");
     expect(resolveArtifactKind("notes.md")).toBe("markdown");
     expect(resolveArtifactKind("notes.txt")).toBe("text");
   });
@@ -142,7 +144,7 @@ describe("indexArtifactDirectory", () => {
       const base = `/api/artifacts/${descriptor.id}/revisions/${descriptor.revision.digest.slice(7)}`;
       expect(descriptor.revision.content.uri).toBe(`${base}/content`);
       expect(descriptor.adapter.snapshotUri).toBe(`${base}/snapshot`);
-      if (descriptor.format === "tsx" || descriptor.format === "jsx") {
+      if (["tsx", "jsx", "svg", "mmd", "mermaid"].includes(descriptor.format)) {
         expect(descriptor.backing).toBe("code");
         expect(descriptor.build?.snapshotUri).toBe(`${base}/build`);
       } else {

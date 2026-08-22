@@ -18,7 +18,7 @@ import type { ArtifactPluginResolution } from "./artifact-adapter-contract.js";
  * Studio actually decided to do. Keeping one classification axis on the wire is
  * what stops `kind` from drifting into a second, competing renderer name.
  */
-export type ArtifactKind = "code" | "diff" | "image" | "json" | "markdown" | "pptx" | "svg" | "text" | "unknown";
+export type ArtifactKind = "code" | "diff" | "image" | "json" | "markdown" | "mermaid" | "pptx" | "svg" | "text" | "unknown";
 
 export interface ArtifactEntry {
   id: string;
@@ -77,6 +77,8 @@ const FORMAT_BY_EXTENSION = new Map<string, ArtifactFormat>([
   [".mjs", { kind: "code", mediaType: "text/javascript; charset=utf-8" }],
   [".markdown", { kind: "markdown", mediaType: "text/markdown; charset=utf-8" }],
   [".md", { kind: "markdown", mediaType: "text/markdown; charset=utf-8" }],
+  [".mermaid", { kind: "mermaid", mediaType: "text/plain; charset=utf-8" }],
+  [".mmd", { kind: "mermaid", mediaType: "text/plain; charset=utf-8" }],
   [".patch", { kind: "diff", mediaType: "text/plain; charset=utf-8" }],
   [".pdf", { kind: "unknown", mediaType: "application/pdf" }],
   [".png", { kind: "image", mediaType: "image/png" }],
@@ -319,7 +321,7 @@ function catalogRevision(index: ArtifactIndex, artifacts: ArtifactCatalogRespons
 
 export function resolveArtifactFamily(path: string, kind = resolveArtifactKind(path)): ArtifactFamily {
   if (DOCUMENT_EXTENSIONS.has(extname(path).toLowerCase())) return "documents";
-  if (kind === "image" || kind === "svg") return "images-diagrams";
+  if (kind === "image" || kind === "svg" || kind === "mermaid") return "images-diagrams";
   if (kind === "json" || extname(path).toLowerCase() === ".lottie") return "data";
   if (["code", "diff", "markdown", "text"].includes(kind)) return "source-text";
   return "other";

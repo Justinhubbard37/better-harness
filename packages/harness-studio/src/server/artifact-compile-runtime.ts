@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile, realpath } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { build, type Message, type Plugin } from "esbuild-wasm";
 import {
   ARTIFACT_BUILD_SNAPSHOT_KIND,
@@ -11,9 +11,11 @@ import {
   type ArtifactDescriptor,
   type ArtifactDigest,
 } from "../artifact-model.js";
+import type { ArtifactBuildRuntimeImplementation } from "./artifact-adapter-contract.js";
+import { REACT_SOURCE_BUILD_RUNTIME } from "./artifact-build-runtimes.js";
 import { digestHex, type ArtifactEntry } from "./artifact-catalog.js";
 
-const COMPILE_RUNTIME_VERSION = "1";
+const COMPILE_RUNTIME_VERSION = "2";
 const MAX_SOURCE_FILES = 64;
 const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -46,6 +48,7 @@ export interface CompileArtifactPreviewOptions {
   artifactRoot: string;
   entry: ArtifactEntry;
   descriptor: ArtifactDescriptor;
+  buildRuntime?: ArtifactBuildRuntimeImplementation;
 }
 
 const latestByEntry = new Map<string, CompiledArtifactPreview>();
@@ -78,20 +81,26 @@ class ArtifactCompileTimeout extends Error {}
  * its contract check then rejects.
  */
 export async function compileArtifactPreview(options: CompileArtifactPreviewOptions): Promise<CompiledArtifactPreview> {
-  const cached = latestByEntry.get(options.entry.path);
+  const buildRuntime = options.buildRuntime ?? REACT_SOURCE_BUILD_RUNTIME;
+  const entryKey = `${options.entry.path}\u0000${buildRuntime.id}@${buildRuntime.version}`;
+  const cached = latestByEntry.get(entryKey);
   if (cached !== undefined
     && cached.snapshot.revisionId === options.descriptor.revision.id
     && await sourcesStillCurrent(cached.sources)) return cached;
 
-  const key = `${options.entry.path}\u0000${options.descriptor.revision.id}`;
+  const key = `${entryKey}\u0000${options.descriptor.revision.id}`;
   const pending = inflightByRevision.get(key);
   if (pending !== undefined) return pending;
-  const compiling = compileArtifactRevision(options).finally(() => inflightByRevision.delete(key));
+  const compiling = compileArtifactRevision(options, buildRuntime, entryKey).finally(() => inflightByRevision.delete(key));
   inflightByRevision.set(key, compiling);
   return compiling;
 }
 
-async function compileArtifactRevision(options: CompileArtifactPreviewOptions): Promise<CompiledArtifactPreview> {
+async function compileArtifactRevision(
+  options: CompileArtifactPreviewOptions,
+  buildRuntime: ArtifactBuildRuntimeImplementation,
+  entryKey: string,
+): Promise<CompiledArtifactPreview> {
   compileCount += 1;
   const root = await realpath(options.artifactRoot);
   const entryPath = await realpath(options.entry.path);
@@ -118,7 +127,8 @@ async function compileArtifactRevision(options: CompileArtifactPreviewOptions): 
       legalComments: "none",
       logLevel: "silent",
       define: { "process.env.NODE_ENV": '"production"' },
-      plugins: [confinedArtifactPlugin(root, entryPath, sources)],
+      minify: buildRuntime.module.kind === "virtual" && buildRuntime.module.minify === true,
+      plugins: [confinedArtifactPlugin(root, entryPath, sources, buildRuntime)],
     }));
     diagnostics = result.warnings.map((message) => diagnosticFromMessage(message, root, "warning"));
     for (const output of result.outputFiles) {
@@ -135,7 +145,7 @@ async function compileArtifactRevision(options: CompileArtifactPreviewOptions): 
     diagnostics = diagnosticsFromError(error, root);
   }
 
-  const buildId = digestBuild(root, options.descriptor, sources, code, css, diagnostics);
+  const buildId = digestBuild(root, options.descriptor, sources, code, css, diagnostics, buildRuntime);
   const base = `/api/artifacts/${encodeURIComponent(options.descriptor.id)}/revisions/${digestHex(options.descriptor.revision.id)}`;
   const snapshot: ArtifactBuildSnapshot = {
     kind: ARTIFACT_BUILD_SNAPSHOT_KIND,
@@ -151,7 +161,7 @@ async function compileArtifactRevision(options: CompileArtifactPreviewOptions): 
   const compiled = { snapshot, ...(code === undefined ? {} : { code }), css, sources };
   // An abandoned build is still running and still mutating `sources`, so its
   // partial record must not become the answer every later request reuses.
-  if (!timedOut) latestByEntry.set(options.entry.path, compiled);
+  if (!timedOut) latestByEntry.set(entryKey, compiled);
   retainedByBuild.delete(buildId);
   retainedByBuild.set(buildId, compiled);
   while (retainedByBuild.size > MAX_RETAINED_BUILDS) retainedByBuild.delete(retainedByBuild.keys().next().value!);
@@ -227,7 +237,7 @@ function previewBootstrap(identity: string): string {
     'port.onmessage=(update)=>{if(update.data&&update.data.type==="runtime.theme")applyTheme(update.data.theme)};',
     "port.start();",
     "executeBundle()",
-    '.then(()=>globalThis.__HARNESS_ARTIFACT_MOUNT__(document.getElementById("artifact-root"),expected))',
+    '.then(()=>globalThis.__HARNESS_ARTIFACT_MOUNT__(document.getElementById("artifact-root"),{...expected,theme:document.documentElement.dataset.artifactTheme}))',
     ".then(()=>new Promise(resolveFrame=>requestAnimationFrame(()=>requestAnimationFrame(resolveFrame))))",
     '.then(()=>{if(!reported)port.postMessage({...expected,type:"renderCompleted"})})',
     ".catch(fail);",
@@ -236,9 +246,14 @@ function previewBootstrap(identity: string): string {
   ].join("");
 }
 
-function confinedArtifactPlugin(root: string, entryPath: string, sources: Map<string, SourceStamp>): Plugin {
-  const require = createRequire(import.meta.url);
+function confinedArtifactPlugin(
+  root: string,
+  entryPath: string,
+  sources: Map<string, SourceStamp>,
+  buildRuntime: ArtifactBuildRuntimeImplementation,
+): Plugin {
   let sourceBytes = 0;
+  const virtualModule = buildRuntime.module.kind === "virtual" ? buildRuntime.module : undefined;
   return {
     name: "studio-confined-artifact",
     setup(buildApi) {
@@ -249,7 +264,8 @@ function confinedArtifactPlugin(root: string, entryPath: string, sources: Map<st
         contents: [
           'import React from "react";',
           'import { createRoot } from "react-dom/client";',
-          'import Artifact from "artifact-entry";',
+          'import * as ArtifactModule from "artifact-entry";',
+          "const Artifact=ArtifactModule.default;",
           // Mount resolves from a committed effect rather than from render(),
           // because a concurrent root schedules its work: returning as soon as
           // render() is called would report a completed render before React had
@@ -259,17 +275,28 @@ function confinedArtifactPlugin(root: string, entryPath: string, sources: Map<st
           "globalThis.__HARNESS_ARTIFACT_MOUNT__=(root,context)=>new Promise((settle)=>{",
           "const rendered=typeof Artifact==='function'?React.createElement(Artifact,context):Artifact;",
           "if(rendered==null)throw new Error('Artifact must default-export a React component or element.');",
-          "const Committed=()=>{React.useEffect(()=>{settle();},[]);return rendered;};",
+          "const Committed=()=>{React.useEffect(()=>{Promise.resolve(ArtifactModule.artifactReady).then(settle,(error)=>{globalThis.__HARNESS_ARTIFACT_FAIL__(error);settle();});},[]);return rendered;};",
           "createRoot(root,{onUncaughtError:(error)=>{globalThis.__HARNESS_ARTIFACT_FAIL__(error);settle();}})",
           ".render(React.createElement(Committed));",
           "});",
         ].join("\n"),
       }));
-      buildApi.onResolve({ filter: /^artifact-entry$/ }, () => ({ path: entryPath }));
+      buildApi.onResolve({ filter: /^artifact-entry$/ }, () => virtualModule === undefined
+        ? { path: entryPath }
+        : { path: "entry", namespace: "artifact-generated" });
+      buildApi.onLoad({ filter: /^entry$/, namespace: "artifact-generated" }, () => ({
+        loader: "tsx",
+        resolveDir: root,
+        contents: virtualModule!.source,
+      }));
+      buildApi.onResolve({ filter: /^artifact-source$/, namespace: "artifact-generated" }, () => ({ path: entryPath }));
       buildApi.onResolve({ filter: /^[^./]|^\// }, (args) => {
-        if (args.namespace !== "artifact-runtime" && !isWithin(root, args.importer)) return undefined;
-        if (!ALLOWED_PACKAGES.has(args.path)) return { errors: [{ text: `Package import '${args.path}' is not available in Artifact Preview.` }] };
-        return { path: require.resolve(args.path) };
+        const generated = args.namespace === "artifact-generated";
+        if (args.namespace !== "artifact-runtime" && !generated && !isWithin(root, args.importer)) return undefined;
+        const allowed = ALLOWED_PACKAGES.has(args.path)
+          || (generated && virtualModule?.runtimePackages.includes(args.path) === true);
+        if (!allowed) return { errors: [{ text: `Package import '${args.path}' is not available in Artifact Preview.` }] };
+        return { path: fileURLToPath(import.meta.resolve(args.path)) };
       });
       buildApi.onResolve({ filter: /^\.{1,2}\// }, async (args) => {
         if (!isWithin(root, args.importer)) return undefined;
@@ -292,7 +319,12 @@ function confinedArtifactPlugin(root: string, entryPath: string, sources: Map<st
             digest: createHash("sha256").update(contents).digest("hex"),
           });
         }
-        return { contents, loader: loaderFor(args.path) };
+        return {
+          contents,
+          loader: args.path === entryPath && virtualModule !== undefined
+            ? virtualModule.sourceLoader
+            : loaderFor(args.path),
+        };
       });
     },
   };
@@ -387,12 +419,15 @@ function digestBuild(
   code: string | undefined,
   css: string,
   diagnostics: ArtifactBuildDiagnostic[],
+  buildRuntime: ArtifactBuildRuntimeImplementation,
 ): ArtifactDigest {
   const sourceDigests = [...sources]
     .map(([path, stamp]) => [relative(root, path).split(sep).join("/"), stamp.digest] as const)
     .sort(([left], [right]) => left.localeCompare(right));
   const digest = createHash("sha256").update(JSON.stringify([
     COMPILE_RUNTIME_VERSION,
+    buildRuntime.id,
+    buildRuntime.version,
     descriptor.id,
     descriptor.revision.id,
     sourceDigests,

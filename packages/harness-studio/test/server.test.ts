@@ -1181,6 +1181,7 @@ describe("harness-studio CLI", () => {
     await writeFile(join(artifactDirectory, "report.pdf"), "%PDF fixture", "utf8");
     await writeFile(join(artifactDirectory, "active.html"), "<script>top.location='https://example.invalid'</script>", "utf8");
     await writeFile(join(artifactDirectory, "diagram.svg"), "<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>", "utf8");
+    await writeFile(join(artifactDirectory, "diagram.mmd"), "graph TD\n  Start --> Finish\n", "utf8");
     started = await startHarnessStudioServer({ appDir, artifactDirectory });
 
     const catalog: unknown = await (await fetch(`${started.url}/api/artifacts`)).json();
@@ -1210,6 +1211,21 @@ describe("harness-studio CLI", () => {
     expect(source.headers.get("etag")).toBe(`"${card.revision.digest.slice(7)}"`);
     expect(await source.text()).toContain("export default");
     expect((await fetch(`${started.url}/api/artifacts/${card.id}/module.js`)).status).toBe(404);
+
+    const svg = catalog.artifacts.find((entry) => entry.label === "diagram.svg")!;
+    const mermaid = catalog.artifacts.find((entry) => entry.label === "diagram.mmd")!;
+    expect(svg).toMatchObject({
+      backing: "code",
+      build: { snapshotUri: expect.stringMatching(/\/build$/u) },
+      renderer: { id: "studio.svg-react-preview", type: "sandboxed-web" },
+    });
+    expect(mermaid).toMatchObject({
+      backing: "code",
+      build: { snapshotUri: expect.stringMatching(/\/build$/u) },
+      renderer: { id: "studio.mermaid-react-preview", type: "sandboxed-web" },
+    });
+    expect((await fetch(`${started.url}${svg.build!.snapshotUri}`)).status).toBe(200);
+    expect((await fetch(`${started.url}${mermaid.build!.snapshotUri}`)).status).toBe(200);
 
     const buildResponse = await fetch(`${started.url}${card.build!.snapshotUri}`);
     expect(buildResponse.status).toBe(200);

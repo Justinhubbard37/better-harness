@@ -71,6 +71,7 @@ import {
 import {
   discoverCanvasViewers,
   resolveArtifactPlugin,
+  type ArtifactBuildRuntimeImplementation,
   type ArtifactPluginResolution,
   type QoderCanvasViewerPlugin,
 } from "./artifact-plugin-registry.js";
@@ -1662,22 +1663,22 @@ async function serveArtifactSnapshot(
   }
 }
 
-async function resolveArtifactCodePreview(
+async function resolveArtifactBuildPreview(
   options: HarnessStudioServerOptions,
   id: string,
   revision: string,
 ): Promise<
-  | { entry: ArtifactEntry; descriptor: ArtifactDescriptor; resolution: ArtifactPluginResolution; artifactRoot: string }
+  | { entry: ArtifactEntry; descriptor: ArtifactDescriptor; resolution: ArtifactPluginResolution; artifactRoot: string; buildRuntime: ArtifactBuildRuntimeImplementation }
   | { error: string; status: number }
 > {
   const resolved = await resolveArtifactRevisionPlugin(options, id, revision);
   if ("error" in resolved) return resolved;
   if (options.artifactDirectory === undefined
     || resolved.resolution.backing !== "code"
-    || resolved.resolution.renderer.id !== "studio.react-preview") {
-    return { error: `Artifact '${id}' has no Studio code preview.`, status: 415 } as const;
+    || resolved.resolution.buildRuntime === undefined) {
+    return { error: `Artifact '${id}' has no Studio build preview.`, status: 415 } as const;
   }
-  return { ...resolved, artifactRoot: options.artifactDirectory };
+  return { ...resolved, artifactRoot: options.artifactDirectory, buildRuntime: resolved.resolution.buildRuntime };
 }
 
 async function serveArtifactBuild(
@@ -1686,7 +1687,7 @@ async function serveArtifactBuild(
   id: string,
   revision: string,
 ): Promise<void> {
-  const resolved = await resolveArtifactCodePreview(options, id, revision);
+  const resolved = await resolveArtifactBuildPreview(options, id, revision);
   if ("error" in resolved) {
     respondArtifactJson(response, resolved.status, { error: resolved.error });
     return;
@@ -1696,6 +1697,7 @@ async function serveArtifactBuild(
       artifactRoot: resolved.artifactRoot,
       entry: resolved.entry,
       descriptor: resolved.descriptor,
+      buildRuntime: resolved.buildRuntime,
     });
     respondArtifactJson(response, 200, compiled.snapshot);
   } catch (error) {
@@ -1710,7 +1712,7 @@ async function serveArtifactBuildPreview(
   revision: string,
   buildId: string,
 ): Promise<void> {
-  const resolved = await resolveArtifactCodePreview(options, id, revision);
+  const resolved = await resolveArtifactBuildPreview(options, id, revision);
   if ("error" in resolved) {
     respondArtifactJson(response, resolved.status, { error: resolved.error });
     return;
@@ -1723,6 +1725,7 @@ async function serveArtifactBuildPreview(
         artifactRoot: resolved.artifactRoot,
         entry: resolved.entry,
         descriptor: resolved.descriptor,
+        buildRuntime: resolved.buildRuntime,
       });
       if (digestHex(current.snapshot.buildId) === buildId) compiled = current;
     }

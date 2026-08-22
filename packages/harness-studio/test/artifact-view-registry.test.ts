@@ -11,22 +11,22 @@ import {
 describe("Artifact View provider registry", () => {
   it("keeps one stable ordered composition boundary for every view family", () => {
     expect(ARTIFACT_VIEW_PROVIDERS.map((provider) => provider.id)).toEqual([
-      "studio.react-preview",
+      "studio.sandboxed-preview",
       "qoder-canvas",
       "studio.markdown",
       "studio.pptx-dom",
-      "studio.svg",
       "studio.image",
       "studio.text-family",
     ]);
   });
 
   it.each([
-    ["dynamic React", descriptor({ id: "studio.react-preview", type: "sandboxed-web" }, { backing: "code", format: "tsx" }), "studio.react-preview"],
+    ["dynamic React", descriptor({ id: "studio.react-preview", type: "sandboxed-web" }, { backing: "code", format: "tsx" }), "studio.sandboxed-preview"],
     ["Qoder Canvas", descriptor({ id: "qoder-canvas.deck", type: "qoder-canvas", viewUri: "/api/artifacts/deck/view" }), "qoder-canvas"],
     ["Markdown", descriptor({ id: "studio.markdown" }, { format: "md" }), "studio.markdown"],
     ["PPTX", descriptor({ id: "studio.pptx-dom" }, { format: "pptx" }), "studio.pptx-dom"],
-    ["SVG", descriptor({ id: "studio.svg" }, { format: "svg" }), "studio.svg"],
+    ["SVG", descriptor({ id: "studio.svg-react-preview", type: "sandboxed-web" }, { backing: "code", format: "svg" }), "studio.sandboxed-preview"],
+    ["Mermaid", descriptor({ id: "studio.mermaid-react-preview", type: "sandboxed-web" }, { backing: "code", format: "mmd" }), "studio.sandboxed-preview"],
     ["image", descriptor({ id: "studio.image" }, { format: "png" }), "studio.image"],
     ["code", descriptor({ id: "studio.code" }, { format: "ts" }), "studio.text-family"],
     ["diff", descriptor({ id: "studio.diff" }, { format: "diff" }), "studio.text-family"],
