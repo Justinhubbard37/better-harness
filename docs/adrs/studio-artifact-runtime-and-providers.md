@@ -64,7 +64,7 @@ its validation evidence.
 | Code lifecycle | TSX/JSX plus Studio-owned SVG and Mermaid virtual modules | One bounded compile/build/preview lifecycle for executable presentation |
 | Browser host | Ordered `ArtifactView` providers | Mount the exact server-selected surface; never reclassify by extension |
 | Qoder | Provider-specific discovery, sidecar, routes, and renderer type | Translate Qoder into a generic external provider contribution and hosted surface |
-| Walnut | Verified local bootstrap receipt; no Artifact execution | Register a verified provider with zero contributions until a reviewed adapter exists |
+| Walnut | Verified local bootstrap receipt; no Artifact execution | Register a receipt-verified, locally derived provider with zero contributions; any future contribution starts `experimental-local` |
 | Revision history | Current bytes are revision-bound but not retained | Retention, compare, and replay require a separate immutable Artifact authority |
 | Session trace | No canonical Artifact trace link | Add an evidence-backed manifest and trace projection in a later spec |
 
@@ -94,6 +94,11 @@ The following terms have one meaning throughout Studio:
 Packaging outputs, checkpoint evidence, report attachments, and Studio Artifact
 revisions remain separate namespaces unless an explicit bridge records their
 identity and provenance.
+
+An **authority scope** is the namespace and retention owner that can prove an
+Artifact identity: currently one live directory catalog, and later potentially
+one retained `SessionArtifactManifest`. Catalog-local and Session-stable Thread
+ids are distinct namespaces until an explicit provenance bridge relates them.
 
 ### Keep catalog authority on the server
 
@@ -154,20 +159,27 @@ interface ArtifactProviderBinding {
   providerId: string;
   contributionId: string;
   fingerprint: ArtifactDigest;
-  support: "verified" | "experimental-local";
+  contributionSupport: "reviewed" | "experimental-local";
 }
 
 type ArtifactSurfaceBinding =
   | { kind: "native"; rendererId: string }
   | { kind: "studio-sandbox"; rendererId: string; runtimeId: string }
-  | { kind: "external-hosted"; rendererId: string; runtimeId: string }
+  | {
+      kind: "external-hosted";
+      rendererId: string;
+      runtimeId: string;
+      securityProfileId: "opaque-web-v1";
+    }
   | { kind: "unavailable"; reason: string };
 ```
 
-These shapes describe ownership; they are not a new public package API. The
-current V2 catalog may continue to project them through `backing`, `build`, and
-`renderer`. A later wire-format revision is justified only when a client needs
-information that cannot be represented safely and additively.
+All TypeScript shapes in this ADR are conceptual ownership contracts until a
+dated implementation spec freezes their internal names and validators; they are
+not a new public package API. The current V2 catalog may continue to project
+them through `backing`, `build`, and `renderer`. A later wire-format revision is
+justified only when a client needs information that cannot be represented
+safely and additively.
 
 The V2 compatibility projection is explicit:
 
@@ -182,9 +194,13 @@ New Studio code normalizes that legacy wire value at the protocol edge and then
 uses the generic surface mount. A Qoder provider migration removes
 `qoderViewer` and the Canvas-typed plugin context from the generic internal
 binding, but it continues to emit `renderer.type: "qoder-canvas"` and the
-provider-owned `qoder-canvas/v1` payload schema to V2 clients. Removing those
-wire aliases requires a dated V3 or negotiated compatibility spec; it is not an
-additive V2 change.
+provider-owned `payload.kind: "qoder-canvas/v1"` discriminator to V2 clients.
+For every migrated viewer it also preserves the current
+`adapter.schemaId: "qoder-canvas/<viewer-id>/v1"`; a provider refactor alone
+cannot rename or generalize that value. A new Qoder adapter schema requires a
+new versioned schema id and compatibility negotiation rather than silently
+replacing the selected V2 contract. Removing any of these wire aliases requires
+a dated V3 or negotiated compatibility spec; it is not an additive V2 change.
 
 Renderer implementations compose under `ArtifactView`; they do not inherit from
 PPTX, Canvas, or another concrete View. `ArtifactCodeView` is the shared source
@@ -297,7 +313,7 @@ interface ExternalArtifactProvider {
   id: string;
   label: string;
   version: string;
-  support: "verified" | "experimental-local";
+  acquisition: "operator-provisioned" | "local-derived-experimental";
   fingerprint: ArtifactDigest;
   receipt: VerifiedExternalProviderReceiptV1;
   contributions: readonly ExternalAdapterContribution[];
@@ -307,7 +323,7 @@ interface VerifiedExternalProviderReceiptV1 {
   kind: "HarnessStudioExternalArtifactProviderReceiptV1";
   providerId: string;
   providerVersion: string;
-  manifestDigest: ArtifactDigest;
+  providerDescriptorDigest: ArtifactDigest;
   assets: readonly {
     relativePath: string;
     role: string;
@@ -332,10 +348,10 @@ interface ExternalAdapterContribution {
   surface: ArtifactSurfaceBinding;
   outputSchemaId: string;
   capabilities: readonly ArtifactCapability[];
-  executionProfile:
+  support: "reviewed" | "experimental-local";
+  adapterExecutionProfile?:
     | "trusted-local-process"
-    | "confined-wasm"
-    | "opaque-web";
+    | "confined-wasm";
 }
 ```
 
@@ -344,6 +360,10 @@ replacement for source-specific evidence. The existing Walnut receipt remains
 the source receipt and is referenced by digest; Qoder gains an equivalent
 source receipt during migration. The provider fingerprint is derived from the
 canonical normalized receipt, every asset digest, and selected driver versions.
+For Qoder, `providerDescriptorDigest` covers its normalized manifest. A
+manifestless source such as Walnut uses a Studio-generated canonical provider
+descriptor derived from the verified source receipt; implementations do not
+invent an empty or synthetic manifest digest.
 
 External matchers are declarative. At least one selector is required; a match
 occurs when any declared normalized format, lowercase extension, or portable
@@ -352,9 +372,15 @@ or a content probe. A Studio-owned built-in plugin may use a separately
 registered bounded inspector, but Artifact bytes still cannot select its module
 or permissions.
 
-An installed and verified provider may contribute zero adapters. Installation
-proves asset identity, not a supported invocation contract, safe output schema,
-or rendering capability.
+Receipt verification proves provider asset identity. Support belongs to each
+adapter contribution because one provider can expose several schemas, drivers,
+and trust profiles at different maturity levels. `reviewed` means that specific
+invocation and output contract has passed its implementation and validation
+gate; `experimental-local` remains explicitly local and unsupported for release
+claims. A provider may therefore be receipt-verified and contribute zero
+adapters. The selected contribution's support level is copied into
+`ArtifactProviderBinding.contributionSupport`; the provider as a whole is never
+upgraded by one reviewed contribution.
 
 #### Qoder Canvas mapping
 
@@ -365,35 +391,48 @@ identity. The translation layer preserves the current request-scoped artifact
 copy, payload validation, size limits, timeout, path redaction, and cleanup.
 
 The current sidecar is trusted local Node code in a bounded child process; it is
-not an operating-system sandbox. Its execution profile must say so. Separating
-the process and limiting request input/output do not justify claims that the
-sidecar cannot inspect the host filesystem or use the network.
+not an operating-system sandbox. Its `adapterExecutionProfile` must say so.
+Separating the process and limiting request input/output do not justify claims
+that the sidecar cannot inspect the host filesystem or use the network.
 
 The hosted Canvas document remains an opaque-origin iframe. Generic hosted-view
 routes serve the selected contribution; the browser and common server path do
 not branch on `qoder-canvas` after the V2 protocol edge has normalized the
-compatibility alias.
+compatibility alias. One Qoder contribution therefore binds two explicit trust
+layers: `adapterExecutionProfile: "trusted-local-process"` for its sidecar and
+`securityProfileId: "opaque-web-v1"` for its external-hosted surface. Activation
+records the complete adapter-plus-surface combination rather than one ambiguous
+execution profile.
+
+Migrated Qoder contributions start with `support: "experimental-local"`.
+Promotion to `reviewed` requires the receipt/fingerprint migration tests,
+bounded sidecar and hosted-surface security tests, cross-platform portable-path
+tests, a real provisioned-runtime browser smoke, and explicit maintainer
+approval. Existing operational behavior alone does not make a release support
+claim.
 
 During migration, an existing Qoder manifest's `overrideBuiltIn` or
 `overridesBuiltIn` value may be imported once into a Studio-private activation
-record. That compatibility import binds the verified provider fingerprint,
+record. That compatibility import binds the receipt-covered provider fingerprint,
 contribution id, declared format/path scope, and `external-override` lane. After
 the import, changing or adding the manifest flag cannot grant precedence; a new
 fingerprint requires explicit operator approval. This preserves already
 provisioned behavior without leaving precedence under manifest control. Only
 Studio-declared data-backed formats are imported; a legacy override flag that
 matches protected TSX/JSX, SVG, or Mermaid is ignored with a provider
-diagnostic.
+diagnostic. The first provider spec must persist an atomic migration marker with
+an import version and source fingerprint. Restart, partial failure, or a later
+manifest change cannot import the flag again or grant new precedence.
 
 #### GPT Walnut mapping
 
-Walnut currently contributes a verified, content-addressed provider receipt and
-no Artifact adapter:
+Walnut currently contributes a receipt-verified, content-addressed provider
+receipt and no Artifact adapter:
 
 ```ts
 {
   id: "chatgpt-walnut",
-  support: "experimental-local",
+  acquisition: "local-derived-experimental",
   receipt: verifiedReceipt,
   contributions: [],
 }
@@ -411,20 +450,26 @@ unreviewed, inactive, or tampered Walnut assets never disable it. Walnut may
 override a built-in adapter only after explicit per-format activation binds an
 exact provider fingerprint.
 
+Current real ChatGPT/Walnut application discovery is macOS-only. Windows and
+Linux evidence covers portable receipt, cache, and path semantics; it does not
+claim native ChatGPT application discovery on those platforms.
+
 #### External execution profiles
 
 External manifests describe relative, receipt-covered assets and select only a
 core-known driver id. They cannot contain an arbitrary shell command or grant
-themselves permissions. The activation policy selects one honest execution
-profile, for example:
+themselves permissions. The activation policy binds the selected adapter
+execution profile and surface security profile. Adapter execution profiles are:
 
 - `trusted-local-process`: explicit operator trust, a separate process, bounded
   request input/output, timeout, diagnostics, and cleanup, but no claim of OS
   filesystem or network isolation;
 - `confined-wasm`: only verified modules and supplied buffers, with no host
-  filesystem or network access exposed by the driver; or
-- `opaque-web`: browser execution in an opaque-origin iframe under a
-  core-selected CSP and message protocol.
+  filesystem or network access exposed by the driver.
+
+An `external-hosted` surface separately and necessarily binds the core-owned
+`opaque-web-v1` profile: an opaque-origin iframe, core-selected CSP, and generic
+message protocol. A native surface has no external browser execution profile.
 
 Environment variables are allowlisted per driver. Provider and artifact paths
 are never accepted from browser input. Diagnostics are bounded and scrubbed.
@@ -459,10 +504,11 @@ stealing precedence from a format activation.
 
 The activation record is Studio-private, server-owned operator configuration;
 it is not part of the browser catalog or an external manifest. It records
-provider id, contribution id, fingerprint, scope, lane, execution profile, and
-user consent. The first external-provider implementation spec must select its
-portable persistence location and atomic update contract. A provider update
-invalidates the activation until the new fingerprint is verified and approved.
+provider id, contribution id, fingerprint, contribution support, scope, lane,
+adapter execution profile, surface security profile, and user consent. The
+first external-provider implementation spec must select its portable
+persistence location and atomic update contract. A provider update invalidates
+the activation until the new fingerprint is receipt-verified and approved.
 
 Provider verification failure removes its contributions before resolution, so
 the next catalog can select the native or another fallback plugin. A runtime
@@ -552,14 +598,15 @@ format-specific control flow inside catalog projection, generic routes, or the
 - SVG and Beautiful Mermaid can share the React/esbuild preview lifecycle
   without making arbitrary document bytes executable in Studio origin.
 - Qoder compatibility remains available but no longer defines the host model.
-- Walnut can be discovered and verified honestly before it has a supported
+- Walnut can be discovered and receipt-verified honestly before it has a supported
   Adapter; capability follows reviewed contributions rather than installation.
 - Adding a format requires a plugin contribution, schemas, renderer surface,
   limits, and tests. It may add declarative classification and composition
   entries, but it should not require a new control-flow branch in the catalog,
   server router, or `ArtifactView` host.
-- Provider receipts, fingerprint-aware catalog revisions, activation state, and
-  execution profiles add implementation and operational complexity.
+- Provider receipts, fingerprint-aware catalog revisions, activation state,
+  adapter execution profiles, and surface security profiles add implementation
+  and operational complexity.
 - The current Qoder trusted-process boundary remains weaker than a true sandbox
   and must stay labeled accordingly until a stronger driver is implemented.
 - Session trace, retention, compare, and replay remain unavailable until their
@@ -574,7 +621,7 @@ format-specific control flow inside catalog projection, generic routes, or the
   class hierarchy.
 - **Let the browser choose by extension or payload kind.** Rejected because it
   duplicates server policy and permits selection/execution drift.
-- **Treat a verified Walnut installation as a working Adapter.** Rejected
+- **Treat a receipt-verified Walnut installation as a working Adapter.** Rejected
   because asset identity does not prove an invocation or output contract.
 - **Allow external manifests to run arbitrary commands.** Rejected because the
   manifest would become a self-authorizing code execution API.
@@ -599,9 +646,10 @@ review evidence.
    existing data-format override flags once into fingerprint-bound activation,
    and preserve fallback/browser behavior. Protected Studio code-backed formats
    are not override-eligible.
-3. Project a verified Walnut installation as an external provider with zero
-   contributions. Expose installed, verified, inactive, and unavailable states
-   without weakening native PPTX.
+3. Project a receipt-verified Walnut installation as a locally derived external
+   provider with zero contributions. Expose installed, receipt-verified,
+   inactive, and unavailable states without weakening native PPTX. Any future
+   Walnut contribution starts with `support: "experimental-local"`.
 4. Add a Walnut format contribution only after its invocation, output schema,
    execution profile, licensing boundary, and cross-platform evidence have been
    reviewed.
@@ -626,13 +674,14 @@ review evidence.
 - Qoder migration tests preserve explicit override, native-before-fallback,
   request-scoped copies, bounded sidecar behavior, path scrubbing, iframe
   isolation, legacy V2 wire behavior, one-time override import, protected
-  code-backed formats, and real provisioned-runtime smoke coverage where
-  available.
+  code-backed formats, initial `experimental-local` contribution support, and
+  real provisioned-runtime smoke coverage where available.
 - Provider tests prove receipt portability on Windows, macOS, and Linux;
   relative-path confinement; full asset fingerprinting; tamper invalidation;
   explicit activation; and catalog revision movement.
-- Walnut tests prove that a verified installation with zero contributions does
-  not advertise a renderer and cannot displace the native PPTX adapter.
+- Walnut tests prove that a receipt-verified installation with zero
+  contributions does not advertise a renderer and cannot displace the native
+  PPTX adapter.
 - Session trace tests, when that slice exists, prove exact retained revision and
   event/tool evidence identity and explicitly reject current-worktree inference.
 - Visual verification covers wide, compact, and narrow Artifact surfaces,
