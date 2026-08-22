@@ -29,6 +29,12 @@ test.beforeAll(async () => {
     "@@ -1 +1 @@",
     "-const value = 1;",
     "+const value = 2;",
+    "diff --git a/guide.md b/guide.md",
+    "--- a/guide.md",
+    "+++ b/guide.md",
+    "@@ -1 +1,2 @@",
+    " # Artifact diff",
+    "+Second file remains visible.",
   ].join("\n"), "utf8");
   await writeFile(join(artifactDirectory, "diagram.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><script>parent.document.body.dataset.svgExecuted="yes"</script><text x="12" y="44">Safe SVG artifact</text></svg>', "utf8");
   await writeFile(join(artifactDirectory, "notes.txt"), "followed the declared content reference\n", "utf8");
@@ -150,7 +156,7 @@ async function openArtifacts(page) {
   await expect(page.getByRole("button", { name: /component\.tsx/ })).toBeVisible({ timeout: 15_000 });
 }
 
-test("renders generated TSX in the sandbox and keeps its source reachable", async ({ page }) => {
+test("renders generated TSX in the sandbox and keeps its source reachable", async ({ page }, testInfo) => {
   const failures = watchFailures(page);
   await openArtifacts(page);
   await page.getByRole("button", { name: /component\.tsx/ }).click();
@@ -179,7 +185,16 @@ test("renders generated TSX in the sandbox and keeps its source reachable", asyn
   await expect(direct.locator("body")).not.toHaveAttribute("data-module-evaluated", "yes");
   await direct.close();
   await page.getByRole("tab", { name: "Source", exact: true }).click();
-  await expect(page.locator(".artifact-code-preview")).toContainText("data-preview");
+  const source = page.locator('[data-artifact-code-view="source"]');
+  await expect(source).toContainText("data-preview");
+  await expect(source.locator('[data-highlight-state="highlighted"]')).toBeVisible();
+  const darkToken = source.locator('span[style*="color"]').first();
+  const darkColor = await darkToken.evaluate((element) => getComputedStyle(element).color);
+  await page.getByRole("button", { name: /Dark theme active/ }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(source.locator('[data-highlight-state="highlighted"]')).toBeVisible();
+  await expect.poll(() => darkToken.evaluate((element) => getComputedStyle(element).color)).not.toBe(darkColor);
+  await page.screenshot({ path: testInfo.outputPath("artifact-source-highlight-light.png"), fullPage: true });
   expect(failures).toEqual([]);
 });
 
@@ -230,11 +245,16 @@ test("loads artifact bytes from the catalog content reference", async ({ page })
   await expect(page.locator(".artifact-code-preview")).not.toContainText("data-preview");
 });
 
-test("renders code diff and sandboxes SVG without script capability", async ({ page }) => {
+test("renders code diff and sandboxes SVG without script capability", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await openArtifacts(page);
   await page.getByRole("button", { name: /change\.patch/ }).click();
-  await expect(page.locator('[data-code-diff="pierre"]')).toBeVisible();
+  const diff = page.locator('[data-artifact-code-view="diff"] [data-code-diff="pierre"]');
+  await expect(diff).toHaveAttribute("data-file-count", "2");
+  await expect(diff).toHaveAttribute("data-render-state", "ready");
+  await expect(diff).toContainText("guide.md");
+  await expect(diff).toContainText("Second file remains visible.");
+  await page.screenshot({ path: testInfo.outputPath("artifact-multi-file-diff.png"), fullPage: true });
   await page.getByRole("button", { name: /diagram\.svg/ }).click();
   const frame = page.locator('iframe[title="SVG preview: diagram.svg"]');
   await expect(frame).toHaveAttribute("sandbox", "");

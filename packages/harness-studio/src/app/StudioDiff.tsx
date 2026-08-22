@@ -1,42 +1,69 @@
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 import { parsePatchFiles } from "@pierre/diffs";
 import { FileDiff, type FileDiffMetadata } from "@pierre/diffs/react";
 import type { DebuggerDiff } from "./session-debugger-model.js";
 import { buildDebuggerPatch } from "./code-rendering-model.js";
+import { useStudioTheme } from "./studio-theme.js";
 
 export default function StudioDiff(props: { diff?: DebuggerDiff; patch?: string }): React.JSX.Element {
+  const theme = useStudioTheme();
   const patch = props.patch ?? (props.diff === undefined ? "" : buildDebuggerPatch(props.diff));
-  const fileDiff = useMemo(() => parseFileDiff(patch), [patch]);
-  if (fileDiff === undefined) {
+  const patchKey = useMemo(() => studioPatchCacheKey(patch), [patch]);
+  const fileDiffs = useMemo(() => parseStudioPatchFiles(patch, patchKey), [patch, patchKey]);
+  const progress = useRef<{ key: string; files: Set<number> }>({ key: patchKey, files: new Set() });
+  const [readyKey, setReadyKey] = useState<string>();
+  if (progress.current.key !== patchKey) progress.current = { key: patchKey, files: new Set() };
+  if (fileDiffs.length === 0) {
     return <pre className="studio-diff-fallback">{patch}</pre>;
   }
-  return <div className="studio-diff-renderer" data-code-diff="pierre">
-    <FileDiff
-      fileDiff={fileDiff}
-      disableWorkerPool
-      options={{
-        diffStyle: "split",
-        disableFileHeader: true,
-        hunkSeparators: "line-info-basic",
-        lineDiffType: "word",
-        overflow: "scroll",
-        stickyHeader: false,
-        theme: "github-light",
-        themeType: "light",
-        unsafeCSS: pierreStudioCss,
-      }}
-    />
+  const markRendered = (index: number): void => {
+    if (progress.current.key !== patchKey) return;
+    progress.current.files.add(index);
+    if (progress.current.files.size === fileDiffs.length) setReadyKey(patchKey);
+  };
+  return <div
+    className="studio-diff-renderer"
+    data-code-diff="pierre"
+    data-file-count={fileDiffs.length}
+    data-render-state={readyKey === patchKey ? "ready" : "loading"}
+  >
+    {fileDiffs.map((fileDiff, index) => <section className="studio-diff-file" key={`${patchKey}:${index}:${fileDiff.name}`}>
+      <FileDiff
+        fileDiff={fileDiff}
+        disableWorkerPool
+        options={{
+          diffStyle: "split",
+          disableFileHeader: fileDiffs.length === 1,
+          hunkSeparators: "line-info-basic",
+          lineDiffType: "word",
+          overflow: "scroll",
+          stickyHeader: false,
+          theme: { dark: "github-dark", light: "github-light" },
+          themeType: theme,
+          unsafeCSS: pierreStudioCss,
+          onPostRender: (_node, _instance, phase) => { if (phase !== "unmount") markRendered(index); },
+        }}
+      />
+    </section>)}
   </div>;
 }
 
-function parseFileDiff(patch: string): FileDiffMetadata | undefined {
+export function parseStudioPatchFiles(patch: string, cacheKey = studioPatchCacheKey(patch)): FileDiffMetadata[] {
   try {
-    return parsePatchFiles(patch, `artifact:${patch.length}`)
-      .flatMap((patch) => patch.files)
-      .at(0);
+    return parsePatchFiles(patch, cacheKey)
+      .flatMap((parsed) => parsed.files);
   } catch {
-    return undefined;
+    return [];
   }
+}
+
+export function studioPatchCacheKey(patch: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < patch.length; index += 1) {
+    hash ^= patch.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `artifact:${patch.length}:${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
 
 const pierreStudioCss = `
@@ -55,7 +82,6 @@ const pierreStudioCss = `
   --diffs-token-light-bg: transparent;
   font-size: var(--diffs-font-size);
 }
-[data-diffs-header] { display: none !important; }
 [data-line-number-content], [data-column-number] {
   font-family: var(--diffs-header-font-family) !important;
   font-variant-numeric: tabular-nums;

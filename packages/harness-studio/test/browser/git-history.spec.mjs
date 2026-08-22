@@ -82,6 +82,11 @@ test("browses refs, commits, changed files, and patches across Studio layouts", 
   await expect(page.getByText("Changed files", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: /feature\.ts/ }).click();
   await expect(page.locator(".git-file-diff")).toContainText("export const feature");
+  const diff = page.locator('.git-file-diff [data-artifact-code-view="diff"] [data-code-diff="pierre"]');
+  await expect(diff).toHaveAttribute("data-file-count", "1");
+  await expect(diff).toHaveAttribute("data-render-state", "ready");
+  await expect(diff.locator("[data-line]").first()).toBeVisible();
+  await expect.poll(async () => new Set(await diff.locator("[data-line] *").evaluateAll((elements) => elements.map((element) => getComputedStyle(element).color))).size).toBeGreaterThan(1);
   await page.screenshot({ path: testInfo.outputPath("git-history-wide.png"), fullPage: true });
   await page.getByRole("button", { name: /Dark theme active/ }).click();
   await expect(page.getByRole("button", { name: /Light theme active/ })).toBeVisible();

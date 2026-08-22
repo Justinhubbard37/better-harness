@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowClockwise } from "@phosphor-icons/react/ArrowClockwise";
 import { CaretDown } from "@phosphor-icons/react/CaretDown";
@@ -28,8 +28,8 @@ import {
   type GitLogPage,
   type GitRefsSnapshot,
 } from "../git-history-model.js";
+import { ArtifactCodeView } from "./ArtifactCodeView.js";
 
-const StudioDiff = lazy(() => import("./StudioDiff.js"));
 const PAGE_SIZE = 40;
 const GIT_LANE_COLOR_TOKENS = [5, 4, 2, 1, 6, 7, 3] as const;
 type NarrowPane = "refs" | "history" | "detail";
@@ -335,7 +335,7 @@ function CommitDetail(props: { detail: GitCommitDetail; selectedFile?: string; p
             ? <div className="git-diff-empty"><FileCode aria-hidden="true" size={22} /><p>Select a changed file to inspect its commit patch.</p></div>
             : props.patch.binary || props.patch.patch.trim() === ""
               ? <div className="git-diff-empty"><FileCode aria-hidden="true" size={22} /><p>{props.patch.binary ? "Binary changes do not have a text patch." : "Git reported no text patch for this file."}</p></div>
-              : <Suspense fallback={<pre className="studio-diff-fallback">{props.patch.patch}</pre>}><StudioDiff patch={props.patch.patch} /></Suspense>}
+              : <ArtifactCodeView mode="diff" patch={props.patch.patch} label={`Git patch: ${props.patch.path}`} />}
     </section>
   </div>;
 }

@@ -1,34 +1,97 @@
 import type { DebuggerDiff } from "./session-debugger-model.js";
 
 export type StudioCodeLanguage =
+  | "batch"
+  | "c"
+  | "cpp"
+  | "csharp"
   | "css"
+  | "dockerfile"
+  | "go"
   | "html"
+  | "java"
   | "javascript"
+  | "jsx"
   | "json"
+  | "jsonc"
+  | "kotlin"
+  | "make"
+  | "markdown"
+  | "mdx"
+  | "php"
+  | "powershell"
+  | "python"
+  | "ruby"
+  | "rust"
+  | "scss"
   | "shellscript"
+  | "sql"
+  | "svelte"
+  | "swift"
+  | "toml"
   | "tsx"
-  | "typescript";
+  | "typescript"
+  | "vue"
+  | "xml"
+  | "yaml";
 
 /** Infer only the bounded language set the Studio can load on demand. */
 export function studioCodeLanguage(sourceHint: string): StudioCodeLanguage | undefined {
   const normalized = sourceHint.trim().toLowerCase();
   const name = normalized.split(/[\\/]/).at(-1) ?? normalized;
-  if (name === "dockerfile") return "shellscript";
+  if (name === "dockerfile" || name.endsWith(".dockerfile")) return "dockerfile";
+  if (name === "makefile" || name === "gnumakefile") return "make";
   const extension = name.split(".").at(-1) ?? "";
   return ({
     bash: "shellscript",
+    bat: "batch",
+    c: "c",
+    cc: "cpp",
+    cmd: "batch",
     cjs: "javascript",
+    cpp: "cpp",
+    cs: "csharp",
     css: "css",
+    cxx: "cpp",
+    go: "go",
+    h: "c",
+    hpp: "cpp",
+    hxx: "cpp",
     htm: "html",
     html: "html",
+    java: "java",
     js: "javascript",
     json: "json",
-    jsonc: "json",
-    jsx: "javascript",
+    json5: "jsonc",
+    jsonc: "jsonc",
+    jsonl: "json",
+    jsx: "jsx",
+    kt: "kotlin",
+    kts: "kotlin",
+    md: "markdown",
+    markdown: "markdown",
+    mdx: "mdx",
     mjs: "javascript",
+    php: "php",
+    ps1: "powershell",
+    psm1: "powershell",
+    py: "python",
+    pyw: "python",
+    rb: "ruby",
+    rs: "rust",
+    scss: "scss",
     sh: "shellscript",
+    sql: "sql",
+    svelte: "svelte",
+    svg: "xml",
+    swift: "swift",
+    toml: "toml",
     ts: "typescript",
     tsx: "tsx",
+    vue: "vue",
+    xml: "xml",
+    yaml: "yaml",
+    yml: "yaml",
     zsh: "shellscript",
   } as const)[extension];
 }

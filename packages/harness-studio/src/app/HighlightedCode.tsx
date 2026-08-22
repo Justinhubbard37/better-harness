@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { StudioCodeToken } from "./code-highlight.js";
+import { useStudioTheme } from "./studio-theme.js";
 
 export function HighlightedCode({
   code,
@@ -12,6 +13,7 @@ export function HighlightedCode({
   className?: string;
   label?: string;
 }): React.JSX.Element {
+  const theme = useStudioTheme();
   const [tokens, setTokens] = useState<readonly (readonly StudioCodeToken[])[] | undefined>();
   const [state, setState] = useState<"plain" | "loading" | "highlighted">("plain");
 
@@ -20,7 +22,7 @@ export function HighlightedCode({
     setTokens(undefined);
     setState("loading");
     void import("./code-highlight.js")
-      .then(({ highlightStudioCode }) => highlightStudioCode(code, sourceHint))
+      .then(({ highlightStudioCode }) => highlightStudioCode(code, sourceHint, theme))
       .then((nextTokens) => {
         if (cancelled) return;
         setTokens(nextTokens);
@@ -30,7 +32,7 @@ export function HighlightedCode({
         if (!cancelled) setState("plain");
       });
     return () => { cancelled = true; };
-  }, [code, sourceHint]);
+  }, [code, sourceHint, theme]);
 
   return <pre className={`highlighted-code ${className}`.trim()} data-highlight-state={state} aria-label={label}><code>{tokens === undefined ? code : tokens.map((line, lineIndex) => <span className="highlighted-code-line" key={lineIndex}>{line.map((token, tokenIndex) => <span key={tokenIndex} style={tokenStyle(token)}>{token.content}</span>)}{lineIndex < tokens.length - 1 ? "\n" : ""}</span>)}</code></pre>;
 }

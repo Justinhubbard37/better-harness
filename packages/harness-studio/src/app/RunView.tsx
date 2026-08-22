@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Icon } from "@phosphor-icons/react";
 import { ArrowBendDownRight } from "@phosphor-icons/react/ArrowBendDownRight";
 import { ArrowBendUpLeft } from "@phosphor-icons/react/ArrowBendUpLeft";
@@ -47,7 +47,7 @@ import { XCircle } from "@phosphor-icons/react/XCircle";
 import type { AguiEvent } from "@qoder-ai/harness-ui";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { applyAguiEvent, initialRunState, timelineItems, type AguiRunState, type TimelineItem } from "./agui-store.js";
-import { HighlightedCode } from "./HighlightedCode.js";
+import { ArtifactCodeView } from "./ArtifactCodeView.js";
 import { createSseParser } from "./sse-client.js";
 import { useRovingTablist } from "./roving-tablist.js";
 import {
@@ -80,8 +80,6 @@ import {
 } from "./session-debugger-model.js";
 import { describeToolPayload } from "./tool-call-model.js";
 import { buildTimelineBins, groupLiveTimeline, semanticToolKind, type LiveTimelineGroup, type TimelineBin } from "./timeline-model.js";
-
-const StudioDiff = lazy(() => import("./StudioDiff.js"));
 
 /** Post one AG-UI run and fold the SSE stream into state updates. */
 async function streamRun(
@@ -200,8 +198,8 @@ const ToolCallEntry = memo(function ToolCallEntry({ item }: { item: ToolCallTime
       <CaretDown className="tool-chevron" size={14} aria-hidden="true" />
     </summary>
     {expanded && <div className="tool-detail">
-      <section><h4>Arguments</h4><HighlightedCode code={argumentsView.formatted} sourceHint={argumentsView.structured ? "tool-input.json" : "tool-input.txt"} className={argumentsView.structured ? "structured" : ""} label="Tool call arguments" /></section>
-      <section><h4>Result</h4>{resultView ? <>{item.resultTruncated ? <p className="tool-notice">Result truncated{item.resultOriginalBytes === undefined ? "" : ` from ${item.resultOriginalBytes.toLocaleString()} bytes`}.</p> : null}<HighlightedCode code={resultView.formatted} sourceHint={resultView.structured ? "tool-result.json" : "tool-result.txt"} className={resultView.structured ? "structured" : ""} label="Tool call result" /></> : <p className="tool-empty">{item.status === "running" || item.status === "preparing" ? "Waiting for the tool result…" : item.status === "result-unavailable" ? "The run finished without a retained result payload." : "No result payload was retained."}</p>}</section>
+      <section><h4>Arguments</h4><ArtifactCodeView mode="source" content={argumentsView.formatted} sourceHint={argumentsView.structured ? "tool-input.json" : "tool-input.txt"} className={argumentsView.structured ? "structured" : ""} label="Tool call arguments" /></section>
+      <section><h4>Result</h4>{resultView ? <>{item.resultTruncated ? <p className="tool-notice">Result truncated{item.resultOriginalBytes === undefined ? "" : ` from ${item.resultOriginalBytes.toLocaleString()} bytes`}.</p> : null}<ArtifactCodeView mode="source" content={resultView.formatted} sourceHint={resultView.structured ? "tool-result.json" : "tool-result.txt"} className={resultView.structured ? "structured" : ""} label="Tool call result" /></> : <p className="tool-empty">{item.status === "running" || item.status === "preparing" ? "Waiting for the tool result…" : item.status === "result-unavailable" ? "The run finished without a retained result payload." : "No result payload was retained."}</p>}</section>
       <footer><span>Call ID</span><code title={item.id}>{item.id}</code></footer>
     </div>}
   </details>;
@@ -541,16 +539,12 @@ function ExploreCell(props: { event: DebuggerEvent; cursor: DebuggerCursor; expa
 }
 
 function ToolCallDetail({ tool }: { tool: DebuggerToolCall }): React.JSX.Element {
-  return <div className="mock-tool-detail"><section><small>Input</small><HighlightedCode code={tool.input} sourceHint="tool-input.json" label="Tool call input" /></section><section><small>Retained result</small><HighlightedCode code={tool.output} sourceHint={tool.resource ?? "tool-result.txt"} label="Retained tool result" /></section>{tool.resource && <footer><FileText size={12} /><code>{tool.resource}</code></footer>}</div>;
+  return <div className="mock-tool-detail"><section><small>Input</small><ArtifactCodeView mode="source" content={tool.input} sourceHint="tool-input.json" label="Tool call input" /></section><section><small>Retained result</small><ArtifactCodeView mode="source" content={tool.output} sourceHint={tool.resource ?? "tool-result.txt"} label="Retained tool result" /></section>{tool.resource && <footer><FileText size={12} /><code>{tool.resource}</code></footer>}</div>;
 }
 
 function DiffCell({ event }: { event: DebuggerEvent }): React.JSX.Element {
   const diff = event.diff!;
-  return <section className="diff-cell"><div className="diff-toolbar"><span><GitDiff size={13} /><code>{diff.path}</code></span><span className="diff-stats">+{event.fileChanges?.[0]?.additions ?? 0} <i>−{event.fileChanges?.[0]?.deletions ?? 0}</i></span></div><Suspense fallback={<div className="diff-grid" data-code-diff="loading"><DiffPane label="Before" start={diff.beforeStart} lines={diff.before} tone="before" /><DiffPane label="After" start={diff.afterStart} lines={diff.after} tone="after" /></div>}><StudioDiff diff={diff} /></Suspense></section>;
-}
-
-function DiffPane({ label, start, lines, tone }: { label: string; start: number; lines: string[]; tone: "before" | "after" }): React.JSX.Element {
-  return <section className={`diff-pane ${tone}`}><header>{label}</header><ol>{lines.map((line, index) => <li key={`${start + index}:${line}`}><span>{start + index}</span><code>{line}</code></li>)}</ol></section>;
+  return <section className="diff-cell"><div className="diff-toolbar"><span><GitDiff size={13} /><code>{diff.path}</code></span><span className="diff-stats">+{event.fileChanges?.[0]?.additions ?? 0} <i>−{event.fileChanges?.[0]?.deletions ?? 0}</i></span></div><ArtifactCodeView mode="diff" diff={diff} label={`Session patch: ${diff.path}`} /></section>;
 }
 
 function ValidationCell({ event }: { event: DebuggerEvent }): React.JSX.Element {
@@ -583,7 +577,7 @@ function InspectorContent({ session, tab, cursor, artifactEndpoint }: { session:
   if (tab === "plan") return <PlanInspector event={event} />;
   if (tab === "evidence") return <EvidenceInspector event={event} />;
   const rawAcp = tool === undefined ? event.rawAcp : { ...event.rawAcp, toolCallId: tool.id, payload: { name: tool.name, input: tool.input, retainedResult: tool.output } };
-  return <section className="raw-acp"><dl><div><dt>Direction</dt><dd>{rawAcp.direction}</dd></div><div><dt>Method</dt><dd>{rawAcp.method}</dd></div><div><dt>RPC ID</dt><dd>{rawAcp.rpcId}</dd></div><div><dt>Session ID</dt><dd>{rawAcp.sessionId}</dd></div>{rawAcp.toolCallId && <div><dt>Tool Call ID</dt><dd>{rawAcp.toolCallId}</dd></div>}<div><dt>Trace Context</dt><dd>{rawAcp.traceContext}</dd></div></dl><HighlightedCode code={JSON.stringify({ jsonrpc: "2.0", id: rawAcp.rpcId, method: rawAcp.method, params: rawAcp.payload }, null, 2)} sourceHint="event.json" label="Raw ACP JSON" /></section>;
+  return <section className="raw-acp"><dl><div><dt>Direction</dt><dd>{rawAcp.direction}</dd></div><div><dt>Method</dt><dd>{rawAcp.method}</dd></div><div><dt>RPC ID</dt><dd>{rawAcp.rpcId}</dd></div><div><dt>Session ID</dt><dd>{rawAcp.sessionId}</dd></div>{rawAcp.toolCallId && <div><dt>Tool Call ID</dt><dd>{rawAcp.toolCallId}</dd></div>}<div><dt>Trace Context</dt><dd>{rawAcp.traceContext}</dd></div></dl><ArtifactCodeView mode="source" content={JSON.stringify({ jsonrpc: "2.0", id: rawAcp.rpcId, method: rawAcp.method, params: rawAcp.payload }, null, 2)} sourceHint="event.json" label="Raw ACP JSON" /></section>;
 }
 
 function ChangesInspector({ event, cumulative }: { event: DebuggerEvent; cumulative: DebuggerFileChange[] }): React.JSX.Element {
@@ -630,7 +624,7 @@ function TestsInspector({ session, event }: { session: DebuggerSession; event: D
 
 function TerminalInspector({ event }: { event: DebuggerEvent }): React.JSX.Element {
   if (event.validation === undefined) return <InspectorSection title="Terminal"><p className="inspector-empty">No terminal result is linked to this cursor.</p></InspectorSection>;
-  return <InspectorSection title="Terminal"><div className={`terminal-card ${event.validation.status}`}><header><TerminalWindow size={13} /><code>{event.validation.command}</code><span>{event.validation.duration}</span></header><HighlightedCode code={event.validation.output.join("\n")} sourceHint="terminal.txt" label="Terminal output" /></div></InspectorSection>;
+  return <InspectorSection title="Terminal"><div className={`terminal-card ${event.validation.status}`}><header><TerminalWindow size={13} /><code>{event.validation.command}</code><span>{event.validation.duration}</span></header><ArtifactCodeView mode="source" content={event.validation.output.join("\n")} sourceHint="terminal.txt" label="Terminal output" /></div></InspectorSection>;
 }
 
 function PlanInspector({ event }: { event: DebuggerEvent }): React.JSX.Element {

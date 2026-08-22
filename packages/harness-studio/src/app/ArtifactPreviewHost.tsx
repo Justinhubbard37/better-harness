@@ -4,7 +4,7 @@ import {
   type ArtifactBuildSnapshot,
   type ArtifactDescriptor,
 } from "../artifact-model.js";
-import { HighlightedCode } from "./HighlightedCode.js";
+import { ArtifactCodeView } from "./ArtifactCodeView.js";
 
 type PreviewState = "compiling" | "starting" | "ready" | "compile-failed" | "runtime-failed";
 
@@ -115,9 +115,9 @@ export function ArtifactPreviewHost(props: {
       <span>{build === undefined ? "No build" : `${shortBuild(build.buildId)} · build ${build.sequence}`}</span>
     </div>
     {surface === "source"
-      ? <div className="artifact-code-preview">{source === undefined
+      ? source === undefined
         ? <p className="artifact-status" role="status">Loading source…</p>
-        : <HighlightedCode code={source} sourceHint={props.artifact.label} label={`Artifact source: ${props.artifact.label}`} />}</div>
+        : <ArtifactCodeView mode="source" content={source} sourceHint={props.artifact.label} className="artifact-code-preview" label={`Artifact source: ${props.artifact.label}`} />
       : build?.status === "ready" && build.previewUri !== undefined
         ? <iframe
           key={build.buildId}

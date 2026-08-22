@@ -8,8 +8,8 @@ export type ArtifactFamily = "documents" | "images-diagrams" | "data" | "source-
 /**
  * Backing decides which half of the Artifact View lifecycle an artifact takes:
  * `data` goes Adapter -> Snapshot -> Renderer, `code` goes Adapter -> Compile
- * Runtime -> Build Snapshot -> Preview Runtime. Only `data` is implemented, but
- * the union is public now so a code-backed descriptor never needs a V3.
+ * Runtime -> Build Snapshot -> Preview Runtime. Keeping both in the public
+ * contract lets the Artifact View host compose their distinct lifecycles.
  */
 export type ArtifactBacking = "data" | "code";
 

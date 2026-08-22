@@ -15,32 +15,26 @@ import { FolderOpen } from "@phosphor-icons/react/FolderOpen";
 import { GitBranch } from "@phosphor-icons/react/GitBranch";
 import { Moon } from "@phosphor-icons/react/Moon";
 import { MagnifyingGlass } from "@phosphor-icons/react/MagnifyingGlass";
-import { Minus } from "@phosphor-icons/react/Minus";
 import { Package } from "@phosphor-icons/react/Package";
-import { Plus } from "@phosphor-icons/react/Plus";
 import { SidebarSimple } from "@phosphor-icons/react/SidebarSimple";
 import { SquaresFour } from "@phosphor-icons/react/SquaresFour";
 import { Sun } from "@phosphor-icons/react/Sun";
 import {
   isArtifactCatalogResponse,
-  isArtifactDataSnapshot,
   type ArtifactCatalogResponse,
-  type ArtifactDataSnapshot,
   type ArtifactDescriptor,
   type ArtifactFamily,
-  type PptxElement,
-  type PptxSlideSnapshot,
 } from "../artifact-model.js";
+import { ArtifactView } from "./ArtifactView.js";
 import { CompareView } from "./CompareView.js";
-import { ArtifactPreviewHost } from "./ArtifactPreviewHost.js";
 import { ExperimentView } from "./ExperimentView.js";
 import { GitHistoryView } from "./GitHistoryView.js";
-import { HighlightedCode } from "./HighlightedCode.js";
 import { RunView } from "./RunView.js";
 import type { DebuggerSession } from "./session-debugger-model.js";
 import { useRovingFocus } from "./roving-tablist.js";
+import { studioApiError } from "./studio-api.js";
+import { StudioThemeContext, type StudioTheme } from "./studio-theme.js";
 
-const StudioDiff = lazy(() => import("./StudioDiff.js"));
 const InspectorWorkbench = lazy(async () => ({ default: (await import("./InspectorWorkbench.js")).InspectorWorkbench }));
 import {
   capabilitySummary,
@@ -73,8 +67,6 @@ const AREA_COPY: Record<StudioArea, string> = {
 };
 
 type StudioSourceKind = "inspector" | "evidence" | "experiment";
-type StudioTheme = "dark" | "light";
-
 interface StudioSourceOption {
   id: string;
   kind: StudioSourceKind;
@@ -249,7 +241,7 @@ export function App(): React.JSX.Element {
     : null;
   const workspaceGateOpen = config.workspaceDiscoveryEnabled && !config.workspaceConnected;
 
-  return <>
+  return <StudioThemeContext.Provider value={theme}>
   <div className={`studio-control-plane${navigationOpen ? " navigation-open" : ""}`} inert={workspaceGateOpen ? true : undefined} aria-hidden={workspaceGateOpen ? true : undefined}>
     <PrimaryNavigation destinations={destinations} current={area} onSelect={openArea} />
     <button className="studio-nav-backdrop" type="button" aria-label="Close Studio navigation" onClick={() => { setNavigationOpen(false); navigationToggleRef.current?.focus(); }} />
@@ -276,7 +268,7 @@ export function App(): React.JSX.Element {
     await workspaceChanged();
     openArea(area === "overview" ? "sessions" : area);
   }} />}
-  </>;
+  </StudioThemeContext.Provider>;
 }
 
 function WorkspaceGate(props: { onWorkspaceChanged: () => Promise<void> }): React.JSX.Element {
@@ -615,16 +607,6 @@ function WorkspaceFolderControls(props: { autoFocus?: boolean; compact?: boolean
   </div>;
 }
 
-async function studioApiError(response: Response): Promise<string> {
-  try {
-    const payload = await response.json() as { error?: string };
-    if (typeof payload.error === "string") return payload.error;
-  } catch {
-    // Preserve the status fallback when a proxy returns a non-JSON body.
-  }
-  return `Studio request failed (${response.status}).`;
-}
-
 function formatSessionTime(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
@@ -742,7 +724,7 @@ function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: s
     <div className="artifact-preview-pane">
       {active === undefined
         ? <p className="artifact-status" role="status">Select an artifact to preview it.</p>
-        : <><header className="artifact-editor-header"><div><strong>{active.label}</strong><small>{formatLabel(active.format)} · {formatBytes(active.size)} · {shortRevision(active.revision.id)}</small></div><span>{active.adapter.id} → {active.renderer.label}</span></header><ArtifactPreview artifact={active} liveGeneration={liveGeneration} /></>}
+        : <><header className="artifact-editor-header"><div><strong>{active.label}</strong><small>{formatLabel(active.format)} · {formatBytes(active.size)} · {shortRevision(active.revision.id)}</small></div><span>{active.adapter.id} → {active.renderer.label}</span></header><ArtifactView artifact={active} liveGeneration={liveGeneration} /></>}
     </div>
   </section>;
 }
@@ -791,40 +773,6 @@ function ArtifactRow(props: { artifact: ArtifactDescriptor; selected: boolean; o
   </button>;
 }
 
-/**
- * Renderer selection happens once, on the server. The client dispatches on the
- * renderer the catalog named rather than re-deriving one from the file type, so
- * a format that Studio classifies one way and renders another cannot exist.
- * An unrecognised renderer falls through to the honest unavailable state.
- */
-function ArtifactPreview({ artifact, liveGeneration }: { artifact: ArtifactDescriptor; liveGeneration: number }): React.JSX.Element {
-  const contentUrl = artifact.revision.content.uri;
-  const contentKey = artifact.revision.digest;
-  if (artifact.renderer.status === "ready") {
-    if (artifact.renderer.id === "studio.react-preview" && artifact.backing === "code") {
-      return <ArtifactPreviewHost artifact={artifact} liveGeneration={liveGeneration} />;
-    }
-    if (artifact.renderer.type === "qoder-canvas" && artifact.renderer.viewUri !== undefined) {
-      return <iframe key={contentKey} className="artifact-frame" title={`Artifact preview: ${artifact.label}`} src={artifact.renderer.viewUri} sandbox="allow-scripts" referrerPolicy="no-referrer" />;
-    }
-    if (artifact.renderer.id === "studio.pptx-dom") {
-      return <PptxArtifactPreview key={contentKey} artifact={artifact} />;
-    }
-    if (artifact.renderer.id === "studio.svg") {
-      return <ArtifactSvgPreview key={contentKey} artifact={artifact} />;
-    }
-    if (artifact.renderer.id === "studio.image") {
-      return <div className="artifact-image-stage"><img key={contentKey} src={contentUrl} alt={artifact.label} /></div>;
-    }
-    if (TEXT_RENDERER_IDS.has(artifact.renderer.id)) {
-      return <ArtifactTextPreview key={contentKey} artifact={artifact} url={contentUrl} />;
-    }
-  }
-  return <p className="artifact-status" role="status">{artifact.renderer.reason ?? `No renderer is available for this artifact (${artifact.renderer.id}).`}</p>;
-}
-
-const TEXT_RENDERER_IDS = new Set(["studio.code", "studio.diff", "studio.json", "studio.text"]);
-
 /** Display names live here, not in the versioned catalog contract. */
 const FORMAT_LABELS: Record<string, string> = {
   docx: "Word",
@@ -838,162 +786,6 @@ const FORMAT_LABELS: Record<string, string> = {
 
 function formatLabel(format: string): string {
   return FORMAT_LABELS[format] ?? format.toUpperCase();
-}
-
-function ArtifactSvgPreview({ artifact }: { artifact: ArtifactDescriptor }): React.JSX.Element {
-  const [source, setSource] = useState<string>();
-  const [failure, setFailure] = useState<string>();
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch(artifact.revision.content.uri, { signal: controller.signal }).then(async (response) => {
-      if (!response.ok) throw new Error(`SVG content failed (${response.status}).`);
-      setSource(await response.text());
-    }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
-    });
-    return () => controller.abort();
-  }, [artifact.revision.content.uri]);
-  if (failure !== undefined) return <p className="artifact-status" role="alert">{failure}</p>;
-  if (source === undefined) return <p className="artifact-status" role="status">Loading SVG preview…</p>;
-  const policy = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">`;
-  return <iframe className="artifact-frame" title={`SVG preview: ${artifact.label}`} srcDoc={`${policy}${source}`} sandbox="" referrerPolicy="no-referrer" />;
-}
-
-function ArtifactTextPreview({ artifact, url }: { artifact: ArtifactDescriptor; url: string }): React.JSX.Element {
-  const [content, setContent] = useState<string>();
-  const [failure, setFailure] = useState<string>();
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch(url, { signal: controller.signal }).then(async (response) => {
-      if (!response.ok) throw new Error(`Artifact content failed (${response.status}).`);
-      setContent(await response.text());
-    }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
-    });
-    return () => controller.abort();
-  }, [url]);
-  if (failure !== undefined) return <p className="artifact-status" role="alert">{failure}</p>;
-  if (content === undefined) return <p className="artifact-status" role="status">Loading preview…</p>;
-  if (artifact.renderer.id === "studio.diff") {
-    return <Suspense fallback={<pre className="studio-diff-fallback">{content}</pre>}><StudioDiff patch={content} /></Suspense>;
-  }
-  return <div className="artifact-code-preview"><HighlightedCode code={content} sourceHint={artifact.label} label={`Artifact source: ${artifact.label}`} /></div>;
-}
-
-function PptxArtifactPreview({ artifact }: { artifact: ArtifactDescriptor }): React.JSX.Element {
-  const [snapshot, setSnapshot] = useState<ArtifactDataSnapshot>();
-  const [failure, setFailure] = useState<string>();
-  const [slideIndex, setSlideIndex] = useState(0);
-  const [zoom, setZoom] = useState(100);
-  const [selectedAddress, setSelectedAddress] = useState<string>();
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch(artifact.adapter.snapshotUri, { signal: controller.signal }).then(async (response) => {
-      if (!response.ok) throw new Error(await studioApiError(response));
-      const value: unknown = await response.json();
-      if (!isArtifactDataSnapshot(value) || value.revisionId !== artifact.revision.id || value.payload.kind !== "pptx/v1") {
-        throw new Error("PPTX snapshot contract is unsupported.");
-      }
-      setSnapshot(value);
-      setFailure(undefined);
-    }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
-    });
-    return () => controller.abort();
-  }, [artifact.adapter.snapshotUri, artifact.revision.id]);
-  if (failure !== undefined) return <p className="artifact-status" role="alert">{failure}</p>;
-  if (snapshot === undefined || snapshot.payload.kind !== "pptx/v1") return <p className="artifact-status" role="status">Adapting PPTX revision…</p>;
-  const payload = snapshot.payload;
-  const active = payload.slides[Math.min(slideIndex, payload.slides.length - 1)];
-  if (active === undefined) return <p className="artifact-status" role="alert">The PPTX snapshot has no slides.</p>;
-  // The adapter already published an addressed outline for this revision; the
-  // rail reads it instead of re-deriving one, which is what makes the semantic
-  // addresses a navigable structure rather than unused payload.
-  const outline = snapshot.structure.length === payload.slides.length ? snapshot.structure : [];
-  const activeOutline = outline[Math.min(slideIndex, outline.length - 1)];
-  const selectAddress = (address: string): void => setSelectedAddress((current) => current === address ? undefined : address);
-  return <div className="pptx-artifact-viewer">
-    <nav className="pptx-slide-rail" aria-label="Slides">
-      {payload.slides.map((slide, index) => <button key={slide.id} type="button" className={index === slideIndex ? "selected" : undefined} aria-current={index === slideIndex} onClick={() => { setSlideIndex(index); setSelectedAddress(undefined); }}>
-        <span className="pptx-slide-thumb" aria-hidden="true">{index + 1}</span><small>{slide.label}</small>
-      </button>)}
-    </nav>
-    <section className="pptx-stage-region" aria-label={`${active.label} preview`}>
-      <div className="pptx-view-toolbar">
-        <span>{active.label}{active.notesPresent ? " · Notes" : ""}</span>
-        <div role="group" aria-label="Slide zoom"><button type="button" aria-label="Zoom out" disabled={zoom <= 50} onClick={() => setZoom((value) => Math.max(50, value - 25))}><Minus aria-hidden="true" size={14} /></button><output>{zoom}%</output><button type="button" aria-label="Zoom in" disabled={zoom >= 200} onClick={() => setZoom((value) => Math.min(200, value + 25))}><Plus aria-hidden="true" size={14} /></button></div>
-      </div>
-      <div className="pptx-stage-scroll">
-        <PptxSlide slide={active} width={payload.width} height={payload.height} zoom={zoom} resources={snapshot.resources} selectedAddress={selectedAddress} />
-      </div>
-      <footer className="pptx-diagnostics">
-        <span>{snapshot.adapter.id}@{snapshot.adapter.version}</span>
-        <ArtifactDiagnostics diagnostics={snapshot.diagnostics} />
-      </footer>
-    </section>
-    {activeOutline !== undefined && (activeOutline.children ?? []).length > 0 && <aside className="pptx-outline-pane" aria-label={`${active.label} outline`}>
-      <h3>Outline</h3>
-      <ul>
-        {(activeOutline.children ?? []).map((node) => <li key={node.id}>
-          <button type="button" className={node.address === selectedAddress ? "selected" : undefined} aria-pressed={node.address === selectedAddress} onClick={() => selectAddress(node.address)}>
-            <strong>{node.label}</strong><small>{node.kind}</small>
-          </button>
-        </li>)}
-      </ul>
-    </aside>}
-  </div>;
-}
-
-/**
- * Diagnostics the adapter recorded for this revision. A count alone hides the
- * one thing a diagnostic exists to say, so the messages stay reachable.
- */
-function ArtifactDiagnostics({ diagnostics }: { diagnostics: ArtifactDataSnapshot["diagnostics"] }): React.JSX.Element {
-  if (diagnostics.length === 0) return <span>No diagnostics</span>;
-  const worst = diagnostics.some((item) => item.level === "error")
-    ? "error"
-    : diagnostics.some((item) => item.level === "warning") ? "warning" : "info";
-  return <details className={`artifact-diagnostics level-${worst}`}>
-    <summary>{diagnostics.length} diagnostic{diagnostics.length === 1 ? "" : "s"}</summary>
-    <ul>
-      {diagnostics.map((item, index) => <li key={`${item.code}:${index}`} className={`level-${item.level}`}>
-        <strong>{item.code}</strong><span>{item.message}</span>{item.address !== undefined && <code>{item.address}</code>}
-      </li>)}
-    </ul>
-  </details>;
-}
-
-function PptxSlide(props: { slide: PptxSlideSnapshot; width: number; height: number; zoom: number; resources: ArtifactDataSnapshot["resources"]; selectedAddress?: string }): React.JSX.Element {
-  return <div className="pptx-slide" style={{ aspectRatio: `${props.width} / ${props.height}`, width: `${props.zoom}%`, backgroundColor: props.slide.background ?? "var(--color-document-paper)" }}>
-    {props.slide.elements.map((element) => <PptxSlideElement key={element.id} element={element} slideWidth={props.width} slideHeight={props.height} resources={props.resources} selected={element.address === props.selectedAddress} />)}
-  </div>;
-}
-
-function PptxSlideElement(props: { element: PptxElement; slideWidth: number; slideHeight: number; resources: ArtifactDataSnapshot["resources"]; selected: boolean }): React.JSX.Element {
-  const element = props.element;
-  const style = {
-    left: `${element.x / props.slideWidth * 100}%`,
-    top: `${element.y / props.slideHeight * 100}%`,
-    width: `${element.width / props.slideWidth * 100}%`,
-    height: `${element.height / props.slideHeight * 100}%`,
-    ...(element.rotation === undefined ? {} : { transform: `rotate(${element.rotation}deg)` }),
-  };
-  const selection = props.selected ? " selected" : "";
-  if (element.kind === "image") {
-    const resource = props.resources.find((candidate) => candidate.id === element.resourceId);
-    return <img className={`pptx-slide-element pptx-slide-image${selection}`} data-artifact-address={element.address} style={style} src={resource?.uri} alt={element.alt ?? element.name} />;
-  }
-  return <div className={`pptx-slide-element pptx-slide-shape${selection}`} data-artifact-address={element.address} style={{ ...style, backgroundColor: element.fill ?? "transparent", borderColor: element.line ?? "transparent" }}>
-    {element.paragraphs.map((paragraph, paragraphIndex) => <p key={paragraphIndex} style={{ textAlign: paragraph.alignment }}>
-      {paragraph.runs.map((run, runIndex) => <span key={runIndex} style={{
-        ...(run.fontFamily === undefined ? {} : { fontFamily: `${JSON.stringify(run.fontFamily)}, system-ui, sans-serif` }),
-        ...(run.fontSizePoints === undefined ? {} : { fontSize: `${run.fontSizePoints / (props.slideWidth / 12_700) * 100}cqw` }),
-        ...(run.color === undefined ? {} : { color: run.color }),
-        ...(run.bold === true ? { fontWeight: 700 } : {}),
-        ...(run.italic === true ? { fontStyle: "italic" } : {}),
-      }}>{run.text}</span>)}
-    </p>)}
-  </div>;
 }
 
 function shortRevision(value: string): string {
