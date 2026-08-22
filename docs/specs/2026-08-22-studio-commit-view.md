@@ -3,7 +3,7 @@
 ## Traceability
 
 - Spec ID: studio-commit-view
-- Status: Implemented
+- Status: Implemented (Windows CI receipt pending)
 
 ## Intent
 
@@ -60,6 +60,27 @@ the server-owned open workspace instead of accepting an arbitrary client path.
   overflow, and loading/error states remain usable.
 - AC-8: Opening another workspace invalidates Commit state and reloads refs and
   history for the new repository without carrying prior filters or selection.
+- AC-9: A workspace selected anywhere inside a Git worktree resolves one
+  canonical repository root. Commit paths, repository labels, details, and
+  patches use that root consistently without broadening any non-Git Studio
+  capability.
+- AC-10: Merge commit details and patches compare against the first parent by
+  default, so a merge never reports zero changed files merely because Git's
+  default combined-diff presentation omitted them.
+- AC-11: History pagination uses an opaque continuation cursor, keeps the graph
+  stable across pages, exposes an honest 5,000-row presentation cap, and leaves
+  already loaded commits usable when a later page fails.
+- AC-12: The ordinary refs -> first history page -> commit -> patch flow reuses
+  workspace refs and commit detail instead of repeating full Git reads. Git
+  execution failures remain sanitized errors and are never converted into an
+  empty repository result.
+- AC-13: The commit table virtualizes accumulated rows, keeps Load more
+  reachable at wide, compact, and narrow widths, and labels search according to
+  its actual subject/hash/author contract.
+- AC-14: Git repository labels and their test fixtures derive native filesystem
+  basenames with the host path implementation. Windows drive-letter and
+  backslash paths never become the full repository label, while browser-facing
+  payloads still redact the absolute repository root on every platform.
 
 ## Non-goals
 
@@ -93,6 +114,16 @@ the server-owned open workspace instead of accepting an arbitrary client path.
 6. Run focused type/build/tests, the repository's preview smoke checks, and
    Playwright review at wide, compact, and narrow widths with console/page-error
    inspection and screenshots outside tracked source.
+7. Resolve and retain the canonical Git root when a workspace opens; define
+   first-parent merge comparison once and reuse it for status, stats, and patch.
+8. Replace offset pagination with a query-bound continuation cursor carrying
+   graph lane state. Reuse the refs snapshot and a bounded commit-detail cache,
+   stop cleanly at 5,000 visible rows, and preserve prior pages on failure.
+9. Virtualize commit rows with the existing TanStack dependency, give the log
+   grid stable toolbar/status/content/footer rows, and make search copy honest.
+10. Remove POSIX-only path splitting from the Git history fixture and document
+    the repository-wide boundary between native filesystem paths, portable
+    protocol paths, line endings, and shell execution.
 
 ## Test and Review Evidence
 
@@ -114,19 +145,47 @@ the server-owned open workspace instead of accepting an arbitrary client path.
 - Risk: Git output is adversarial structured data. Delimiter-safe parsing,
   exact ref allowlisting, bounded buffers/results, revision validation, and
   stderr redaction are required before the route can be considered implemented.
-- Risk: the worktree already contains Artifact Preview edits in Studio shell,
-  server, CSS, and tests. Review and stage the Commit View paths separately;
-  do not treat adjacent changes as this spec's evidence.
+- Risk: the base branch includes separately committed Artifact Preview work in
+  the Studio shell and server. Keep Commit View review evidence scoped to the
+  files and tests listed here rather than treating adjacent history as proof.
+- AC-9, AC-10: add nested-worktree and merge-first-parent fixtures that assert
+  non-empty, exact patches.
+- AC-11, AC-12: assert cursor query binding, page uniqueness, the 5,000-row
+  terminal receipt, cached HTTP reads, and sanitized Git execution failures.
+- AC-11, AC-13: browser-click Load more, scroll through virtualized rows, and
+  inspect DOM bounds at wide, compact, and narrow widths.
+- AC-14: run the Git history fixture on the host-native path implementation and
+  retain the GitHub Actions Windows job as the authoritative backslash/drive
+  receipt; local non-Windows runs are supporting evidence, not Windows proof.
 
 ## Implementation Evidence
 
-- AC-1 through AC-6 and AC-8: `git-history.test.ts`,
+- AC-1 through AC-6 and AC-8 through AC-12: `git-history.test.ts`,
   `git-history-server.test.ts`, and the full Harness Studio Vitest suite pass
-  with real temporary Git repositories (`24` files, `148` tests).
-- AC-2 through AC-5 and AC-7: `git-history.spec.mjs` passes a real browser flow
-  for ref filtering, author search, commit selection, file selection, and patch
-  rendering at `1440x960`, `900x760`, and `390x844` with no console or page
-  errors. The full Studio Playwright suite passes (`21` tests).
+  with real temporary Git repositories (`24` files, `151` tests). The focused
+  Git contract suite passes `8` tests, including nested worktrees, first-parent
+  merge detail/patch, signed cursor binding, Git failures, and the 5,000-row
+  terminal cap.
+- AC-2 through AC-5, AC-7, AC-11, and AC-13: `git-history.spec.mjs` passes a
+  real browser flow for ref filtering, author search, cursor pagination,
+  bounded virtual rows, commit/file selection, and patch rendering at
+  `1440x960`, `900x760`, and `390x844` with no unexpected console/page errors
+  or horizontal overflow. The injected 422 page failure produces one expected
+  browser resource error and leaves prior rows usable. The full Studio
+  Playwright suite passes (`21` tests).
+- The current `better-harness` repository was paged through all `326` reachable
+  commits: order exactly matches `git log --date-order`, all SHAs are unique,
+  `59` merges retain valid graph edges, and no commits are omitted.
+- A fresh local HTTP run measured refs at `21.1 ms`, first 40-row history at
+  `33.4 ms`, the next page at `16.8 ms`, commit detail at `34.5 ms`, and the
+  cached-detail patch route at `11.0 ms` on this checkout. These timings are
+  observational, not a cross-machine performance threshold.
+- AC-14: the Git fixture now derives the expected repository label with native
+  `node:path.basename` instead of POSIX-only string splitting. The focused Git
+  history suite passes (`7` tests), Studio typecheck passes, the full Studio
+  suite passes (`24` files, `151` tests), and the doc-link suite passes (`8`
+  tests). A post-change Windows Actions run has not yet been observed, so this
+  is implemented locally but not claimed as fresh Windows CI proof.
 - `npm run typecheck --workspace @qoder-ai/harness-studio` and
   `npm test --workspace @qoder-ai/harness-studio` pass.
 - `git diff --check` passes.

@@ -51,7 +51,9 @@ export interface GitLogPage {
   commits: GitHistoryCommit[];
   total: number;
   hasMore: boolean;
+  nextCursor?: string;
   searchTruncated: boolean;
+  historyTruncated: boolean;
 }
 
 export type GitFileChangeKind = "added" | "modified" | "deleted" | "renamed" | "copied" | "type-changed";
@@ -94,7 +96,9 @@ export function isGitLogPage(value: unknown): value is GitLogPage {
     && value.commits.every(isGitCommit)
     && Number.isInteger(value.total)
     && typeof value.hasMore === "boolean"
-    && typeof value.searchTruncated === "boolean";
+    && (value.nextCursor === undefined || typeof value.nextCursor === "string")
+    && typeof value.searchTruncated === "boolean"
+    && typeof value.historyTruncated === "boolean";
 }
 
 export function isGitCommitDetail(value: unknown): value is GitCommitDetail {

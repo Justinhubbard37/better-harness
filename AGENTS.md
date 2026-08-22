@@ -63,6 +63,28 @@ Adding support for a new Coding Agent host starts with
 
 ## Test and Verify
 
+### Cross-platform behavior
+
+- Treat native filesystem paths as host data. Build and inspect them with
+  `node:path` (`join`, `resolve`, `relative`, `basename`, and `dirname`) rather
+  than splitting on `/`, concatenating separators, assuming `/tmp`, or ignoring
+  Windows drive letters and UNC roots.
+- Keep portable format paths separate from filesystem paths. Persisted artifact,
+  archive, URL, protocol, and receipt paths use their specified separator (often
+  `node:path.posix`); when simulating a target OS, select `posix` or `win32` from
+  that explicit target instead of the host running the test.
+- Prefer Node APIs and `execFile` argv arrays over shell-specific commands or
+  quoting. If a shell is part of the contract, cover the intended PowerShell,
+  `cmd.exe`, or POSIX-shell behavior explicitly.
+- Do not make fixtures depend on checkout newline conversion, executable bits,
+  case-sensitive filesystems, or raw absolute-path string equality unless that
+  platform behavior is the contract. Normalize only at the boundary the test is
+  meant to ignore.
+- A local POSIX pass is not Windows evidence. Reproduce platform semantics with
+  focused tests where possible, and use the corresponding GitHub Actions job as
+  the authoritative receipt before declaring a Windows, macOS, or Linux failure
+  fixed.
+
 - Assert on behaviour, not on text that happens to contain it. Prefer calling the
   function and checking its returned value, shape, or error over matching a
   pattern against source code, rendered markup, or CLI output.

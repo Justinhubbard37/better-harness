@@ -81,6 +81,7 @@ import {
   type QoderCanvasRuntime,
 } from "./qoder-canvas-viewer-bridge.js";
 import type { ArtifactDescriptor } from "../artifact-model.js";
+import type { GitCommitDetail, GitRefsSnapshot } from "../git-history-model.js";
 import {
   DEFAULT_LOCAL_HARNESS_ID,
   DEFAULT_LOCAL_HARNESS_SOURCE,
@@ -88,11 +89,11 @@ import {
 } from "./default-local-harness.js";
 import {
   GitHistoryError,
-  isGitRepository,
-  readGitCommit,
-  readGitFilePatch,
+  readGitCommitAtRoot,
+  readGitFilePatchAtRoot,
   readGitLog,
-  readGitRefs,
+  readGitRefsAtRoot,
+  resolveGitRepositoryRoot,
 } from "./git-history.js";
 
 const builtInExecutorFactory: HarnessUiExecutorFactory = (context) => {
@@ -312,8 +313,12 @@ interface StudioWorkspace {
   inspectorReport?: Record<string, unknown>;
   /** Server-only execution root for the selected local project. Never serialized. */
   localDirectory?: string;
-  /** Read-only Git capability observed when the local workspace was opened. */
-  gitRepository?: boolean;
+  /** Canonical server-only repository root. Never serialized. */
+  gitRoot?: string;
+  /** Ref snapshot shared by refs and log requests until the next explicit refresh. */
+  gitRefs?: GitRefsSnapshot;
+  /** Small immutable-detail cache used by commit and patch routes. */
+  gitCommitCache?: Map<string, GitCommitDetail>;
   ownedDirectory?: string;
 }
 
@@ -361,7 +366,7 @@ async function route(
       harnessMode: options.harnessSource === undefined ? "none" : options.harnessMode ?? "configured",
       historyEnabled: state.historyAdapter !== undefined,
       inspectorEnabled: activeSourcePath(state.sourceCatalog, state.activeSources, "inspector") !== undefined,
-      gitEnabled: state.workspace?.gitRepository === true,
+      gitEnabled: state.workspace?.gitRoot !== undefined,
       workspaceWorkbenchEnabled: state.workspace?.inspectorReport !== undefined,
       workspaceDiscoveryEnabled: options.workspaceSessionProvider !== undefined,
       workspaceConnected: state.workspace !== undefined,
@@ -714,6 +719,7 @@ async function openWorkspace(
       ...(provider.status === "error" ? { message: "Provider discovery failed." } : {}),
     }));
     const previous = state.workspace?.ownedDirectory;
+    const gitRoot = await resolveGitRepositoryRoot(workspacePath);
     state.workspace = {
       label: portableWorkspaceLabel(discovered.label),
       sessionCount: sessions.size,
@@ -722,7 +728,7 @@ async function openWorkspace(
       providers,
       ...(validWorkspaceInspectorReport(discovered.inspectorReport) ? { inspectorReport: discovered.inspectorReport } : {}),
       localDirectory: workspacePath,
-      gitRepository: await isGitRepository(workspacePath),
+      ...(gitRoot === undefined ? {} : { gitRoot, gitCommitCache: new Map<string, GitCommitDetail>() }),
     };
     if (previous !== undefined) await rm(previous, { recursive: true, force: true }).catch(() => undefined);
     respondJson(response, 200, {
@@ -1059,15 +1065,17 @@ function sessionComparisonSide(session: StoredWorkspaceSession): Record<string, 
 
 function gitWorkspaceRoot(state: HarnessStudioState): string {
   const workspace = state.workspace;
-  if (workspace?.localDirectory === undefined || workspace.gitRepository !== true) {
+  if (workspace?.gitRoot === undefined) {
     throw new GitHistoryError("The open workspace is not a Git repository.", 404, "NOT_GIT_REPOSITORY");
   }
-  return workspace.localDirectory;
+  return workspace.gitRoot;
 }
 
 async function serveGitRefs(response: ServerResponse, state: HarnessStudioState): Promise<void> {
   try {
-    respondJson(response, 200, await readGitRefs(gitWorkspaceRoot(state)), { "Cache-Control": "no-store" });
+    const refs = await readGitRefsAtRoot(gitWorkspaceRoot(state));
+    if (state.workspace !== undefined) state.workspace.gitRefs = refs;
+    respondJson(response, 200, refs, { "Cache-Control": "no-store" });
   } catch (error) {
     respondGitError(response, error);
   }
@@ -1076,13 +1084,15 @@ async function serveGitRefs(response: ServerResponse, state: HarnessStudioState)
 async function serveGitLog(response: ServerResponse, state: HarnessStudioState, url: URL): Promise<void> {
   try {
     const limitText = url.searchParams.get("limit");
-    const skipText = url.searchParams.get("skip");
-    respondJson(response, 200, await readGitLog(gitWorkspaceRoot(state), {
+    const root = gitWorkspaceRoot(state);
+    const refs = state.workspace?.gitRefs ?? await readGitRefsAtRoot(root);
+    if (state.workspace !== undefined) state.workspace.gitRefs = refs;
+    respondJson(response, 200, await readGitLog(root, {
       refs: url.searchParams.getAll("ref"),
       search: url.searchParams.get("search") ?? undefined,
       limit: limitText === null ? undefined : Number(limitText),
-      skip: skipText === null ? undefined : Number(skipText),
-    }), { "Cache-Control": "no-store" });
+      cursor: url.searchParams.get("cursor") ?? undefined,
+    }, refs), { "Cache-Control": "no-store" });
   } catch (error) {
     respondGitError(response, error);
   }
@@ -1090,7 +1100,7 @@ async function serveGitLog(response: ServerResponse, state: HarnessStudioState, 
 
 async function serveGitCommit(response: ServerResponse, state: HarnessStudioState, sha: string): Promise<void> {
   try {
-    respondJson(response, 200, await readGitCommit(gitWorkspaceRoot(state), sha), { "Cache-Control": "no-store" });
+    respondJson(response, 200, await cachedGitCommit(state, sha), { "Cache-Control": "no-store" });
   } catch (error) {
     respondGitError(response, error);
   }
@@ -1104,10 +1114,26 @@ async function serveGitFilePatch(
 ): Promise<void> {
   try {
     if (path === null) throw new GitHistoryError("File path is required.", 400, "INVALID_PATH");
-    respondJson(response, 200, await readGitFilePatch(gitWorkspaceRoot(state), sha, path), { "Cache-Control": "no-store" });
+    const detail = await cachedGitCommit(state, sha);
+    respondJson(response, 200, await readGitFilePatchAtRoot(gitWorkspaceRoot(state), sha, path, detail), { "Cache-Control": "no-store" });
   } catch (error) {
     respondGitError(response, error);
   }
+}
+
+async function cachedGitCommit(state: HarnessStudioState, sha: string): Promise<GitCommitDetail> {
+  const workspace = state.workspace;
+  const cached = workspace?.gitCommitCache?.get(sha);
+  if (cached !== undefined) return cached;
+  const detail = await readGitCommitAtRoot(gitWorkspaceRoot(state), sha);
+  if (workspace?.gitCommitCache !== undefined) {
+    workspace.gitCommitCache.set(sha, detail);
+    if (workspace.gitCommitCache.size > 64) {
+      const oldest = workspace.gitCommitCache.keys().next().value as string | undefined;
+      if (oldest !== undefined) workspace.gitCommitCache.delete(oldest);
+    }
+  }
+  return detail;
 }
 
 function respondGitError(response: ServerResponse, error: unknown): void {

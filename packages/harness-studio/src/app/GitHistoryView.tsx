@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowClockwise } from "@phosphor-icons/react/ArrowClockwise";
 import { CaretDown } from "@phosphor-icons/react/CaretDown";
 import { CaretRight } from "@phosphor-icons/react/CaretRight";
@@ -37,7 +38,9 @@ export function GitHistoryView(): React.JSX.Element {
   const [commits, setCommits] = useState<GitHistoryCommit[]>([]);
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string>();
   const [searchTruncated, setSearchTruncated] = useState(false);
+  const [historyTruncated, setHistoryTruncated] = useState(false);
   const [selectedRefs, setSelectedRefs] = useState<string[]>([]);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -46,12 +49,16 @@ export function GitHistoryView(): React.JSX.Element {
   const [selectedFile, setSelectedFile] = useState<string>();
   const [patch, setPatch] = useState<GitFilePatch>();
   const [loading, setLoading] = useState(true);
+  const [refsLoading, setRefsLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [patchLoading, setPatchLoading] = useState(false);
   const [failure, setFailure] = useState<string>();
+  const [refsFailure, setRefsFailure] = useState<string>();
+  const [loadMoreFailure, setLoadMoreFailure] = useState<string>();
   const [detailFailure, setDetailFailure] = useState<string>();
   const [revision, setRevision] = useState(0);
+  const [refsRevision, setRefsRevision] = useState(-1);
   const [narrowPane, setNarrowPane] = useState<NarrowPane>("history");
   const logRequest = useRef(0);
   const detailRequest = useRef(0);
@@ -64,26 +71,37 @@ export function GitHistoryView(): React.JSX.Element {
 
   useEffect(() => {
     let cancelled = false;
+    setRefsFailure(undefined);
+    setRefsLoading(true);
     void (async () => {
       try {
         const response = await fetch("/api/git/refs", { cache: "no-store" });
         const payload: unknown = await response.json();
         if (!response.ok) throw new Error(apiError(payload, "Git refs are unavailable."));
         if (!isGitRefsSnapshot(payload)) throw new Error("Git refs use an unsupported contract.");
-        if (!cancelled) setRefs(payload);
+        if (!cancelled) {
+          const available = new Set([payload.head?.id, ...payload.local.map((ref) => ref.id), ...payload.remote.map((ref) => ref.id), ...payload.tags.map((ref) => ref.id)].filter((id): id is string => id !== undefined));
+          setRefs(payload);
+          setSelectedRefs((current) => current.filter((id) => available.has(id)));
+          setRefsRevision(revision);
+        }
       } catch (error) {
-        if (!cancelled) setFailure(errorMessage(error));
+        if (!cancelled) setRefsFailure(errorMessage(error));
+      } finally {
+        if (!cancelled) setRefsLoading(false);
       }
     })();
     return () => { cancelled = true; };
   }, [revision]);
 
   const loadLog = useCallback(async (append: boolean): Promise<void> => {
+    if (append && nextCursor === undefined) return;
     const requestId = ++logRequest.current;
     append ? setLoadingMore(true) : setLoading(true);
-    if (!append) setFailure(undefined);
+    append ? setLoadMoreFailure(undefined) : setFailure(undefined);
     try {
-      const params = new URLSearchParams({ limit: String(PAGE_SIZE), skip: String(append ? commits.length : 0) });
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
+      if (append && nextCursor !== undefined) params.set("cursor", nextCursor);
       if (search !== "") params.set("search", search);
       selectedRefs.forEach((ref) => params.append("ref", ref));
       const response = await fetch(`/api/git/log?${params}`, { cache: "no-store" });
@@ -94,7 +112,9 @@ export function GitHistoryView(): React.JSX.Element {
       setCommits((current) => append ? appendUnique(current, payload) : payload.commits);
       setTotal(payload.total);
       setHasMore(payload.hasMore);
+      setNextCursor(payload.nextCursor);
       setSearchTruncated(payload.searchTruncated);
+      setHistoryTruncated(payload.historyTruncated);
       if (!append) {
         setSelectedSha(undefined);
         setDetail(undefined);
@@ -103,16 +123,20 @@ export function GitHistoryView(): React.JSX.Element {
         setNarrowPane("history");
       }
     } catch (error) {
-      if (requestId === logRequest.current) setFailure(errorMessage(error));
+      if (requestId === logRequest.current) {
+        append ? setLoadMoreFailure(errorMessage(error)) : setFailure(errorMessage(error));
+      }
     } finally {
       if (requestId === logRequest.current) {
         setLoading(false);
         setLoadingMore(false);
       }
     }
-  }, [commits.length, search, selectedRefs]);
+  }, [nextCursor, search, selectedRefs]);
 
-  useEffect(() => { void loadLog(false); }, [search, selectedRefs, revision]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (refsRevision === revision) void loadLog(false);
+  }, [search, selectedRefs, revision, refsRevision]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function selectCommit(sha: string): Promise<void> {
     const requestId = ++detailRequest.current;
@@ -166,7 +190,7 @@ export function GitHistoryView(): React.JSX.Element {
     <header className="git-history-titlebar">
       <div><GitCommit aria-hidden="true" size={18} weight="fill" /><span><strong>Commit history</strong><small>{refs?.repository.label ?? "Open workspace"}</small></span></div>
       {refs !== undefined && <span className="git-current-branch"><GitBranch aria-hidden="true" size={14} /><strong>{refs.repository.currentBranch ?? "Detached HEAD"}</strong><code>{refs.repository.headSha?.slice(0, 8) ?? "no commits"}</code></span>}
-      <button type="button" title="Refresh Git history" aria-label="Refresh Git history" disabled={loading} onClick={() => setRevision((value) => value + 1)}><ArrowClockwise aria-hidden="true" size={15} className={loading ? "spin" : undefined} /></button>
+      <button type="button" title="Refresh Git history" aria-label="Refresh Git history" disabled={loading || refsLoading} onClick={() => setRevision((value) => value + 1)}><ArrowClockwise aria-hidden="true" size={15} className={loading || refsLoading ? "spin" : undefined} /></button>
     </header>
     <nav className="git-narrow-tabs" aria-label="Commit workbench panes">
       {(["refs", "history", "detail"] as const).map((pane) => <button key={pane} type="button" aria-current={narrowPane === pane ? "page" : undefined} onClick={() => setNarrowPane(pane)}>{pane === "refs" ? "Refs" : pane === "history" ? "History" : "Details"}</button>)}
@@ -174,26 +198,32 @@ export function GitHistoryView(): React.JSX.Element {
     <aside className="git-refs-pane" aria-label="Repository refs">
       <PaneHeader title="Refs" trailing={selectedRefs.length === 0 ? "All" : `${selectedRefs.length} selected`} />
       <div className="git-refs-scroll">
-        {refs === undefined
+        {refsFailure !== undefined
+          ? <ErrorState message={refsFailure} />
+          : refs === undefined
           ? <LoadingState label="Loading refs…" />
           : <RefsTree refs={refs} selected={selectedRefs} onToggle={toggleRef} />}
       </div>
     </aside>
     <section className="git-log-pane" aria-label="Commit history">
       <div className="git-log-toolbar">
-        <label><MagnifyingGlass aria-hidden="true" size={14} /><input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Filter message, hash, or author" aria-label="Filter commit history" />{searchInput !== "" && <button type="button" aria-label="Clear commit filter" title="Clear commit filter" onClick={() => setSearchInput("")}><X aria-hidden="true" size={13} /></button>}</label>
+        <label><MagnifyingGlass aria-hidden="true" size={14} /><input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Filter subject, hash, or author" aria-label="Filter commit history" />{searchInput !== "" && <button type="button" aria-label="Clear commit filter" title="Clear commit filter" onClick={() => setSearchInput("")}><X aria-hidden="true" size={13} /></button>}</label>
         {selectedRefs.length > 0 && <button type="button" className="git-clear-filter" onClick={() => setSelectedRefs([])}>Clear refs</button>}
         <span>{total} commit{total === 1 ? "" : "s"}</span>
       </div>
-      {searchTruncated && <p className="git-search-limit" role="status">Search is limited to the newest 2,000 commits in the selected refs.</p>}
+      <div className="git-log-status">
+        {searchTruncated && <p className="git-search-limit" role="status">Search is limited to the newest 2,000 commits in the selected refs.</p>}
+        {historyTruncated && <p className="git-search-limit" role="status">History is limited to the newest 5,000 of {total} reachable commits. Refine refs or search to inspect older history.</p>}
+        {loadMoreFailure !== undefined && <p className="git-page-error" role="alert">{loadMoreFailure} Previously loaded commits remain available.</p>}
+      </div>
       {failure !== undefined
         ? <ErrorState message={failure} />
         : loading && commits.length === 0
           ? <LoadingState label="Loading commits…" />
           : commits.length === 0
             ? <EmptyState search={search} />
-            : <CommitTable commits={commits} selectedSha={selectedSha} onSelect={(sha) => void selectCommit(sha)} />}
-      {hasMore && !loading && <footer className="git-load-more"><button type="button" disabled={loadingMore} onClick={() => void loadLog(true)}>{loadingMore ? <><SpinnerGap aria-hidden="true" className="spin" size={14} />Loading…</> : `Load more · ${commits.length} of ${total}`}</button></footer>}
+            : <CommitTable key={`${revision}\0${selectedRefs.join("\0")}\0${search}`} commits={commits} selectedSha={selectedSha} onSelect={(sha) => void selectCommit(sha)} />}
+      <footer className="git-load-more">{hasMore && !loading && <button type="button" disabled={loadingMore} onClick={() => void loadLog(true)}>{loadingMore ? <><SpinnerGap aria-hidden="true" className="spin" size={14} />Loading…</> : loadMoreFailure === undefined ? `Load more · ${commits.length} of ${Math.min(total, 5_000)}` : "Retry loading history"}</button>}</footer>
     </section>
     <section className="git-detail-pane" aria-label="Commit detail">
       <PaneHeader title="Commit details" trailing={activeCommit?.shortSha} />
@@ -233,16 +263,38 @@ function RefRow(props: { gitRef: GitHistoryRef; selected: boolean; onToggle: (id
 }
 
 function CommitTable(props: { commits: GitHistoryCommit[]; selectedSha?: string; onSelect: (sha: string) => void }): React.JSX.Element {
+  const scrollRef = useRef<HTMLDivElement>(null);
   const laneCount = Math.max(2, ...props.commits.flatMap((commit) => [commit.lane + 1, ...commit.activeLanes.map((lane) => lane + 1), ...commit.graphEdges.map((edge) => Math.max(edge.fromLane, edge.toLane) + 1)]));
-  return <div className="git-commit-table" role="table" aria-label="Commits">
+  const rows = useVirtualizer({
+    count: props.commits.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 32,
+    overscan: 10,
+    getItemKey: (index) => props.commits[index]!.sha,
+  });
+  rows.shouldAdjustScrollPositionOnItemSizeChange = () => false;
+  return <div ref={scrollRef} className="git-commit-table" role="table" aria-label="Commits" aria-rowcount={props.commits.length + 1}>
     <div className="git-commit-table-head" role="row"><span style={{ width: laneCount * 16 + 8 }} /><strong>Message</strong><strong>Author</strong><strong>Date</strong><strong>Hash</strong></div>
-    <div className="git-commit-rows" role="rowgroup">{props.commits.map((commit) => <button key={commit.sha} type="button" role="row" aria-selected={props.selectedSha === commit.sha} onClick={() => props.onSelect(commit.sha)}>
-      <CommitGraph commit={commit} laneCount={laneCount} />
-      <span className="git-commit-subject" role="cell"><span>{commit.refs.map((ref) => <i key={ref.id} data-kind={ref.kind}>{ref.kind === "tag" ? <Tag aria-hidden="true" size={10} /> : <GitBranch aria-hidden="true" size={10} />}{ref.remote === undefined ? ref.name : `${ref.remote}/${ref.name}`}</i>)}</span><strong title={commit.summary}>{commit.summary}</strong></span>
-      <span className="git-commit-author" role="cell" title={commit.authorEmail}>{commit.authorName}</span>
-      <time role="cell" dateTime={commit.authoredAt} title={new Date(commit.authoredAt).toLocaleString()}>{relativeTime(commit.authoredAt)}</time>
-      <code role="cell">{commit.shortSha}</code>
-    </button>)}</div>
+    <div className="git-commit-rows" role="rowgroup" style={{ height: rows.getTotalSize() }}>{rows.getVirtualItems().map((virtualRow) => {
+      const commit = props.commits[virtualRow.index]!;
+      return <button
+        key={commit.sha}
+        ref={rows.measureElement}
+        data-index={virtualRow.index}
+        style={{ transform: `translateY(${virtualRow.start}px)` }}
+        type="button"
+        role="row"
+        aria-rowindex={virtualRow.index + 2}
+        aria-selected={props.selectedSha === commit.sha}
+        onClick={() => props.onSelect(commit.sha)}
+      >
+        <CommitGraph commit={commit} laneCount={laneCount} />
+        <span className="git-commit-subject" role="cell"><span>{commit.refs.map((ref) => <i key={ref.id} data-kind={ref.kind}>{ref.kind === "tag" ? <Tag aria-hidden="true" size={10} /> : <GitBranch aria-hidden="true" size={10} />}{ref.remote === undefined ? ref.name : `${ref.remote}/${ref.name}`}</i>)}</span><strong title={commit.summary}>{commit.summary}</strong></span>
+        <span className="git-commit-author" role="cell" title={commit.authorEmail}>{commit.authorName}</span>
+        <time role="cell" dateTime={commit.authoredAt} title={new Date(commit.authoredAt).toLocaleString()}>{relativeTime(commit.authoredAt)}</time>
+        <code role="cell">{commit.shortSha}</code>
+      </button>;
+    })}</div>
   </div>;
 }
 

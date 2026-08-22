@@ -19,6 +19,9 @@ test.beforeAll(async () => {
   git("add", "README.md");
   git("commit", "-m", "docs: add commit view fixture", "-m", "The full body remains visible in details.");
   git("tag", "v1.0.0");
+  for (let index = 1; index <= 41; index += 1) {
+    git("commit", "--allow-empty", "-m", `chore: history page ${index}`);
+  }
   git("switch", "-c", "feature/history-filter");
   await writeFile(join(workspace, "feature.ts"), "export const feature = true;\n", "utf8");
   git("add", "feature.ts");
@@ -60,6 +63,31 @@ test("browses refs, commits, changed files, and patches across Studio layouts", 
   await expect(page.locator(".git-file-diff")).toContainText("export const feature");
   await page.screenshot({ path: testInfo.outputPath("git-history-wide.png"), fullPage: true });
 
+  const loadMore = page.getByRole("button", { name: /Load more/ });
+  await expect(loadMore).toBeVisible();
+  let failNextPage = true;
+  await page.route("**/api/git/log?*", async (route) => {
+    if (failNextPage && new URL(route.request().url()).searchParams.has("cursor")) {
+      failNextPage = false;
+      await route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: "Git could not read this workspace.", code: "GIT_READ_FAILED" }) });
+      return;
+    }
+    await route.continue();
+  });
+  await loadMore.click();
+  await expect(page.getByRole("alert")).toContainText("Previously loaded commits remain available.");
+  await expect(page.getByRole("row", { name: /feat: add filtered branch commit/ })).toBeVisible();
+  await page.unroute("**/api/git/log?*");
+  const nextPage = page.waitForResponse((response) => response.url().includes("/git/log?") && response.url().includes("cursor="));
+  await page.getByRole("button", { name: "Retry loading history" }).click();
+  expect((await nextPage).ok()).toBe(true);
+  await expect(loadMore).toHaveCount(0);
+  const commitTable = page.getByRole("table", { name: "Commits" });
+  await commitTable.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(page.getByRole("row", { name: /docs: add commit view fixture/ })).toBeVisible();
+  expect(await page.locator(".git-commit-rows > button").count()).toBeLessThan(45);
+  await commitTable.evaluate((element) => { element.scrollTop = 0; });
+
   const localGroup = page.getByRole("button", { name: /Local branches/ });
   await expect(localGroup).toHaveAttribute("aria-expanded", "true");
   await page.getByRole("button", { name: /feature\/history-filter/ }).click();
@@ -82,8 +110,13 @@ test("browses refs, commits, changed files, and patches across Studio layouts", 
   await expect(page.getByRole("button", { name: "Details", exact: true })).not.toHaveAttribute("aria-current", "page");
   await expect(page.getByRole("button", { name: "Details", exact: true })).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(page.getByRole("region", { name: "Commit history" })).toBeVisible();
+  await expect(page.locator(".git-commit-rows > button").first()).toContainText("feat: add filtered branch commit");
+  const narrowTable = page.getByRole("table", { name: "Commits" });
+  expect(await narrowTable.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("git-history-narrow.png"), fullPage: true });
-  expect(failures).toEqual([]);
+  const expectedPageFailures = failures.filter((message) => message.includes("422 (Unprocessable Entity)"));
+  expect(expectedPageFailures).toHaveLength(1);
+  expect(failures.filter((message) => !expectedPageFailures.includes(message))).toEqual([]);
 });
 
 function git(...args) {

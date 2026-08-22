@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   isGitRepository,
@@ -26,7 +26,7 @@ describe("workspace Git history", () => {
     const repo = await makeRepository();
     const refs = await readGitRefs(repo.path);
 
-    expect(refs.repository).toEqual(expect.objectContaining({ label: repo.label, currentBranch: "main", detached: false }));
+    expect(refs.repository).toEqual(expect.objectContaining({ label: basename(repo.path), currentBranch: "main", detached: false }));
     expect(JSON.stringify(refs)).not.toContain(repo.path);
     expect(refs.head).toMatchObject({ id: "HEAD", name: "main", commitSha: repo.mergeSha });
     expect(refs.local.map((ref) => ref.id)).toEqual(expect.arrayContaining(["refs/heads/main", "refs/heads/feature/commit-view"]));
@@ -40,13 +40,18 @@ describe("workspace Git history", () => {
   it("filters exact local and remote refs, searches, paginates, and lays out merges", async () => {
     const repo = await makeRepository();
     const first = await readGitLog(repo.path, { limit: 2 });
-    const second = await readGitLog(repo.path, { limit: 2, skip: 2 });
+    const second = await readGitLog(repo.path, { limit: 2, cursor: first.nextCursor });
+    const third = await readGitLog(repo.path, { limit: 2, cursor: second.nextCursor });
+    const unpaged = await readGitLog(repo.path, { limit: 100 });
     const feature = await readGitLog(repo.path, { refs: ["refs/heads/feature/commit-view"], limit: 40 });
     const remote = await readGitLog(repo.path, { refs: ["refs/remotes/origin/main"], limit: 40 });
     const search = await readGitLog(repo.path, { search: "ALICE@EXAMPLE.COM", limit: 40 });
 
     expect(first.commits).toHaveLength(2);
-    expect(new Set([...first.commits, ...second.commits].map((commit) => commit.sha)).size).toBe(4);
+    expect(first.nextCursor).toEqual(expect.any(String));
+    const paged = [...first.commits, ...second.commits, ...third.commits];
+    expect(new Set(paged.map((commit) => commit.sha)).size).toBe(unpaged.commits.length);
+    expect(paged).toEqual(unpaged.commits);
     expect(first.hasMore).toBe(true);
     expect(feature.commits.map((commit) => commit.sha)).toContain(repo.featureSha);
     expect(feature.commits.map((commit) => commit.sha)).not.toContain(repo.mainOnlySha);
@@ -54,6 +59,7 @@ describe("workspace Git history", () => {
     expect(search.commits).toHaveLength(first.total);
     expect(first.commits[0]).toMatchObject({ sha: repo.mergeSha, parents: expect.arrayContaining([expect.any(String), expect.any(String)]) });
     expect(first.commits[0]!.graphEdges).toHaveLength(2);
+    await expect(readGitLog(repo.path, { refs: ["refs/heads/feature/commit-view"], limit: 2, cursor: first.nextCursor })).rejects.toMatchObject({ status: 400, code: "INVALID_CURSOR" });
   });
 
   it("returns full multiline messages, renamed files, stats, and a selected file patch", async () => {
@@ -68,6 +74,52 @@ describe("workspace Git history", () => {
     expect(patch.binary).toBe(false);
     await expect(readGitFilePatch(repo.path, repo.renameSha, "not-in-commit.txt")).rejects.toMatchObject({ status: 404, code: "FILE_NOT_FOUND" });
   });
+
+  it("uses the repository root for nested workspaces and first-parent merge patches", async () => {
+    const repo = await makeRepository();
+    const nested = join(repo.path, "packages", "app");
+    await mkdir(nested, { recursive: true });
+
+    const refs = await readGitRefs(nested);
+    const detail = await readGitCommit(nested, repo.mergeSha);
+    const feature = detail.files.find((file) => file.path === "feature.txt");
+    const patch = await readGitFilePatch(nested, repo.mergeSha, "feature.txt");
+
+    expect(refs.repository.label).toBe(basename(repo.path));
+    expect(feature).toMatchObject({ status: "added", additions: 1, deletions: 0 });
+    expect(patch.patch).toContain("+feature");
+  });
+
+  it("reports Git execution failures instead of converting them into empty history", async () => {
+    const repo = await makeRepository();
+    const refs = await readGitRefs(repo.path);
+    const missing = "f".repeat(40);
+    const broken = {
+      ...refs,
+      head: refs.head === null ? null : { ...refs.head, commitSha: missing },
+      local: refs.local.map((ref) => ({ ...ref, commitSha: missing })),
+      remote: [],
+      tags: [],
+    };
+
+    await expect(readGitLog(repo.path, {}, broken)).rejects.toMatchObject({ status: 422, code: "GIT_READ_FAILED" });
+  });
+
+  it("stops cursor pagination at an honest 5,000-row presentation cap", async () => {
+    const path = await makeLargeRepository(5_001);
+    const refs = await readGitRefs(path);
+    let cursor: string | undefined;
+    let visible = 0;
+    let last;
+    do {
+      last = await readGitLog(path, { limit: 100, cursor }, refs);
+      visible += last.commits.length;
+      cursor = last.nextCursor;
+    } while (cursor !== undefined);
+
+    expect(visible).toBe(5_000);
+    expect(last).toMatchObject({ total: 5_001, hasMore: false, historyTruncated: true });
+  }, 20_000);
 
   it("parses delimiter-safe records and rename numstat as behavior", () => {
     const records = parseLogRecords(`a`.repeat(40) + `\x1faaaaaaa\x1fsubject\x1fAlice\x1falice@example.com\x1f2026-08-22T10:00:00Z\x1f${"b".repeat(40)}\x00`);
@@ -87,7 +139,6 @@ describe("workspace Git history", () => {
 
 async function makeRepository(): Promise<{
   path: string;
-  label: string;
   featureSha: string;
   mainOnlySha: string;
   renameSha: string;
@@ -123,7 +174,35 @@ async function makeRepository(): Promise<{
   const mergeSha = git(path, "rev-parse", "HEAD");
   git(path, "update-ref", "refs/remotes/origin/main", mergeSha);
   git(path, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
-  return { path, label: path.split("/").at(-1)!, featureSha, mainOnlySha, renameSha, mergeSha };
+  return { path, featureSha, mainOnlySha, renameSha, mergeSha };
+}
+
+async function makeLargeRepository(commitCount: number): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), "harness-studio-git-large-"));
+  directories.push(path);
+  git(path, "init", "-b", "main");
+  const commands: string[] = [];
+  for (let index = 0; index < commitCount; index += 1) {
+    const message = `history ${index}`;
+    commands.push(
+      "commit refs/heads/main",
+      `mark :${index + 1}`,
+      `author History Test <history@example.com> ${index + 1} +0000`,
+      `committer History Test <history@example.com> ${index + 1} +0000`,
+      `data ${Buffer.byteLength(message)}`,
+      message,
+      ...(index === 0 ? [] : [`from :${index}`]),
+      "",
+    );
+  }
+  commands.push("done", "");
+  execFileSync("git", ["fast-import", "--quiet"], {
+    cwd: path,
+    input: commands.join("\n"),
+    encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C" },
+  });
+  return path;
 }
 
 function git(cwd: string, ...args: string[]): string {
