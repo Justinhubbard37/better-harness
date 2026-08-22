@@ -141,6 +141,7 @@ Valid examples (choose EXACTLY ONE):
 Co-authored-by: GitHub Copilot Agent (GPT 5.5) <198982749+copilot@users.noreply.github.com>
 Co-authored-by: Codex (GPT 5.6 Sol) <codex@openai.com>
 Co-authored-by: QoderAI (Qwen 3.8 Max) <qoder_ai@qoder.com>
+Co-authored-by: augment-app-staging[bot] <182802480+augment-app-staging[bot]@users.noreply.github.com>
 
 ## Commit Messages
 
