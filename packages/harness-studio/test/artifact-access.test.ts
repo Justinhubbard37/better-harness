@@ -22,8 +22,10 @@ async function temporaryDirectory(prefix: string): Promise<string> {
 
 async function startWithArtifacts(artifactDirectory: string): Promise<HarnessStudioServerHandle> {
   const appDir = await temporaryDirectory("studio-app-");
+  const artifactProviderStateRoot = await temporaryDirectory("studio-provider-state-");
+  const walnutCacheRoot = await temporaryDirectory("studio-walnut-cache-");
   await writeFile(join(appDir, "index.html"), "<!doctype html><title>studio fixture</title>\n", "utf8");
-  started = await startHarnessStudioServer({ appDir, artifactDirectory });
+  started = await startHarnessStudioServer({ appDir, artifactDirectory, artifactProviderStateRoot, walnutCacheRoot });
   return started;
 }
 
@@ -49,6 +51,15 @@ describe("artifact read boundary", () => {
     expect((await fetch(`${server.url}/api/artifacts`, { headers: hostile })).status).toBe(403);
     expect((await fetch(`${server.url}${contentUri}`, { headers: hostile })).status).toBe(403);
     expect((await fetch(`${server.url}/api/artifacts/events`, { headers: hostile })).status).toBe(403);
+    expect((await fetch(`${server.url}/api/artifact-providers`, { headers: hostile })).status).toBe(403);
+
+    const providers = await (await fetch(`${server.url}/api/artifact-providers`)).json() as { kind: string; providers: unknown[] };
+    expect(providers.kind).toBe("HarnessStudioArtifactProviderStatusV1");
+    expect(providers.providers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "chatgpt-walnut", status: "unavailable", contributions: [] }),
+    ]));
+    expect(JSON.stringify(providers)).not.toContain("studio-provider-state-");
+    expect(JSON.stringify(providers)).not.toContain("studio-walnut-cache-");
   });
 
   it("keeps a code artifact's own subdirectory out of the declined list", async () => {

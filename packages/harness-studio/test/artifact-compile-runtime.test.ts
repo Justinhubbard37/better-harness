@@ -14,8 +14,8 @@ import { resolveArtifactPlugin } from "../src/server/artifact-plugin-registry.js
 async function compileEntry(directory: string, label: string) {
   const index = await indexArtifactDirectory(directory, { includeDigests: true });
   const entry = index.entries.find((candidate) => candidate.label === label)!;
-  const resolution = resolveArtifactPlugin(entry, { qoderCanvasViewers: [] });
-  const descriptor = describeArtifactCatalog(index, (candidate) => resolveArtifactPlugin(candidate, { qoderCanvasViewers: [] }))
+  const resolution = resolveArtifactPlugin(entry);
+  const descriptor = describeArtifactCatalog(index, (candidate) => resolveArtifactPlugin(candidate))
     .artifacts.find((candidate) => candidate.id === entry.id)!;
   return compileArtifactPreview({ artifactRoot: directory, entry, descriptor, buildRuntime: resolution.buildRuntime });
 }

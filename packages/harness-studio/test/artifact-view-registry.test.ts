@@ -3,16 +3,17 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ArtifactDescriptor, ArtifactRendererReference } from "../src/artifact-model.js";
 import {
-  ARTIFACT_VIEW_PROVIDERS,
+  ARTIFACT_SURFACE_MOUNTS,
   ArtifactView,
-  resolveArtifactViewProvider,
+  normalizeArtifactSurfaceKind,
+  resolveArtifactSurfaceMount,
 } from "../src/app/ArtifactView.js";
 
-describe("Artifact View provider registry", () => {
+describe("Artifact View surface registry", () => {
   it("keeps one stable ordered composition boundary for every view family", () => {
-    expect(ARTIFACT_VIEW_PROVIDERS.map((provider) => provider.id)).toEqual([
+    expect(ARTIFACT_SURFACE_MOUNTS.map((mount) => mount.id)).toEqual([
       "studio.sandboxed-preview",
-      "qoder-canvas",
+      "external-hosted",
       "studio.markdown",
       "studio.pptx-dom",
       "studio.image",
@@ -22,7 +23,7 @@ describe("Artifact View provider registry", () => {
 
   it.each([
     ["dynamic React", descriptor({ id: "studio.react-preview", type: "sandboxed-web" }, { backing: "code", format: "tsx" }), "studio.sandboxed-preview"],
-    ["Qoder Canvas", descriptor({ id: "qoder-canvas.deck", type: "qoder-canvas", viewUri: "/api/artifacts/deck/view" }), "qoder-canvas"],
+    ["Qoder Canvas", descriptor({ id: "qoder-canvas.deck", type: "qoder-canvas", viewUri: "/api/artifacts/deck/view" }), "external-hosted"],
     ["Markdown", descriptor({ id: "studio.markdown" }, { format: "md" }), "studio.markdown"],
     ["PPTX", descriptor({ id: "studio.pptx-dom" }, { format: "pptx" }), "studio.pptx-dom"],
     ["SVG", descriptor({ id: "studio.svg-react-preview", type: "sandboxed-web" }, { backing: "code", format: "svg" }), "studio.sandboxed-preview"],
@@ -33,19 +34,21 @@ describe("Artifact View provider registry", () => {
     ["JSON", descriptor({ id: "studio.json" }, { format: "json" }), "studio.text-family"],
     ["text", descriptor({ id: "studio.text" }, { format: "txt" }), "studio.text-family"],
   ])("resolves the server-selected %s renderer", (_label, artifact, expected) => {
-    expect(resolveArtifactViewProvider(artifact).id).toBe(expected);
+    expect(resolveArtifactSurfaceMount(artifact)?.id).toBe(expected);
   });
 
   it("does not reclassify an unknown renderer from a familiar extension", () => {
     const artifact = descriptor({ id: "future.deck-renderer" }, { label: "deck.pptx", format: "pptx" });
-    expect(resolveArtifactViewProvider(artifact)).toBeUndefined();
+    expect(resolveArtifactSurfaceMount(artifact)).toBeUndefined();
     expect(renderToStaticMarkup(createElement(ArtifactView, { artifact, liveGeneration: 0 })))
       .toContain("No renderer is available for this artifact (future.deck-renderer).");
+    expect(resolveArtifactSurfaceMount(descriptor({ id: "studio.pptx-dom", type: "future-native" }, { format: "pptx" }))).toBeUndefined();
   });
 
   it("rejects a malformed hosted renderer and preserves unavailable reasons", () => {
     const missingView = descriptor({ id: "qoder-canvas.deck", type: "qoder-canvas" });
-    expect(resolveArtifactViewProvider(missingView)).toBeUndefined();
+    expect(normalizeArtifactSurfaceKind(missingView)).toBe("external-hosted");
+    expect(resolveArtifactSurfaceMount(missingView)).toBeUndefined();
 
     const unavailable = descriptor({
       id: "studio.unavailable",

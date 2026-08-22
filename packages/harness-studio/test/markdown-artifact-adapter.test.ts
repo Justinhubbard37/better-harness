@@ -27,7 +27,7 @@ async function markdownDirectory(): Promise<string> {
 async function adaptDocument(directory: string, label: string) {
   const index = await indexArtifactDirectory(directory, { includeDigests: true });
   const entry = index.entries.find((candidate) => candidate.label === label)!;
-  const catalog = describeArtifactCatalog(index, (candidate) => resolveArtifactPlugin(candidate, { qoderCanvasViewers: [] }));
+  const catalog = describeArtifactCatalog(index, (candidate) => resolveArtifactPlugin(candidate));
   const descriptor = catalog.artifacts.find((candidate) => candidate.id === entry.id)!;
   const snapshot = await MARKDOWN_ARTIFACT_ADAPTER.adapt({ entry, descriptor });
   return { entry, descriptor, snapshot, payload: snapshot.payload as MarkdownArtifactPayload };

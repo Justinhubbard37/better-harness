@@ -14,6 +14,7 @@
   - [Render Markdown artifacts as native React documents](../specs/2026-08-22-studio-markdown-artifact-view.md)
   - [Render SVG and Mermaid artifacts through the React preview runtime](../specs/2026-08-22-studio-react-document-artifacts.md)
   - [Keep Walnut bootstrap receipts portable across platforms](../specs/2026-08-21-walnut-cross-platform-paths.md)
+  - [Implement external Artifact providers in Harness Studio](../specs/2026-08-22-studio-external-artifact-provider-runtime.md)
 
 ## Context
 

@@ -62,26 +62,22 @@ import {
   type ArtifactIndex,
   type IndexArtifactDirectoryOptions,
 } from "./artifact-catalog.js";
-import { compileTrustedRendererModule, formatTrustedRendererCompileError } from "./trusted-renderer-compiler.js";
+import { formatTrustedRendererCompileError } from "./trusted-renderer-compiler.js";
 import {
   artifactPreviewHtml,
   compileArtifactPreview,
   findCompiledArtifactPreview,
 } from "./artifact-compile-runtime.js";
 import {
-  discoverCanvasViewers,
-  resolveArtifactPlugin,
   type ArtifactBuildRuntimeImplementation,
   type ArtifactPluginResolution,
-  type QoderCanvasViewerPlugin,
 } from "./artifact-plugin-registry.js";
 import {
-  prepareQoderCanvasViewer,
   resolveQoderCanvasRuntime,
   serveQoderCanvasRuntimeFile,
-  type QoderCanvasRuntime,
 } from "./qoder-canvas-viewer-bridge.js";
-import type { ArtifactDescriptor } from "../artifact-model.js";
+import { ARTIFACT_PROVIDER_STATUS_RESPONSE_KIND, type ArtifactDescriptor } from "../artifact-model.js";
+import { discoverArtifactProviderRuntime } from "./artifact-provider-discovery.js";
 import type { GitCommitDetail, GitRefsSnapshot } from "../git-history-model.js";
 import {
   DEFAULT_LOCAL_HARNESS_ID,
@@ -212,6 +208,10 @@ export interface HarnessStudioServerOptions {
   canvasSdkRoot?: string;
   /** Prebuilt Canvas SDK media directory containing canvas-sdk.js and index-canvas.html. */
   canvasSdkMedia?: string;
+  /** Studio-private external Artifact activation state root. */
+  artifactProviderStateRoot?: string;
+  /** Studio-owned Walnut cache root; defaults to the platform cache location. */
+  walnutCacheRoot?: string;
   /** Additional bounded source candidates selectable from inside Studio. */
   sourceCatalog?: StudioSourceCandidate[];
   executorFactory?: HarnessUiExecutorFactory;
@@ -562,6 +562,12 @@ async function route(
     await serveArtifactCatalog(response, artifactOptions(options, state));
     return;
   }
+  if (request.method === "GET" && url.pathname === "/api/artifact-providers") {
+    if (!allowArtifactRead(request, response)) return;
+    const runtime = await discoverArtifactProviderRuntime(artifactOptions(options, state));
+    respondJson(response, 200, { kind: ARTIFACT_PROVIDER_STATUS_RESPONSE_KIND, providers: runtime.statuses }, { "Cache-Control": "no-store" });
+    return;
+  }
   if (request.method === "POST" && url.pathname === "/api/artifact-imports") {
     await createArtifactImport(request, response, state);
     return;
@@ -621,17 +627,18 @@ async function route(
       return;
     }
     if (tail === "viewer/" || tail === "viewer/index.html") {
-      await serveArtifactViewer(response, scoped, id, revision);
+      await serveArtifactHostedDocument(response, scoped, id, revision);
       return;
     }
-    if (tail === "viewer/canvas-module.js" || tail === "viewer/canvas-module.js.map") {
-      await serveArtifactViewerModule(response, scoped, id, revision, tail.endsWith(".map"));
+    if (tail === "viewer/runtime-module.js" || tail === "viewer/runtime-module.js.map"
+      || tail === "viewer/canvas-module.js" || tail === "viewer/canvas-module.js.map") {
+      await serveArtifactHostedModule(response, scoped, id, revision, tail.endsWith(".map"));
       return;
     }
-    const viewerResourceMatch = tail.match(/^viewer\/(runtime\/.*)$/);
+    const viewerResourceMatch = tail.match(/^viewer\/(.+)$/);
     if (viewerResourceMatch !== null) {
       const resource = decodeRouteComponent(response, viewerResourceMatch[1]!);
-      if (resource !== undefined) await serveArtifactViewerResource(response, scoped, id, revision, resource);
+      if (resource !== undefined) await serveArtifactHostedResource(response, scoped, id, revision, resource);
       return;
     }
     respondArtifactJson(response, 404, { error: "No such artifact revision route." });
@@ -1472,8 +1479,8 @@ async function resolveArtifactRevisionPlugin(
 ): Promise<{ entry: ArtifactEntry; descriptor: ArtifactDescriptor; resolution: ArtifactPluginResolution } | { error: string; status: number }> {
   const resolved = await resolveArtifactRevision(options.artifactDirectory, id, revision);
   if ("error" in resolved) return resolved;
-  const viewers = await discoverCanvasViewers(options.canvasViewerRoot);
-  const resolution = resolveArtifactPlugin(resolved.entry, { qoderCanvasViewers: viewers });
+  const runtime = await discoverArtifactProviderRuntime(options);
+  const resolution = runtime.registry.resolve(resolved.entry);
   // Project through the same function the catalog uses so a single artifact and
   // the listing can never describe the same revision differently.
   const descriptor = describeArtifactCatalog({ ...resolved.index, entries: [resolved.entry] }, () => resolution).artifacts[0];
@@ -1487,11 +1494,11 @@ async function serveArtifactCatalog(response: ServerResponse, options: HarnessSt
     respondJson(response, index.status, { error: index.error });
     return;
   }
-  const viewers = await discoverCanvasViewers(options.canvasViewerRoot);
+  const runtime = await discoverArtifactProviderRuntime(options);
   try {
     respondJson(response, 200, describeArtifactCatalog(
       index,
-      (entry) => resolveArtifactPlugin(entry, { qoderCanvasViewers: viewers }),
+      (entry) => runtime.registry.resolve(entry),
     ));
   } catch (error) {
     const message = error instanceof ArtifactCatalogContractError
@@ -1784,39 +1791,44 @@ function safeArtifactError(error: unknown): string {
   return message.replaceAll(process.cwd(), "<workspace>").slice(0, 1_000);
 }
 
-async function resolveArtifactViewer(
+async function resolveArtifactHostedSurface(
   options: HarnessStudioServerOptions,
   id: string,
   revision: string,
-): Promise<{ entry: ArtifactEntry; viewer: QoderCanvasViewerPlugin; runtime: QoderCanvasRuntime } | { error: string; status: number }> {
+): Promise<{
+  entry: ArtifactEntry;
+  descriptor: ArtifactDescriptor;
+  resolution: ArtifactPluginResolution & { surface: Extract<ArtifactPluginResolution["surface"], { kind: "external-hosted" }> };
+} | { error: string; status: number }> {
   const resolved = await resolveArtifactRevisionPlugin(options, id, revision);
   if ("error" in resolved) return resolved;
-  const viewer = resolved.resolution.qoderViewer;
-  if (viewer === undefined || resolved.resolution.renderer.status !== "ready") {
-    return { error: `Artifact '${id}' has no Canvas viewer.`, status: 415 };
+  if (resolved.resolution.surface.kind !== "external-hosted" || resolved.resolution.renderer.status !== "ready") {
+    return { error: `Artifact '${id}' has no external hosted surface.`, status: 415 };
   }
-  const runtime = resolveQoderCanvasRuntime({ sdkRoot: options.canvasSdkRoot, sdkMedia: options.canvasSdkMedia, cwd: options.cwd });
-  if (runtime === undefined) return { error: "Canvas SDK runtime is unavailable.", status: 503 };
-  return { entry: resolved.entry, viewer, runtime };
+  return {
+    entry: resolved.entry,
+    descriptor: resolved.descriptor,
+    resolution: resolved.resolution as ArtifactPluginResolution & {
+      surface: Extract<ArtifactPluginResolution["surface"], { kind: "external-hosted" }>;
+    },
+  };
 }
 
-async function serveArtifactViewer(
+async function serveArtifactHostedDocument(
   response: ServerResponse,
   options: HarnessStudioServerOptions,
   id: string,
   revision: string,
 ): Promise<void> {
-  const resolved = await resolveArtifactViewer(options, id, revision);
+  const resolved = await resolveArtifactHostedSurface(options, id, revision);
   if ("error" in resolved) {
     respondArtifactJson(response, resolved.status, { error: resolved.error });
     return;
   }
   try {
-    const prepared = await prepareQoderCanvasViewer(
-      resolved.entry,
-      resolved.viewer,
-      resolved.runtime,
-      `${artifactRevisionBase(id, resolved.entry.digest!)}/viewer/canvas-module.js?v=1`,
+    const html = await resolved.resolution.surface.runtime.prepareDocument(
+      { entry: resolved.entry, descriptor: resolved.descriptor },
+      `${artifactRevisionBase(id, resolved.entry.digest!)}/viewer/runtime-module.js?v=1`,
     );
     response.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8",
@@ -1824,28 +1836,31 @@ async function serveArtifactViewer(
       "Content-Security-Policy": "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; worker-src blob:;",
       "X-Content-Type-Options": "nosniff",
     });
-    response.end(prepared.html);
+    response.end(html);
   } catch (error) {
     respondArtifactJson(response, 422, { error: formatTrustedRendererCompileError(error) });
   }
 }
 
-async function serveArtifactViewerModule(
+async function serveArtifactHostedModule(
   response: ServerResponse,
   options: HarnessStudioServerOptions,
   id: string,
   revision: string,
   map: boolean,
 ): Promise<void> {
-  const resolved = await resolveArtifactViewer(options, id, revision);
+  const resolved = await resolveArtifactHostedSurface(options, id, revision);
   if ("error" in resolved) {
     respondArtifactJson(response, resolved.status, { error: resolved.error });
     return;
   }
   try {
-    const compiled = await compileTrustedRendererModule(resolved.viewer.modulePath);
+    const compiled = await resolved.resolution.surface.runtime.readModule(
+      { entry: resolved.entry, descriptor: resolved.descriptor },
+      map,
+    );
     if (map) {
-      respondArtifactJson(response, 200, JSON.parse(compiled.map));
+      respondArtifactJson(response, 200, JSON.parse(compiled));
       return;
     }
     response.writeHead(200, {
@@ -1854,7 +1869,7 @@ async function serveArtifactViewerModule(
       "X-Content-Type-Options": "nosniff",
       "Access-Control-Allow-Origin": "*",
     });
-    response.end(`${compiled.code}//# sourceMappingURL=canvas-module.js.map\n`);
+    response.end(compiled);
   } catch (error) {
     respondArtifactJson(response, 422, { error: formatTrustedRendererCompileError(error) });
   }
@@ -1870,30 +1885,34 @@ async function serveCanvasSdk(response: ServerResponse, options: HarnessStudioSe
   await serveQoderCanvasRuntimeFile(response, path, map ? "application/json" : STATIC_CONTENT_TYPES[".js"]!);
 }
 
-async function serveArtifactViewerResource(
+async function serveArtifactHostedResource(
   response: ServerResponse,
   options: HarnessStudioServerOptions,
   id: string,
   revision: string,
   resource: string,
 ): Promise<void> {
-  const resolved = await resolveArtifactViewer(options, id, revision);
+  const resolved = await resolveArtifactHostedSurface(options, id, revision);
   if ("error" in resolved) {
     respondArtifactJson(response, resolved.status, { error: resolved.error });
     return;
   }
-  const root = await realpath(resolved.viewer.rootPath);
-  const candidate = resolve(root, resource);
-  if (candidate !== root && !candidate.startsWith(root + sep)) {
-    respondArtifactJson(response, 400, { error: "Canvas viewer resource escapes its viewer root." });
-    return;
-  }
   try {
-    const physical = await realpath(candidate);
-    if (physical !== root && !physical.startsWith(root + sep)) throw new Error("escape");
-    await serveQoderCanvasRuntimeFile(response, physical, STATIC_CONTENT_TYPES[extname(physical).toLowerCase()] ?? "application/octet-stream");
+    const hosted = await resolved.resolution.surface.runtime.readResource(
+      { entry: resolved.entry, descriptor: resolved.descriptor },
+      resource,
+    );
+    if (hosted === undefined) throw new Error("unavailable");
+    response.writeHead(200, {
+      "Content-Type": hosted.mediaType,
+      "Content-Length": hosted.bytes.byteLength,
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+      "Access-Control-Allow-Origin": "*",
+    });
+    response.end(hosted.bytes);
   } catch {
-    respondArtifactJson(response, 404, { error: "Canvas viewer resource is unavailable." });
+    respondArtifactJson(response, 404, { error: "Hosted Artifact resource is unavailable." });
   }
 }
 

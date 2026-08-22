@@ -152,7 +152,7 @@ async function runSidecar(script: string, target: string, dataPath: string, cwd:
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
       env: {
-        ...process.env,
+        ...allowlistedSidecarEnvironment(process.env),
         AICODING_CANVAS_DATA: dataPath,
         QODER_CANVAS_DATA: dataPath,
         AICODING_CANVAS_SCRIPT_ARGS: JSON.stringify({ targetFilePath: target }),
@@ -167,9 +167,21 @@ async function runSidecar(script: string, target: string, dataPath: string, cwd:
     child.once("exit", (code, signal) => {
       clearTimeout(timeout);
       if (code === 0) resolvePromise();
-      else reject(new Error(`Canvas viewer data adapter failed (${signal ?? code ?? "unknown"}).${stderr.trim() === "" ? "" : ` ${stderr.trim()}`}`));
+      else {
+        const diagnostic = stderr.trim()
+          .replaceAll(script, "<provider-script>")
+          .replaceAll(target, "<artifact>")
+          .replaceAll(dataPath, "<provider-data>")
+          .replaceAll(cwd, "<provider-work>");
+        reject(new Error(`Canvas viewer data adapter failed (${signal ?? code ?? "unknown"}).${diagnostic === "" ? "" : ` ${diagnostic}`}`));
+      }
     });
   });
+}
+
+function allowlistedSidecarEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const allowed = ["PATH", "Path", "PATHEXT", "SystemRoot", "SYSTEMROOT", "COMSPEC", "TMP", "TEMP", "TMPDIR", "LANG", "LC_ALL"];
+  return Object.fromEntries(allowed.flatMap((key) => source[key] === undefined ? [] : [[key, source[key]]])) as NodeJS.ProcessEnv;
 }
 
 export async function serveQoderCanvasRuntimeFile(response: ServerResponse, path: string, contentType: string): Promise<void> {

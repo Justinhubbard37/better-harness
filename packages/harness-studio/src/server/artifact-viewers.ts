@@ -18,6 +18,7 @@ export interface CanvasViewer {
   dataKey?: string;
   overrideBuiltIn: boolean;
   rootPath: string;
+  manifestPath: string;
   modulePath: string;
   scriptPath?: string;
 }
@@ -77,7 +78,8 @@ async function discoverCanvasViewersAt(root: string): Promise<CanvasViewer[]> {
   for (const name of names.sort()) {
     const viewerRoot = join(root, name);
     try {
-      const manifest = JSON.parse(await readFile(join(viewerRoot, "manifest.json"), "utf8")) as ViewerManifest;
+      const manifestPath = join(viewerRoot, "manifest.json");
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as ViewerManifest;
       const id = portableString(manifest.id);
       const modulePath = join(viewerRoot, "index.canvas.tsx");
       if (id === undefined || !(await stat(modulePath)).isFile()) continue;
@@ -91,6 +93,7 @@ async function discoverCanvasViewersAt(root: string): Promise<CanvasViewer[]> {
         ...(portableString(manifest.dataKey) === undefined ? {} : { dataKey: portableString(manifest.dataKey) }),
         overrideBuiltIn: manifest.overrideBuiltIn === true || manifest.overridesBuiltIn === true,
         rootPath: viewerRoot,
+        manifestPath,
         modulePath,
         ...(scriptPath === undefined ? {} : { scriptPath }),
       });

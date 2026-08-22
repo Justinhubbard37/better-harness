@@ -1,6 +1,7 @@
 export const ARTIFACT_CATALOG_RESPONSE_KIND = "HarnessStudioArtifactCatalogV2" as const;
 export const ARTIFACT_DATA_SNAPSHOT_KIND = "ArtifactDataSnapshotV1" as const;
 export const ARTIFACT_BUILD_SNAPSHOT_KIND = "ArtifactBuildSnapshotV1" as const;
+export const ARTIFACT_PROVIDER_STATUS_RESPONSE_KIND = "HarnessStudioArtifactProviderStatusV1" as const;
 
 export type ArtifactDigest = `sha256:${string}`;
 export type ArtifactFamily = "documents" | "images-diagrams" | "data" | "source-text" | "other";
@@ -113,6 +114,32 @@ export interface ArtifactCatalogResponse {
   };
   artifacts: ArtifactDescriptor[];
   omitted: ArtifactOmission[];
+}
+
+export interface ArtifactProviderContributionStatus {
+  id: string;
+  label: string;
+  support: "reviewed" | "experimental-local";
+  active: boolean;
+  lane?: "external-override" | "external-fallback";
+}
+
+/** Browser-safe provider diagnostics. Filesystem and executable paths stay server-private. */
+export interface ArtifactProviderStatus {
+  id: string;
+  label: string;
+  version?: string;
+  acquisition: "operator-provisioned" | "local-derived-experimental";
+  status: "ready" | "unavailable";
+  receiptVerified: boolean;
+  fingerprint?: ArtifactDigest;
+  contributions: ArtifactProviderContributionStatus[];
+  reason?: string;
+}
+
+export interface ArtifactProviderStatusResponse {
+  kind: typeof ARTIFACT_PROVIDER_STATUS_RESPONSE_KIND;
+  providers: ArtifactProviderStatus[];
 }
 
 export type ArtifactDiagnosticLevel = "info" | "warning" | "error";

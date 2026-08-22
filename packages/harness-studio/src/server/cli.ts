@@ -5,12 +5,14 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { startHarnessStudioServer } from "./server.js";
 import { readSourceCatalogFile } from "./source-catalog.js";
 import { runWalnutBootstrapCli } from "./walnut-cli.js";
+import { runArtifactProviderCli } from "./artifact-provider-cli.js";
 
 const HELP = `harness-studio — local studio for harness runs and compare evidence
 
 Usage:
   harness-studio [options]
   harness-studio walnut <probe|install|verify|remove> [options]
+  harness-studio artifact-provider <list|activate|deactivate> [options]
   harness-studio --help
 
 Options:
@@ -34,6 +36,9 @@ Options:
                       Canvas SDK checkout used by provisioned viewers
   --canvas-sdk-media <dir>
                       Prebuilt Canvas SDK media directory
+  --provider-state <dir>
+                      Studio-private external provider activation state
+  --walnut-cache <dir> Studio-owned Walnut cache root
   --source-catalog <file>
                       JSON catalog of bounded switchable Studio inputs
   --harness-id <id>   Harness to resolve (default: the file's only harness)
@@ -88,6 +93,8 @@ interface ParsedArgs {
   canvasViewers?: string;
   canvasSdkRoot?: string;
   canvasSdkMedia?: string;
+  providerState?: string;
+  walnutCache?: string;
   sourceCatalog?: string;
   port: number;
   host: string;
@@ -153,6 +160,12 @@ export function parseHarnessStudioArgs(argv: string[]): ParsedArgs {
       case "--canvas-sdk-media":
         parsed.canvasSdkMedia = takeValue();
         break;
+      case "--provider-state":
+        parsed.providerState = takeValue();
+        break;
+      case "--walnut-cache":
+        parsed.walnutCache = takeValue();
+        break;
       case "--source-catalog":
         parsed.sourceCatalog = takeValue();
         break;
@@ -192,6 +205,7 @@ export function defaultAppDir(): string {
 /** In-process CLI entry; returns the exit code (0 keeps the server running). */
 export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo): Promise<number> {
   if (argv[0] === "walnut") return await runWalnutBootstrapCli(argv.slice(1), io);
+  if (argv[0] === "artifact-provider") return await runArtifactProviderCli(argv.slice(1), io);
   const parsed = parseHarnessStudioArgs(argv);
   if (parsed.help) {
     io.stdout(HELP);
@@ -227,6 +241,8 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     ...(parsed.canvasViewers !== undefined ? { canvasViewerRoot: resolve(parsed.canvasViewers) } : {}),
     ...(parsed.canvasSdkRoot !== undefined ? { canvasSdkRoot: resolve(parsed.canvasSdkRoot) } : {}),
     ...(parsed.canvasSdkMedia !== undefined ? { canvasSdkMedia: resolve(parsed.canvasSdkMedia) } : {}),
+    ...(parsed.providerState !== undefined ? { artifactProviderStateRoot: resolve(parsed.providerState) } : {}),
+    ...(parsed.walnutCache !== undefined ? { walnutCacheRoot: resolve(parsed.walnutCache) } : {}),
     ...(sourceCatalog.length > 0 ? { sourceCatalog } : {}),
     ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),
     ...(sourceRoot !== undefined ? { sourceRoot } : {}),

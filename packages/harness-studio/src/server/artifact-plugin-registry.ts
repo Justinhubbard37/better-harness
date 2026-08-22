@@ -1,10 +1,9 @@
 /**
- * The Artifact View plugin registry.
+ * Server-authoritative Artifact plugin composition.
  *
- * Resolution is an ordered list of providers rather than a branch chain, so a
- * new format is added by writing a provider and inserting it here. Qoder Canvas
- * is two of those providers; it is not the host abstraction, and nothing in the
- * registry's shape assumes a Canvas surface.
+ * Built-ins, external contributions, activation, and the terminal unavailable
+ * state meet here. Callers receive the selected binding directly and never
+ * re-derive vendor or format policy from ids.
  */
 import { extname } from "node:path";
 import {
@@ -15,44 +14,54 @@ import {
 import type {
   ArtifactAdaptContext,
   ArtifactAdapterImplementation,
-  ArtifactPluginContext,
-  ArtifactPluginResolution,
-  ArtifactRendererProvider,
+  ArtifactExternalLane,
+  ArtifactMatcher,
+  ArtifactPlugin,
+  ArtifactPluginBinding,
+  ArtifactPluginRegistry,
+  ArtifactProviderActivation,
+  ExternalAdapterContribution,
+  ExternalArtifactProvider,
 } from "./artifact-adapter-contract.js";
-import type { ArtifactEntry, ArtifactKind } from "./artifact-catalog.js";
+import { resolveArtifactFormatCode, type ArtifactEntry, type ArtifactKind } from "./artifact-catalog.js";
 import {
   MERMAID_REACT_BUILD_RUNTIME,
   REACT_SOURCE_BUILD_RUNTIME,
   SVG_REACT_BUILD_RUNTIME,
 } from "./artifact-build-runtimes.js";
-import { matchCanvasViewers, type CanvasViewer } from "./artifact-viewers.js";
 import { MARKDOWN_ARTIFACT_ADAPTER } from "./markdown-artifact-adapter.js";
 import { PPTX_ARTIFACT_ADAPTER } from "./pptx-artifact-adapter.js";
-import { adaptQoderCanvasViewerData } from "./qoder-canvas-viewer-bridge.js";
 
-export {
-  defaultCanvasViewerRoot,
-  discoverCanvasViewers,
-  matchCanvasViewer,
-  matchCanvasViewers,
-  resetCanvasViewerDiscoveryCache,
-} from "./artifact-viewers.js";
 export type {
   ArtifactAdaptContext,
+  ArtifactAdapterExecutionProfile,
   ArtifactAdapterImplementation,
   ArtifactBuildRuntimeImplementation,
-  ArtifactPluginContext,
+  ArtifactContributionSupport,
+  ArtifactExternalLane,
+  ArtifactHostedResource,
+  ArtifactHostedRuntimeImplementation,
+  ArtifactMatcher,
+  ArtifactPlugin,
+  ArtifactPluginBinding,
+  ArtifactPluginRegistry,
   ArtifactPluginResolution,
-  ArtifactRendererProvider,
+  ArtifactProviderActivation,
+  ArtifactProviderBinding,
+  ArtifactProviderAcquisition,
   ArtifactResourceBytes,
+  ArtifactSurfaceBinding,
+  ExternalAdapterContribution,
+  ExternalArtifactProvider,
+  VerifiedExternalProviderAssetReceipt,
+  VerifiedExternalProviderReceipt,
 } from "./artifact-adapter-contract.js";
-export type { CanvasViewer as QoderCanvasViewerPlugin } from "./artifact-viewers.js";
 
 const RAW_ADAPTER_ID = "studio.raw";
 const RAW_SCHEMA_ID = "artifact/raw-v1";
 
 /** Passes the exact content reference through for renderers that read bytes. */
-const RAW_ARTIFACT_ADAPTER: ArtifactAdapterImplementation = {
+export const RAW_ARTIFACT_ADAPTER: ArtifactAdapterImplementation = {
   id: RAW_ADAPTER_ID,
   version: "1",
   schemaId: RAW_SCHEMA_ID,
@@ -62,19 +71,7 @@ const RAW_ARTIFACT_ADAPTER: ArtifactAdapterImplementation = {
   }),
 };
 
-function qoderCanvasAdapter(viewer: CanvasViewer): ArtifactAdapterImplementation {
-  return {
-    id: `qoder-canvas.${viewer.id}.sidecar`,
-    version: "1",
-    schemaId: `qoder-canvas/${viewer.id}/v1`,
-    adapt: async (context) => envelopeSnapshot(context, {
-      kind: "qoder-canvas/v1",
-      data: await adaptQoderCanvasViewerData(context.entry, viewer),
-    }),
-  };
-}
-
-async function envelopeSnapshot(
+export async function envelopeSnapshot(
   context: ArtifactAdaptContext,
   payload: ArtifactDataSnapshot["payload"],
 ): Promise<ArtifactDataSnapshot> {
@@ -96,45 +93,13 @@ async function envelopeSnapshot(
   };
 }
 
-function qoderCanvasResolution(viewer: CanvasViewer): ArtifactPluginResolution {
-  const reference: ArtifactRendererReference = {
-    id: `qoder-canvas.${viewer.id}`,
-    label: viewer.label,
-    provider: "qoder-canvas",
-    type: "qoder-canvas",
-    status: "ready",
-  };
-  if (viewer.scriptPath === undefined || viewer.dataKey === undefined) {
-    return {
-      backing: "data",
-      adapter: qoderCanvasAdapter(viewer),
-      renderer: {
-        ...reference,
-        type: "unavailable",
-        status: "unavailable",
-        reason: "The matching Qoder Canvas viewer has no target-file data adapter.",
-      },
-      capabilities: [],
-    };
-  }
-  return {
-    backing: "data",
-    adapter: qoderCanvasAdapter(viewer),
-    renderer: reference,
-    hosted: true,
-    qoderViewer: viewer,
-    capabilities: ["navigate", "select", "zoom"],
-  };
-}
-
-function nativeResolution(kind: ArtifactKind): ArtifactPluginResolution | undefined {
+function nativeResolution(kind: ArtifactKind): ArtifactPluginBinding | undefined {
   if (kind === "markdown") {
     return {
       backing: "data",
       adapter: MARKDOWN_ARTIFACT_ADAPTER,
       renderer: { id: "studio.markdown", label: "Studio Markdown", provider: "studio", type: "native", status: "ready" },
-      // Only what the renderer actually does: an outline built from the
-      // document's headings, and navigation to the one a reader picks.
+      surface: { kind: "native", rendererId: "studio.markdown" },
       capabilities: ["navigate", "outline"],
     };
   }
@@ -143,19 +108,22 @@ function nativeResolution(kind: ArtifactKind): ArtifactPluginResolution | undefi
       backing: "data",
       adapter: PPTX_ARTIFACT_ADAPTER,
       renderer: { id: "studio.pptx-dom", label: "Studio PPTX", provider: "studio", type: "native", status: "ready" },
+      surface: { kind: "native", rendererId: "studio.pptx-dom" },
       capabilities: ["navigate", "outline", "select", "zoom"],
     };
   }
   if (kind === "unknown" || kind === "mermaid") return undefined;
+  const rendererId = `studio.${kind}`;
   return {
     backing: "data",
     adapter: RAW_ARTIFACT_ADAPTER,
-    renderer: { id: `studio.${kind}`, label: nativeRendererLabel(kind), provider: "studio", type: "native", status: "ready" },
+    renderer: { id: rendererId, label: nativeRendererLabel(kind), provider: "studio", type: "native", status: "ready" },
+    surface: { kind: "native", rendererId },
     capabilities: kind === "image" || kind === "svg" ? ["select", "zoom"] : ["search", "select"],
   };
 }
 
-function studioCodePreviewResolution(entry: ArtifactEntry): ArtifactPluginResolution | undefined {
+function studioCodePreviewResolution(entry: ArtifactEntry): ArtifactPluginBinding | undefined {
   if (entry.kind !== "code" || ![".tsx", ".jsx"].includes(extname(entry.label).toLowerCase())) return undefined;
   return {
     backing: "code",
@@ -168,27 +136,29 @@ function studioCodePreviewResolution(entry: ArtifactEntry): ArtifactPluginResolu
       type: "sandboxed-web",
       status: "ready",
     },
+    surface: { kind: "studio-sandbox", rendererId: "studio.react-preview", runtimeId: REACT_SOURCE_BUILD_RUNTIME.id },
     capabilities: ["execute", "live-update", "select"],
   };
 }
 
-function studioDocumentPreviewResolution(entry: ArtifactEntry): ArtifactPluginResolution | undefined {
+function studioDocumentPreviewResolution(entry: ArtifactEntry): ArtifactPluginBinding | undefined {
   const buildRuntime = entry.kind === "svg"
     ? SVG_REACT_BUILD_RUNTIME
     : entry.kind === "mermaid" ? MERMAID_REACT_BUILD_RUNTIME : undefined;
   if (buildRuntime === undefined) return undefined;
-  const label = entry.kind === "svg" ? "Studio SVG Preview" : "Studio Mermaid Preview";
+  const rendererId = entry.kind === "svg" ? "studio.svg-react-preview" : "studio.mermaid-react-preview";
   return {
     backing: "code",
     adapter: RAW_ARTIFACT_ADAPTER,
     buildRuntime,
     renderer: {
-      id: entry.kind === "svg" ? "studio.svg-react-preview" : "studio.mermaid-react-preview",
-      label,
+      id: rendererId,
+      label: entry.kind === "svg" ? "Studio SVG Preview" : "Studio Mermaid Preview",
       provider: "studio",
       type: "sandboxed-web",
       status: "ready",
     },
+    surface: { kind: "studio-sandbox", rendererId, runtimeId: buildRuntime.id },
     capabilities: ["execute", "live-update"],
   };
 }
@@ -205,63 +175,143 @@ function nativeRendererLabel(kind: Exclude<ArtifactKind, "unknown" | "pptx" | "m
   })[kind];
 }
 
-/**
- * Ordered resolution, matching the Artifact View model's declared priority:
- * an operator's overriding Qoder viewer, then a Studio-native plugin, then any
- * matching Qoder viewer, then an honest unavailable state.
- */
-export const ARTIFACT_RENDERER_PROVIDERS: readonly ArtifactRendererProvider[] = [
-  {
-    id: "qoder-canvas-override",
-    resolve(entry, context) {
-      // Search every match, not just the first: an operator's override would
-      // otherwise be discarded whenever a non-overriding viewer for the same
-      // extension happened to sort earlier in the discovery order.
-      const override = matchCanvasViewers(entry, context.qoderCanvasViewers).find((viewer) => viewer.overrideBuiltIn);
-      return override === undefined ? undefined : qoderCanvasResolution(override);
-    },
-  },
-  {
-    id: "studio-code-preview",
-    resolve: studioCodePreviewResolution,
-  },
-  {
-    id: "studio-document-preview",
-    resolve: studioDocumentPreviewResolution,
-  },
-  {
-    id: "studio-native",
-    resolve: (entry) => nativeResolution(entry.kind),
-  },
-  {
-    id: "qoder-canvas",
-    resolve(entry, context) {
-      const viewer = matchCanvasViewers(entry, context.qoderCanvasViewers)[0];
-      return viewer === undefined ? undefined : qoderCanvasResolution(viewer);
-    },
-  },
-  {
-    id: "studio-raw",
-    resolve: () => ({
-      backing: "data",
-      adapter: RAW_ARTIFACT_ADAPTER,
-      renderer: {
-        id: "studio.unavailable",
-        label: "Unavailable",
-        provider: "studio",
-        type: "unavailable",
-        status: "unavailable",
-        reason: "No native renderer or provisioned Qoder Canvas viewer matches this file.",
-      },
-      capabilities: [],
-    }),
-  },
-];
+const PROTECTED_PLUGINS: readonly ArtifactPlugin[] = Object.freeze([
+  { id: "studio-code-preview", resolve: studioCodePreviewResolution },
+  { id: "studio-document-preview", resolve: studioDocumentPreviewResolution },
+]);
 
-export function resolveArtifactPlugin(entry: ArtifactEntry, context: ArtifactPluginContext): ArtifactPluginResolution {
-  for (const provider of ARTIFACT_RENDERER_PROVIDERS) {
-    const resolution = provider.resolve(entry, context);
-    if (resolution !== undefined) return resolution;
+const NATIVE_PLUGINS: readonly ArtifactPlugin[] = Object.freeze([
+  { id: "studio-native", resolve: (entry) => nativeResolution(entry.kind) },
+]);
+
+export interface CreateArtifactPluginRegistryOptions {
+  externalProviders?: readonly ExternalArtifactProvider[];
+  activations?: readonly ArtifactProviderActivation[];
+  protectedPlugins?: readonly ArtifactPlugin[];
+  nativePlugins?: readonly ArtifactPlugin[];
+}
+
+export function createArtifactPluginRegistry(
+  options: CreateArtifactPluginRegistryOptions = {},
+): ArtifactPluginRegistry {
+  const providers = Object.freeze([...(options.externalProviders ?? [])]);
+  const activations = Object.freeze([...(options.activations ?? [])]);
+  const protectedPlugins = options.protectedPlugins ?? PROTECTED_PLUGINS;
+  const nativePlugins = options.nativePlugins ?? NATIVE_PLUGINS;
+  return Object.freeze({
+    providers,
+    activations,
+    resolve(entry: ArtifactEntry): ArtifactPluginBinding {
+      const protectedBinding = resolvePlugins(entry, protectedPlugins);
+      if (protectedBinding !== undefined) return protectedBinding;
+      const overrides = externalBindings(entry, "external-override", providers, activations);
+      if (overrides.length === 1) return overrides[0]!;
+      const nativeBinding = resolvePlugins(entry, nativePlugins);
+      if (nativeBinding !== undefined) return nativeBinding;
+      const fallbacks = externalBindings(entry, "external-fallback", providers, activations);
+      if (fallbacks.length === 1) return fallbacks[0]!;
+      const conflict = overrides.length > 1 || fallbacks.length > 1;
+      return unavailableBinding(conflict
+        ? "Multiple activated external Artifact contributions match the same lane; narrow or remove an activation."
+        : "No native renderer or activated external Artifact contribution matches this file.");
+    },
+  });
+}
+
+/** Convenience for callers that own no external providers. */
+export function resolveArtifactPlugin(entry: ArtifactEntry, registry = createArtifactPluginRegistry()): ArtifactPluginBinding {
+  return registry.resolve(entry);
+}
+
+function resolvePlugins(entry: ArtifactEntry, plugins: readonly ArtifactPlugin[]): ArtifactPluginBinding | undefined {
+  for (const plugin of plugins) {
+    const binding = plugin.resolve(entry);
+    if (binding !== undefined) return binding;
   }
-  throw new Error("The artifact plugin registry has no terminal provider.");
+  return undefined;
+}
+
+function externalBindings(
+  entry: ArtifactEntry,
+  lane: ArtifactExternalLane,
+  providers: readonly ExternalArtifactProvider[],
+  activations: readonly ArtifactProviderActivation[],
+): ArtifactPluginBinding[] {
+  const bindings: ArtifactPluginBinding[] = [];
+  for (const provider of providers) {
+    for (const contribution of provider.contributions) {
+      const activation = activations.find((candidate) => candidate.providerId === provider.id
+        && candidate.contributionId === contribution.id
+        && candidate.fingerprint === provider.fingerprint
+        && candidate.lane === lane
+        && candidate.contributionSupport === contribution.support
+        && candidate.adapterExecutionProfile === contribution.adapterExecutionProfile
+        && candidate.surfaceSecurityProfile === (contribution.surface.kind === "external-hosted"
+          ? contribution.surface.securityProfileId
+          : undefined)
+        && matchesArtifact(entry, candidate.matcher));
+      if (activation === undefined || !matchesArtifact(entry, contribution.matcher)) continue;
+      bindings.push(externalBinding(provider, contribution));
+    }
+  }
+  return bindings;
+}
+
+function externalBinding(
+  provider: ExternalArtifactProvider,
+  contribution: ExternalAdapterContribution,
+): ArtifactPluginBinding {
+  return {
+    backing: "data",
+    adapter: contribution.adapter,
+    renderer: contribution.renderer,
+    surface: contribution.surface,
+    capabilities: contribution.capabilities,
+    provider: {
+      providerId: provider.id,
+      contributionId: contribution.id,
+      fingerprint: provider.fingerprint,
+      contributionSupport: contribution.support,
+      ...(contribution.adapterExecutionProfile === undefined
+        ? {}
+        : { adapterExecutionProfile: contribution.adapterExecutionProfile }),
+      ...(contribution.surface.kind === "external-hosted"
+        ? { surfaceSecurityProfile: contribution.surface.securityProfileId }
+        : {}),
+    },
+  };
+}
+
+function unavailableBinding(reason: string): ArtifactPluginBinding {
+  const renderer: ArtifactRendererReference = {
+    id: "studio.unavailable",
+    label: "Unavailable",
+    provider: "studio",
+    type: "unavailable",
+    status: "unavailable",
+    reason,
+  };
+  return {
+    backing: "data",
+    adapter: RAW_ARTIFACT_ADAPTER,
+    renderer,
+    surface: { kind: "unavailable", reason },
+    capabilities: [],
+  };
+}
+
+export function matchesArtifact(entry: ArtifactEntry, matcher: ArtifactMatcher): boolean {
+  const extension = extname(entry.label).replace(/^\./u, "").toLowerCase();
+  const format = resolveArtifactFormatCode(entry.label);
+  const portablePath = entry.label.replaceAll("\\", "/");
+  return (matcher.formats?.some((candidate) => candidate.toLowerCase() === format) ?? false)
+    || (matcher.extensions?.some((candidate) => candidate.replace(/^\./u, "").toLowerCase() === extension) ?? false)
+    || (matcher.pathGlobs?.some((glob) => matchesPortablePathGlob(portablePath, glob)) ?? false);
+}
+
+function matchesPortablePathGlob(path: string, glob: string): boolean {
+  const normalized = glob.replaceAll("\\", "/");
+  if (normalized.startsWith("**/*.")) return path.toLowerCase().endsWith(normalized.slice(4).toLowerCase());
+  if (normalized.startsWith("**/")) return path === normalized.slice(3) || path.endsWith(`/${normalized.slice(3)}`);
+  return path === normalized;
 }

@@ -13,65 +13,85 @@ import { ArtifactPreviewHost } from "./ArtifactPreviewHost.js";
 import { MarkdownArtifactView } from "./MarkdownArtifactView.js";
 import { studioApiError } from "./studio-api.js";
 
-export interface ArtifactViewProviderContext {
+export interface ArtifactSurfaceMountContext {
   artifact: ArtifactDescriptor;
   liveGeneration: number;
 }
 
 /** Composition contract for one browser-side Artifact renderer family. */
-export interface ArtifactViewProvider {
+export interface ArtifactSurfaceMount {
   id: string;
   matches: (artifact: ArtifactDescriptor) => boolean;
-  render: (context: ArtifactViewProviderContext) => React.JSX.Element;
+  render: (context: ArtifactSurfaceMountContext) => React.JSX.Element;
+}
+
+export type ArtifactSurfaceKind = "native" | "studio-sandbox" | "external-hosted" | "unavailable";
+
+/** Normalize V2 compatibility aliases once at the protocol edge. */
+export function normalizeArtifactSurfaceKind(artifact: ArtifactDescriptor): ArtifactSurfaceKind {
+  if (artifact.renderer.status !== "ready" || artifact.renderer.type === "unavailable") return "unavailable";
+  if (artifact.renderer.type === "native") return "native";
+  if (artifact.renderer.type === "sandboxed-web") return "studio-sandbox";
+  if (artifact.renderer.type === "qoder-canvas") return "external-hosted";
+  return "unavailable";
 }
 
 const TEXT_RENDERER_IDS = new Set(["studio.code", "studio.diff", "studio.json", "studio.text"]);
 
-export const ARTIFACT_VIEW_PROVIDERS: readonly ArtifactViewProvider[] = Object.freeze([
+export const ARTIFACT_SURFACE_MOUNTS: readonly ArtifactSurfaceMount[] = Object.freeze([
   {
     id: "studio.sandboxed-preview",
-    matches: (artifact) => artifact.renderer.type === "sandboxed-web" && artifact.backing === "code",
+    matches: (artifact) => normalizeArtifactSurfaceKind(artifact) === "studio-sandbox" && artifact.backing === "code",
     render: ({ artifact, liveGeneration }) => <ArtifactPreviewHost artifact={artifact} liveGeneration={liveGeneration} />,
   },
   {
-    id: "qoder-canvas",
-    matches: (artifact) => artifact.renderer.type === "qoder-canvas" && artifact.renderer.viewUri !== undefined,
+    id: "external-hosted",
+    matches: (artifact) => normalizeArtifactSurfaceKind(artifact) === "external-hosted" && artifact.renderer.viewUri !== undefined,
     render: ({ artifact }) => <iframe key={artifact.revision.digest} className="artifact-frame" title={`Artifact preview: ${artifact.label}`} src={artifact.renderer.viewUri} sandbox="allow-scripts" referrerPolicy="no-referrer" />,
   },
   {
     id: "studio.markdown",
-    matches: (artifact) => artifact.renderer.id === "studio.markdown",
+    matches: (artifact) => normalizeArtifactSurfaceKind(artifact) === "native" && artifact.renderer.id === "studio.markdown",
     render: ({ artifact }) => <MarkdownArtifactView key={artifact.revision.digest} artifact={artifact} />,
   },
   {
     id: "studio.pptx-dom",
-    matches: (artifact) => artifact.renderer.id === "studio.pptx-dom",
+    matches: (artifact) => normalizeArtifactSurfaceKind(artifact) === "native" && artifact.renderer.id === "studio.pptx-dom",
     render: ({ artifact }) => <PptxArtifactView key={artifact.revision.digest} artifact={artifact} />,
   },
   {
     id: "studio.image",
-    matches: (artifact) => artifact.renderer.id === "studio.image",
+    matches: (artifact) => normalizeArtifactSurfaceKind(artifact) === "native" && artifact.renderer.id === "studio.image",
     render: ({ artifact }) => <div className="artifact-image-stage"><img key={artifact.revision.digest} src={artifact.revision.content.uri} alt={artifact.label} /></div>,
   },
   {
     id: "studio.text-family",
-    matches: (artifact) => TEXT_RENDERER_IDS.has(artifact.renderer.id),
+    matches: (artifact) => normalizeArtifactSurfaceKind(artifact) === "native" && TEXT_RENDERER_IDS.has(artifact.renderer.id),
     render: ({ artifact }) => <TextArtifactView key={artifact.revision.digest} artifact={artifact} />,
   },
 ]);
 
-export function resolveArtifactViewProvider(
+export function resolveArtifactSurfaceMount(
   artifact: ArtifactDescriptor,
-  providers: readonly ArtifactViewProvider[] = ARTIFACT_VIEW_PROVIDERS,
-): ArtifactViewProvider | undefined {
-  return providers.find((provider) => provider.matches(artifact));
+  mounts: readonly ArtifactSurfaceMount[] = ARTIFACT_SURFACE_MOUNTS,
+): ArtifactSurfaceMount | undefined {
+  return mounts.find((mount) => mount.matches(artifact));
 }
 
+/** @deprecated V2 source compatibility; new code uses Artifact Surface terminology. */
+export type ArtifactViewProviderContext = ArtifactSurfaceMountContext;
+/** @deprecated V2 source compatibility; new code uses Artifact Surface terminology. */
+export type ArtifactViewProvider = ArtifactSurfaceMount;
+/** @deprecated V2 source compatibility; new code uses Artifact Surface terminology. */
+export const ARTIFACT_VIEW_PROVIDERS = ARTIFACT_SURFACE_MOUNTS;
+/** @deprecated V2 source compatibility; new code uses Artifact Surface terminology. */
+export const resolveArtifactViewProvider = resolveArtifactSurfaceMount;
+
 /** Host-owned dispatch; the server-selected renderer remains authoritative. */
-export function ArtifactView(props: ArtifactViewProviderContext): React.JSX.Element {
+export function ArtifactView(props: ArtifactSurfaceMountContext): React.JSX.Element {
   if (props.artifact.renderer.status === "ready") {
-    const provider = resolveArtifactViewProvider(props.artifact);
-    if (provider !== undefined) return provider.render(props);
+    const mount = resolveArtifactSurfaceMount(props.artifact);
+    if (mount !== undefined) return mount.render(props);
   }
   return <p className="artifact-status" role="status">{props.artifact.renderer.reason ?? `No renderer is available for this artifact (${props.artifact.renderer.id}).`}</p>;
 }

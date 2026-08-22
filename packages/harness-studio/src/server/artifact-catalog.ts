@@ -236,12 +236,23 @@ export function describeArtifactCatalog(
   if (index.entries.some((entry) => entry.digest === undefined)) {
     throw new ArtifactCatalogContractError("Artifact catalog snapshots require exact-byte digests.");
   }
+  const selectedBindings: ArtifactPluginResolution[] = [];
   const artifacts = index.entries.map((entry) => {
     const selected = resolutionFor(entry);
+    selectedBindings.push(selected);
     const digest = entry.digest!;
     const base = artifactRevisionBase(entry.id, digest);
     const snapshotId = `sha256:${createHash("sha256")
-      .update(JSON.stringify([digest, selected.adapter.id, selected.adapter.version, selected.adapter.schemaId]))
+      .update(JSON.stringify([
+        digest,
+        selected.adapter.id,
+        selected.adapter.version,
+        selected.adapter.schemaId,
+        selected.provider?.fingerprint,
+        selected.provider?.contributionSupport,
+        selected.provider?.adapterExecutionProfile,
+        selected.provider?.surfaceSecurityProfile,
+      ]))
       .digest("hex")}` as ArtifactDigest;
     return {
       id: entry.id,
@@ -268,7 +279,7 @@ export function describeArtifactCatalog(
         snapshotUri: `${base}/snapshot`,
       },
       ...(selected.backing === "code" ? { build: { snapshotUri: `${base}/build` } } : {}),
-      renderer: selected.hosted === true
+      renderer: selected.surface.kind === "external-hosted"
         ? { ...selected.renderer, viewUri: `${base}/viewer/` }
         : selected.renderer,
       capabilities: [...selected.capabilities],
@@ -278,7 +289,7 @@ export function describeArtifactCatalog(
     kind: ARTIFACT_CATALOG_RESPONSE_KIND,
     snapshot: {
       catalogId: index.catalogId,
-      revision: catalogRevision(index, artifacts),
+      revision: catalogRevision(index, artifacts, selectedBindings),
     },
     artifacts,
     omitted: index.omitted,
@@ -291,9 +302,15 @@ export function describeArtifactCatalog(
  * adapter and surface a client should use while every byte on disk stays put,
  * and a revision that cannot see that is useless as a cache or refetch key.
  */
-function catalogRevision(index: ArtifactIndex, artifacts: ArtifactCatalogResponse["artifacts"]): ArtifactDigest {
+function catalogRevision(
+  index: ArtifactIndex,
+  artifacts: ArtifactCatalogResponse["artifacts"],
+  selectedBindings: readonly ArtifactPluginResolution[],
+): ArtifactDigest {
   const rows = artifacts
-    .map((artifact) => [
+    .map((artifact, index) => {
+      const binding = selectedBindings[index]!;
+      return [
       artifact.id,
       artifact.threadId,
       artifact.label,
@@ -309,7 +326,18 @@ function catalogRevision(index: ArtifactIndex, artifacts: ArtifactCatalogRespons
       artifact.renderer.type,
       artifact.renderer.status,
       [...artifact.capabilities].sort(),
-    ] as const)
+      binding.buildRuntime?.id,
+      binding.buildRuntime?.version,
+      binding.surface.kind,
+      binding.surface.kind === "external-hosted" ? binding.surface.securityProfileId : undefined,
+      binding.provider?.providerId,
+      binding.provider?.contributionId,
+      binding.provider?.fingerprint,
+      binding.provider?.contributionSupport,
+      binding.provider?.adapterExecutionProfile,
+      binding.provider?.surfaceSecurityProfile,
+    ] as const;
+    })
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
   const omissions = index.omitted
     .map((omission) => [omission.label, omission.reason] as const)

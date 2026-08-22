@@ -67,7 +67,7 @@ describe("PPTX ArtifactDataAdapter", () => {
 
     await writeFile(first.entry.path, createPptxFixture("02"));
     const index = await indexArtifactDirectory(first.directory, { includeDigests: true });
-    const secondDescriptor = describeArtifactCatalog(index, (entry) => resolveArtifactPlugin(entry, { qoderCanvasViewers: [] })).artifacts[0]!;
+    const secondDescriptor = describeArtifactCatalog(index, (entry) => resolveArtifactPlugin(entry)).artifacts[0]!;
     const secondSnapshot = await PPTX_ARTIFACT_ADAPTER.adapt({ entry: index.entries[0]!, descriptor: secondDescriptor });
 
     // Identity survives the edit; only the revision moves.
@@ -84,7 +84,7 @@ describe("PPTX ArtifactDataAdapter", () => {
     const directory = await makeTempDirectory();
     await writeFile(join(directory, "broken.pptx"), "not a zip archive");
     const index = await indexArtifactDirectory(directory, { includeDigests: true });
-    const descriptor = describeArtifactCatalog(index, (entry) => resolveArtifactPlugin(entry, { qoderCanvasViewers: [] })).artifacts[0]!;
+    const descriptor = describeArtifactCatalog(index, (entry) => resolveArtifactPlugin(entry)).artifacts[0]!;
 
     await expect(PPTX_ARTIFACT_ADAPTER.adapt({ entry: index.entries[0]!, descriptor })).rejects.toThrow();
   });
@@ -99,7 +99,7 @@ async function writeFixture(text: string): Promise<{ directory: string; entry: A
   const directory = await makeTempDirectory();
   await writeFile(join(directory, "deck.pptx"), createPptxFixture(text));
   const index = await indexArtifactDirectory(directory, { includeDigests: true });
-  const descriptor = describeArtifactCatalog(index, (entry) => resolveArtifactPlugin(entry, { qoderCanvasViewers: [] })).artifacts[0]!;
+  const descriptor = describeArtifactCatalog(index, (entry) => resolveArtifactPlugin(entry)).artifacts[0]!;
   return { directory, entry: index.entries[0]!, descriptor };
 }
 
@@ -113,6 +113,6 @@ async function expectRejectedArchive(bytes: Uint8Array, error: RegExp): Promise<
   const directory = await makeTempDirectory();
   await writeFile(join(directory, "hostile.pptx"), bytes);
   const index = await indexArtifactDirectory(directory, { includeDigests: true });
-  const descriptor = describeArtifactCatalog(index, (entry) => resolveArtifactPlugin(entry, { qoderCanvasViewers: [] })).artifacts[0]!;
+  const descriptor = describeArtifactCatalog(index, (entry) => resolveArtifactPlugin(entry)).artifacts[0]!;
   await expect(PPTX_ARTIFACT_ADAPTER.adapt({ entry: index.entries[0]!, descriptor })).rejects.toThrow(error);
 }

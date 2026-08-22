@@ -20,7 +20,7 @@ import type { ArtifactEntry } from "../src/server/artifact-catalog.js";
 import { resolveArtifactPlugin } from "../src/server/artifact-plugin-registry.js";
 
 const fixtures = fileURLToPath(new URL("./fixtures/artifacts/", import.meta.url));
-const presentationFor = (entry: ArtifactEntry) => resolveArtifactPlugin(entry, { qoderCanvasViewers: [] });
+const presentationFor = (entry: ArtifactEntry) => resolveArtifactPlugin(entry);
 const idOf = (label: string) => artifactIdForLabel(label);
 
 describe("resolveArtifactKind", () => {
@@ -220,6 +220,31 @@ describe("indexArtifactDirectory", () => {
     }));
     expect(rebound.snapshot.revision).not.toBe(native.snapshot.revision);
     expect(rebound.artifacts[0]?.revision.digest).toBe(native.artifacts[0]?.revision.digest);
+  });
+
+  it("binds snapshot and catalog identity to external provider trust metadata", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "artifact-provider-catalog-"));
+    await writeFile(join(directory, "notes.txt"), "same bytes", "utf8");
+    const index = await indexArtifactDirectory(directory, { includeDigests: true });
+    const describeWith = (fingerprint: `sha256:${string}`, support: "reviewed" | "experimental-local") => describeArtifactCatalog(index, (entry) => ({
+      ...presentationFor(entry),
+      provider: {
+        providerId: "fixture",
+        contributionId: "text",
+        fingerprint,
+        contributionSupport: support,
+        adapterExecutionProfile: "trusted-local-process",
+        surfaceSecurityProfile: "opaque-web-v1",
+      },
+    }));
+    const first = describeWith(`sha256:${"a".repeat(64)}`, "experimental-local");
+    const changedBytes = describeWith(`sha256:${"b".repeat(64)}`, "experimental-local");
+    const changedSupport = describeWith(`sha256:${"b".repeat(64)}`, "reviewed");
+
+    expect(changedBytes.artifacts[0]!.adapter.snapshotId).not.toBe(first.artifacts[0]!.adapter.snapshotId);
+    expect(changedBytes.snapshot.revision).not.toBe(first.snapshot.revision);
+    expect(changedSupport.snapshot.revision).not.toBe(changedBytes.snapshot.revision);
+    expect(changedBytes.artifacts[0]!.revision.digest).toBe(first.artifacts[0]!.revision.digest);
   });
 
   it("refuses to mint a revision snapshot without exact-byte digests", async () => {

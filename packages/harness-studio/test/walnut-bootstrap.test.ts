@@ -12,6 +12,7 @@ import {
   verifyActiveWalnutProvider,
   type WalnutApplicationIdentity,
 } from "../src/server/walnut-bootstrap.js";
+import { discoverWalnutArtifactProvider } from "../src/server/walnut-artifact-provider.js";
 
 const IDENTITY: WalnutApplicationIdentity = {
   version: "fixture-1",
@@ -107,6 +108,30 @@ describe("Studio-private Walnut bootstrap", () => {
 
     expect(verification.ok).toBe(false);
     expect(verification.reason).toContain("failed verification");
+  });
+
+  it("projects only a verified path-redacted zero-contribution Artifact provider", async () => {
+    const fixture = await makeFixture();
+    const probe = await probeFixture(fixture);
+    await installWalnutProvider(probe, { acceptLocalExperimental: true });
+
+    const ready = await discoverWalnutArtifactProvider(fixture.cacheRoot);
+    expect(ready.provider).toMatchObject({
+      id: "chatgpt-walnut",
+      acquisition: "local-derived-experimental",
+      contributions: [],
+      receipt: { sourceReceipt: { kind: "HarnessStudioWalnutProviderReceiptV1" } },
+    });
+    expect(ready.status).toMatchObject({ status: "ready", receiptVerified: true, contributions: [] });
+    expect(JSON.stringify(ready)).not.toContain(fixture.root);
+    expect(JSON.stringify(ready.provider?.receipt)).not.toContain("sourcePath");
+
+    const receipt = ready.provider!.receipt.assets[0]!;
+    await writeFile(join(fixture.cacheRoot, "walnut", probe.archive!.digest.replace(":", "-"), receipt.relativePath), bytes("tampered"));
+    const unavailable = await discoverWalnutArtifactProvider(fixture.cacheRoot);
+    expect(unavailable.provider).toBeUndefined();
+    expect(unavailable.status).toMatchObject({ status: "unavailable", receiptVerified: false, contributions: [] });
+    expect(JSON.stringify(unavailable.status)).not.toContain(fixture.root);
   });
 
   it("refuses installation when ChatGPT changes after the probe", async () => {
