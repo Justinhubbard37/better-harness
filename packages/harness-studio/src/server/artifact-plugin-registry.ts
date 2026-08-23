@@ -23,14 +23,21 @@ import type {
   ExternalAdapterContribution,
   ExternalArtifactProvider,
 } from "./artifact-adapter-contract.js";
-import { resolveArtifactFormatCode, type ArtifactEntry, type ArtifactKind } from "./artifact-catalog.js";
+import {
+  PROVIDER_HOSTED_CANVAS_TSX_FORMAT,
+  resolveArtifactFormatCode,
+  type ArtifactEntry,
+  type ArtifactKind,
+} from "./artifact-catalog.js";
 import {
   MERMAID_REACT_BUILD_RUNTIME,
   REACT_SOURCE_BUILD_RUNTIME,
   SVG_REACT_BUILD_RUNTIME,
 } from "./artifact-build-runtimes.js";
+import { DOCX_ARTIFACT_ADAPTER } from "./docx-artifact-adapter.js";
 import { MARKDOWN_ARTIFACT_ADAPTER } from "./markdown-artifact-adapter.js";
 import { PPTX_ARTIFACT_ADAPTER } from "./pptx-artifact-adapter.js";
+import { XLSX_ARTIFACT_ADAPTER } from "./xlsx-artifact-adapter.js";
 
 export type {
   ArtifactAdaptContext,
@@ -94,6 +101,15 @@ export async function envelopeSnapshot(
 }
 
 function nativeResolution(kind: ArtifactKind): ArtifactPluginBinding | undefined {
+  if (kind === "docx") {
+    return {
+      backing: "data",
+      adapter: DOCX_ARTIFACT_ADAPTER,
+      renderer: { id: "studio.docx-dom", label: "Studio DOCX", provider: "studio", type: "native", status: "ready" },
+      surface: { kind: "native", rendererId: "studio.docx-dom" },
+      capabilities: ["navigate", "outline", "select", "zoom"],
+    };
+  }
   if (kind === "markdown") {
     return {
       backing: "data",
@@ -110,6 +126,15 @@ function nativeResolution(kind: ArtifactKind): ArtifactPluginBinding | undefined
       renderer: { id: "studio.pptx-dom", label: "Studio PPTX", provider: "studio", type: "native", status: "ready" },
       surface: { kind: "native", rendererId: "studio.pptx-dom" },
       capabilities: ["navigate", "outline", "select", "zoom"],
+    };
+  }
+  if (kind === "xlsx") {
+    return {
+      backing: "data",
+      adapter: XLSX_ARTIFACT_ADAPTER,
+      renderer: { id: "studio.xlsx-grid", label: "Studio XLSX", provider: "studio", type: "native", status: "ready" },
+      surface: { kind: "native", rendererId: "studio.xlsx-grid" },
+      capabilities: ["navigate", "select"],
     };
   }
   if (kind === "unknown" || kind === "mermaid") return undefined;
@@ -163,7 +188,7 @@ function studioDocumentPreviewResolution(entry: ArtifactEntry): ArtifactPluginBi
   };
 }
 
-function nativeRendererLabel(kind: Exclude<ArtifactKind, "unknown" | "pptx" | "mermaid">): string {
+function nativeRendererLabel(kind: Exclude<ArtifactKind, "unknown" | "docx" | "pptx" | "xlsx" | "mermaid">): string {
   return ({
     code: "Studio code",
     diff: "Studio diff",
@@ -202,6 +227,21 @@ export function createArtifactPluginRegistry(
     providers,
     activations,
     resolve(entry: ArtifactEntry): ArtifactPluginBinding {
+      if (resolveArtifactFormatCode(entry.label) === PROVIDER_HOSTED_CANVAS_TSX_FORMAT) {
+        const containerFallbacks = externalBindings(
+          entry,
+          "external-fallback",
+          providers,
+          activations,
+          PROVIDER_HOSTED_CANVAS_TSX_FORMAT,
+        );
+        if (containerFallbacks.length === 1) return containerFallbacks[0]!;
+        if (containerFallbacks.length > 1) {
+          return unavailableBinding(
+            "Multiple activated external Artifact contributions match the provider-hosted Canvas format; narrow or remove an activation.",
+          );
+        }
+      }
       const protectedBinding = resolvePlugins(entry, protectedPlugins);
       if (protectedBinding !== undefined) return protectedBinding;
       const overrides = externalBindings(entry, "external-override", providers, activations);
@@ -236,6 +276,7 @@ function externalBindings(
   lane: ArtifactExternalLane,
   providers: readonly ExternalArtifactProvider[],
   activations: readonly ArtifactProviderActivation[],
+  requiredFormatOnly?: string,
 ): ArtifactPluginBinding[] {
   const bindings: ArtifactPluginBinding[] = [];
   for (const provider of providers) {
@@ -249,12 +290,21 @@ function externalBindings(
         && candidate.surfaceSecurityProfile === (contribution.surface.kind === "external-hosted"
           ? contribution.surface.securityProfileId
           : undefined)
+        && (requiredFormatOnly === undefined || matcherUsesFormatAxis(candidate.matcher, requiredFormatOnly))
         && matchesArtifact(entry, candidate.matcher));
-      if (activation === undefined || !matchesArtifact(entry, contribution.matcher)) continue;
+      if (activation === undefined
+        || !matchesArtifact(entry, contribution.matcher)
+        || (requiredFormatOnly !== undefined && !matcherUsesFormatAxis(contribution.matcher, requiredFormatOnly))) continue;
       bindings.push(externalBinding(provider, contribution));
     }
   }
   return bindings;
+}
+
+function matcherUsesFormatAxis(matcher: ArtifactMatcher, format: string): boolean {
+  return (matcher.formats?.some((candidate) => candidate.toLowerCase() === format) ?? false)
+    && (matcher.extensions?.length ?? 0) === 0
+    && (matcher.pathGlobs?.length ?? 0) === 0;
 }
 
 function externalBinding(

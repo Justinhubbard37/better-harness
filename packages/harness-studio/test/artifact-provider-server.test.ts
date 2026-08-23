@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { isArtifactCatalogResponse, isArtifactDataSnapshot } from "../src/artifact-model.js";
 import { activateArtifactContribution } from "../src/server/artifact-provider-activation.js";
+import { PROVIDER_HOSTED_CANVAS_TSX_FORMAT } from "../src/server/artifact-catalog.js";
 import { discoverCanvasViewers } from "../src/server/artifact-viewers.js";
 import { envelopeSnapshot, type ExternalArtifactProvider } from "../src/server/artifact-plugin-registry.js";
 import { createQoderArtifactProvider } from "../src/server/qoder-artifact-provider.js";
@@ -59,6 +60,70 @@ describe("generic external hosted Artifact routes", () => {
     const viewer = await fetch(`${server.url}${catalogValue.artifacts[0]!.renderer.viewUri}`);
     expect(viewer.status).toBe(200);
     expect(await viewer.text()).toContain("injected provider");
+  });
+
+  it("rebinds a real Canvas TSX file only after exact-format fallback activation", async () => {
+    const root = await temp("artifact-canvas-provider-");
+    const appDir = join(root, "app");
+    const artifactDirectory = join(root, "artifacts");
+    const stateRoot = join(root, "state");
+    await Promise.all([mkdir(appDir), mkdir(artifactDirectory)]);
+    await writeFile(join(appDir, "index.html"), "<!doctype html><title>fixture</title>", "utf8");
+    await writeFile(
+      join(artifactDirectory, "artifact-manifest-demo.canvas.tsx"),
+      'export default () => <main data-canvas-source="true">Canvas source</main>;\n',
+      "utf8",
+    );
+    const provider = injectedCanvasProvider();
+    expect(provider.contributions[0]?.matcher).toEqual({ formats: [PROVIDER_HOSTED_CANVAS_TSX_FORMAT] });
+    server = await startHarnessStudioServer({
+      appDir,
+      artifactDirectory,
+      artifactProviderStateRoot: stateRoot,
+      artifactProviders: [provider],
+      canvasViewerRoot: join(root, "missing-canvas"),
+      canvasSdkRoot: join(root, "missing-sdk"),
+      walnutCacheRoot: join(root, "missing-walnut"),
+    });
+
+    const beforeValue: unknown = await (await fetch(`${server.url}/api/artifacts`)).json();
+    expect(isArtifactCatalogResponse(beforeValue)).toBe(true);
+    if (!isArtifactCatalogResponse(beforeValue)) throw new Error("expected Artifact catalog");
+    expect(beforeValue.artifacts[0]).toMatchObject({
+      label: "artifact-manifest-demo.canvas.tsx",
+      format: PROVIDER_HOSTED_CANVAS_TSX_FORMAT,
+      backing: "code",
+      renderer: { id: "studio.react-preview", type: "sandboxed-web", status: "ready" },
+    });
+    expect(beforeValue.artifacts[0]?.renderer.viewUri).toBeUndefined();
+
+    const activated = await activateArtifactContribution(
+      provider,
+      "cursor-canvas",
+      "external-fallback",
+      { formats: [PROVIDER_HOSTED_CANVAS_TSX_FORMAT] },
+      { root: stateRoot },
+    );
+    expect(activated.activations[0]?.matcher).toEqual({ formats: [PROVIDER_HOSTED_CANVAS_TSX_FORMAT] });
+
+    const afterValue: unknown = await (await fetch(`${server.url}/api/artifacts`)).json();
+    expect(isArtifactCatalogResponse(afterValue)).toBe(true);
+    if (!isArtifactCatalogResponse(afterValue)) throw new Error("expected Artifact catalog");
+    expect(afterValue.artifacts[0]).toMatchObject({
+      label: "artifact-manifest-demo.canvas.tsx",
+      format: PROVIDER_HOSTED_CANVAS_TSX_FORMAT,
+      backing: "data",
+      renderer: {
+        id: "fixture.cursor-canvas",
+        type: "cursor-canvas-tsx",
+        status: "ready",
+        viewUri: expect.any(String),
+      },
+    });
+    expect(afterValue.snapshot.revision).not.toBe(beforeValue.snapshot.revision);
+    const viewer = await fetch(`${server.url}${afterValue.artifacts[0]!.renderer.viewUri}`);
+    expect(viewer.status).toBe(200);
+    expect(await viewer.text()).toContain("provider-owned Canvas container");
   });
 
   it("serves an activated Qoder contribution without Qoder fields in the common binding", async () => {
@@ -177,6 +242,60 @@ function injectedProvider(): ExternalArtifactProvider {
         },
       },
       capabilities: ["navigate"],
+      support: "experimental-local",
+      adapterExecutionProfile: "trusted-local-process",
+    }],
+  };
+}
+
+function injectedCanvasProvider(): ExternalArtifactProvider {
+  const receipt: ExternalArtifactProvider["receipt"] = {
+    kind: "HarnessStudioExternalArtifactProviderReceiptV1",
+    providerId: "fixture.cursor-canvas",
+    providerVersion: "1",
+    providerDescriptorDigest: `sha256:${"c".repeat(64)}`,
+    assets: [],
+    driverVersions: { fixture: "1" },
+  };
+  const fingerprint = `sha256:${createHash("sha256").update(JSON.stringify(receipt)).digest("hex")}` as const;
+  return {
+    id: receipt.providerId,
+    label: "Fixture Cursor-like Canvas",
+    version: receipt.providerVersion,
+    acquisition: "operator-provisioned",
+    fingerprint,
+    receipt,
+    contributions: [{
+      id: "cursor-canvas",
+      label: "Fixture Cursor-like Canvas container",
+      matcher: { formats: [PROVIDER_HOSTED_CANVAS_TSX_FORMAT] },
+      adapter: {
+        id: "fixture.cursor-canvas.adapter",
+        version: "1",
+        schemaId: "fixture/cursor-canvas-v1",
+        adapt: async (context) => await envelopeSnapshot(context, { kind: "fixture/cursor-canvas-v1" }),
+      },
+      renderer: {
+        id: "fixture.cursor-canvas",
+        label: "Fixture Cursor-like Canvas",
+        provider: "fixture",
+        type: "cursor-canvas-tsx",
+        status: "ready",
+      },
+      surface: {
+        kind: "external-hosted",
+        rendererId: "fixture.cursor-canvas",
+        runtimeId: "fixture.cursor-canvas.runtime",
+        securityProfileId: "opaque-web-v1",
+        runtime: {
+          id: "fixture.cursor-canvas.runtime",
+          version: "1",
+          prepareDocument: async () => "<!doctype html><main>provider-owned Canvas container</main>",
+          readModule: async () => "export {};",
+          readResource: async () => undefined,
+        },
+      },
+      capabilities: ["execute", "select"],
       support: "experimental-local",
       adapterExecutionProfile: "trusted-local-process",
     }],

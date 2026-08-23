@@ -1,7 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
 import { extname, posix } from "node:path";
-import { unzipSync } from "fflate";
 import { XMLParser } from "fast-xml-parser";
 import {
   ARTIFACT_DATA_SNAPSHOT_KIND,
@@ -20,6 +18,15 @@ import {
 } from "../artifact-model.js";
 import { artifactRevisionBase } from "./artifact-catalog.js";
 import type { ArtifactEntry } from "./artifact-catalog.js";
+import {
+  artifactSnapshotCacheKey,
+  assertBoundedArtifactSnapshot,
+  loadBoundedOpcArchive,
+  readBoundedOpcXmlSource,
+  readLruCache,
+  resolveOpcPackageTarget,
+  writeLruCache,
+} from "./bounded-opc-package.js";
 import type {
   ArtifactAdaptContext,
   ArtifactAdapterImplementation,
@@ -28,13 +35,8 @@ import type {
 
 const PPTX_ADAPTER_ID = "studio.pptx-ooxml";
 const PPTX_ADAPTER_VERSION = "1";
-const MAX_INPUT_BYTES = 64 * 1024 * 1024;
-const MAX_ENTRY_COUNT = 2_048;
-const MAX_ENTRY_BYTES = 32 * 1024 * 1024;
-const MAX_EXPANDED_BYTES = 256 * 1024 * 1024;
+const PPTX_SCHEMA_ID = "pptx/v1";
 const MAX_XML_BYTES = 8 * 1024 * 1024;
-const MAX_SNAPSHOT_BYTES = 24 * 1024 * 1024;
-const MAX_CACHE_ENTRIES = 8;
 
 interface CachedPptxSnapshot {
   snapshot: ArtifactDataSnapshot;
@@ -45,7 +47,7 @@ interface CachedPptxSnapshot {
 export const PPTX_ARTIFACT_ADAPTER: ArtifactAdapterImplementation = {
   id: PPTX_ADAPTER_ID,
   version: PPTX_ADAPTER_VERSION,
-  schemaId: "pptx/v1",
+  schemaId: PPTX_SCHEMA_ID,
   adapt: async (context) => (await loadPptxSnapshot(context)).snapshot,
   readResource: async (context, resourceId) => {
     if (!/^[A-Za-z0-9_-]+$/u.test(resourceId)) return undefined;
@@ -67,37 +69,25 @@ export function resetPptxArtifactCache(): void {
 }
 
 async function loadPptxSnapshot({ entry, descriptor }: ArtifactAdaptContext): Promise<CachedPptxSnapshot> {
-  if (descriptor.adapter.id !== PPTX_ADAPTER_ID || descriptor.adapter.version !== PPTX_ADAPTER_VERSION) {
+  if (
+    descriptor.adapter.id !== PPTX_ADAPTER_ID
+    || descriptor.adapter.version !== PPTX_ADAPTER_VERSION
+    || descriptor.adapter.schemaId !== PPTX_SCHEMA_ID
+  ) {
     throw new Error("PPTX snapshot requested with an unsupported adapter.");
   }
-  const key = `${descriptor.revision.digest}:${descriptor.adapter.id}:${descriptor.adapter.version}:${descriptor.adapter.schemaId}`;
-  const cached = cache.get(key);
-  if (cached !== undefined) {
-    cache.delete(key);
-    cache.set(key, cached);
-    return cached;
-  }
-  if ((await stat(entry.path)).size > MAX_INPUT_BYTES) throw new Error("PPTX exceeds the adapter input limit.");
-  const archiveBytes = new Uint8Array(await readFile(entry.path));
-  let entryCount = 0;
-  let expandedBytes = 0;
-  const archive = unzipSync(archiveBytes, {
-    filter(file) {
-      entryCount += 1;
-      if (entryCount > MAX_ENTRY_COUNT) throw new Error("PPTX contains too many archive entries.");
-      assertSafePackagePath(file.name);
-      if (file.originalSize > MAX_ENTRY_BYTES) throw new Error("PPTX archive entry exceeds the expansion limit.");
-      expandedBytes += file.originalSize;
-      if (expandedBytes > MAX_EXPANDED_BYTES) throw new Error("PPTX expanded content exceeds the limit.");
-      return file.name.startsWith("ppt/") || file.name === "[Content_Types].xml";
-    },
+  const key = artifactSnapshotCacheKey(descriptor);
+  const cached = readLruCache(cache, key);
+  if (cached !== undefined) return cached;
+  const archive = await loadBoundedOpcArchive({
+    path: entry.path,
+    expectedDigest: descriptor.revision.digest,
+    format: "PPTX",
+    include: (path) => path.startsWith("ppt/") || path === "[Content_Types].xml",
   });
   const result = materializePptxSnapshot(archive, descriptor);
-  if (Buffer.byteLength(JSON.stringify(result.snapshot), "utf8") > MAX_SNAPSHOT_BYTES) {
-    throw new Error("PPTX snapshot exceeds the response limit.");
-  }
-  cache.set(key, result);
-  while (cache.size > MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value!);
+  assertBoundedArtifactSnapshot(result.snapshot, "PPTX");
+  writeLruCache(cache, key, result);
   return result;
 }
 
@@ -348,16 +338,11 @@ function relationshipMap(value: Record<string, unknown>, ownerPath: string): Map
 }
 
 function resolvePackageTarget(ownerPath: string, target: string): string {
-  const candidate = target.startsWith("/") ? target.slice(1) : posix.normalize(posix.join(posix.dirname(ownerPath), target));
-  assertSafePackagePath(candidate);
-  return candidate;
+  return resolveOpcPackageTarget(ownerPath, target, "PPTX");
 }
 
 function parseXml(archive: Record<string, Uint8Array>, path: string): Record<string, unknown> {
-  const bytes = archive[path];
-  if (bytes === undefined) throw new Error(`PPTX required part '${path}' is missing.`);
-  if (bytes.byteLength > MAX_XML_BYTES) throw new Error("PPTX XML part exceeds the parse limit.");
-  const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/^\uFEFF/u, "");
+  const source = readBoundedOpcXmlSource(archive, path, "PPTX", MAX_XML_BYTES);
   const parsed: unknown = xmlParser.parse(source);
   return record(parsed, "PPTX XML did not parse to an object.");
 }
@@ -419,13 +404,6 @@ function scrubLocalPaths(value: string): string {
     const normalized = path.replaceAll("\\", "/");
     return `<local-path>/${normalized.slice(normalized.lastIndexOf("/") + 1)}`;
   });
-}
-
-function assertSafePackagePath(path: string): void {
-  const normalized = path.replaceAll("\\", "/");
-  if (normalized === "" || normalized.startsWith("/") || normalized.includes("\0") || normalized.split("/").some((part) => part === "..")) {
-    throw new Error("PPTX archive contains an unsafe entry path.");
-  }
 }
 
 function positiveNumber(value: unknown, message: string): number {

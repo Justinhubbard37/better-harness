@@ -1080,7 +1080,7 @@
 .artifact-editor-header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .artifact-editor-header small,
 .artifact-editor-header > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-muted); font-size: var(--type-meta-size); }
-.artifact-frame { flex: 1; min-width: 0; border: 0; background: var(--color-surface); }
+.artifact-frame { width: 100%; height: 100%; min-width: 0; min-height: 0; border: 0; background: var(--color-surface); }
 .artifact-code-preview { flex: 1; min-width: 0; min-height: 0; overflow: auto; background: var(--color-surface); }
 .artifact-code-preview > * { min-height: 100%; }
 .artifact-image-stage { flex: 1; min-width: 0; min-height: 0; padding: var(--space-md); display: grid; place-items: center; overflow: auto; }
@@ -1282,6 +1282,67 @@
 .markdown-image-unresolved { padding: 0 var(--space-xs); border: 1px dashed var(--color-border-strong); border-radius: var(--radius-xs); color: var(--color-text-subtle); font-style: italic; }
 .markdown-document-footer { min-width: 0; padding: 0 var(--space-sm); display: flex; gap: var(--space-md); align-items: center; overflow: hidden; border-top: 1px solid var(--color-border); color: var(--color-text-muted); font-size: var(--type-meta-size); background: var(--color-titlebar); }
 .markdown-document-footer > span { overflow: hidden; font-family: var(--font-code); text-overflow: ellipsis; white-space: nowrap; }
+
+.docx-artifact-viewer { min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; background: var(--color-workspace); }
+.docx-stage-region { min-width: 0; min-height: 0; display: grid; grid-template-rows: var(--pane-header-height) minmax(0, 1fr) var(--statusbar-height); }
+.docx-view-toolbar { min-width: 0; padding: 0 var(--space-sm) 0 var(--space-md); display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); border-bottom: 1px solid var(--color-border); background: var(--color-panel); }
+.docx-view-toolbar > span { min-width: 0; overflow: hidden; color: var(--color-text-muted); font-size: var(--type-meta-size); text-overflow: ellipsis; white-space: nowrap; }
+.docx-view-toolbar > div { height: 100%; flex: none; display: flex; align-items: center; }
+.docx-view-toolbar button { width: var(--toolbar-target); height: var(--toolbar-target); display: grid; place-items: center; border: 0; border-radius: var(--radius-xs); color: var(--color-text); background: transparent; }
+.docx-view-toolbar button:hover { background: var(--color-surface-hover); }
+.docx-view-toolbar button:disabled { color: var(--color-text-subtle); }
+.docx-view-toolbar button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.docx-view-toolbar output { min-width: 44px; color: var(--color-text-muted); font-size: var(--type-meta-size); text-align: center; font-variant-numeric: tabular-nums; }
+.docx-document-scroll { min-width: 0; min-height: 0; overflow: auto; padding: var(--space-lg); background: var(--color-canvas); }
+.docx-document-page { box-sizing: border-box; margin: 0 auto; padding: .8in .85in; overflow-wrap: anywhere; color: var(--color-document-ink); color-scheme: light; background: var(--color-document-paper); outline: 1px solid var(--color-border-strong); font-family: var(--font-sans); line-height: var(--type-body-line); }
+.docx-paragraph { margin: 0 0 var(--space-md); white-space: pre-wrap; }
+.docx-paragraph.selected, .docx-table-scroll.selected { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.docx-document-page h1, .docx-document-page h2, .docx-document-page h3, .docx-document-page h4, .docx-document-page h5, .docx-document-page h6 { margin: var(--space-xl) 0 var(--space-sm); line-height: var(--type-section-line); }
+.docx-document-page h1 { font-size: var(--type-page-size); }
+.docx-document-page h2 { padding-bottom: var(--space-xs); border-bottom: 1px solid var(--color-border); font-size: var(--type-section-size); }
+.docx-list-marker { display: inline-block; width: var(--space-lg); margin-left: calc(-1 * var(--space-lg)); color: var(--color-text-muted); }
+.docx-inline-image { display: inline-block; max-width: 100%; height: auto; vertical-align: middle; }
+.docx-table-scroll { margin: 0 0 var(--space-lg); overflow-x: auto; }
+.docx-table-scroll table { width: 100%; min-width: 0; border-collapse: collapse; color: inherit; font-variant-numeric: inherit; }
+.docx-table-scroll td { min-width: 8ch; height: auto; padding: var(--space-sm); vertical-align: top; border: 1px solid var(--color-border-strong); color: inherit; }
+.docx-table-scroll tbody tr:hover { background: transparent; }
+.docx-table-scroll .docx-paragraph:last-child { margin-bottom: 0; }
+.docx-diagnostics { min-width: 0; padding: 0 var(--space-sm); display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); border-top: 1px solid var(--color-border); color: var(--color-text-muted); background: var(--color-surface-subtle); font-size: var(--type-meta-size); }
+.docx-diagnostics > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docx-diagnostics .artifact-diagnostics { position: relative; min-width: 0; }
+.docx-outline-pane { min-width: 0; width: 220px; overflow-y: auto; padding: var(--space-sm); border-left: 1px solid var(--color-border); background: var(--color-sidebar); }
+.docx-outline-pane h3 { margin: 0 0 var(--space-xs); color: var(--color-text-muted); font-size: var(--type-meta-size); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.docx-outline-pane ul { margin: 0; padding: 0; display: grid; gap: 2px; list-style: none; }
+.docx-outline-pane button { width: 100%; padding: var(--space-xs); display: grid; gap: 1px; border: 1px solid transparent; border-radius: var(--radius-xs); color: var(--color-text); background: transparent; font: inherit; text-align: left; }
+.docx-outline-pane button:hover { background: var(--color-surface-hover); }
+.docx-outline-pane button.selected { border-color: var(--color-primary); background: var(--color-surface-selected); }
+.docx-outline-pane button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.docx-outline-pane strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.docx-outline-pane small { color: var(--color-text-muted); font-size: var(--type-meta-size); }
+
+.xlsx-artifact-viewer { min-width: 0; min-height: 0; display: grid; grid-template-rows: var(--pane-header-height) minmax(0, 1fr) var(--pane-header-height) var(--statusbar-height); color: var(--color-document-ink); color-scheme: light; background: var(--color-document-paper); }
+.xlsx-formula-bar { min-width: 0; display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: center; border-bottom: 1px solid var(--color-border); color: var(--color-text); background: var(--color-panel); font-size: var(--type-meta-size); }
+.xlsx-formula-bar strong { align-self: stretch; padding: 0 var(--space-sm); display: flex; align-items: center; overflow: hidden; border-right: 1px solid var(--color-border); font-family: var(--font-code); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.xlsx-formula-bar span { min-width: 0; padding: 0 var(--space-sm); overflow: hidden; font-family: var(--font-code); text-overflow: ellipsis; white-space: nowrap; }
+.xlsx-grid-scroll { min-width: 0; min-height: 0; overflow: auto; background: var(--color-document-paper); }
+.xlsx-grid { min-width: 100%; width: max-content; table-layout: fixed; border-collapse: separate; border-spacing: 0; color: var(--color-document-ink); background: var(--color-document-paper); font-family: var(--font-sans); font-size: var(--type-body-size); font-variant-numeric: tabular-nums; }
+.xlsx-grid .xlsx-row-number-column { width: 44px; }
+.xlsx-grid th { position: sticky; z-index: 2; height: 24px; padding: 0 var(--space-xs); border-right: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); color: var(--color-text-muted); background: var(--color-surface-subtle); font-size: var(--type-meta-size); font-weight: 500; text-align: center; }
+.xlsx-grid thead th { top: 0; }
+.xlsx-grid tbody th { left: 0; z-index: 1; min-width: 44px; }
+.xlsx-grid thead th:first-child { left: 0; z-index: 3; }
+.xlsx-grid td { box-sizing: border-box; min-width: 0; height: inherit; padding: 2px var(--space-xs); overflow: hidden; border-right: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); text-overflow: ellipsis; white-space: nowrap; cursor: default; }
+.xlsx-grid td:hover { outline: 1px solid var(--color-border-strong); outline-offset: -1px; }
+.xlsx-grid td.selected { position: relative; z-index: 1; outline: 2px solid var(--color-primary); outline-offset: -2px; }
+.xlsx-grid td:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.xlsx-sheet-tabs { min-width: 0; padding: 0 var(--space-sm); display: flex; align-items: end; gap: 1px; overflow-x: auto; border-top: 1px solid var(--color-border); background: var(--color-panel); }
+.xlsx-sheet-tabs button { height: calc(var(--pane-header-height) - 4px); min-width: 72px; padding: 0 var(--space-md); border: 0; border-top: 2px solid transparent; color: var(--color-text-muted); background: transparent; font: inherit; font-size: var(--type-meta-size); white-space: nowrap; }
+.xlsx-sheet-tabs button:hover { color: var(--color-text); background: var(--color-surface-hover); }
+.xlsx-sheet-tabs button.selected { border-top-color: var(--color-primary); color: var(--color-text); background: var(--color-surface-selected); }
+.xlsx-sheet-tabs button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.xlsx-diagnostics { min-width: 0; padding: 0 var(--space-sm); display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); border-top: 1px solid var(--color-border); color: var(--color-text-muted); background: var(--color-surface-subtle); font-size: var(--type-meta-size); }
+.xlsx-diagnostics > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xlsx-diagnostics .artifact-diagnostics { position: relative; min-width: 0; }
 
 .pptx-artifact-viewer { min-width: 0; min-height: 0; display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; background: var(--color-workspace); }
 .pptx-slide-rail { min-width: 0; overflow-y: auto; padding: var(--space-sm); border-right: 1px solid var(--color-border); background: var(--color-sidebar); }
@@ -1632,6 +1693,10 @@
   .markdown-artifact-viewer { grid-template-columns: minmax(0, 1fr); }
   .markdown-outline-rail { display: none; }
   .markdown-document-scroll { padding: var(--space-md); }
+  .docx-artifact-viewer { grid-template-columns: minmax(0, 1fr); }
+  .docx-outline-pane { display: none; }
+  .docx-document-scroll { padding: var(--space-sm); }
+  .docx-document-page { padding: .45in; }
   .pptx-artifact-viewer { grid-template-columns: 72px minmax(0, 1fr); }
   .pptx-outline-pane { display: none; }
   .pptx-slide-rail { padding: var(--space-xs); }

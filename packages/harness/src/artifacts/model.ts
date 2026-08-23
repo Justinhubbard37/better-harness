@@ -235,6 +235,141 @@ export interface PptxArtifactPayload {
   slides: PptxSlideSnapshot[];
 }
 
+export interface DocxTextRun {
+  kind: "text";
+  text: string;
+  fontFamily?: string;
+  fontSizePoints?: number;
+  color?: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+}
+
+export interface DocxImageInline {
+  kind: "image";
+  resourceId: string;
+  alt?: string;
+  widthEmu?: number;
+  heightEmu?: number;
+}
+
+export type DocxInline = DocxTextRun | DocxImageInline;
+
+export interface DocxParagraph {
+  kind: "paragraph";
+  id: string;
+  label: string;
+  address: string;
+  styleId?: string;
+  headingLevel?: 1 | 2 | 3 | 4 | 5 | 6;
+  alignment?: "left" | "center" | "right" | "justify";
+  numbering?: { numId: string; level: number };
+  inlines: DocxInline[];
+}
+
+export interface DocxTableCell {
+  paragraphs: DocxParagraph[];
+}
+
+export interface DocxTableRow {
+  cells: DocxTableCell[];
+}
+
+export interface DocxTable {
+  kind: "table";
+  id: string;
+  label: string;
+  address: string;
+  rows: DocxTableRow[];
+}
+
+export type DocxBlock = DocxParagraph | DocxTable;
+
+/**
+ * Bounded semantic projection of one DOCX revision.
+ *
+ * This is intentionally not a pagination or mutation model. Word layout and
+ * writeback remain outside the capabilities advertised by the native surface.
+ */
+export interface DocxArtifactPayload {
+  kind: "docx/v1";
+  blocks: DocxBlock[];
+  headersPresent: boolean;
+  footersPresent: boolean;
+}
+
+export interface XlsxCellStyle {
+  fill?: string;
+  color?: string;
+  fontFamily?: string;
+  fontSizePoints?: number;
+  bold?: boolean;
+  italic?: boolean;
+  horizontalAlignment?: "left" | "center" | "right";
+  verticalAlignment?: "top" | "center" | "bottom";
+  wrapText?: boolean;
+  numberFormat?: string;
+}
+
+export interface XlsxCellSnapshot {
+  address: string;
+  row: number;
+  column: number;
+  value: string | number | boolean | null;
+  display: string;
+  formula?: string;
+  style?: XlsxCellStyle;
+}
+
+export interface XlsxMergedRange {
+  ref: string;
+  startRow: number;
+  startColumn: number;
+  endRow: number;
+  endColumn: number;
+}
+
+export interface XlsxColumnSnapshot {
+  index: number;
+  width?: number;
+}
+
+export interface XlsxRowSnapshot {
+  index: number;
+  height?: number;
+}
+
+/** Public safety bounds for the browser-consumable XLSX projection. */
+export const XLSX_ARTIFACT_PREVIEW_LIMITS = Object.freeze({
+  sheets: 64,
+  rowsPerSheet: 200,
+  columnsPerSheet: 64,
+  populatedCells: 50_000,
+});
+
+export interface XlsxWorksheetSnapshot {
+  id: string;
+  label: string;
+  address: string;
+  rowCount: number;
+  columnCount: number;
+  cells: XlsxCellSnapshot[];
+  mergedRanges: XlsxMergedRange[];
+  columns: XlsxColumnSnapshot[];
+  rows: XlsxRowSnapshot[];
+}
+
+/** Bounded read-only projection of workbook cells and presentation metadata. */
+export interface XlsxArtifactPayload {
+  kind: "xlsx/v1";
+  activeSheetIndex: number;
+  dateSystem: "1900" | "1904";
+  definedNamesPresent: boolean;
+  sheets: XlsxWorksheetSnapshot[];
+}
+
 export type MarkdownInline =
   | { kind: "text"; text: string }
   | { kind: "code"; text: string }
@@ -290,6 +425,8 @@ export interface ExternalArtifactPayload {
 
 export type ArtifactSnapshotPayload =
   | RawArtifactPayload
+  | DocxArtifactPayload
+  | XlsxArtifactPayload
   | PptxArtifactPayload
   | MarkdownArtifactPayload
   | QoderCanvasArtifactPayload
@@ -379,17 +516,294 @@ export function isArtifactDataSnapshot(value: unknown): value is ArtifactDataSna
   if (!isRecord(value) || value.kind !== ARTIFACT_DATA_SNAPSHOT_KIND) return false;
   if (typeof value.artifactId !== "string" || !isDigest(value.revisionId) || !isDigest(value.snapshotId)) return false;
   if (!isRecord(value.adapter) || typeof value.adapter.id !== "string" || typeof value.adapter.version !== "string") return false;
-  if (typeof value.schemaId !== "string" || !isRecord(value.summary) || !ARTIFACT_FAMILIES.has(value.summary.family as ArtifactFamily)) return false;
-  if (!Array.isArray(value.structure) || !Array.isArray(value.semanticIndex) || !Array.isArray(value.resources) || !Array.isArray(value.diagnostics)) return false;
-  if (!value.resources.every((resource) => isRecord(resource)
+  if (typeof value.schemaId !== "string"
+    || !isRecord(value.summary)
+    || typeof value.summary.label !== "string"
+    || !ARTIFACT_FAMILIES.has(value.summary.family as ArtifactFamily)
+    || typeof value.summary.format !== "string") return false;
+  if (!Array.isArray(value.structure) || !value.structure.every(isArtifactStructureNode)) return false;
+  if (!Array.isArray(value.semanticIndex) || !value.semanticIndex.every(isArtifactSemanticIndexEntry)) return false;
+  if (!Array.isArray(value.resources) || !value.resources.every((resource) => isRecord(resource)
     && typeof resource.id === "string"
     && typeof resource.label === "string"
     && typeof resource.mediaType === "string"
     && isStudioArtifactPath(resource.uri)
-    && typeof resource.size === "number" && resource.size >= 0)) return false;
+    && isFiniteNumber(resource.size) && resource.size >= 0)) return false;
+  if (!Array.isArray(value.diagnostics) || !value.diagnostics.every(isArtifactDiagnostic)) return false;
   // An unknown payload kind is a renderer-selection problem, not a malformed
   // response: the envelope is still usable for outline and diagnostics.
-  return isRecord(value.payload) && typeof value.payload.kind === "string";
+  if (!isRecord(value.payload) || typeof value.payload.kind !== "string") return false;
+  return isKnownArtifactPayload(value.payload);
+}
+
+function isKnownArtifactPayload(value: Record<string, unknown>): boolean {
+  if (value.kind === "artifact/raw-v1") {
+    return isRecord(value.content)
+      && typeof value.content.mediaType === "string"
+      && isStudioArtifactPath(value.content.uri)
+      && isDigest(value.content.digest);
+  }
+  if (value.kind === "qoder-canvas/v1") return isRecord(value.data);
+  if (value.kind === "markdown/v1") return Array.isArray(value.blocks) && value.blocks.every(isMarkdownBlock);
+  if (value.kind === "docx/v1") {
+    return Array.isArray(value.blocks)
+      && value.blocks.every(isDocxBlock)
+      && typeof value.headersPresent === "boolean"
+      && typeof value.footersPresent === "boolean";
+  }
+  if (value.kind === "pptx/v1") {
+    return isPositiveFiniteNumber(value.width)
+      && isPositiveFiniteNumber(value.height)
+      && Array.isArray(value.slides)
+      && value.slides.every(isPptxSlide);
+  }
+  if (value.kind === "xlsx/v1") {
+    return isXlsxPayload(value);
+  }
+  return true;
+}
+
+function isArtifactStructureNode(value: unknown): boolean {
+  return isRecord(value)
+    && hasStringFields(value, ["id", "label", "address", "kind"])
+    && (value.children === undefined
+      || (Array.isArray(value.children) && value.children.every(isArtifactStructureNode)));
+}
+
+function isArtifactSemanticIndexEntry(value: unknown): boolean {
+  return isRecord(value) && hasStringFields(value, ["address", "label", "kind"]);
+}
+
+function isArtifactDiagnostic(value: unknown): boolean {
+  return isRecord(value)
+    && (value.level === "info" || value.level === "warning" || value.level === "error")
+    && hasStringFields(value, ["code", "message"])
+    && isOptionalString(value.address);
+}
+
+function isPptxSlide(value: unknown): boolean {
+  return isRecord(value)
+    && hasStringFields(value, ["id", "label", "address"])
+    && isOptionalString(value.background)
+    && typeof value.notesPresent === "boolean"
+    && isOptionalString(value.notesText)
+    && Array.isArray(value.elements)
+    && value.elements.every(isPptxElement);
+}
+
+function isPptxElement(value: unknown): boolean {
+  if (!isRecord(value)
+    || !hasStringFields(value, ["id", "name", "address"])
+    || ![value.x, value.y, value.width, value.height].every(isFiniteNumber)
+    || !isOptionalFiniteNumber(value.rotation)) return false;
+  if (value.kind === "image") return typeof value.resourceId === "string" && isOptionalString(value.alt);
+  return value.kind === "shape"
+    && isOptionalString(value.fill)
+    && isOptionalString(value.line)
+    && Array.isArray(value.paragraphs)
+    && value.paragraphs.every(isPptxParagraph);
+}
+
+function isPptxParagraph(value: unknown): boolean {
+  return isRecord(value)
+    && (value.alignment === "left" || value.alignment === "center" || value.alignment === "right")
+    && Array.isArray(value.runs)
+    && value.runs.every((run) => isRecord(run)
+      && typeof run.text === "string"
+      && isOptionalString(run.fontFamily)
+      && isOptionalFiniteNumber(run.fontSizePoints)
+      && isOptionalString(run.color)
+      && isOptionalBoolean(run.bold)
+      && isOptionalBoolean(run.italic));
+}
+
+function isDocxBlock(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.kind === "paragraph") return isDocxParagraph(value);
+  return value.kind === "table"
+    && hasStringFields(value, ["id", "label", "address"])
+    && Array.isArray(value.rows)
+    && value.rows.every((row) => isRecord(row)
+      && Array.isArray(row.cells)
+      && row.cells.every((cell) => isRecord(cell)
+        && Array.isArray(cell.paragraphs)
+        && cell.paragraphs.every(isDocxParagraph)));
+}
+
+function isDocxParagraph(value: unknown): boolean {
+  return isRecord(value)
+    && value.kind === "paragraph"
+    && hasStringFields(value, ["id", "label", "address"])
+    && isOptionalString(value.styleId)
+    && (value.headingLevel === undefined
+      || (typeof value.headingLevel === "number" && [1, 2, 3, 4, 5, 6].includes(value.headingLevel)))
+    && (value.alignment === undefined || ["left", "center", "right", "justify"].includes(String(value.alignment)))
+    && (value.numbering === undefined || (isRecord(value.numbering)
+      && typeof value.numbering.numId === "string"
+      && isNonNegativeInteger(value.numbering.level)))
+    && Array.isArray(value.inlines)
+    && value.inlines.every(isDocxInline);
+}
+
+function isDocxInline(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.kind === "image") {
+    return typeof value.resourceId === "string"
+      && isOptionalString(value.alt)
+      && isOptionalFiniteNumber(value.widthEmu)
+      && isOptionalFiniteNumber(value.heightEmu);
+  }
+  return value.kind === "text"
+    && typeof value.text === "string"
+    && isOptionalString(value.fontFamily)
+    && isOptionalFiniteNumber(value.fontSizePoints)
+    && isOptionalString(value.color)
+    && [value.bold, value.italic, value.underline, value.strike].every(isOptionalBoolean);
+}
+
+function isXlsxPayload(value: Record<string, unknown>): boolean {
+  if (!isNonNegativeInteger(value.activeSheetIndex)
+    || (value.dateSystem !== "1900" && value.dateSystem !== "1904")
+    || typeof value.definedNamesPresent !== "boolean"
+    || !Array.isArray(value.sheets)
+    || value.sheets.length > XLSX_ARTIFACT_PREVIEW_LIMITS.sheets
+    || (value.sheets.length > 0 && value.activeSheetIndex >= value.sheets.length)) return false;
+  const sheetIds = new Set<string>();
+  let populatedCells = 0;
+  for (const sheet of value.sheets) {
+    if (!isXlsxWorksheet(sheet) || sheetIds.has(sheet.id)) return false;
+    sheetIds.add(sheet.id);
+    populatedCells += sheet.cells.length;
+    if (populatedCells > XLSX_ARTIFACT_PREVIEW_LIMITS.populatedCells) return false;
+  }
+  return true;
+}
+
+function isXlsxWorksheet(value: unknown): value is XlsxWorksheetSnapshot {
+  if (!isRecord(value)
+    || !hasStringFields(value, ["id", "label", "address"])
+    || !isPositiveInteger(value.rowCount)
+    || value.rowCount > XLSX_ARTIFACT_PREVIEW_LIMITS.rowsPerSheet
+    || !isPositiveInteger(value.columnCount)
+    || value.columnCount > XLSX_ARTIFACT_PREVIEW_LIMITS.columnsPerSheet
+    || !Array.isArray(value.cells)
+    || !Array.isArray(value.mergedRanges)
+    || !Array.isArray(value.columns)
+    || !Array.isArray(value.rows)) return false;
+  const rowCount = value.rowCount;
+  const columnCount = value.columnCount;
+  const cellCoordinates = new Set<string>();
+  for (const cell of value.cells) {
+    if (!isXlsxCell(cell, rowCount, columnCount)) return false;
+    const key = `${cell.row}:${cell.column}`;
+    if (cellCoordinates.has(key)) return false;
+    cellCoordinates.add(key);
+  }
+  const mergedCoordinates = new Set<string>();
+  for (const merge of value.mergedRanges) {
+    if (!isXlsxMergedRange(merge, rowCount, columnCount)) return false;
+    for (let row = merge.startRow; row <= merge.endRow; row += 1) {
+      for (let column = merge.startColumn; column <= merge.endColumn; column += 1) {
+        const key = `${row}:${column}`;
+        if (mergedCoordinates.has(key)) return false;
+        mergedCoordinates.add(key);
+      }
+    }
+  }
+  return value.columns.every((column) => isRecord(column)
+      && isPositiveInteger(column.index)
+      && column.index <= columnCount
+      && isOptionalFiniteNumber(column.width))
+    && value.rows.every((row) => isRecord(row)
+      && isPositiveInteger(row.index)
+      && row.index <= rowCount
+      && isOptionalFiniteNumber(row.height));
+}
+
+function isXlsxCell(value: unknown, rowCount: number, columnCount: number): value is XlsxCellSnapshot {
+  return isRecord(value)
+    && typeof value.address === "string"
+    && isPositiveInteger(value.row)
+    && value.row <= rowCount
+    && isPositiveInteger(value.column)
+    && value.column <= columnCount
+    && (value.value === null || ["string", "number", "boolean"].includes(typeof value.value))
+    && (typeof value.value !== "number" || Number.isFinite(value.value))
+    && typeof value.display === "string"
+    && isOptionalString(value.formula)
+    && (value.style === undefined || isXlsxCellStyle(value.style));
+}
+
+function isXlsxCellStyle(value: unknown): boolean {
+  return isRecord(value)
+    && [value.fill, value.color, value.fontFamily, value.numberFormat].every(isOptionalString)
+    && isOptionalFiniteNumber(value.fontSizePoints)
+    && [value.bold, value.italic, value.wrapText].every(isOptionalBoolean)
+    && (value.horizontalAlignment === undefined || ["left", "center", "right"].includes(String(value.horizontalAlignment)))
+    && (value.verticalAlignment === undefined || ["top", "center", "bottom"].includes(String(value.verticalAlignment)));
+}
+
+function isXlsxMergedRange(value: unknown, rowCount: number, columnCount: number): value is XlsxMergedRange {
+  return isRecord(value)
+    && typeof value.ref === "string"
+    && [value.startRow, value.startColumn, value.endRow, value.endColumn].every(isPositiveInteger)
+    && Number(value.startRow) <= Number(value.endRow)
+    && Number(value.startColumn) <= Number(value.endColumn)
+    && Number(value.endRow) <= rowCount
+    && Number(value.endColumn) <= columnCount;
+}
+
+function isMarkdownBlock(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.kind !== "string") return false;
+  if (value.kind === "heading") {
+    return typeof value.level === "number" && [1, 2, 3, 4, 5, 6].includes(value.level)
+      && hasStringFields(value, ["id", "address"])
+      && Array.isArray(value.children) && value.children.every(isMarkdownInline);
+  }
+  if (value.kind === "paragraph") return Array.isArray(value.children) && value.children.every(isMarkdownInline);
+  if (value.kind === "code") return isOptionalString(value.language) && typeof value.text === "string";
+  if (value.kind === "quote") return Array.isArray(value.blocks) && value.blocks.every(isMarkdownBlock);
+  if (value.kind === "list") {
+    return typeof value.ordered === "boolean"
+      && typeof value.tight === "boolean"
+      && (value.start === undefined || isFiniteNumber(value.start))
+      && Array.isArray(value.items)
+      && value.items.every((item) => isRecord(item)
+        && isOptionalBoolean(item.checked)
+        && Array.isArray(item.blocks)
+        && item.blocks.every(isMarkdownBlock));
+  }
+  if (value.kind === "table") {
+    return Array.isArray(value.alignments)
+      && value.alignments.every((alignment) => ["left", "center", "right"].includes(String(alignment)))
+      && Array.isArray(value.head) && value.head.every(isMarkdownInlineArray)
+      && Array.isArray(value.rows) && value.rows.every((row) => Array.isArray(row) && row.every(isMarkdownInlineArray));
+  }
+  if (value.kind === "thematicBreak") return true;
+  return value.kind === "rawHtml" && typeof value.text === "string";
+}
+
+function isMarkdownInline(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.kind !== "string") return false;
+  if (value.kind === "break") return true;
+  if (value.kind === "text" || value.kind === "code") return typeof value.text === "string";
+  if (value.kind === "emphasis" || value.kind === "strong" || value.kind === "strike") {
+    return Array.isArray(value.children) && value.children.every(isMarkdownInline);
+  }
+  if (value.kind === "link") {
+    return typeof value.href === "string"
+      && isOptionalString(value.title)
+      && Array.isArray(value.children)
+      && value.children.every(isMarkdownInline);
+  }
+  return value.kind === "image"
+    && typeof value.alt === "string"
+    && isOptionalString(value.title)
+    && isOptionalString(value.resourceId);
+}
+
+function isMarkdownInlineArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every(isMarkdownInline);
 }
 
 export function isArtifactBuildSnapshot(value: unknown): value is ArtifactBuildSnapshot {
@@ -462,6 +876,38 @@ function isRenderer(value: unknown): value is ArtifactRendererReference {
 
 function isDigest(value: unknown): value is ArtifactDigest {
   return typeof value === "string" && /^sha256:[0-9a-f]{64}$/u.test(value);
+}
+
+function hasStringFields(value: Record<string, unknown>, fields: readonly string[]): boolean {
+  return fields.every((field) => typeof value[field] === "string");
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isPositiveFiniteNumber(value: unknown): value is number {
+  return isFiniteNumber(value) && value > 0;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalBoolean(value: unknown): boolean {
+  return value === undefined || typeof value === "boolean";
+}
+
+function isOptionalFiniteNumber(value: unknown): boolean {
+  return value === undefined || isFiniteNumber(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

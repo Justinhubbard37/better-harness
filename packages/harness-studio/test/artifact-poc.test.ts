@@ -12,6 +12,7 @@ import {
   findArtifact,
   indexArtifactDirectory,
   resetArtifactDigestCache,
+  resolveArtifactFormatCode,
   resolveArtifactMediaType,
   resolveArtifactKind,
 } from "../src/server/artifact-catalog.js";
@@ -40,8 +41,17 @@ describe("resolveArtifactKind", () => {
     expect(resolveArtifactKind("Report.TSX")).toBe("code");
   });
 
-  it("classifies the native PPTX adapter without guessing unknown binaries", () => {
+  it("gives provider-hosted Canvas TSX a dedicated server-side format", () => {
+    expect(resolveArtifactFormatCode("artifact-manifest-demo.canvas.tsx")).toBe("cursor-canvas-tsx");
+    expect(resolveArtifactFormatCode("ARTIFACT-MANIFEST-DEMO.CANVAS.TSX")).toBe("cursor-canvas-tsx");
+    expect(resolveArtifactFormatCode("ordinary.tsx")).toBe("tsx");
+    expect(resolveArtifactKind("artifact-manifest-demo.canvas.tsx")).toBe("code");
+  });
+
+  it("classifies native Office adapters without guessing unknown binaries", () => {
+    expect(resolveArtifactKind("document.docx")).toBe("docx");
     expect(resolveArtifactKind("deck.pptx")).toBe("pptx");
+    expect(resolveArtifactKind("workbook.xlsx")).toBe("xlsx");
     expect(resolveArtifactKind("archive.bin")).toBe("unknown");
     expect(resolveArtifactKind("noextension")).toBe("unknown");
   });
@@ -51,6 +61,9 @@ describe("resolveArtifactMediaType", () => {
   it("keeps artifact references format-aware without claiming a renderer", () => {
     expect(resolveArtifactMediaType("deck.pptx")).toBe(
       "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    );
+    expect(resolveArtifactMediaType("workbook.xlsx")).toBe(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
     expect(resolveArtifactMediaType("report.pdf")).toBe("application/pdf");
     expect(resolveArtifactMediaType("motion.lottie")).toBe("application/zip");

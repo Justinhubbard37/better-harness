@@ -8,6 +8,7 @@ import type {
   ArtifactProviderActivation,
   ExternalArtifactProvider,
 } from "./artifact-adapter-contract.js";
+import { PROVIDER_HOSTED_CANVAS_TSX_FORMAT } from "./artifact-catalog.js";
 
 export const ARTIFACT_PROVIDER_ACTIVATION_STATE_KIND = "HarnessStudioArtifactProviderActivationStateV1" as const;
 export const QODER_LEGACY_IMPORT_ID = "qoder-canvas-manifest-v1" as const;
@@ -268,7 +269,14 @@ function assertMatcher(matcher: ArtifactMatcher): void {
 }
 
 function legacyDataMatcher(matcher: ArtifactMatcher): ArtifactMatcher | undefined {
-  const protectedValues = new Set(["tsx", "jsx", "svg", "mmd", "mermaid"]);
+  const protectedValues = new Set([
+    "tsx",
+    "jsx",
+    "svg",
+    "mmd",
+    "mermaid",
+    PROVIDER_HOSTED_CANVAS_TSX_FORMAT,
+  ]);
   const formats = (matcher.formats ?? []).filter((value) => !protectedValues.has(value.toLowerCase()));
   const extensions = (matcher.extensions ?? []).filter((value) => !protectedValues.has(value.replace(/^\./u, "").toLowerCase()));
   const pathGlobs = (matcher.pathGlobs ?? []).filter((value) => {
@@ -284,7 +292,7 @@ function legacyDataMatcher(matcher: ArtifactMatcher): ArtifactMatcher | undefine
 }
 
 function matcherNamesAuthoredCodeFormat(matcher: ArtifactMatcher): boolean {
-  const protectedValues = new Set(["tsx", "jsx"]);
+  const protectedValues = new Set(["tsx", "jsx", PROVIDER_HOSTED_CANVAS_TSX_FORMAT]);
   if ([...(matcher.formats ?? []), ...(matcher.extensions ?? [])]
     .some((value) => protectedValues.has(value.replace(/^\./u, "").toLowerCase()))) return true;
   return (matcher.pathGlobs ?? []).some((value) => {

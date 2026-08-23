@@ -57,7 +57,7 @@ const UNKNOWN_FORMAT: ArtifactFormat = { kind: "unknown", mediaType: "applicatio
 const FORMAT_BY_EXTENSION = new Map<string, ArtifactFormat>([
   [".css", { kind: "code", mediaType: "text/css; charset=utf-8" }],
   [".diff", { kind: "diff", mediaType: "text/plain; charset=utf-8" }],
-  [".docx", { kind: "unknown", mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }],
+  [".docx", { kind: "docx", mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }],
   [".gif", { kind: "image", mediaType: "image/gif" }],
   [".html", { kind: "code", mediaType: "text/html; charset=utf-8", active: true }],
   [".jpeg", { kind: "image", mediaType: "image/jpeg" }],
@@ -81,10 +81,16 @@ const FORMAT_BY_EXTENSION = new Map<string, ArtifactFormat>([
   [".tsx", { kind: "code", mediaType: "text/plain; charset=utf-8" }],
   [".txt", { kind: "text", mediaType: "text/plain; charset=utf-8" }],
   [".webp", { kind: "image", mediaType: "image/webp" }],
-  [".xlsx", { kind: "unknown", mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }],
+  [".xlsx", { kind: "xlsx", mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }],
 ]);
 
 const DOCUMENT_EXTENSIONS = new Set([".pptx", ".xlsx", ".docx", ".pdf"]);
+
+/**
+ * Format lane for provider-owned Canvas container source. This remains a
+ * server-side format selector: the browser consumes only the selected Surface.
+ */
+export const PROVIDER_HOSTED_CANVAS_TSX_FORMAT = "cursor-canvas-tsx";
 
 export class ArtifactCatalogContractError extends Error {
   constructor(message: string) {
@@ -353,6 +359,7 @@ export function resolveArtifactFamily(path: string, kind = resolveArtifactKind(p
  * the wire and gives translators nothing to work with.
  */
 export function resolveArtifactFormatCode(path: string): string {
+  if (path.toLowerCase().endsWith(".canvas.tsx")) return PROVIDER_HOSTED_CANVAS_TSX_FORMAT;
   const extension = extname(path).toLowerCase();
   return extension === "" ? "file" : extension.slice(1);
 }

@@ -5,6 +5,7 @@ import type { ArtifactDescriptor, ArtifactRendererReference } from "../src/artif
 import {
   ARTIFACT_SURFACE_MOUNTS,
   ArtifactView,
+  artifactSurfaceInstanceKey,
   normalizeArtifactSurfaceKind,
   resolveArtifactSurfaceMount,
 } from "../src/app/ArtifactView.js";
@@ -15,7 +16,9 @@ describe("Artifact View surface registry", () => {
       "studio.sandboxed-preview",
       "external-hosted",
       "studio.markdown",
+      "studio.docx-dom",
       "studio.pptx-dom",
+      "studio.xlsx-grid",
       "studio.image",
       "studio.text-family",
     ]);
@@ -24,8 +27,15 @@ describe("Artifact View surface registry", () => {
   it.each([
     ["dynamic React", descriptor({ id: "studio.react-preview", type: "sandboxed-web" }, { backing: "code", format: "tsx" }), "studio.sandboxed-preview"],
     ["Qoder Canvas", descriptor({ id: "qoder-canvas.deck", type: "qoder-canvas", viewUri: "/api/artifacts/deck/view" }), "external-hosted"],
+    ["Structurizr", descriptor({ id: "homology.structurizr-svg", type: "homology-diagram-svg", viewUri: "/api/artifacts/structurizr/view" }, { format: "dsl" }), "external-hosted"],
+    ["D2", descriptor({ id: "homology.d2-svg", type: "homology-diagram-svg", viewUri: "/api/artifacts/d2/view" }, { format: "d2" }), "external-hosted"],
+    ["external Mermaid", descriptor({ id: "homology.mermaid-svg", type: "homology-diagram-svg", viewUri: "/api/artifacts/mermaid/view" }, { format: "mmd" }), "external-hosted"],
+    ["Jupyter Notebook", descriptor({ id: "homology.jupyter-notebook", type: "homology-notebook-read-only", viewUri: "/api/artifacts/notebook/view" }, { format: "ipynb" }), "external-hosted"],
+    ["Cursor Canvas TSX container", descriptor({ id: "provider.cursor-canvas", type: "cursor-canvas-tsx", viewUri: "/api/artifacts/cursor-container/view" }, { format: "cursor-canvas-tsx" }), "external-hosted"],
     ["Markdown", descriptor({ id: "studio.markdown" }, { format: "md" }), "studio.markdown"],
+    ["DOCX", descriptor({ id: "studio.docx-dom" }, { format: "docx" }), "studio.docx-dom"],
     ["PPTX", descriptor({ id: "studio.pptx-dom" }, { format: "pptx" }), "studio.pptx-dom"],
+    ["XLSX", descriptor({ id: "studio.xlsx-grid" }, { format: "xlsx" }), "studio.xlsx-grid"],
     ["SVG", descriptor({ id: "studio.svg-react-preview", type: "sandboxed-web" }, { backing: "code", format: "svg" }), "studio.sandboxed-preview"],
     ["Mermaid", descriptor({ id: "studio.mermaid-react-preview", type: "sandboxed-web" }, { backing: "code", format: "mmd" }), "studio.sandboxed-preview"],
     ["image", descriptor({ id: "studio.image" }, { format: "png" }), "studio.image"],
@@ -59,6 +69,32 @@ describe("Artifact View surface registry", () => {
     const markup = renderToStaticMarkup(createElement(ArtifactView, { artifact: unavailable, liveGeneration: 0 }));
     expect(markup).toContain('role="status"');
     expect(markup).toContain("No approved renderer matches this revision.");
+  });
+
+  it("does not infer external hosting from an unknown renderer type without a server view URI", () => {
+    const missingView = descriptor({ id: "homology.structurizr-svg", type: "homology-diagram-svg" }, { format: "dsl" });
+    expect(normalizeArtifactSurfaceKind(missingView)).toBe("unavailable");
+    expect(resolveArtifactSurfaceMount(missingView)).toBeUndefined();
+  });
+
+  it("changes the mounted surface identity when the server binding changes without changing file bytes", () => {
+    const first = descriptor({
+      id: "provider.diagram",
+      provider: "provider-a",
+      type: "provider-svg",
+      viewUri: "/api/artifacts/example/revisions/111/viewer/",
+    });
+    const second = {
+      ...first,
+      adapter: { ...first.adapter, snapshotId: `sha256:${"2".repeat(64)}` as const },
+      renderer: { ...first.renderer, id: "provider.diagram-v2", provider: "provider-b" },
+    };
+    const firstMount = resolveArtifactSurfaceMount(first)!;
+    const secondMount = resolveArtifactSurfaceMount(second)!;
+
+    expect(first.revision.digest).toBe(second.revision.digest);
+    expect(first.renderer.viewUri).toBe(second.renderer.viewUri);
+    expect(artifactSurfaceInstanceKey(firstMount, first)).not.toBe(artifactSurfaceInstanceKey(secondMount, second));
   });
 });
 

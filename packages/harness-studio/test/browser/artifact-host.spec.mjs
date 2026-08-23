@@ -7,7 +7,9 @@ import { HarnessRunEmitter } from "@qoder-ai/harness/exec";
 import { buildHarnessInspectorReport, emptyFeatureTree } from "../../../../scripts/harness-inspector/index.mjs";
 import { startHarnessStudioServer } from "../../dist/server/server.js";
 import { sessionFromRetainedRun } from "../../dist/app/session-debugger-model.js";
+import { createDocxFixture } from "../docx-fixture.ts";
 import { createPptxFixture } from "../pptx-fixture.ts";
+import { createXlsxFixture } from "../xlsx-fixture.ts";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const ARTIFACT_PREVIEW_PANEL_ID = "artifact-preview-panel";
@@ -20,8 +22,11 @@ let artifactDirectory;
 
 test.beforeAll(async () => {
   artifactDirectory = await mkdtemp(join(tmpdir(), "studio-artifact-browser-"));
+  await writeFile(join(artifactDirectory, "document.docx"), createDocxFixture("Studio Word Fixture"));
   await writeFile(join(artifactDirectory, "deck.pptx"), createPptxFixture("01"));
+  await writeFile(join(artifactDirectory, "workbook.xlsx"), createXlsxFixture());
   await writeFile(join(artifactDirectory, "component.tsx"), 'document.body.dataset.moduleEvaluated = "yes"; export default () => <p data-preview="current">first render</p>;\n', "utf8");
+  await writeFile(join(artifactDirectory, "fallback.canvas.tsx"), 'export default () => <p data-preview="canvas-fallback">Studio React fallback</p>;\n', "utf8");
   await writeFile(join(artifactDirectory, "broken.tsx"), 'export default () => <main>broken;\n', "utf8");
   await writeFile(join(artifactDirectory, "throws.tsx"), 'export default function Boom() { throw new Error("render exploded"); }\n', "utf8");
   await writeFile(join(artifactDirectory, "late-throw.tsx"), [
@@ -241,6 +246,20 @@ test("renders generated TSX in the sandbox and keeps its source reachable", asyn
   await expect(source.locator('[data-highlight-state="highlighted"]')).toBeVisible();
   await expect.poll(() => darkToken.evaluate((element) => getComputedStyle(element).color)).not.toBe(darkColor);
   await page.screenshot({ path: testInfo.outputPath("artifact-source-highlight-light.png"), fullPage: true });
+  expect(failures).toEqual([]);
+});
+
+test("keeps an unactivated Canvas TSX file on the Studio React fallback", async ({ page }) => {
+  const failures = watchFailures(page);
+  await openArtifacts(page);
+  await page.getByRole("button", { name: /fallback\.canvas\.tsx/ }).click();
+  const preview = page.frameLocator('iframe[title="Live artifact preview: fallback.canvas.tsx"]');
+  await expect(preview.locator('[data-preview="canvas-fallback"]')).toHaveText("Studio React fallback");
+  const catalog = await (await page.request.get(`${studio.url}/api/artifacts`)).json();
+  expect(catalog.artifacts.find((artifact) => artifact.label === "fallback.canvas.tsx")).toMatchObject({
+    format: "cursor-canvas-tsx",
+    renderer: { id: "studio.react-preview", type: "sandboxed-web", status: "ready" },
+  });
   expect(failures).toEqual([]);
 });
 
@@ -483,6 +502,96 @@ test("renders a PPTX snapshot through Studio without a provisioned Qoder Canvas 
   await expect(page.locator(".pptx-slide-element.selected")).toHaveCount(1);
   await page.locator(".artifact-diagnostics > summary").click();
   await expect(page.locator(".artifact-diagnostics > ul")).toContainText("PPTX_BASELINE_RENDERER");
+  expect(failures).toEqual([]);
+});
+
+test("renders a read-only XLSX snapshot with sheets, formulas, merges, and styles", async ({ page }, testInfo) => {
+  const failures = watchFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openArtifacts(page);
+  await page.getByRole("button", { name: /workbook\.xlsx/ }).click();
+  const viewer = page.locator(".xlsx-artifact-viewer");
+  await expect(viewer).toBeVisible();
+  await expect(page.locator(".artifact-editor-header")).toContainText("studio.xlsx-ooxml");
+  await expect(page.locator(".artifact-preview-pane iframe")).toHaveCount(0);
+  await expect(viewer.getByRole("button", { name: "Data" })).toHaveAttribute("aria-current", "true");
+  await expect(viewer.getByRole("gridcell", { name: "A2 2026-08-23" })).toBeVisible();
+  await expect(viewer.getByRole("gridcell", { name: "C2 Canvas TSX" })).toBeVisible();
+
+  await viewer.getByRole("button", { name: "Summary" }).click();
+  const title = viewer.getByRole("gridcell", { name: "A1 Studio XLSX Fixture" });
+  await expect(title).toBeVisible();
+  expect(await title.evaluate((element) => element.colSpan)).toBe(2);
+  expect(await title.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(23, 50, 77)");
+  await title.focus();
+  await expect(title).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(viewer.getByRole("gridcell", { name: "A2" })).toBeFocused();
+  await expect(viewer.locator(".xlsx-formula-bar")).toContainText("A2");
+  const formulaCell = viewer.getByRole("gridcell", { name: "B3 30" });
+  await formulaCell.click();
+  await expect(viewer.locator(".xlsx-formula-bar")).toContainText("=SUM('Data'!B2:B3)");
+  await expect(viewer.getByRole("gridcell", { name: "B4 75.0%" })).toBeVisible();
+  await viewer.locator(".artifact-diagnostics > summary").click();
+  await expect(viewer.locator(".artifact-diagnostics > ul")).toContainText("XLSX_BASELINE_RENDERER");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)).toBe(false);
+  await page.screenshot({ path: testInfo.outputPath("artifact-xlsx-wide.png"), fullPage: true });
+  expect(failures).toEqual([]);
+});
+
+test("renders a read-only DOCX snapshot at wide, compact, and narrow widths", async ({ page }, testInfo) => {
+  const failures = watchFailures(page);
+  for (const layout of [
+    { name: "wide", width: 1440, height: 900 },
+    { name: "compact", width: 1024, height: 768 },
+    { name: "narrow", width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize({ width: layout.width, height: layout.height });
+    await openArtifacts(page);
+    await page.getByRole("button", { name: /document\.docx/ }).click();
+    const viewer = page.locator(".docx-artifact-viewer");
+    await expect(viewer).toBeVisible();
+    await expect(viewer.getByRole("heading", { name: /Studio Word Fixture/u })).toBeVisible();
+    await expect(viewer).toContainText("Cell A");
+    const image = viewer.locator(".docx-inline-image");
+    await expect(image).toHaveJSProperty("complete", true);
+    await expect(page.locator(".artifact-editor-header")).toContainText("studio.docx-ooxml");
+    await expect(page.locator(".artifact-preview-pane iframe")).toHaveCount(0);
+    await expect(page.getByText(/Read-only/u)).toBeVisible();
+    await expect(page.locator(".docx-outline-pane")).toBeVisible({ visible: layout.width > 760 });
+    if (layout.width <= 760) {
+      const pageBox = await viewer.locator(".docx-document-page").boundingBox();
+      const scrollBox = await viewer.locator(".docx-document-scroll").boundingBox();
+      expect(pageBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual((scrollBox?.width ?? 0) + 1);
+      expect(await viewer.locator(".docx-document-scroll").evaluate((element) => element.scrollLeft)).toBe(0);
+    }
+    const cellText = viewer.getByText("Cell A", { exact: true });
+    expect(await cellText.evaluate((element) => getComputedStyle(element).color)).toBe("rgb(0, 0, 0)");
+    await cellText.hover();
+    expect(await viewer.locator(".docx-table-scroll tr").first().evaluate((element) => getComputedStyle(element).backgroundColor))
+      .toBe("rgba(0, 0, 0, 0)");
+    await cellText.click();
+    await expect(viewer.locator(".docx-table-scroll .docx-paragraph.selected")).toContainText("Cell A");
+    await expect(viewer.locator(".docx-table-scroll.selected")).toHaveCount(0);
+    if (layout.name === "wide") {
+      const before = await image.boundingBox();
+      await viewer.getByRole("button", { name: "Zoom in" }).click();
+      await expect(viewer.locator(".document-zoom-controls output")).toHaveText("125%");
+      const after = await image.boundingBox();
+      expect((after?.width ?? 0) / (before?.width ?? 1)).toBeCloseTo(1.25, 1);
+      await viewer.getByRole("button", { name: "Zoom out" }).click();
+      await expect(viewer.locator(".document-zoom-controls output")).toHaveText("100%");
+    }
+    if (layout.width > 760) {
+      await page.locator(".docx-outline-pane button").first().click();
+      await expect(page.locator(".docx-paragraph.selected")).toHaveCount(1);
+    }
+    const overflows = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
+    expect(overflows, `${layout.name} DOCX overflows horizontally`).toBe(false);
+    await page.screenshot({ path: testInfo.outputPath(`artifact-docx-${layout.name}.png`), fullPage: true });
+  }
+  await page.locator(".artifact-diagnostics > summary").click();
+  await expect(page.locator(".artifact-diagnostics > ul")).toContainText("DOCX_BASELINE_RENDERER");
   expect(failures).toEqual([]);
 });
 

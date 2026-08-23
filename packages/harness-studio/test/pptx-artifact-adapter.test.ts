@@ -80,6 +80,35 @@ describe("PPTX ArtifactDataAdapter", () => {
     expect(((secondSnapshot.payload as PptxArtifactPayload).slides[0]?.elements[0] as { paragraphs: Array<{ runs: Array<{ text: string }> }> }).paragraphs[0]?.runs[0]?.text).toBe("02");
   });
 
+  it("keeps identical bytes isolated by exact Artifact and snapshot identity", async () => {
+    const directory = await makeTempDirectory();
+    const bytes = createPptxFixture("same");
+    await writeFile(join(directory, "first.pptx"), bytes);
+    await writeFile(join(directory, "second.pptx"), bytes);
+    const index = await indexArtifactDirectory(directory, { includeDigests: true });
+    const descriptors = describeArtifactCatalog(index, (entry) => resolveArtifactPlugin(entry)).artifacts;
+
+    const snapshots = await Promise.all(index.entries.map((entry, index) => PPTX_ARTIFACT_ADAPTER.adapt({
+      entry,
+      descriptor: descriptors[index]!,
+    })));
+
+    expect(snapshots[0]?.artifactId).toBe(descriptors[0]?.id);
+    expect(snapshots[1]?.artifactId).toBe(descriptors[1]?.id);
+    expect(snapshots[0]?.snapshotId).toBe(descriptors[0]?.adapter.snapshotId);
+    expect(snapshots[1]?.snapshotId).toBe(descriptors[1]?.adapter.snapshotId);
+    expect(snapshots[0]?.resources[0]?.uri).toContain(`/api/artifacts/${descriptors[0]?.id}/`);
+    expect(snapshots[1]?.resources[0]?.uri).toContain(`/api/artifacts/${descriptors[1]?.id}/`);
+  });
+
+  it("rejects bytes that drift from the requested revision", async () => {
+    const fixture = await writeFixture("before");
+    await writeFile(fixture.entry.path, createPptxFixture("after"));
+
+    await expect(PPTX_ARTIFACT_ADAPTER.adapt({ entry: fixture.entry, descriptor: fixture.descriptor }))
+      .rejects.toThrow(/no longer match the requested artifact revision/u);
+  });
+
   it("rejects malformed archives instead of returning a partial snapshot", async () => {
     const directory = await makeTempDirectory();
     await writeFile(join(directory, "broken.pptx"), "not a zip archive");

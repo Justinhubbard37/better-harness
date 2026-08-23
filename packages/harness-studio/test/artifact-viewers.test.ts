@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compileTrustedRendererModule } from "../src/server/trusted-renderer-compiler.js";
-import { artifactIdForLabel, artifactThreadIdForLabel, type ArtifactEntry } from "../src/server/artifact-catalog.js";
+import {
+  artifactIdForLabel,
+  artifactThreadIdForLabel,
+  PROVIDER_HOSTED_CANVAS_TSX_FORMAT,
+  type ArtifactEntry,
+} from "../src/server/artifact-catalog.js";
 import { adaptQoderCanvasViewerData } from "../src/server/qoder-canvas-viewer-bridge.js";
 import { createArtifactPluginRegistry } from "../src/server/artifact-plugin-registry.js";
 import { defaultCanvasViewerRoot, discoverCanvasViewers } from "../src/server/artifact-viewers.js";
@@ -23,6 +28,7 @@ describe("Artifact plugin registry and the Qoder Canvas provider", () => {
     const provider = await createQoderArtifactProvider(viewers[0]!, await fakeRuntime(root));
     expect(viewers).toHaveLength(1);
     expect(resolve_(entry("deck.pptx", "pptx"), [provider], "external-fallback")).toMatchObject({ renderer: { id: "studio.pptx-dom", type: "native" } });
+    expect(resolve_(entry("workbook.xlsx", "xlsx"), [provider], "external-fallback")).toMatchObject({ renderer: { id: "studio.xlsx-grid", type: "native" } });
     expect(resolve_(entry("diagram.svg", "svg"), [provider], "external-override")).toMatchObject({ renderer: { id: "qoder-canvas.pptx" } });
     expect(resolve_(entry("diagram.svg", "svg"), [provider], "external-fallback")).toMatchObject({
       backing: "code",
@@ -65,6 +71,35 @@ describe("Artifact plugin registry and the Qoder Canvas provider", () => {
       id: "studio.unavailable",
       reason: expect.stringContaining("Multiple activated"),
     });
+  });
+
+  it("prefers only an exact-format Canvas fallback before protected React", async () => {
+    const root = await fakeViewerRoot(false);
+    const discovered = await createQoderArtifactProvider(
+      (await discoverCanvasViewers(root))[0]!,
+      await fakeRuntime(root),
+    );
+    const exact = {
+      ...discovered,
+      contributions: [{
+        ...discovered.contributions[0]!,
+        matcher: { formats: [PROVIDER_HOSTED_CANVAS_TSX_FORMAT] },
+      }],
+    } satisfies ExternalArtifactProvider;
+    const canvasEntry = entry("artifact-manifest-demo.canvas.tsx", "code");
+
+    expect(createArtifactPluginRegistry().resolve(canvasEntry).renderer.id).toBe("studio.react-preview");
+    expect(resolve_(canvasEntry, [exact], "external-fallback").renderer.id).toBe("qoder-canvas.pptx");
+    expect(resolve_(entry("ordinary.tsx", "code"), [exact], "external-fallback").renderer.id)
+      .toBe("studio.react-preview");
+
+    for (const matcher of [{ extensions: ["tsx"] }, { pathGlobs: ["**/*.canvas.tsx"] }]) {
+      const broad = {
+        ...discovered,
+        contributions: [{ ...discovered.contributions[0]!, matcher }],
+      } satisfies ExternalArtifactProvider;
+      expect(resolve_(canvasEntry, [broad], "external-fallback").renderer.id).toBe("studio.react-preview");
+    }
   });
 
   it("preserves Canvas SDK imports when compiling trusted viewer code", async () => {

@@ -1,15 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef } from "react";
 import {
-  isArtifactDataSnapshot,
   type ArtifactDataSnapshot,
   type ArtifactDescriptor,
   type ArtifactStructureNode,
-  type MarkdownArtifactPayload,
   type MarkdownBlock,
   type MarkdownInline,
 } from "../artifact-model.js";
+import { ArtifactDiagnostics } from "./artifacts/ArtifactDiagnostics.js";
+import { useArtifactSnapshot } from "./artifacts/useArtifactSnapshot.js";
 import { HighlightedCode } from "./HighlightedCode.js";
-import { studioApiError } from "./studio-api.js";
 
 /**
  * Fence info strings name a language; the highlighter resolves a file
@@ -23,31 +22,14 @@ const FENCE_LANGUAGE_HINTS: Record<string, string> = {
 };
 
 export function MarkdownArtifactView({ artifact }: { artifact: ArtifactDescriptor }): React.JSX.Element {
-  const [snapshot, setSnapshot] = useState<ArtifactDataSnapshot>();
-  const [failure, setFailure] = useState<string>();
+  const { snapshot, failure } = useArtifactSnapshot(artifact, "markdown/v1", "Markdown");
   const documentRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch(artifact.adapter.snapshotUri, { signal: controller.signal }).then(async (response) => {
-      if (!response.ok) throw new Error(await studioApiError(response));
-      const value: unknown = await response.json();
-      if (!isArtifactDataSnapshot(value) || value.revisionId !== artifact.revision.id || value.payload.kind !== "markdown/v1") {
-        throw new Error("Markdown snapshot contract is unsupported.");
-      }
-      setSnapshot(value);
-      setFailure(undefined);
-    }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
-    });
-    return () => controller.abort();
-  }, [artifact.adapter.snapshotUri, artifact.revision.id]);
-
   if (failure !== undefined) return <p className="artifact-status" role="alert">{failure}</p>;
-  if (snapshot === undefined || snapshot.payload.kind !== "markdown/v1") {
+  if (snapshot === undefined) {
     return <p className="artifact-status" role="status">Adapting Markdown revision…</p>;
   }
-  const payload: MarkdownArtifactPayload = snapshot.payload;
+  const payload = snapshot.payload;
   const context: RenderContext = {
     resources: snapshot.resources,
     // Selecting an outline entry scrolls the document rather than writing a
@@ -73,7 +55,7 @@ export function MarkdownArtifactView({ artifact }: { artifact: ArtifactDescripto
       </div>
       <footer className="markdown-document-footer">
         <span>{snapshot.adapter.id}@{snapshot.adapter.version}</span>
-        <MarkdownDiagnostics diagnostics={snapshot.diagnostics} />
+        <ArtifactDiagnostics diagnostics={snapshot.diagnostics} />
       </footer>
     </section>
   </div>;
@@ -200,19 +182,6 @@ function MarkdownInlineNode({ node, context }: { node: MarkdownInline; context: 
     return <img className="markdown-image" src={resource.uri} alt={node.alt} title={node.title} loading="lazy" />;
   }
   return <MarkdownInlineView nodes={node.children} context={context} />;
-}
-
-function MarkdownDiagnostics({ diagnostics }: { diagnostics: ArtifactDataSnapshot["diagnostics"] }): React.JSX.Element {
-  if (diagnostics.length === 0) return <span>No diagnostics</span>;
-  const worst = diagnostics.some((item) => item.level === "error")
-    ? "error"
-    : diagnostics.some((item) => item.level === "warning") ? "warning" : "info";
-  return <details className={`artifact-diagnostics level-${worst}`}>
-    <summary>{diagnostics.length} diagnostic{diagnostics.length === 1 ? "" : "s"}</summary>
-    <ul>{diagnostics.map((diagnostic, index) => <li key={`${diagnostic.code}:${index}`}>
-      <code>{diagnostic.code}</code><span>{diagnostic.message}</span>
-    </li>)}</ul>
-  </details>;
 }
 
 function fenceHint(language: string | undefined): string {

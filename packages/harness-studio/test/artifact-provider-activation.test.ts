@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ExternalArtifactProvider } from "../src/server/artifact-adapter-contract.js";
+import { PROVIDER_HOSTED_CANVAS_TSX_FORMAT } from "../src/server/artifact-catalog.js";
 import {
   activateArtifactContribution,
   defaultArtifactProviderStateRoot,
@@ -86,6 +87,31 @@ describe("Artifact provider activation", () => {
     expect((await readArtifactProviderActivationState({ root })).activations).toEqual(activated.activations);
   });
 
+  it("activates the dedicated Canvas TSX format only in the fallback lane", async () => {
+    const root = await mkdtemp(join(tmpdir(), "artifact-provider-canvas-format-"));
+    const provider = fixtureProvider(DIGEST_A);
+    const activated = await activateArtifactContribution(
+      provider,
+      "cursor-canvas",
+      "external-fallback",
+      { formats: [PROVIDER_HOSTED_CANVAS_TSX_FORMAT] },
+      { root },
+    );
+    expect(activated.activations).toMatchObject([{
+      contributionId: "cursor-canvas",
+      lane: "external-fallback",
+      matcher: { formats: [PROVIDER_HOSTED_CANVAS_TSX_FORMAT] },
+    }]);
+    await expect(activateArtifactContribution(
+      provider,
+      "cursor-canvas",
+      "external-override",
+      { formats: [PROVIDER_HOSTED_CANVAS_TSX_FORMAT] },
+      { root },
+    )).rejects.toThrow("Protected authored TSX and JSX");
+    expect((await readArtifactProviderActivationState({ root })).activations).toEqual(activated.activations);
+  });
+
   it("lists and deactivates through path-redacted CLI operations", async () => {
     const root = await mkdtemp(join(tmpdir(), "artifact-provider-cli-"));
     await activateArtifactContribution(fixtureProvider(DIGEST_A), "pptx", "external-fallback", { formats: ["pptx"] }, { root });
@@ -139,6 +165,7 @@ function fixtureProvider(fingerprint: typeof DIGEST_A | typeof DIGEST_B): Extern
     contributions: [
       { ...common, id: "pptx", label: "PPTX", matcher: { formats: ["pptx"] } },
       { ...common, id: "svg", label: "SVG", matcher: { formats: ["svg"] } },
+      { ...common, id: "cursor-canvas", label: "Cursor Canvas", matcher: { formats: [PROVIDER_HOSTED_CANVAS_TSX_FORMAT] } },
     ],
   };
 }

@@ -4,6 +4,7 @@ import type { ArtifactDigest } from "./model.js";
 export type ArtifactKind =
   | "code"
   | "diff"
+  | "docx"
   | "image"
   | "json"
   | "markdown"
@@ -11,6 +12,7 @@ export type ArtifactKind =
   | "pptx"
   | "svg"
   | "text"
+  | "xlsx"
   | "unknown";
 
 /**
