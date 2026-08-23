@@ -764,7 +764,7 @@ function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: s
     <div className="artifact-preview-pane" id="artifact-preview-pane" role="tabpanel" aria-labelledby="artifact-tab-preview">
       {active === undefined
         ? <p className="artifact-status" role="status">Select an artifact to preview it.</p>
-        : <><header className="artifact-editor-header"><div><strong>{active.label}</strong><small>{formatLabel(active.format)} · {formatBytes(active.size)} · {shortRevision(active.revision.id)}</small></div><span>{active.adapter.id} → {active.renderer.label}</span></header><ArtifactView artifact={active} liveGeneration={liveGeneration} /></>}
+        : <><header className="artifact-editor-header"><div><strong>{active.label}</strong><small>{formatLabel(active.format)} · {formatBytes(active.size)} · {shortRevision(active.revision.id)}</small></div><span>{active.adapter.id} → {active.renderer.label}</span></header><ArtifactView authorityId={catalog.snapshot.catalogId} artifact={active} liveGeneration={liveGeneration} /></>}
     </div>
   </section>;
 }

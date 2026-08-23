@@ -8,16 +8,21 @@ export function TextArtifactView({ artifact }: ArtifactSurfaceMountContext): Rea
 
   useEffect(() => {
     const controller = new AbortController();
+    let active = true;
     setContent(undefined);
     setFailure(undefined);
     void fetch(artifact.revision.content.uri, { signal: controller.signal }).then(async (response) => {
       if (!response.ok) throw new Error(`Artifact content failed (${response.status}).`);
-      setContent(await response.text());
+      const text = await response.text();
+      if (active) setContent(text);
     }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
+      if (active && !controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
     });
-    return () => controller.abort();
-  }, [artifact.revision.content.uri]);
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [artifact.id, artifact.revision.content.uri, artifact.revision.id]);
 
   if (failure !== undefined) return <p className="artifact-status" role="alert">{failure}</p>;
   if (content === undefined) return <p className="artifact-status" role="status">Loading preview…</p>;

@@ -11,9 +11,11 @@ import { useArtifactSnapshot } from "../useArtifactSnapshot.js";
 
 export function PptxArtifactView({ artifact }: ArtifactSurfaceMountContext): React.JSX.Element {
   const { snapshot, failure } = useArtifactSnapshot(artifact, "pptx/v1", "PPTX");
-  const [slideIndex, setSlideIndex] = useState(0);
+  const [navigation, setNavigation] = useState<{ revisionId: string; slideIndex: number }>();
   const [zoom, setZoom] = useState(100);
-  const [selectedAddress, setSelectedAddress] = useState<string>();
+  const [selection, setSelection] = useState<{ revisionId: string; address: string }>();
+  const slideIndex = navigation?.revisionId === artifact.revision.id ? navigation.slideIndex : 0;
+  const selectedAddress = selection?.revisionId === artifact.revision.id ? selection.address : undefined;
 
   if (failure !== undefined) return <p className="artifact-status" role="alert">{failure}</p>;
   if (snapshot === undefined) return <p className="artifact-status" role="status">Adapting PPTX revision…</p>;
@@ -23,7 +25,11 @@ export function PptxArtifactView({ artifact }: ArtifactSurfaceMountContext): Rea
   if (active === undefined) return <p className="artifact-status" role="alert">The PPTX snapshot has no slides.</p>;
   const outline = snapshot.structure.length === payload.slides.length ? snapshot.structure : [];
   const activeOutline = outline[Math.min(slideIndex, outline.length - 1)];
-  const selectAddress = (address: string): void => setSelectedAddress((current) => current === address ? undefined : address);
+  const selectAddress = (address: string): void => setSelection((current) => (
+    current?.revisionId === artifact.revision.id && current.address === address
+      ? undefined
+      : { revisionId: artifact.revision.id, address }
+  ));
 
   return <div className="pptx-artifact-viewer">
     <nav className="pptx-slide-rail" aria-label="Slides">
@@ -33,8 +39,8 @@ export function PptxArtifactView({ artifact }: ArtifactSurfaceMountContext): Rea
         className={index === slideIndex ? "selected" : undefined}
         aria-current={index === slideIndex}
         onClick={() => {
-          setSlideIndex(index);
-          setSelectedAddress(undefined);
+          setNavigation({ revisionId: artifact.revision.id, slideIndex: index });
+          setSelection(undefined);
         }}
       ><span className="pptx-slide-thumb" aria-hidden="true">{index + 1}</span><small>{slide.label}</small></button>)}
     </nav>

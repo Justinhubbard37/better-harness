@@ -82,15 +82,20 @@ export function ArtifactPreviewHost(props: {
 
   useEffect(() => {
     const controller = new AbortController();
+    let active = true;
     setSource(undefined);
     void fetch(props.artifact.revision.content.uri, { signal: controller.signal }).then(async (response) => {
       if (!response.ok) throw new Error(`Artifact source failed (${response.status}).`);
-      setSource(await response.text());
+      const text = await response.text();
+      if (active) setSource(text);
     }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
+      if (active && !controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
     });
-    return () => controller.abort();
-  }, [props.artifact.revision.content.uri]);
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [props.artifact.id, props.artifact.revision.content.uri, props.artifact.revision.id]);
 
   // The preview learns the theme once at handshake time, so a later Studio
   // toggle has to be pushed down the same channel or the frame keeps rendering

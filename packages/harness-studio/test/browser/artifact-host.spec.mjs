@@ -318,7 +318,7 @@ test("moves between Preview and Source with arrow keys from one tab stop", async
   expect(failures).toEqual([]);
 });
 
-test("commits a changed TSX build without reloading Studio", async ({ page }) => {
+test("commits a changed TSX build without reloading Studio and retains the selected Host tab", async ({ page }, testInfo) => {
   const failures = watchFailures(page);
   await openArtifacts(page);
   await page.getByRole("button", { name: /component\.tsx/ }).click();
@@ -326,10 +326,17 @@ test("commits a changed TSX build without reloading Studio", async ({ page }) =>
   const preview = page.frameLocator('iframe[title="Live artifact preview: component.tsx"]');
   await expect(preview.locator('[data-preview="current"]')).toHaveText("first render");
   const firstBuild = await frame.getAttribute("src");
+  const sourceTab = page.getByRole("tab", { name: "Source", exact: true });
   try {
+    await sourceTab.click();
+    await expect(sourceTab).toHaveAttribute("aria-selected", "true");
     await writeFile(join(artifactDirectory, "component.tsx"), 'document.body.dataset.moduleEvaluated = "yes"; export default () => <p data-preview="current">second render</p>;\n', "utf8");
+    await expect(sourceTab).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator(".artifact-code-preview")).toContainText("second render", { timeout: 10_000 });
+    await page.locator(".artifact-runtime-tabs").getByRole("tab", { name: "Preview", exact: true }).click();
     await expect(preview.locator('[data-preview="current"]')).toHaveText("second render", { timeout: 10_000 });
     await expect(frame).not.toHaveAttribute("src", firstBuild);
+    await page.screenshot({ path: testInfo.outputPath("artifact-retained-host-tab.png"), fullPage: true });
   } finally {
     await writeFile(join(artifactDirectory, "component.tsx"), 'document.body.dataset.moduleEvaluated = "yes"; export default () => <p data-preview="current">first render</p>;\n', "utf8");
   }
@@ -353,6 +360,50 @@ test("loads artifact bytes from the catalog content reference", async ({ page })
   await page.getByRole("tab", { name: "Source", exact: true }).click();
   await expect(page.locator(".artifact-code-preview")).toContainText("followed the declared content reference");
   await expect(page.locator(".artifact-code-preview")).not.toContainText("data-preview");
+});
+
+test("rejects a late exact-content response from an older revision", async ({ page }) => {
+  const failures = watchFailures(page);
+  await openArtifacts(page);
+  const catalog = await (await page.request.get(`${studio.url}/api/artifacts`)).json();
+  const notes = catalog.artifacts.find((entry) => entry.label === "notes.txt");
+  expect(notes).toBeDefined();
+  await page.getByRole("button", { name: /notes\.txt/ }).click();
+  await expect(page.locator(".artifact-code-preview")).toContainText("followed the declared content reference");
+  await page.evaluate((artifactId) => {
+    const originalFetch = window.fetch.bind(window);
+    window.__releaseDelayedArtifactContent = undefined;
+    window.__delayedArtifactContentStarted = false;
+    window.fetch = async (...args) => {
+      const response = await originalFetch(...args);
+      const url = String(args[0] instanceof Request ? args[0].url : args[0]);
+      if (url.includes(`/api/artifacts/${artifactId}/revisions/`) && url.endsWith("/content")) {
+        const text = await response.clone().text();
+        if (text.includes("delayed older revision")) {
+          window.__delayedArtifactContentStarted = true;
+          await new Promise((resolveRelease) => {
+            window.__releaseDelayedArtifactContent = resolveRelease;
+          });
+        }
+      }
+      return response;
+    };
+  }, notes.id);
+
+  try {
+    await writeFile(join(artifactDirectory, "notes.txt"), "delayed older revision\n", "utf8");
+    await expect.poll(() => page.evaluate(() => window.__delayedArtifactContentStarted)).toBe(true);
+    await writeFile(join(artifactDirectory, "notes.txt"), "latest exact revision\n", "utf8");
+    await expect(page.locator(".artifact-code-preview")).toContainText("latest exact revision", { timeout: 10_000 });
+    await page.evaluate(() => window.__releaseDelayedArtifactContent?.());
+    await page.waitForTimeout(200);
+    await expect(page.locator(".artifact-code-preview")).toContainText("latest exact revision");
+    await expect(page.locator(".artifact-code-preview")).not.toContainText("delayed older revision");
+  } finally {
+    await page.evaluate(() => window.__releaseDelayedArtifactContent?.());
+    await writeFile(join(artifactDirectory, "notes.txt"), "followed the declared content reference\n", "utf8");
+  }
+  expect(failures).toEqual([]);
 });
 
 test("renders diff, SVG, and Beautiful Mermaid through the shared sandbox", async ({ page }, testInfo) => {
@@ -405,13 +456,15 @@ test("renders diff, SVG, and Beautiful Mermaid through the shared sandbox", asyn
     await expect(mermaidFrameElement).not.toHaveAttribute("src", firstMermaidBuild, { timeout: 10_000 });
     await expect(mermaidFrame.getByRole("img", { name: "Mermaid diagram" })).toBeVisible();
     await expect(page.getByText("Preview rendered from the current build.")).toBeVisible();
+    // Exercise the failing build before restoring diagram.mmd. Restoring emits
+    // an advisory catalog invalidation; racing that unrelated rebuild with the
+    // next click would only test scheduler timing, not the invalid fixture.
+    await page.getByRole("button", { name: /invalid\.mmd/ }).click();
+    await expect(page.getByText(/Invalid mermaid header/u)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
   } finally {
     await writeFile(join(artifactDirectory, "diagram.mmd"), "graph TD\n  Start --> Finish\n", "utf8");
   }
-
-  await page.getByRole("button", { name: /invalid\.mmd/ }).click();
-  await expect(page.getByText(/Invalid mermaid header/u)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
   expect(failures).toEqual([]);
 });
 
@@ -505,6 +558,29 @@ test("renders a PPTX snapshot through Studio without a provisioned Qoder Canvas 
   expect(failures).toEqual([]);
 });
 
+test("retains PPTX zoom but resets revision-scoped selection", async ({ page }, testInfo) => {
+  const failures = watchFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openArtifacts(page);
+  await page.getByRole("button", { name: /deck\.pptx/ }).click();
+  const viewer = page.locator(".pptx-artifact-viewer");
+  await viewer.getByRole("button", { name: "Zoom in" }).click();
+  await expect(viewer.locator(".document-zoom-controls output")).toHaveText("125%");
+  await viewer.locator(".pptx-outline-pane button").first().click();
+  await expect(viewer.locator(".pptx-slide-element.selected")).toHaveCount(1);
+  try {
+    await writeFile(join(artifactDirectory, "deck.pptx"), createPptxFixture("02"));
+    await expect(viewer.locator(".pptx-slide-shape")).toContainText("02", { timeout: 10_000 });
+    await expect(viewer.locator(".document-zoom-controls output")).toHaveText("125%");
+    await expect(viewer.locator(".pptx-slide-element.selected")).toHaveCount(0);
+    await expect(viewer.locator(".pptx-slide-rail button").first()).toHaveAttribute("aria-current", "true");
+    await page.screenshot({ path: testInfo.outputPath("artifact-pptx-revision-state.png"), fullPage: true });
+  } finally {
+    await writeFile(join(artifactDirectory, "deck.pptx"), createPptxFixture("01"));
+  }
+  expect(failures).toEqual([]);
+});
+
 test("renders a read-only XLSX snapshot with sheets, formulas, merges, and styles", async ({ page }, testInfo) => {
   const failures = watchFailures(page);
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -536,6 +612,27 @@ test("renders a read-only XLSX snapshot with sheets, formulas, merges, and style
   await expect(viewer.locator(".artifact-diagnostics > ul")).toContainText("XLSX_BASELINE_RENDERER");
   expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)).toBe(false);
   await page.screenshot({ path: testInfo.outputPath("artifact-xlsx-wide.png"), fullPage: true });
+  expect(failures).toEqual([]);
+});
+
+test("resets XLSX sheet and cell state to the new snapshot default", async ({ page }, testInfo) => {
+  const failures = watchFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openArtifacts(page);
+  await page.getByRole("button", { name: /workbook\.xlsx/ }).click();
+  const viewer = page.locator(".xlsx-artifact-viewer");
+  await viewer.getByRole("button", { name: "Summary" }).click();
+  await viewer.getByRole("gridcell", { name: "B3 30" }).click();
+  await expect(viewer.locator('[role="gridcell"][aria-selected="true"]')).toHaveCount(1);
+  try {
+    await writeFile(join(artifactDirectory, "workbook.xlsx"), createXlsxFixture({ formulaResult: 31 }));
+    await expect(viewer.getByRole("button", { name: "Data" })).toHaveAttribute("aria-current", "true", { timeout: 10_000 });
+    await expect(viewer.locator('[role="gridcell"][aria-selected="true"]')).toHaveCount(0);
+    await expect(viewer.locator(".xlsx-formula-bar strong")).toHaveText("Data");
+    await page.screenshot({ path: testInfo.outputPath("artifact-xlsx-revision-state.png"), fullPage: true });
+  } finally {
+    await writeFile(join(artifactDirectory, "workbook.xlsx"), createXlsxFixture());
+  }
   expect(failures).toEqual([]);
 });
 
@@ -592,6 +689,28 @@ test("renders a read-only DOCX snapshot at wide, compact, and narrow widths", as
   }
   await page.locator(".artifact-diagnostics > summary").click();
   await expect(page.locator(".artifact-diagnostics > ul")).toContainText("DOCX_BASELINE_RENDERER");
+  expect(failures).toEqual([]);
+});
+
+test("retains DOCX zoom but clears revision-scoped selection", async ({ page }, testInfo) => {
+  const failures = watchFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openArtifacts(page);
+  await page.getByRole("button", { name: /document\.docx/ }).click();
+  const viewer = page.locator(".docx-artifact-viewer");
+  await viewer.getByRole("button", { name: "Zoom in" }).click();
+  await expect(viewer.locator(".document-zoom-controls output")).toHaveText("125%");
+  await viewer.locator(".docx-outline-pane button").first().click();
+  await expect(viewer.locator(".docx-paragraph.selected")).toHaveCount(1);
+  try {
+    await writeFile(join(artifactDirectory, "document.docx"), createDocxFixture("Updated Word Fixture"));
+    await expect(viewer.getByRole("heading", { name: /Updated Word Fixture/u })).toBeVisible({ timeout: 10_000 });
+    await expect(viewer.locator(".document-zoom-controls output")).toHaveText("125%");
+    await expect(viewer.locator(".docx-paragraph.selected")).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath("artifact-docx-revision-state.png"), fullPage: true });
+  } finally {
+    await writeFile(join(artifactDirectory, "document.docx"), createDocxFixture("Studio Word Fixture"));
+  }
   expect(failures).toEqual([]);
 });
 

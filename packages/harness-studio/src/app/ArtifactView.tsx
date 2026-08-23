@@ -28,23 +28,36 @@ export const ARTIFACT_VIEW_PROVIDERS = ARTIFACT_SURFACE_MOUNTS;
 /** @deprecated V2 source compatibility; new code uses Artifact Surface terminology. */
 export const resolveArtifactViewProvider = resolveArtifactSurfaceMount;
 
+export interface ArtifactViewHostProps extends ArtifactSurfaceMountContext {
+  /** Identity of the catalog authority that selected this artifact binding. */
+  authorityId: string;
+}
+
 /** Host-owned dispatch; the server-selected renderer remains authoritative. */
-export function ArtifactView(props: ArtifactSurfaceMountContext): React.JSX.Element {
+export function ArtifactView(props: ArtifactViewHostProps): React.JSX.Element {
   if (props.artifact.renderer.status === "ready") {
     const mount = resolveArtifactSurfaceMount(props.artifact);
     if (mount !== undefined) {
       const Component = mount.Component;
-      const key = artifactSurfaceInstanceKey(mount, props.artifact);
-      return <Component key={key} {...props} />;
+      const key = artifactSurfaceInstanceKey(mount, props.authorityId, props.artifact);
+      return <Component key={key} artifact={props.artifact} liveGeneration={props.liveGeneration} />;
     }
   }
   return <p className="artifact-status" role="status">{props.artifact.renderer.reason ?? `No renderer is available for this artifact (${props.artifact.renderer.id}).`}</p>;
 }
 
-/** Remount whenever the server-selected adapter or renderer binding changes. */
-export function artifactSurfaceInstanceKey(mount: ArtifactSurfaceMount, artifact: ArtifactDescriptor): string {
+/** Retain content revisions only while the selecting authority and binding agree. */
+export function artifactSurfaceInstanceKey(
+  mount: ArtifactSurfaceMount,
+  authorityId: string,
+  artifact: ArtifactDescriptor,
+): string {
+  if (artifact.renderer.bindingId !== undefined) {
+    return [mount.id, authorityId, artifact.id, artifact.renderer.bindingId].join(":");
+  }
   return [
     mount.id,
+    authorityId,
     artifact.id,
     artifact.revision.digest,
     artifact.adapter.snapshotId,

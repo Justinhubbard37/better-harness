@@ -17,6 +17,28 @@ import type { ArtifactExternalLane, ArtifactProviderActivation, ExternalArtifact
 import type { QoderCanvasRuntime } from "../src/server/qoder-canvas-viewer-bridge.js";
 
 describe("Artifact plugin registry and the Qoder Canvas provider", () => {
+  it("advertises only capabilities implemented by each built-in surface", () => {
+    const registry = createArtifactPluginRegistry();
+    const expected = [
+      ["notes.md", "markdown", ["navigate", "outline"]],
+      ["document.docx", "docx", ["navigate", "outline", "select", "zoom"]],
+      ["deck.pptx", "pptx", ["navigate", "outline", "select", "zoom"]],
+      ["workbook.xlsx", "xlsx", ["navigate", "select"]],
+      ["component.tsx", "code", ["execute", "live-update"]],
+      ["diagram.svg", "svg", ["live-update"]],
+      ["diagram.mmd", "mermaid", ["live-update"]],
+      ["source.ts", "code", []],
+      ["change.diff", "diff", []],
+      ["data.json", "json", []],
+      ["photo.png", "image", []],
+      ["notes.txt", "text", []],
+    ] as const;
+
+    for (const [label, kind, capabilities] of expected) {
+      expect(registry.resolve(entry(label, kind)).capabilities, label).toEqual(capabilities);
+    }
+  });
+
   it("uses the Qoder canvas/canvases directory", () => {
     expect(defaultCanvasViewerRoot({ QODER_HOME: "/qoder-home" }, "/home/test")).toBe(join(resolve("/qoder-home"), "canvas", "canvases"));
     expect(defaultCanvasViewerRoot({}, "/home/test")).toBe(join("/home/test", ".qoder", "canvas", "canvases"));

@@ -14,8 +14,12 @@ import { useArtifactSnapshot } from "../useArtifactSnapshot.js";
 export function DocxArtifactView({ artifact }: ArtifactSurfaceMountContext): React.JSX.Element {
   const { snapshot, failure } = useArtifactSnapshot(artifact, "docx/v1", "DOCX");
   const [zoom, setZoom] = useState(100);
-  const [selectedAddress, setSelectedAddress] = useState<string>();
+  const [selection, setSelection] = useState<{ revisionId: string; address: string }>();
   const documentRef = useRef<HTMLElement>(null);
+  const selectedAddress = selection?.revisionId === artifact.revision.id ? selection.address : undefined;
+  const setSelectedAddress = (address: string | undefined): void => {
+    setSelection(address === undefined ? undefined : { revisionId: artifact.revision.id, address });
+  };
 
   if (failure !== undefined) return <p className="artifact-status" role="alert">{failure}</p>;
   if (snapshot === undefined) return <p className="artifact-status" role="status">Adapting DOCX revision…</p>;

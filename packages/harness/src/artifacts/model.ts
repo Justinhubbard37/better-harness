@@ -62,6 +62,15 @@ export interface ArtifactRendererReference {
   provider: string;
   type: ArtifactRendererType;
   status: ArtifactRendererStatus;
+  /**
+   * Stable identity of the selected adapter/runtime/surface binding.
+   *
+   * V2 clients must tolerate this being absent for older servers. Current
+   * servers emit it for every ready renderer so a host can retain a mounted
+   * surface across content revisions without retaining it across a binding
+   * change.
+   */
+  bindingId?: ArtifactDigest;
   /** Present when the renderer is hosted by the server rather than by Studio. */
   viewUri?: string;
   reason?: string;
@@ -870,6 +879,7 @@ function isRenderer(value: unknown): value is ArtifactRendererReference {
     && typeof value.provider === "string" && value.provider !== ""
     && typeof value.type === "string" && value.type !== ""
     && RENDERER_STATUSES.has(value.status as ArtifactRendererStatus)
+    && (value.bindingId === undefined || isDigest(value.bindingId))
     && (value.viewUri === undefined || isStudioArtifactPath(value.viewUri))
     && (value.reason === undefined || typeof value.reason === "string");
 }

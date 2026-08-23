@@ -100,6 +100,112 @@ export class ArtifactCatalogContractError extends Error {
 }
 
 /**
+ * Versioned, server-owned identity of one selected Artifact Surface binding.
+ *
+ * This is deliberately narrower than either an artifact revision or the full
+ * plugin implementation. It contains only the axes that decide whether a
+ * mounted surface can safely survive a content revision. Keep presentation
+ * labels, snapshot ids, content URIs, and build ids out of this projection.
+ */
+export interface ArtifactSurfaceBindingIdentityV1 {
+  kind: "ArtifactSurfaceBindingIdentityV1";
+  backing: ArtifactPluginResolution["backing"];
+  adapter: { id: string; version: string; schemaId: string };
+  buildRuntime?: { id: string; version: string };
+  renderer: { id: string; provider: string; type: string };
+  surface:
+    | { kind: "native"; rendererId: string }
+    | { kind: "studio-sandbox"; rendererId: string; runtimeId: string }
+    | {
+      kind: "external-hosted";
+      rendererId: string;
+      runtimeId: string;
+      hostedRuntime: { id: string; version: string };
+      securityProfileId: string;
+    }
+    | { kind: "unavailable"; reason: string };
+  capabilities: string[];
+  provider?: {
+    providerId: string;
+    contributionId: string;
+    fingerprint: ArtifactDigest;
+    contributionSupport: string;
+    adapterExecutionProfile?: string;
+    surfaceSecurityProfile?: string;
+  };
+}
+
+export function artifactSurfaceBindingIdentity(
+  binding: ArtifactPluginResolution,
+): ArtifactSurfaceBindingIdentityV1 {
+  const surface = (() => {
+    if (binding.surface.kind === "native") {
+      return { kind: binding.surface.kind, rendererId: binding.surface.rendererId } as const;
+    }
+    if (binding.surface.kind === "studio-sandbox") {
+      return {
+        kind: binding.surface.kind,
+        rendererId: binding.surface.rendererId,
+        runtimeId: binding.surface.runtimeId,
+      } as const;
+    }
+    if (binding.surface.kind === "external-hosted") {
+      return {
+        kind: binding.surface.kind,
+        rendererId: binding.surface.rendererId,
+        runtimeId: binding.surface.runtimeId,
+        hostedRuntime: {
+          id: binding.surface.runtime.id,
+          version: binding.surface.runtime.version,
+        },
+        securityProfileId: binding.surface.securityProfileId,
+      } as const;
+    }
+    return { kind: binding.surface.kind, reason: binding.surface.reason } as const;
+  })();
+
+  return {
+    kind: "ArtifactSurfaceBindingIdentityV1",
+    backing: binding.backing,
+    adapter: {
+      id: binding.adapter.id,
+      version: binding.adapter.version,
+      schemaId: binding.adapter.schemaId,
+    },
+    ...(binding.buildRuntime === undefined ? {} : {
+      buildRuntime: { id: binding.buildRuntime.id, version: binding.buildRuntime.version },
+    }),
+    renderer: {
+      id: binding.renderer.id,
+      provider: binding.renderer.provider,
+      type: binding.renderer.type,
+    },
+    surface,
+    capabilities: [...new Set(binding.capabilities)].sort(),
+    ...(binding.provider === undefined ? {} : {
+      provider: {
+        providerId: binding.provider.providerId,
+        contributionId: binding.provider.contributionId,
+        fingerprint: binding.provider.fingerprint,
+        contributionSupport: binding.provider.contributionSupport,
+        ...(binding.provider.adapterExecutionProfile === undefined ? {} : {
+          adapterExecutionProfile: binding.provider.adapterExecutionProfile,
+        }),
+        ...(binding.provider.surfaceSecurityProfile === undefined ? {} : {
+          surfaceSecurityProfile: binding.provider.surfaceSecurityProfile,
+        }),
+      },
+    }),
+  };
+}
+
+export function artifactSurfaceBindingId(binding: ArtifactPluginResolution): ArtifactDigest {
+  return `sha256:${createHash("sha256")
+    .update(JSON.stringify(artifactSurfaceBindingIdentity(binding)))
+    .digest("hex")}`;
+}
+
+/**
  * Resolve an artifact kind from its path. Unrecognized extensions resolve to
  * `unknown` so the registry offers an honest unavailable renderer rather than
  * guessing one.
@@ -234,10 +340,12 @@ export function describeArtifactCatalog(
   if (index.entries.some((entry) => entry.digest === undefined)) {
     throw new ArtifactCatalogContractError("Artifact catalog snapshots require exact-byte digests.");
   }
-  const selectedBindings: ArtifactPluginResolution[] = [];
   const artifacts = index.entries.map((entry) => {
     const selected = resolutionFor(entry);
-    selectedBindings.push(selected);
+    const renderer = { ...selected.renderer };
+    // The public binding identity is minted by this server-owned projection;
+    // a provider contribution cannot supply or retain its own value.
+    delete renderer.bindingId;
     const digest = entry.digest!;
     const base = artifactRevisionBase(entry.id, digest);
     const snapshotId = `sha256:${createHash("sha256")
@@ -277,9 +385,11 @@ export function describeArtifactCatalog(
         snapshotUri: `${base}/snapshot`,
       },
       ...(selected.backing === "code" ? { build: { snapshotUri: `${base}/build` } } : {}),
-      renderer: selected.surface.kind === "external-hosted"
-        ? { ...selected.renderer, viewUri: `${base}/viewer/` }
-        : selected.renderer,
+      renderer: {
+        ...renderer,
+        ...(selected.renderer.status === "ready" ? { bindingId: artifactSurfaceBindingId(selected) } : {}),
+        ...(selected.surface.kind === "external-hosted" ? { viewUri: `${base}/viewer/` } : {}),
+      },
       capabilities: [...selected.capabilities],
     };
   });
@@ -287,7 +397,7 @@ export function describeArtifactCatalog(
     kind: ARTIFACT_CATALOG_RESPONSE_KIND,
     snapshot: {
       catalogId: index.catalogId,
-      revision: catalogRevision(index, artifacts, selectedBindings),
+      revision: catalogRevision(index, artifacts),
     },
     artifacts,
     omitted: index.omitted,
@@ -303,12 +413,9 @@ export function describeArtifactCatalog(
 function catalogRevision(
   index: ArtifactIndex,
   artifacts: ArtifactCatalogResponse["artifacts"],
-  selectedBindings: readonly ArtifactPluginResolution[],
 ): ArtifactDigest {
   const rows = artifacts
-    .map((artifact, index) => {
-      const binding = selectedBindings[index]!;
-      return [
+    .map((artifact) => [
       artifact.id,
       artifact.threadId,
       artifact.label,
@@ -317,25 +424,23 @@ function catalogRevision(
       artifact.format,
       artifact.backing,
       artifact.revision.digest,
+      artifact.revision.content.mediaType,
       artifact.adapter.id,
       artifact.adapter.version,
       artifact.adapter.schemaId,
+      artifact.adapter.snapshotId,
+      artifact.adapter.snapshotUri,
+      artifact.build?.snapshotUri,
       artifact.renderer.id,
+      artifact.renderer.label,
+      artifact.renderer.provider,
       artifact.renderer.type,
       artifact.renderer.status,
+      artifact.renderer.bindingId,
+      artifact.renderer.viewUri,
+      artifact.renderer.reason,
       [...artifact.capabilities].sort(),
-      binding.buildRuntime?.id,
-      binding.buildRuntime?.version,
-      binding.surface.kind,
-      binding.surface.kind === "external-hosted" ? binding.surface.securityProfileId : undefined,
-      binding.provider?.providerId,
-      binding.provider?.contributionId,
-      binding.provider?.fingerprint,
-      binding.provider?.contributionSupport,
-      binding.provider?.adapterExecutionProfile,
-      binding.provider?.surfaceSecurityProfile,
-    ] as const;
-    })
+    ] as const)
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
   const omissions = index.omitted
     .map((omission) => [omission.label, omission.reason] as const)

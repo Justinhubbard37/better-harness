@@ -7,6 +7,7 @@ import {
   artifactIdForLabel,
   assertArtifactId,
   ArtifactCatalogContractError,
+  artifactSurfaceBindingId,
   confineToRoot,
   describeArtifactCatalog,
   findArtifact,
@@ -18,6 +19,7 @@ import {
 } from "../src/server/artifact-catalog.js";
 import { isArtifactCatalogResponse } from "../src/artifact-model.js";
 import type { ArtifactEntry } from "../src/server/artifact-catalog.js";
+import type { ArtifactPluginResolution } from "../src/server/artifact-adapter-contract.js";
 import { resolveArtifactPlugin } from "../src/server/artifact-plugin-registry.js";
 
 const fixtures = fileURLToPath(new URL("./fixtures/artifacts/", import.meta.url));
@@ -157,6 +159,9 @@ describe("indexArtifactDirectory", () => {
       const base = `/api/artifacts/${descriptor.id}/revisions/${descriptor.revision.digest.slice(7)}`;
       expect(descriptor.revision.content.uri).toBe(`${base}/content`);
       expect(descriptor.adapter.snapshotUri).toBe(`${base}/snapshot`);
+      if (descriptor.renderer.status === "ready") {
+        expect(descriptor.renderer.bindingId).toMatch(/^sha256:[0-9a-f]{64}$/u);
+      }
       if (["tsx", "jsx", "svg", "mmd", "mermaid"].includes(descriptor.format)) {
         expect(descriptor.backing).toBe("code");
         expect(descriptor.build?.snapshotUri).toBe(`${base}/build`);
@@ -201,6 +206,7 @@ describe("indexArtifactDirectory", () => {
     await writeFile(join(directory, "stable.txt"), "stable", "utf8");
     const firstIndex = await indexArtifactDirectory(directory, { includeDigests: true });
     const first = describeArtifactCatalog(firstIndex, presentationFor);
+    const firstNotesBinding = first.artifacts.find((entry) => entry.id === idOf("notes.txt"))!.renderer.bindingId;
     expect(first.snapshot.catalogId).toMatch(/^artifacts-[0-9a-f]{16}$/u);
     expect(first.snapshot.revision).toMatch(/^sha256:[0-9a-f]{64}$/u);
     expect(first.artifacts[0]?.revision.digest).toMatch(/^sha256:[0-9a-f]{64}$/u);
@@ -216,6 +222,8 @@ describe("indexArtifactDirectory", () => {
     );
     expect(second.snapshot.revision).not.toBe(first.snapshot.revision);
     expect(second.artifacts[0]?.revision.digest).not.toBe(first.artifacts[0]?.revision.digest);
+    expect(second.artifacts.find((entry) => entry.id === idOf("notes.txt"))!.renderer.bindingId)
+      .toBe(firstNotesBinding);
   });
 
   it("moves the catalog revision when presentation changes but bytes do not", async () => {
@@ -228,11 +236,20 @@ describe("indexArtifactDirectory", () => {
     // as a refetch key.
     const rebound = describeArtifactCatalog(index, (entry) => ({
       ...presentationFor(entry),
-      renderer: { id: "qoder-canvas.text", label: "Qoder text", provider: "qoder-canvas", type: "qoder-canvas", status: "ready" },
+      renderer: {
+        id: "qoder-canvas.text",
+        label: "Qoder text",
+        provider: "qoder-canvas",
+        type: "qoder-canvas",
+        status: "ready",
+        bindingId: `sha256:${"f".repeat(64)}`,
+      },
       capabilities: ["navigate"],
     }));
     expect(rebound.snapshot.revision).not.toBe(native.snapshot.revision);
     expect(rebound.artifacts[0]?.revision.digest).toBe(native.artifacts[0]?.revision.digest);
+    expect(rebound.artifacts[0]?.renderer.bindingId).not.toBe(native.artifacts[0]?.renderer.bindingId);
+    expect(rebound.artifacts[0]?.renderer.bindingId).not.toBe(`sha256:${"f".repeat(64)}`);
   });
 
   it("binds snapshot and catalog identity to external provider trust metadata", async () => {
@@ -255,9 +272,84 @@ describe("indexArtifactDirectory", () => {
     const changedSupport = describeWith(`sha256:${"b".repeat(64)}`, "reviewed");
 
     expect(changedBytes.artifacts[0]!.adapter.snapshotId).not.toBe(first.artifacts[0]!.adapter.snapshotId);
+    expect(changedBytes.artifacts[0]!.renderer.bindingId).not.toBe(first.artifacts[0]!.renderer.bindingId);
     expect(changedBytes.snapshot.revision).not.toBe(first.snapshot.revision);
+    expect(changedSupport.artifacts[0]!.renderer.bindingId).not.toBe(changedBytes.artifacts[0]!.renderer.bindingId);
     expect(changedSupport.snapshot.revision).not.toBe(changedBytes.snapshot.revision);
     expect(changedBytes.artifacts[0]!.revision.digest).toBe(first.artifacts[0]!.revision.digest);
+  });
+
+  it("moves binding identity for every adapter, runtime, surface, capability, and provider axis", async () => {
+    const index = await indexArtifactDirectory(fixtures, { includeDigests: true });
+    const adapter = presentationFor(index.entries.find((entry) => entry.label === "tool-mix.tsx")!).adapter;
+    const runtime = {
+      id: "provider.hosted-runtime",
+      version: "1",
+      prepareDocument: async () => "<!doctype html>",
+      readModule: async () => "export default {};",
+      readResource: async () => undefined,
+    };
+    const base = {
+      backing: "code",
+      adapter,
+      buildRuntime: { id: "studio.build", version: "1", module: { kind: "source" } },
+      renderer: {
+        id: "provider.diagram",
+        label: "Provider diagram",
+        provider: "fixture",
+        type: "provider-svg",
+        status: "ready",
+      },
+      surface: {
+        kind: "external-hosted",
+        rendererId: "provider.diagram",
+        runtimeId: "provider.viewer",
+        securityProfileId: "opaque-web-v1",
+        runtime,
+      },
+      capabilities: ["navigate", "select"],
+      provider: {
+        providerId: "fixture",
+        contributionId: "diagram",
+        fingerprint: `sha256:${"a".repeat(64)}`,
+        contributionSupport: "reviewed",
+        adapterExecutionProfile: "trusted-local-process",
+        surfaceSecurityProfile: "opaque-web-v1",
+      },
+    } satisfies ArtifactPluginResolution;
+    const variants: Record<string, ArtifactPluginResolution> = {
+      backing: { ...base, backing: "data" },
+      adapterId: { ...base, adapter: { ...adapter, id: "fixture.adapter-v2" } },
+      adapterVersion: { ...base, adapter: { ...adapter, version: "2" } },
+      schema: { ...base, adapter: { ...adapter, schemaId: "fixture/v2" } },
+      buildRuntimeId: { ...base, buildRuntime: { ...base.buildRuntime, id: "studio.build-v2" } },
+      buildRuntimeVersion: { ...base, buildRuntime: { ...base.buildRuntime, version: "2" } },
+      rendererId: { ...base, renderer: { ...base.renderer, id: "provider.diagram-v2" } },
+      rendererProvider: { ...base, renderer: { ...base.renderer, provider: "fixture-v2" } },
+      rendererType: { ...base, renderer: { ...base.renderer, type: "provider-canvas" } },
+      surfaceKind: {
+        ...base,
+        surface: { kind: "studio-sandbox", rendererId: "provider.diagram", runtimeId: "provider.viewer" },
+      },
+      surfaceRenderer: { ...base, surface: { ...base.surface, rendererId: "provider.diagram-v2" } },
+      surfaceRuntime: { ...base, surface: { ...base.surface, runtimeId: "provider.viewer-v2" } },
+      hostedRuntimeId: { ...base, surface: { ...base.surface, runtime: { ...runtime, id: "provider.hosted-runtime-v2" } } },
+      hostedRuntimeVersion: { ...base, surface: { ...base.surface, runtime: { ...runtime, version: "2" } } },
+      capabilities: { ...base, capabilities: ["navigate", "zoom"] },
+      providerId: { ...base, provider: { ...base.provider, providerId: "fixture-v2" } },
+      contributionId: { ...base, provider: { ...base.provider, contributionId: "diagram-v2" } },
+      fingerprint: { ...base, provider: { ...base.provider, fingerprint: `sha256:${"b".repeat(64)}` } },
+      support: { ...base, provider: { ...base.provider, contributionSupport: "experimental-local" } },
+      executionProfile: { ...base, provider: { ...base.provider, adapterExecutionProfile: "confined-wasm" } },
+      securityProfile: { ...base, provider: { ...base.provider, surfaceSecurityProfile: undefined } },
+    };
+    const baseId = artifactSurfaceBindingId(base);
+
+    for (const [axis, variant] of Object.entries(variants)) {
+      expect(artifactSurfaceBindingId(variant), axis).not.toBe(baseId);
+    }
+    expect(artifactSurfaceBindingId({ ...base, capabilities: ["select", "navigate", "navigate"] }))
+      .toBe(baseId);
   });
 
   it("refuses to mint a revision snapshot without exact-byte digests", async () => {

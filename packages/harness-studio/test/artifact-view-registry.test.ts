@@ -50,7 +50,7 @@ describe("Artifact View surface registry", () => {
   it("does not reclassify an unknown renderer from a familiar extension", () => {
     const artifact = descriptor({ id: "future.deck-renderer" }, { label: "deck.pptx", format: "pptx" });
     expect(resolveArtifactSurfaceMount(artifact)).toBeUndefined();
-    expect(renderToStaticMarkup(createElement(ArtifactView, { artifact, liveGeneration: 0 })))
+    expect(renderToStaticMarkup(createElement(ArtifactView, { authorityId: "catalog-a", artifact, liveGeneration: 0 })))
       .toContain("No renderer is available for this artifact (future.deck-renderer).");
     expect(resolveArtifactSurfaceMount(descriptor({ id: "studio.pptx-dom", type: "future-native" }, { format: "pptx" }))).toBeUndefined();
   });
@@ -66,7 +66,7 @@ describe("Artifact View surface registry", () => {
       status: "unavailable",
       reason: "No approved renderer matches this revision.",
     });
-    const markup = renderToStaticMarkup(createElement(ArtifactView, { artifact: unavailable, liveGeneration: 0 }));
+    const markup = renderToStaticMarkup(createElement(ArtifactView, { authorityId: "catalog-a", artifact: unavailable, liveGeneration: 0 }));
     expect(markup).toContain('role="status"');
     expect(markup).toContain("No approved renderer matches this revision.");
   });
@@ -77,28 +77,60 @@ describe("Artifact View surface registry", () => {
     expect(resolveArtifactSurfaceMount(missingView)).toBeUndefined();
   });
 
-  it("changes the mounted surface identity when the server binding changes without changing file bytes", () => {
+  it("retains a mounted surface across content revisions for the same authority and binding", () => {
     const first = descriptor({
       id: "provider.diagram",
       provider: "provider-a",
       type: "provider-svg",
+      bindingId: BINDING_DIGEST,
       viewUri: "/api/artifacts/example/revisions/111/viewer/",
     });
     const second = {
       ...first,
-      adapter: { ...first.adapter, snapshotId: `sha256:${"2".repeat(64)}` as const },
-      renderer: { ...first.renderer, id: "provider.diagram-v2", provider: "provider-b" },
+      revision: {
+        ...first.revision,
+        id: NEXT_DIGEST,
+        digest: NEXT_DIGEST,
+        content: { ...first.revision.content, digest: NEXT_DIGEST },
+      },
+      adapter: { ...first.adapter, snapshotId: NEXT_DIGEST },
+      renderer: { ...first.renderer, viewUri: "/api/artifacts/example/revisions/222/viewer/" },
     };
     const firstMount = resolveArtifactSurfaceMount(first)!;
     const secondMount = resolveArtifactSurfaceMount(second)!;
 
-    expect(first.revision.digest).toBe(second.revision.digest);
-    expect(first.renderer.viewUri).toBe(second.renderer.viewUri);
-    expect(artifactSurfaceInstanceKey(firstMount, first)).not.toBe(artifactSurfaceInstanceKey(secondMount, second));
+    expect(artifactSurfaceInstanceKey(firstMount, "catalog-a", first))
+      .toBe(artifactSurfaceInstanceKey(secondMount, "catalog-a", second));
+  });
+
+  it("remounts when authority or binding changes and conservatively remounts old V2 responses", () => {
+    const bound = descriptor({ id: "studio.markdown", bindingId: BINDING_DIGEST });
+    const rebound = descriptor({ id: "studio.markdown", bindingId: NEXT_DIGEST });
+    const mount = resolveArtifactSurfaceMount(bound)!;
+
+    expect(artifactSurfaceInstanceKey(mount, "catalog-a", bound))
+      .not.toBe(artifactSurfaceInstanceKey(mount, "catalog-b", bound));
+    expect(artifactSurfaceInstanceKey(mount, "catalog-a", bound))
+      .not.toBe(artifactSurfaceInstanceKey(mount, "catalog-a", rebound));
+
+    const legacy = descriptor({ id: "studio.markdown" });
+    const legacyNext = {
+      ...legacy,
+      revision: {
+        ...legacy.revision,
+        id: NEXT_DIGEST,
+        digest: NEXT_DIGEST,
+        content: { ...legacy.revision.content, digest: NEXT_DIGEST },
+      },
+    };
+    expect(artifactSurfaceInstanceKey(mount, "catalog-a", legacy))
+      .not.toBe(artifactSurfaceInstanceKey(mount, "catalog-a", legacyNext));
   });
 });
 
 const DIGEST = `sha256:${"1".repeat(64)}` as const;
+const BINDING_DIGEST = `sha256:${"b".repeat(64)}` as const;
+const NEXT_DIGEST = `sha256:${"2".repeat(64)}` as const;
 
 function descriptor(
   renderer: Pick<ArtifactRendererReference, "id"> & Partial<ArtifactRendererReference>,

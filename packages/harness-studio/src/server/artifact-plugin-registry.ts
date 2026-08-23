@@ -144,7 +144,7 @@ function nativeResolution(kind: ArtifactKind): ArtifactPluginBinding | undefined
     adapter: RAW_ARTIFACT_ADAPTER,
     renderer: { id: rendererId, label: nativeRendererLabel(kind), provider: "studio", type: "native", status: "ready" },
     surface: { kind: "native", rendererId },
-    capabilities: kind === "image" || kind === "svg" ? ["select", "zoom"] : ["search", "select"],
+    capabilities: [],
   };
 }
 
@@ -162,7 +162,7 @@ function studioCodePreviewResolution(entry: ArtifactEntry): ArtifactPluginBindin
       status: "ready",
     },
     surface: { kind: "studio-sandbox", rendererId: "studio.react-preview", runtimeId: REACT_SOURCE_BUILD_RUNTIME.id },
-    capabilities: ["execute", "live-update", "select"],
+    capabilities: ["execute", "live-update"],
   };
 }
 
@@ -184,7 +184,7 @@ function studioDocumentPreviewResolution(entry: ArtifactEntry): ArtifactPluginBi
       status: "ready",
     },
     surface: { kind: "studio-sandbox", rendererId, runtimeId: buildRuntime.id },
-    capabilities: ["execute", "live-update"],
+    capabilities: ["live-update"],
   };
 }
 

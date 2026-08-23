@@ -10,8 +10,13 @@ import { useArtifactSnapshot } from "../useArtifactSnapshot.js";
 
 export function XlsxArtifactView({ artifact }: ArtifactSurfaceMountContext): React.JSX.Element {
   const { snapshot, failure } = useArtifactSnapshot(artifact, "xlsx/v1", "XLSX");
-  const [requestedSheetIndex, setRequestedSheetIndex] = useState<number>();
-  const [selectedAddress, setSelectedAddress] = useState<string>();
+  const [sheetRequest, setSheetRequest] = useState<{ revisionId: string; sheetIndex: number }>();
+  const [selection, setSelection] = useState<{ revisionId: string; address: string }>();
+  const requestedSheetIndex = sheetRequest?.revisionId === artifact.revision.id ? sheetRequest.sheetIndex : undefined;
+  const selectedAddress = selection?.revisionId === artifact.revision.id ? selection.address : undefined;
+  const setSelectedAddress = (address: string): void => {
+    setSelection({ revisionId: artifact.revision.id, address });
+  };
 
   if (failure !== undefined) return <p className="artifact-status" role="alert">{failure}</p>;
   if (snapshot === undefined) return <p className="artifact-status" role="status">Adapting XLSX revision…</p>;
@@ -35,8 +40,8 @@ export function XlsxArtifactView({ artifact }: ArtifactSurfaceMountContext): Rea
         className={candidate.id === sheet.id ? "selected" : undefined}
         aria-current={candidate.id === sheet.id}
         onClick={() => {
-          setRequestedSheetIndex(index);
-          setSelectedAddress(undefined);
+          setSheetRequest({ revisionId: artifact.revision.id, sheetIndex: index });
+          setSelection(undefined);
         }}
       >{candidate.label}</button>)}
     </nav>
