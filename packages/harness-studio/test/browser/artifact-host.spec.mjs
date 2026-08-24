@@ -130,9 +130,20 @@ test.beforeAll(async () => {
           toolName: event.name,
           status: "completed",
           startedAt: Date.parse(record.savedAt) + index,
+          durationMs: index + 1,
+          durationStatus: "observed",
+          filePaths: event.name === "Edit" ? ["src/renderer.ts"] : [],
         })),
       },
-      dialogue: { turns: [{ prompt: record.prompt, response: `${record.prompt} complete` }] },
+      dialogue: { turns: [{
+        index: 1,
+        anchorId: "turn-1",
+        prompt: { text: record.prompt, timestamp: record.savedAt },
+        steps: record.timeline.filter((event) => event.kind === "tool-call").map((event) => ({ kind: "tool", callId: event.id, toolName: event.name })),
+        toolCallCount: record.toolCallCount,
+        response: `${record.prompt} complete`,
+        responseStatus: "retained",
+      }] },
     })),
     correlation: { commits: [] },
     providers: [{ platform: "qoder", status: "ok", discovered: 2, included: 2 }],
@@ -873,12 +884,47 @@ test("opens a project workspace and compares Inspector-discovered Sessions", asy
   await expect(inspector.getByRole("tab", { name: "Date" })).toHaveAttribute("aria-selected", "true");
   await expect(inspector.getByRole("button", { name: "Open session" }).first()).toBeVisible();
   expect(requestedUrls.some((url) => url.endsWith("/assets/inspector-workbench.js"))).toBe(false);
-  await inspector.getByRole("button", { name: "Open session" }).first().click();
+  const openSessionButton = inspector.getByRole("button", { name: "Open session" }).first();
+  await openSessionButton.click();
   await expect(inspector.locator(".session-view")).toBeVisible();
   await expect(inspector.getByRole("dialog")).toContainText(/Repair (parser|renderer)/);
   await expect(inspector.getByRole("button", { name: "Close" })).toBeFocused();
+  await expect(inspector.locator("[data-harness-inspector]")).toHaveAttribute("inert", "");
+  await expect(inspector.locator("[data-harness-inspector]")).toHaveAttribute("aria-hidden", "true");
+  await expect(page).toHaveURL(/inspector-session=/u);
+  await expect(inspector.locator(".session-cell[data-session-cell=run]")).toHaveCount(1);
+  await expect(inspector.locator("details.session-process")).not.toHaveAttribute("open", "");
+  await expect(inspector.getByRole("region", { name: "Turn 1 outcome" })).toContainText("Outcome");
+  await inspector.getByRole("button", { name: "Expand process" }).click();
+  await expect(inspector.locator("details.session-process")).toHaveAttribute("open", "");
+  await inspector.locator("details.session-filter-disclosure > summary").click();
+  await expect(inspector.getByRole("checkbox", { name: /Tool calls/u })).toBeChecked();
+  await inspector.getByRole("tab", { name: "Replay" }).click();
+  await expect(inspector.getByRole("tab", { name: /Events/u })).toHaveAttribute("aria-selected", "true");
+  await expect(inspector.getByRole("tab", { name: /Files/u })).toBeVisible();
+  await inspector.getByRole("button", { name: /Next event/u }).click();
+  await expect(inspector.locator(".replay-position")).toContainText("Event 2 /");
+  await expect(page).toHaveURL(/inspector-event=/u);
+  for (const layout of [
+    { name: "wide", width: 1440, height: 900 },
+    { name: "compact", width: 1024, height: 768 },
+    { name: "narrow", width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize({ width: layout.width, height: layout.height });
+    if (layout.width <= 1080) await expect(page.locator(".studio-primary-nav")).not.toBeInViewport();
+    await expect(inspector.getByRole("button", { name: "Close" })).toBeVisible();
+    await expect(inspector.locator(".replay-transport")).toBeVisible();
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
+    expect(overflow, `${layout.name} Session detail overflows horizontally`).toBe(false);
+    await page.screenshot({ path: `test-results/session-detail-replay-${layout.name}.png`, fullPage: true });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.keyboard.press("Escape");
   await expect(inspector.locator(".session-view")).toHaveCount(0);
+  await expect(inspector.locator("[data-harness-inspector]")).not.toHaveAttribute("inert", "");
+  await expect(inspector.locator("[data-harness-inspector]")).not.toHaveAttribute("aria-hidden", "true");
+  await expect(openSessionButton).toBeFocused();
+  await expect(page).not.toHaveURL(/inspector-session=/u);
   for (const layout of [
     { name: "wide", width: 1440, height: 900 },
     { name: "compact", width: 1024, height: 768 },

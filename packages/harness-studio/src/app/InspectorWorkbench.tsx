@@ -1,5 +1,18 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import {
+  filteredCallCount,
+  groupToolRuns,
+  observedDurationTotal,
+  projectSessionTrace,
+  replayIndexForFile,
+  sessionTurns,
+  type InspectorCommit as Commit,
+  type InspectorReplayEvent as ReplayEvent,
+  type InspectorSession as Session,
+  type InspectorToolCall as ToolCall,
+  type InspectorTurn as Turn,
+} from "./inspector-session-model.js";
 
 type Mode = "feature" | "date";
 type ViewMode = "trace" | "replay";
@@ -18,72 +31,6 @@ interface FeatureNode {
 interface Story extends FeatureNode {
   sessionLinks?: Array<{ sessionId: string; evidenceKind?: string; confidence?: string }>;
   commitHashes?: string[];
-}
-
-interface ToolCall {
-  id: string;
-  callId?: string;
-  kind?: "note" | "tool";
-  text?: string;
-  toolName?: string;
-  actionLabel?: string;
-  operation?: string;
-  family?: string;
-  status?: string;
-  startedAt?: number | null;
-  durationMs?: number | null;
-  detail?: string;
-  detailKind?: string;
-  filePath?: string | null;
-  filePaths?: string[];
-}
-
-interface Turn {
-  index: number;
-  anchorId?: string;
-  prompt?: { text?: string; timestamp?: string | null };
-  steps?: ToolCall[];
-  toolCallCount?: number;
-  response?: string | null;
-  responseStatus?: string;
-  durationMs?: number | null;
-}
-
-interface ReplayEvent {
-  id: string;
-  type: string;
-  title?: string;
-  label?: string;
-  body?: string;
-  turnIndex?: number | null;
-  timeBasis?: string;
-  atMs?: number | null;
-  files?: string[];
-}
-
-interface Session {
-  sessionId: string;
-  locator?: string;
-  platform?: string;
-  firstSeen?: string | null;
-  durationMs?: number | null;
-  files?: string[];
-  prompts?: Array<{ text: string; timestamp?: string | null; turnIndex?: number | null }>;
-  models?: string[];
-  toolActivity?: { totalCalls?: number; failedCalls?: number; files?: string[]; calls?: ToolCall[] };
-  dialogue?: { turns?: Turn[] };
-  replay?: { events?: ReplayEvent[] };
-  commitLinks?: Array<{ hash: string }>;
-}
-
-interface Commit {
-  hash: string;
-  shortHash?: string;
-  subject?: string;
-  fileCount?: number;
-  linesAdded?: number;
-  linesRemoved?: number;
-  files?: Array<{ path: string; added?: number | null; removed?: number | null }>;
 }
 
 interface Day {
@@ -164,6 +111,10 @@ function ReactInspector({ report }: { report: Report }): React.JSX.Element {
   const [collapsedBranches, setCollapsedBranches] = useState<Set<string>>(new Set());
   const [collapsedCards, setCollapsedCards] = useState<Set<number>>(new Set());
   const [selectedSession, setSelectedSession] = useState<Session>();
+  const sessionTrigger = useRef<HTMLElement | null>(null);
+  const inspectorRoot = useRef<HTMLDivElement>(null);
+  const workbenchScrollTop = useRef(0);
+  const sessionWasOpen = useRef(false);
   const byNode = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const byStory = useMemo(() => new Map(stories.map((story) => [story.id, story])), [stories]);
   const bySession = useMemo(() => new Map(sessions.map((session) => [session.sessionId, session])), [sessions]);
@@ -174,13 +125,71 @@ function ReactInspector({ report }: { report: Report }): React.JSX.Element {
   const itemStories = new Set(items.flatMap((item) => item.story ? [item.story.id] : []));
   const workspaceName = report.workspace?.name ?? "workspace";
 
+  useEffect(() => {
+    const syncSessionFromUrl = (): void => {
+      const sessionId = new URL(globalThis.location.href).searchParams.get("inspector-session");
+      setSelectedSession(sessionId ? bySession.get(sessionId) : undefined);
+    };
+    syncSessionFromUrl();
+    globalThis.addEventListener("popstate", syncSessionFromUrl);
+    return () => globalThis.removeEventListener("popstate", syncSessionFromUrl);
+  }, [bySession]);
+
+  function openSession(session: Session, trigger?: HTMLElement): void {
+    sessionTrigger.current = trigger ?? null;
+    const url = new URL(globalThis.location.href);
+    url.searchParams.set("inspector-session", session.sessionId);
+    url.searchParams.delete("inspector-view");
+    url.searchParams.delete("inspector-event");
+    globalThis.history.pushState({ inspectorSession: session.sessionId }, "", url);
+    setSelectedSession(session);
+  }
+
+  function closeSession(): void {
+    const url = new URL(globalThis.location.href);
+    if (url.searchParams.has("inspector-session") && globalThis.history.state?.inspectorSession === selectedSession?.sessionId) {
+      globalThis.history.back();
+      return;
+    }
+    url.searchParams.delete("inspector-session");
+    url.searchParams.delete("inspector-view");
+    url.searchParams.delete("inspector-event");
+    globalThis.history.replaceState(globalThis.history.state, "", url);
+    setSelectedSession(undefined);
+  }
+
+  useEffect(() => {
+    if (selectedSession !== undefined) return;
+    const trigger = sessionTrigger.current;
+    sessionTrigger.current = null;
+    if (trigger?.isConnected) globalThis.requestAnimationFrame(() => trigger.focus());
+  }, [selectedSession]);
+
+  useEffect(() => {
+    const root = inspectorRoot.current;
+    if (!root) return;
+    if (selectedSession !== undefined && !sessionWasOpen.current) {
+      workbenchScrollTop.current = root.scrollTop;
+      root.scrollTop = 0;
+      sessionWasOpen.current = true;
+    } else if (selectedSession === undefined && sessionWasOpen.current) {
+      sessionWasOpen.current = false;
+      globalThis.requestAnimationFrame(() => { root.scrollTop = workbenchScrollTop.current; });
+    }
+  }, [selectedSession]);
+
   function changeMode(next: Mode): void {
     setMode(next);
     setScope(next === "feature" ? report.featureTree?.roots?.[0] ?? nodes[0]?.id ?? "" : days.at(-1)?.date ?? "");
   }
 
-  return <div className={`native-inspector-root${selectedSession ? " session-open" : ""}`} data-studio-native-inspector data-react-inspector-workbench>
-    <div className={`app${pickerCollapsed ? " picker-collapsed" : ""}`} data-harness-inspector>
+  return <div ref={inspectorRoot} className={`native-inspector-root${selectedSession ? " session-open" : ""}`} data-studio-native-inspector data-react-inspector-workbench>
+    <div
+      className={`app${pickerCollapsed ? " picker-collapsed" : ""}`}
+      data-harness-inspector
+      inert={selectedSession ? true : undefined}
+      aria-hidden={selectedSession ? true : undefined}
+    >
       <aside className="scope-picker" aria-label="Scope picker">
         <div className="brand"><div className="brand-copy"><strong>Harness Inspector</strong><span>{workspaceName}</span></div><button className="picker-toggle" type="button" aria-expanded={!pickerCollapsed} aria-label={pickerCollapsed ? "Expand capability tree" : "Collapse capability tree"} onClick={() => setPickerCollapsed((value) => !value)}><span className="collapse-label">Hide</span><span className="expand-label">Show tree</span></button></div>
         <div className="mode-tabs" role="tablist" aria-label="Picker mode"><button role="tab" aria-selected={mode === "feature"} tabIndex={mode === "feature" ? 0 : -1} className={mode === "feature" ? "active" : undefined} onClick={() => changeMode("feature")} onKeyDown={(event) => moveInspectorTab(event, "date", changeMode)}>Capability</button><button role="tab" aria-selected={mode === "date"} tabIndex={mode === "date" ? 0 : -1} className={mode === "date" ? "active" : undefined} onClick={() => changeMode("date")} onKeyDown={(event) => moveInspectorTab(event, "feature", changeMode)}>Date</button></div>
@@ -189,10 +198,10 @@ function ReactInspector({ report }: { report: Report }): React.JSX.Element {
       </aside>
       <main className="workspace">
         <header className="workspace-header"><nav className="workspace-breadcrumb" aria-label="Workbench breadcrumb"><span>Harness Inspector</span><i>/</i><strong>{mode === "date" ? scope : byNode.get(scope)?.title ?? "Delivery Workbench"}</strong></nav><div className="workspace-header-meta"><div className="scope-metrics" aria-label="Scope metrics"><Metric value={itemStories.size} label="stories" singular="story" /><Metric value={itemSessions.length} label="sessions" singular="session" /><Metric value={itemSessions.reduce((sum, session) => sum + totalCalls(session), 0)} label="calls" singular="call" /><Metric value={itemCommits.size} label="commits" singular="commit" /></div><span className="window-badge">{platformBadge(report)} · {sessions.length} sessions</span></div></header>
-        <div className="workspace-scroll">{(report.diagnostics?.length ?? 0) > 0 && <details className="react-diagnostics"><summary>Inspector boundaries · {report.diagnostics!.length}</summary><ul>{report.diagnostics!.map((diagnostic) => <li key={diagnostic}>{diagnostic}</li>)}</ul></details>}<section className="workbench-list" aria-live="polite">{items.length ? items.map((item, index) => <WorkbenchCard key={`${item.session?.sessionId ?? item.story?.id ?? "commit"}-${index}`} item={item} commits={commitsFor(item, byCommit)} collapsed={collapsedCards.has(index)} onToggle={() => setCollapsedCards(toggleNumber(collapsedCards, index))} onOpen={setSelectedSession} />) : <div className="empty-state">No provenance workbench exists in this scope.</div>}</section></div>
+        <div className="workspace-scroll">{(report.diagnostics?.length ?? 0) > 0 && <details className="react-diagnostics"><summary>Inspector boundaries · {report.diagnostics!.length}</summary><ul>{report.diagnostics!.map((diagnostic) => <li key={diagnostic}>{diagnostic}</li>)}</ul></details>}<section className="workbench-list" aria-live="polite">{items.length ? items.map((item, index) => <WorkbenchCard key={`${item.session?.sessionId ?? item.story?.id ?? "commit"}-${index}`} item={item} commits={commitsFor(item, byCommit)} collapsed={collapsedCards.has(index)} onToggle={() => setCollapsedCards(toggleNumber(collapsedCards, index))} onOpen={openSession} />) : <div className="empty-state">No provenance workbench exists in this scope.</div>}</section></div>
       </main>
     </div>
-    {selectedSession && <SessionView workspaceName={workspaceName} session={selectedSession} onClose={() => setSelectedSession(undefined)} />}
+    {selectedSession && <SessionView workspaceName={workspaceName} session={selectedSession} commits={commitsFor({ session: selectedSession }, byCommit)} onClose={closeSession} />}
   </div>;
 }
 
@@ -232,7 +241,7 @@ function Metric({ value, label, singular }: { value: number; label: string; sing
   return value ? <span className="metric" aria-label={`${value} ${value === 1 ? singular : label}`}><strong>{value}</strong><span className="metric-label">{value === 1 ? singular : label}</span><span className="metric-short">{label.slice(0, 5)}</span></span> : null;
 }
 
-function WorkbenchCard({ item, commits, collapsed, onToggle, onOpen }: { item: Item; commits: Commit[]; collapsed: boolean; onToggle(): void; onOpen(session: Session): void }): React.JSX.Element {
+function WorkbenchCard({ item, commits, collapsed, onToggle, onOpen }: { item: Item; commits: Commit[]; collapsed: boolean; onToggle(): void; onOpen(session: Session, trigger?: HTMLElement): void }): React.JSX.Element {
   const session = item.session;
   // A scope that retained nothing collapses to its title row. Three empty lanes
   // read as a completed dashboard, and repeating them down a long scope buries
@@ -241,23 +250,23 @@ function WorkbenchCard({ item, commits, collapsed, onToggle, onOpen }: { item: I
     || (session?.prompts?.length ?? 0) > 0
     || (session?.toolActivity?.calls?.length ?? 0) > 0
     || commits.length > 0;
-  const head = <header className="workbench-head"><div className="workbench-title-line"><div className="workbench-meta">{session ? <><span className="workbench-provider">{session.platform ?? "agent"}</span><span>{formatClock(session.firstSeen)}</span><span>{formatDuration(session.durationMs)}</span></> : <span>No linked Session</span>}</div><h3>{item.story?.title ?? (session ? sessionTitle(session) : "Commits without a linked Session")}</h3></div><div className="head-actions">{session && <button className="prepare-button" type="button" onClick={() => onOpen(session)}>Open session</button>}{retained && <button className="card-collapse" type="button" aria-expanded={!collapsed} onClick={onToggle}>{collapsed ? "+" : "−"}</button>}</div></header>;
+  const head = <header className="workbench-head"><div className="workbench-title-line"><div className="workbench-meta">{session ? <><span className="workbench-provider">{session.platform ?? "agent"}</span><span>{formatClock(session.firstSeen)}</span><span>{formatDuration(session.durationMs)}</span></> : <span>No linked Session</span>}</div><h3>{item.story?.title ?? (session ? sessionTitle(session) : "Commits without a linked Session")}</h3></div><div className="head-actions">{session && <button className="prepare-button" type="button" onClick={(event) => onOpen(session, event.currentTarget)}>Open session</button>}{retained && <button className="card-collapse" type="button" aria-expanded={!collapsed} onClick={onToggle}>{collapsed ? "+" : "−"}</button>}</div></header>;
   if (!retained) return <article className="workbench workbench-unevidenced" id={session ? `workbench-${encodeURIComponent(session.sessionId)}` : undefined}>{head}{session ? <p className="workbench-unevidenced-note">No prompt, tool call, or commit was retained for this Session.</p> : null}</article>;
   return <article className={`workbench${collapsed ? " card-collapsed" : ""}`} id={session ? `workbench-${encodeURIComponent(session.sessionId)}` : undefined}>{head}<div className="workbench-grid"><PromptLane item={item} onOpen={onOpen} /><div className="lane-resizer prompt" role="separator" /><ActivityLane session={session} onOpen={onOpen} /><div className="lane-resizer delivery" role="separator" /><DeliveryLane commits={commits} /></div></article>;
 }
 
-function PromptLane({ item, onOpen }: { item: Item; onOpen(session: Session): void }): React.JSX.Element {
+function PromptLane({ item, onOpen }: { item: Item; onOpen(session: Session, trigger?: HTMLElement): void }): React.JSX.Element {
   const prompts = item.session?.prompts ?? [];
   const declared = item.story?.refs?.prompts?.[0];
-  return <section className={`lane prompt-lane${declared || prompts.length ? "" : " lane-empty"}`}><div className="lane-title"><strong>User prompts</strong><span>{prompts.length} retained</span></div>{declared && <div className="intent-card declared-intent"><p>{declared}</p><small>Feature Tree intent · {item.story?.evidence ?? "declared"}</small></div>}{prompts.map((prompt, index) => <div className="intent-card" key={`${prompt.timestamp ?? index}-${index}`}><p>{prompt.text}</p><small>{prompt.turnIndex ? `User turn ${prompt.turnIndex}` : "Retained prompt"}{prompt.timestamp ? ` · ${formatClock(prompt.timestamp)}` : ""}</small></div>)}{!declared && !prompts.length && <div className="empty-state">No retained privacy-safe user turn for this scope.</div>}{item.session && <button className="lane-more" type="button" onClick={() => onOpen(item.session!)}>Open Session View</button>}</section>;
+  return <section className={`lane prompt-lane${declared || prompts.length ? "" : " lane-empty"}`}><div className="lane-title"><strong>User prompts</strong><span>{prompts.length} retained</span></div>{declared && <div className="intent-card declared-intent"><p>{declared}</p><small>Feature Tree intent · {item.story?.evidence ?? "declared"}</small></div>}{prompts.map((prompt, index) => <div className="intent-card" key={`${prompt.timestamp ?? index}-${index}`}><p>{prompt.text}</p><small>{prompt.turnIndex ? `User turn ${prompt.turnIndex}` : "Retained prompt"}{prompt.timestamp ? ` · ${formatClock(prompt.timestamp)}` : ""}</small></div>)}{!declared && !prompts.length && <div className="empty-state">No retained privacy-safe user turn for this scope.</div>}{item.session && <button className="lane-more" type="button" onClick={(event) => onOpen(item.session!, event.currentTarget)}>Open Session View</button>}</section>;
 }
 
-function ActivityLane({ session, onOpen }: { session?: Session; onOpen(session: Session): void }): React.JSX.Element {
+function ActivityLane({ session, onOpen }: { session?: Session; onOpen(session: Session, trigger?: HTMLElement): void }): React.JSX.Element {
   const calls = session?.toolActivity?.calls ?? [];
   if (!session || !calls.length) return <section className="lane activity-lane lane-empty"><div className="lane-title"><strong>Checkpoint activity</strong><span>0 calls</span></div><div className="empty-state">No normalized tool call was retained for this Session.</div></section>;
   const counts = countActions(calls).slice(0, 6);
   const max = Math.max(...counts.map(([, value]) => value.count), 1);
-  return <section className="lane activity-lane"><div className="lane-title"><strong>Checkpoint activity</strong><span>{session.toolActivity?.files?.length ?? session.files?.length ?? 0} paths</span></div><div className="activity-summary"><div className="activity-total"><strong>{calls.length}</strong><span>calls · {session.toolActivity?.failedCalls ?? calls.filter((call) => call.status === "failed").length} failed</span></div><div className="family-bars">{counts.map(([label, value]) => <div className="family-row" key={label}><span title={label}><i className="family-dot" style={{ background: familyColor(value.family) }} />{label}</span><div className="family-track"><div className="family-fill" style={{ width: `${Math.max(2, value.count / max * 100)}%`, background: familyColor(value.family) }} /></div><strong>{value.count}</strong></div>)}</div></div><details className="activity-details"><summary><span>Expand {calls.length} normalized actions</span><small>focus view</small></summary><div className="react-action-list">{calls.map((call) => <ToolRow call={call} key={call.id} />)}</div><div className="activity-actions"><button className="activity-action primary" type="button" onClick={() => onOpen(session)}>Open Session</button></div></details></section>;
+  return <section className="lane activity-lane"><div className="lane-title"><strong>Checkpoint activity</strong><span>{session.toolActivity?.files?.length ?? session.files?.length ?? 0} paths</span></div><div className="activity-summary"><div className="activity-total"><strong>{calls.length}</strong><span>calls · {session.toolActivity?.failedCalls ?? calls.filter((call) => call.status === "failed").length} failed</span></div><div className="family-bars">{counts.map(([label, value]) => <div className="family-row" key={label}><span title={label}><i className="family-dot" style={{ background: familyColor(value.family) }} />{label}</span><div className="family-track"><div className="family-fill" style={{ width: `${Math.max(2, value.count / max * 100)}%`, background: familyColor(value.family) }} /></div><strong>{value.count}</strong></div>)}</div></div><details className="activity-details"><summary><span>Expand {calls.length} normalized actions</span><small>focus view</small></summary><div className="react-action-list">{calls.map((call) => <ToolRow call={call} key={call.id} />)}</div><div className="activity-actions"><button className="activity-action primary" type="button" onClick={(event) => onOpen(session, event.currentTarget)}>Open Session</button></div></details></section>;
 }
 
 function DeliveryLane({ commits }: { commits: Commit[] }): React.JSX.Element {
@@ -265,33 +274,180 @@ function DeliveryLane({ commits }: { commits: Commit[] }): React.JSX.Element {
   return <section className="lane delivery-lane"><div className="lane-title"><strong>Commits / files</strong><span>{commits.length} commits</span></div><div className="delivery-content">{commits.map((commit) => <details className="commit-card commit-card-expanded" open key={commit.hash}><summary className="commit-head"><div className="commit-head-line"><span className="commit-id"><span className="commit-chevron">›</span><code>{commit.shortHash ?? commit.hash.slice(0, 8)}</code></span><span className="evidence observed">observed</span></div><p>{commit.subject ?? "Commit evidence"}</p><div className="commit-stats">{commit.fileCount ?? commit.files?.length ?? 0} files · +{commit.linesAdded ?? 0} / -{commit.linesRemoved ?? 0}</div></summary><div className="file-tree">{(commit.files ?? []).map((file) => <div className="file-row" key={file.path}><code>{file.path}</code><span className="delta">{file.added == null ? "bin" : `+${file.added}`} / {file.removed == null ? "bin" : `-${file.removed}`}</span></div>)}</div></details>)}</div></section>;
 }
 
-function SessionView({ workspaceName, session, onClose }: { workspaceName: string; session: Session; onClose(): void }): React.JSX.Element {
-  const [mode, setMode] = useState<ViewMode>("trace");
+function SessionView({ workspaceName, session, commits, onClose }: { workspaceName: string; session: Session; commits: Commit[]; onClose(): void }): React.JSX.Element {
+  const [mode, setModeState] = useState<ViewMode>(() => new URL(globalThis.location.href).searchParams.get("inspector-view") === "replay" ? "replay" : "trace");
+  const view = useRef<HTMLElement>(null);
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent): void => { if (event.key === "Escape") onClose(); };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [onClose]);
-  return <section className="session-view" role="dialog" aria-modal="true" aria-labelledby="session-view-title"><header className="session-nav"><nav className="session-crumbs"><span>{workspaceName}</span><i>/</i><span>Sessions</span><i>/</i><strong>{sessionTitle(session)}</strong></nav><button className="session-close" type="button" autoFocus onClick={onClose}>Close</button></header><div className="session-shell"><header className="session-titlebar"><div className="session-notebook-brand"><strong>Harness Inspector</strong></div><div className="session-title-copy"><small>{session.platform ?? "agent"} · retained Session</small><h2 id="session-view-title">{sessionTitle(session)}</h2></div><div className="session-title-actions"><div className="session-mode-tabs" role="tablist"><button role="tab" aria-selected={mode === "trace"} tabIndex={mode === "trace" ? 0 : -1} onClick={() => setMode("trace")} onKeyDown={(event) => moveInspectorTab(event, "replay", setMode)}>Trace</button><button role="tab" aria-selected={mode === "replay"} tabIndex={mode === "replay" ? 0 : -1} onClick={() => setMode("replay")} onKeyDown={(event) => moveInspectorTab(event, "trace", setMode)}>Replay</button></div></div></header>{mode === "trace" ? <SessionTrace session={session} /> : <SessionReplay session={session} />}</div></section>;
+  useEffect(() => { if (view.current) view.current.scrollTop = 0; }, [mode]);
+  function setMode(next: ViewMode): void {
+    const url = new URL(globalThis.location.href);
+    if (next === "replay") url.searchParams.set("inspector-view", "replay");
+    else {
+      url.searchParams.delete("inspector-view");
+      url.searchParams.delete("inspector-event");
+    }
+    globalThis.history.replaceState(globalThis.history.state, "", url);
+    setModeState(next);
+  }
+  return <section ref={view} className="session-view" role="dialog" aria-modal="true" aria-labelledby="session-view-title"><header className="session-nav"><nav className="session-crumbs" aria-label="Session breadcrumb"><span>{workspaceName}</span><i>/</i><span>Sessions</span><i>/</i><strong>{sessionTitle(session)}</strong></nav><button className="session-close" type="button" autoFocus onClick={onClose}>Close</button></header><div className="session-shell"><header className="session-titlebar"><div className="session-notebook-brand"><strong>Harness Inspector</strong></div><div className="session-title-copy"><small>{session.platform ?? "agent"} · retained Session</small><h2 id="session-view-title">{sessionTitle(session)}</h2></div><div className="session-title-actions"><div className="session-mode-tabs" role="tablist" aria-label="Session view mode"><button id="react-session-tab-trace" role="tab" aria-controls="react-session-panel-trace" aria-selected={mode === "trace"} tabIndex={mode === "trace" ? 0 : -1} onClick={() => setMode("trace")} onKeyDown={(event) => moveInspectorTab(event, "replay", setMode)}>Trace</button><button id="react-session-tab-replay" role="tab" aria-controls="react-session-panel-replay" aria-selected={mode === "replay"} tabIndex={mode === "replay" ? 0 : -1} onClick={() => setMode("replay")} onKeyDown={(event) => moveInspectorTab(event, "trace", setMode)}>Replay</button></div></div></header>{mode === "trace" ? <SessionTrace session={session} commits={commits} /> : <SessionReplay session={session} />}</div></section>;
 }
 
-function SessionTrace({ session }: { session: Session }): React.JSX.Element {
-  const turns = session.dialogue?.turns ?? [];
+type EvidenceKind = "prompts" | "responses" | "intermediate" | "commits" | "tools";
+
+function SessionTrace({ session, commits }: { session: Session; commits: Commit[] }): React.JSX.Element {
+  const projection = useMemo(() => projectSessionTrace(session, commits), [session, commits]);
+  const turns = projection.turns;
   const calls = session.toolActivity?.calls ?? [];
-  return <div className="session-layout"><main className="session-notebook-main"><div className="session-timeline">{turns.length ? turns.map((turn) => <article className="session-cell" key={turn.anchorId ?? turn.index}><header className="session-turn-head"><strong>Turn {turn.index}</strong><span>{turn.toolCallCount ?? 0} calls · {formatDuration(turn.durationMs)}</span></header><div className="session-cell-marker"><span className="turn-select">IN {turn.index}</span><span>OUT</span></div><div className="session-turn"><article className="session-event prompt"><div className="session-event-head"><strong>Prompt</strong><span>{formatClock(turn.prompt?.timestamp)}</span></div><div className="session-event-body session-markdown"><p>{turn.prompt?.text ?? "Prompt unavailable after privacy filtering."}</p></div></article><details className="session-process" open><summary><span>Process</span><em>{turn.toolCallCount ?? 0} tool calls</em></summary><div className="session-process-body">{(turn.steps ?? []).map((step, index) => step.kind === "note" ? <article className="session-event intermediate" key={`note-${index}`}><div className="session-note-label">Intermediate</div><p>{step.text}</p></article> : <ToolRow call={{ ...step, id: step.callId ?? step.id ?? `tool-${index}` }} key={step.callId ?? step.id ?? index} />)}</div></details><article className="session-event response"><div className="session-event-head"><strong>Response</strong><span>{turn.responseStatus ?? "retained"}</span></div><div className="session-event-body session-markdown"><p>{turn.response ?? "No privacy-safe response retained."}</p></div></article></div></article>) : <div className="empty-state">No retained dialogue turns. The normalized tool ledger remains in the outline.</div>}</div></main><aside className="session-sidebar"><header><div><strong>Session outline</strong><span>{session.locator ?? session.sessionId}</span></div></header><section className="session-outline-facts"><h3>Observed facts</h3><dl><div><dt>Provider</dt><dd>{session.platform ?? "unknown"}</dd></div><div><dt>Turns</dt><dd>{turns.length}</dd></div><div><dt>Tool calls</dt><dd>{calls.length}</dd></div><div><dt>Files</dt><dd>{session.files?.length ?? 0}</dd></div><div><dt>Model</dt><dd>{session.models?.join(", ") || "not retained"}</dd></div></dl></section><section><h3>Files</h3><div className="session-file-list">{session.files?.length ? session.files.map((file) => <code key={file}>{file}</code>) : <span className="empty-state">No paths retained.</span>}</div></section></aside></div>;
+  const toolNames = useMemo(() => [...new Set(calls.map((call) => call.toolName ?? call.operation ?? "tool"))], [calls]);
+  const [kinds, setKinds] = useState<Set<EvidenceKind>>(() => new Set(["prompts", "responses", "intermediate", "commits", "tools"]));
+  const [enabledTools, setEnabledTools] = useState<Set<string>>(() => new Set(toolNames));
+  const [showFiles, setShowFiles] = useState(true);
+  const [openProcesses, setOpenProcesses] = useState<Set<number>>(new Set());
+  const cellRefs = useRef(new Map<string, HTMLElement>());
+  const visibleCalls = filteredCallCount(calls, enabledTools);
+  const responseCount = session.dialogue?.responseCount ?? turns.filter(({ turn }) => turn.response).length;
+  const noteCount = session.dialogue?.noteCount ?? turns.reduce((sum, { turn }) => sum + (turn.steps ?? []).filter((step) => step.kind === "note").length, 0);
+
+  function toggleKind(kind: EvidenceKind): void { setKinds((current) => toggle(current, kind)); }
+  function toggleTool(name: string): void { setEnabledTools((current) => toggle(current, name)); }
+  function setAllProcesses(open: boolean): void { setOpenProcesses(open ? new Set(turns.map(({ turn }) => turn.index)) : new Set()); }
+  function jumpTo(value: string): void { cellRefs.current.get(value)?.scrollIntoView({ behavior: "smooth", block: "start" }); }
+
+  return <section id="react-session-panel-trace" role="tabpanel" aria-labelledby="react-session-tab-trace" className="session-mode-panel"><div className="session-layout"><main className="session-notebook-main"><div className="session-timeline" aria-label="Session run cells">
+    {turns.length ? turns.map(({ turn, calls: turnCalls, commits: turnCommits }) => {
+      const anchor = turn.anchorId ?? `turn-${turn.index}`;
+      const processOpen = openProcesses.has(turn.index);
+      const intermediateCount = turn.intermediateCount ?? (turn.steps ?? []).filter((step) => step.kind === "note").length;
+      const eventCount = turn.eventCount ?? intermediateCount + (turn.toolCallCount ?? turnCalls.length);
+      const shown = turn.shownEventCount ?? turn.steps?.length ?? 0;
+      const summary = `${turn.processTruncated ? `${shown} of ${eventCount}` : eventCount} process events · ${intermediateCount} intermediate response${intermediateCount === 1 ? "" : "s"} · ${turn.toolCallCount ?? turnCalls.length} tool calls${Number.isFinite(turn.durationMs) ? ` · ${formatDuration(turn.durationMs)}` : ""}`;
+      return <section className="session-cell" data-session-cell="run" key={anchor} ref={(node) => { if (node) cellRefs.current.set(anchor, node); else cellRefs.current.delete(anchor); }}><header className="session-turn-head"><strong>Turn {turn.index}</strong><span>{summary}</span></header><section className="session-turn" data-turn-index={turn.index}><div className="session-row-marker session-input-marker"><span className="turn-select">In [{turn.index}]</span></div>{kinds.has("prompts") && <article className="session-event prompt"><div className="session-event-body session-prose"><p>{turn.prompt?.text ?? "Prompt unavailable after privacy filtering."}</p></div></article>}<div className="session-row-marker session-process-marker" aria-hidden="true" />{(turn.steps?.length ?? 0) > 0 ? <details className="session-process" open={processOpen} onToggle={(event) => { const open = event.currentTarget.open; setOpenProcesses((current) => open === current.has(turn.index) ? current : toggle(current, turn.index)); }}><summary><span>Process trace</span><em>{shown}{turn.processTruncated ? ` of ${eventCount}` : ""} retained events · observed order</em></summary><div className="session-process-body"><ProcessStream turn={turn} calls={turnCalls} showIntermediate={kinds.has("intermediate")} showTools={kinds.has("tools")} enabledTools={enabledTools} showFiles={showFiles} /></div></details> : <div className="session-process session-process-empty"><span>Process</span><em>No retained process evidence</em></div>}<div className="session-row-marker session-output-marker"><span>Out [{turn.index}]</span></div><div className="session-cell-output"><TurnOutcome turn={turn} calls={turnCalls} commits={kinds.has("commits") ? turnCommits : []} showResponse={kinds.has("responses")} showFiles={showFiles} /></div></section></section>;
+    }) : <div className="empty-state">No retained dialogue turns. Unplaced evidence remains available below.</div>}
+    {(projection.unplacedCalls.length > 0 || projection.unplacedFiles.length > 0) && <section className="session-cell session-unplaced" data-session-cell="unplaced" ref={(node) => { if (node) cellRefs.current.set("unplaced", node); else cellRefs.current.delete("unplaced"); }}><header className="session-turn-head"><strong>Unplaced evidence</strong><span>{projection.unplacedCalls.length} calls · {projection.unplacedFiles.length} files</span></header><div className="session-cell-marker"><span>[ ]</span></div><section className="session-turn">{kinds.has("tools") && <ToolList calls={projection.unplacedCalls.filter((call) => enabledTools.has(call.toolName ?? call.operation ?? "tool"))} showFiles={showFiles} />}{showFiles && projection.unplacedFiles.length > 0 && <article className="session-event files"><header className="session-event-head"><strong>{projection.unplacedFiles.length} attributed file paths</strong><span>observed tool evidence</span></header><div className="session-file-list">{projection.unplacedFiles.map((file) => <code key={file}>{file}</code>)}</div></article>}</section></section>}
+    {kinds.has("commits") && projection.outsideCommits.length > 0 && <section className="session-cell session-outside" data-session-cell="outside" ref={(node) => { if (node) cellRefs.current.set("outside", node); else cellRefs.current.delete("outside"); }}><header className="session-turn-head"><strong>Commits outside Turn windows</strong><span>{projection.outsideCommits.length} commits</span></header><div className="session-cell-marker"><span>[ ]</span></div><section className="session-turn"><div className="session-outside-note">Timestamps fall outside every observed Turn window.</div>{projection.outsideCommits.map(({ commit, relation }) => <CommitEvent commit={commit} relation={relation} key={commit.hash} />)}</section></section>}
+    {calls.length > 0 && <SessionActivity calls={calls} />}
+  </div></main><aside className="session-sidebar" aria-label="Session outline"><header><div><strong>Session outline</strong><span>Read-only</span></div></header><section><h3>Cells</h3><select className="jump-select" aria-label="Jump to Session cell" defaultValue={turns[0]?.turn.anchorId ?? `turn-${turns[0]?.turn.index ?? 1}`} onChange={(event) => jumpTo(event.target.value)}>{turns.map(({ turn }) => <option value={turn.anchorId ?? `turn-${turn.index}`} key={turn.index}>In [{turn.index}]</option>)}{(projection.unplacedCalls.length > 0 || projection.unplacedFiles.length > 0) && <option value="unplaced">Unplaced evidence</option>}{projection.outsideCommits.length > 0 && <option value="outside">Commits outside Turn windows</option>}</select><div className="session-bulk"><button type="button" onClick={() => setAllProcesses(true)}>Expand process</button><button type="button" onClick={() => setAllProcesses(false)}>Collapse process</button></div></section><details className="session-filter-disclosure"><summary><span>Evidence filters</span><em>{visibleCalls} calls</em></summary><div className="session-filter-list"><Filter label="Prompts" count={turns.length} checked={kinds.has("prompts")} onChange={() => toggleKind("prompts")} /><Filter label="Results" count={responseCount} checked={kinds.has("responses")} onChange={() => toggleKind("responses")} /><Filter label="Intermediate" count={noteCount} checked={kinds.has("intermediate")} onChange={() => toggleKind("intermediate")} /><Filter label="Commits" count={commits.length} checked={kinds.has("commits")} onChange={() => toggleKind("commits")} /><Filter label="Tool calls" count={visibleCalls} checked={kinds.has("tools")} onChange={() => toggleKind("tools")} />{toolNames.slice(0, 8).map((name) => <Filter subtype label={name} count={calls.filter((call) => (call.toolName ?? call.operation ?? "tool") === name).length} checked={enabledTools.has(name)} onChange={() => toggleTool(name)} key={name} />)}<Filter subtype label="File paths" count={session.toolActivity?.files?.length ?? session.files?.length ?? 0} checked={showFiles} onChange={() => setShowFiles((value) => !value)} /></div></details><section className="session-outline-facts"><h3>Session</h3><dl><div><dt>Source</dt><dd>{session.source === "entire-checkpoint" ? "Entire checkpoint" : "Native session"}</dd></div><div><dt>Runtime</dt><dd>{session.platform ?? "unknown"}</dd></div><div><dt>Model</dt><dd>{session.models?.join(", ") || "unavailable"}</dd></div><div><dt>Duration</dt><dd>{formatDuration(session.durationMs)}</dd></div><div><dt>Turns</dt><dd>{turns.length}</dd></div><div><dt>Tool calls</dt><dd>{calls.length}</dd></div><div><dt>File edits</dt><dd>{session.fileEditCount ?? 0}</dd></div><div><dt>Token usage</dt><dd>{formatTokenUsage(session.tokenUsage)}</dd></div>{session.dialogue?.truncated && <div><dt>Projection</dt><dd>Truncated</dd></div>}</dl></section></aside></div></section>;
 }
 
-function ToolRow({ call }: { call: ToolCall }): React.JSX.Element {
+function Filter({ label, count, checked, subtype = false, onChange }: { label: string; count: number; checked: boolean; subtype?: boolean; onChange(): void }): React.JSX.Element {
+  return <label className={`session-filter${subtype ? " subtype" : ""}`}><input type="checkbox" checked={checked} onChange={onChange} /><span>{label}</span><em>{count}</em></label>;
+}
+
+function ProcessStream({ turn, calls, showIntermediate, showTools, enabledTools, showFiles }: { turn: Turn; calls: ToolCall[]; showIntermediate: boolean; showTools: boolean; enabledTools: ReadonlySet<string>; showFiles: boolean }): React.JSX.Element {
+  const byId = new Map(calls.map((call) => [call.id, call]));
+  const rows: ReactNode[] = [];
+  let pending: ToolCall[] = [];
+  let noteIndex = 0;
+  const flush = (): void => {
+    const visible = pending.filter((call) => enabledTools.has(call.toolName ?? call.operation ?? "tool"));
+    pending = [];
+    if (!showTools || visible.length === 0) return;
+    rows.push(<details className="session-event tools session-process-tool-run" key={`tools-${rows.length}`}><summary className="session-event-head"><strong>{visible.length} tool call{visible.length === 1 ? "" : "s"}</strong><span>{[...new Set(visible.map((call) => call.toolName ?? call.operation ?? "tool"))].slice(0, 3).join(" · ")}</span></summary><ToolList calls={visible} showFiles={showFiles} /></details>);
+  };
+  for (const step of turn.steps ?? []) {
+    if (step.kind === "tool") {
+      const call = byId.get(step.callId ?? step.id);
+      if (call) pending.push(call);
+      else {
+        flush();
+        if (showTools) rows.push(<article className="session-event session-tool-unavailable" key={`missing-${rows.length}`}><div className="session-event-body"><strong>{step.toolName ?? "Tool call"}</strong><span>Structured call detail was not retained.</span></div></article>);
+      }
+    } else if (step.kind === "note") {
+      flush();
+      noteIndex += 1;
+      if (showIntermediate) rows.push(<article className="session-event intermediate" key={`note-${noteIndex}`}><div className="session-note-label">Intermediate {noteIndex}</div><SessionMarkdown text={step.text ?? ""} /></article>);
+    }
+  }
+  flush();
+  return <div className="session-process-stream">{rows.length ? rows : <p className="session-process-facts">No process events match the active evidence filters.</p>}</div>;
+}
+
+function ToolList({ calls, showFiles }: { calls: ToolCall[]; showFiles: boolean }): React.JSX.Element {
+  const runs = groupToolRuns(calls);
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? runs : runs.slice(0, 14);
+  return <div className="session-call-list">{visible.map((run) => run.calls.length === 1 ? <ToolRow call={run.calls[0]!} showFiles={showFiles} key={run.calls[0]!.id} /> : <details className="session-tool-run" data-call-count={run.calls.length} key={run.key}><summary><span className="session-tool-id">{run.calls[0]!.id}–{run.calls.at(-1)!.id}</span><span className="session-tool-copy"><i className="family-dot" style={{ background: familyColor(run.calls[0]!.family ?? "other") }} /><strong>{run.calls[0]!.actionLabel ?? run.calls[0]!.toolName ?? "Tool call"} ×{run.calls.length}</strong><code>{run.calls[0]!.toolName ?? run.calls[0]!.operation ?? "tool"}</code></span><span className="session-tool-time"><code>{formatStamp(run.calls[0]!.startedAt)}</code><small>{formatToolRunDuration(run.calls)}</small></span></summary>{run.calls.map((call) => <ToolRow call={call} showFiles={showFiles} key={call.id} />)}</details>)}{!expanded && runs.length > 14 && <button type="button" className="session-call-more" onClick={() => setExpanded(true)}>Show {runs.length - 14} more grouped rows</button>}</div>;
+}
+
+function ToolRow({ call, showFiles = true }: { call: ToolCall; showFiles?: boolean }): React.JSX.Element {
   const files = call.filePaths ?? (call.filePath ? [call.filePath] : []);
-  return <div className="session-tool-row"><span className="session-tool-id">{call.id}</span><span className="session-tool-copy"><strong>{call.actionLabel ?? call.toolName ?? "Tool call"}</strong><code>{call.toolName ?? call.operation ?? "tool"}</code></span><span className="session-tool-time"><code>{formatStamp(call.startedAt)}</code><small>{formatDuration(call.durationMs)}</small></span>{call.detail && <span className="session-tool-detail-row"><em className={`detail-kind ${call.detailKind?.includes("redacted") ? "redacted" : "summary"}`}>{call.detailKind?.includes("redacted") ? "redacted" : "summary"}</em><span className="session-tool-detail">{call.detail}</span></span>}{files.length > 0 && <code className="session-tool-file">{files.join(" · ")}</code>}</div>;
+  return <div className="session-tool-row" data-tool={call.toolName ?? call.operation ?? "tool"}><span className="session-tool-id">{call.id}</span><span className="session-tool-copy"><i className="family-dot" style={{ background: familyColor(call.family ?? "other") }} /><strong>{call.actionLabel ?? call.toolName ?? "Tool call"}</strong><code>{call.toolName ?? call.operation ?? "tool"}</code>{call.status === "failed" && <em className="session-tool-failed">failed</em>}</span><span className="session-tool-time"><code>{formatStamp(call.startedAt)}</code><small>{call.durationStatus === "observed" ? formatDuration(call.durationMs) : "—"}</small></span>{call.detail && <span className="session-tool-detail-row"><code className="session-tool-detail">{call.detail}</code><em className={`detail-kind ${call.detailKind?.includes("redacted") ? "redacted" : "summary"}`}>{call.detailKind?.includes("redacted") ? "redacted" : "summary"}</em></span>}{showFiles && files.length > 0 && <code className="session-tool-file">{files.join(" · ")}</code>}</div>;
+}
+
+function TurnOutcome({ turn, calls, commits, showResponse, showFiles }: { turn: Turn; calls: ToolCall[]; commits: Commit[]; showResponse: boolean; showFiles: boolean }): React.JSX.Element {
+  const editCalls = calls.filter((call) => call.family === "change");
+  const verifyCalls = calls.filter((call) => call.family === "verify");
+  const editPaths = [...new Set(editCalls.flatMap((call) => call.filePaths ?? (call.filePath ? [call.filePath] : [])))];
+  const responseStatus = turn.responseStatus ?? (turn.response ? "retained" : "unavailable");
+  const statusLabel = responseStatus === "retained" ? "Terminal response retained" : responseStatus === "incomplete" ? "Retained Turn is incomplete" : "Terminal response unavailable";
+  return <section className="session-outcome" aria-label={`Turn ${turn.index} outcome`}><header><strong>Outcome</strong><span data-response-status={responseStatus}>{statusLabel}</span></header>{editCalls.length || verifyCalls.length || commits.length ? <ul className="session-outcome-facts">{editCalls.length > 0 && <li><strong>{editCalls.length}</strong> edit calls observed</li>}{verifyCalls.length > 0 && <li><strong>{verifyCalls.length}</strong> verification calls observed</li>}{commits.length > 0 && <li><strong>{commits.length}</strong> correlated commits</li>}</ul> : <p className="session-outcome-empty">No edit, verification, or commit evidence was attributed to this Turn.</p>}{showFiles && editPaths.length > 0 && <div className="session-outcome-paths"><span>Observed edit paths</span><div>{editPaths.map((path) => <code key={path}>{path}</code>)}</div></div>}{editCalls.length > 0 && <p className="session-patch-unavailable">Session-scoped patch was not retained; the current worktree is not used as this Turn’s diff.</p>}{showResponse && (turn.response ? <article className="session-event response"><div className="session-response-label">Assistant response</div><div className="session-event-body"><SessionMarkdown text={turn.response} /></div></article> : <article className="session-event response session-unavailable"><div className="session-event-body"><p>{responseStatus === "incomplete" ? "A later tool call was observed after the last assistant message, so no terminal response is claimed." : "No terminal assistant response was retained after privacy filtering."}</p></div></article>)}{commits.map((commit) => <CommitEvent commit={commit} relation="within this Turn window" key={commit.hash} />)}</section>;
+}
+
+function CommitEvent({ commit, relation }: { commit: Commit; relation: string }): React.JSX.Element {
+  return <article className="session-event commit"><div className="commit-head"><header className="session-event-head"><strong>{commit.shortHash ?? commit.hash.slice(0, 8)} · {commit.subject ?? "Commit evidence"}</strong><span>{commit.fileCount ?? commit.files?.length ?? 0} files</span></header><div className="session-event-body"><p>+{commit.linesAdded ?? 0} / -{commit.linesRemoved ?? 0} · committed {relation} · shared paths remain contextual.</p></div></div></article>;
+}
+
+function SessionActivity({ calls }: { calls: ToolCall[] }): React.JSX.Element {
+  const timed = calls.filter((call) => Number.isFinite(call.startedAt));
+  const start = Math.min(...timed.map((call) => Number(call.startedAt)));
+  const end = Math.max(...timed.map((call) => Number(call.startedAt)));
+  return <section className="session-overall-activity"><details className="session-axis-panel"><summary><span>Overall Session activity <em>{calls.length} calls</em></span><small>All retained Turns and unplaced calls</small></summary><div className="react-session-axis" aria-label={`${calls.length} retained calls`}>{timed.length ? timed.slice(0, 180).map((call) => <i key={call.id} title={`${call.actionLabel ?? call.toolName ?? "Tool call"} · ${formatStamp(call.startedAt)}`} style={{ left: `${end > start ? ((Number(call.startedAt) - start) / (end - start)) * 100 : 50}%`, background: familyColor(call.family ?? "other") }} />) : <span>Sequence only · timestamps unavailable</span>}</div></details></section>;
+}
+
+function SessionMarkdown({ text }: { text: string }): React.JSX.Element {
+  const blocks = text.replace(/\r\n?/gu, "\n").split(/\n{2,}/u).filter(Boolean);
+  return <div className="session-markdown">{blocks.map((block, index) => {
+    if (/^```/u.test(block)) return <pre key={index}><code>{block.replace(/^```[^\n]*\n?/u, "").replace(/\n?```$/u, "")}</code></pre>;
+    const heading = block.match(/^(#{1,3})\s+(.+)$/u);
+    if (heading) { const level = heading[1]!.length; return level === 1 ? <h3 key={index}>{heading[2]}</h3> : level === 2 ? <h4 key={index}>{heading[2]}</h4> : <h5 key={index}>{heading[2]}</h5>; }
+    const lines = block.split("\n");
+    if (lines.every((line) => /^[-*]\s+/u.test(line))) return <ul key={index}>{lines.map((line, lineIndex) => <li key={lineIndex}>{line.replace(/^[-*]\s+/u, "")}</li>)}</ul>;
+    return <p key={index}>{lines.map((line, lineIndex) => <span key={lineIndex}>{line}{lineIndex < lines.length - 1 && <br />}</span>)}</p>;
+  })}</div>;
 }
 
 function SessionReplay({ session }: { session: Session }): React.JSX.Element {
   const events = session.replay?.events ?? [];
-  const [index, setIndex] = useState(0);
+  const files = session.replay?.files ?? [];
+  const [index, setIndexState] = useState(() => {
+    const eventId = new URL(globalThis.location.href).searchParams.get("inspector-event");
+    const found = events.findIndex((event) => event.id === eventId);
+    return found >= 0 ? found : 0;
+  });
+  const [indexTab, setIndexTab] = useState<"events" | "files">("events");
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const currentEventRow = useRef<HTMLButtonElement>(null);
   const event = events[index];
+  function setIndex(next: number): void {
+    const bounded = Math.max(0, Math.min(events.length - 1, next));
+    const url = new URL(globalThis.location.href);
+    const nextEvent = events[bounded];
+    if (nextEvent) url.searchParams.set("inspector-event", nextEvent.id);
+    globalThis.history.replaceState(globalThis.history.state, "", url);
+    setIndexState(bounded);
+  }
+  useEffect(() => {
+    if (!playing) return undefined;
+    if (index >= events.length - 1) { setPlaying(false); return undefined; }
+    const timer = globalThis.setTimeout(() => setIndex(index + 1), Math.max(90, 900 / speed));
+    return () => globalThis.clearTimeout(timer);
+  }, [events.length, index, playing, speed]);
+  useEffect(() => { currentEventRow.current?.scrollIntoView({ block: "nearest" }); }, [index, indexTab]);
+  function togglePlayback(): void {
+    if (playing) { setPlaying(false); return; }
+    if (index >= events.length - 1) setIndex(0);
+    setPlaying(true);
+  }
   if (!event) return <main className="session-notebook-main"><div className="empty-state">Replay is unavailable because no ordered privacy-safe event ledger was retained.</div></main>;
-  return <main className="session-notebook-main replay-shell"><p className="replay-boundary"><strong>Ordered evidence replay</strong><span>Replay follows retained event order; it never executes the Session again.</span></p><div className="replay-layout"><section className="replay-stage"><article className={`replay-event-card ${event.type}`}><header><div><small>{event.label ?? event.type}</small><h3>{event.title ?? `Event ${index + 1}`}</h3></div><div className="replay-event-badges"><span className="replay-excerpt">{event.timeBasis ?? "sequence"}</span></div></header><div className="replay-event-meta"><code>{formatStamp(event.atMs)}</code><span>Turn {event.turnIndex ?? "—"}</span><span>{index + 1} / {events.length}</span></div><div className="replay-event-body"><p>{event.body ?? "No privacy-safe body retained."}</p></div>{event.files?.length ? <div className="replay-stage-files"><strong>Files</strong>{event.files.map((file) => <button type="button" key={file}><code>{file}</code></button>)}</div> : null}</article></section><aside className="replay-index"><div className="replay-index-tabs"><button type="button" aria-selected="true">Events <span>{events.length}</span></button><button type="button" aria-selected="false">Files <span>{session.files?.length ?? 0}</span></button></div><div className="replay-index-body"><div className="replay-event-list">{events.map((candidate, candidateIndex) => <button type="button" className={candidateIndex === index ? "replay-current" : undefined} key={candidate.id} onClick={() => setIndex(candidateIndex)}><span className="replay-event-order">{candidateIndex + 1}</span><span className="replay-event-copy"><strong>{candidate.title ?? candidate.label ?? candidate.type}</strong><small>{candidate.body ?? "No body retained"}</small></span><span className="replay-event-kind">{candidate.type}</span></button>)}</div></div></aside></div><nav className="react-replay-controls"><button type="button" disabled={index === 0} onClick={() => setIndex((value) => Math.max(0, value - 1))}>Previous</button><strong>Event {index + 1} of {events.length}</strong><button type="button" disabled={index === events.length - 1} onClick={() => setIndex((value) => Math.min(events.length - 1, value + 1))}>Next</button></nav></main>;
+  const start = session.replay?.startMs;
+  const end = session.replay?.endMs;
+  const timed = Number.isFinite(start) && Number.isFinite(end) && Number(end) > Number(start);
+  return <section id="react-session-panel-replay" role="tabpanel" aria-labelledby="react-session-tab-replay" className="session-mode-panel replay-shell"><div className="replay-boundary"><strong>Read-only evidence playback</strong><span>Replay advances through retained evidence. It never reruns tools, resumes the host Session, or invents missing time.</span></div><div className="replay-layout"><main className="replay-stage" tabIndex={0} aria-label="Current replay event; J and L move between events, Space toggles playback" onKeyDown={(keyboardEvent) => { if (keyboardEvent.key.toLowerCase() === "j") { keyboardEvent.preventDefault(); setIndex(index - 1); } else if (keyboardEvent.key.toLowerCase() === "l") { keyboardEvent.preventDefault(); setIndex(index + 1); } else if (keyboardEvent.key === " ") { keyboardEvent.preventDefault(); togglePlayback(); } }}><article className={`replay-event-card ${event.type}`}><header><div><small>{event.label ?? event.type}</small><h3>{event.title ?? `Event ${index + 1}`}</h3></div><div className="replay-event-badges">{event.status === "failed" && <span className="replay-status failed">Failed</span>}{event.availability === "unavailable" && <span className="replay-availability">Content unavailable</span>}{event.bodyExcerpt && <span className="replay-excerpt">Excerpt</span>}</div></header><div className="replay-event-meta"><span>{replayTiming(event)}</span>{event.meta && <code>{event.meta}</code>}{Number.isFinite(event.durationMs) && <span>{formatDuration(event.durationMs)}</span>}</div><div className="replay-event-body"><p>{event.body ?? "No privacy-safe body retained."}</p></div>{event.files?.length ? <div className="replay-stage-files"><strong>Files</strong>{event.files.map((file) => <button type="button" key={file} onClick={() => { const next = replayIndexForFile(events, files, file); if (next >= 0) setIndex(next); }}><code>{file}</code></button>)}</div> : null}<footer><span>{event.turnIndex ? `Turn ${event.turnIndex}` : "Outside any observed Turn"}</span></footer></article></main><aside className="replay-index"><div className="replay-index-tabs" role="tablist" aria-label="Replay index"><button type="button" role="tab" aria-selected={indexTab === "events"} tabIndex={indexTab === "events" ? 0 : -1} onClick={() => setIndexTab("events")} onKeyDown={(keyEvent) => moveInspectorTab(keyEvent, "files", setIndexTab)}>Events <span>{events.length}</span></button><button type="button" role="tab" aria-selected={indexTab === "files"} tabIndex={indexTab === "files" ? 0 : -1} onClick={() => setIndexTab("files")} onKeyDown={(keyEvent) => moveInspectorTab(keyEvent, "events", setIndexTab)}>Files <span>{files.length}</span></button></div><div className="replay-index-body" role="tabpanel">{indexTab === "events" ? <div className="replay-event-list">{events.map((candidate, candidateIndex) => <button ref={candidateIndex === index ? currentEventRow : undefined} type="button" className={candidateIndex === index ? "replay-current" : undefined} aria-current={candidateIndex === index ? "step" : undefined} key={candidate.id} onClick={() => setIndex(candidateIndex)}><span className="replay-event-order">{candidate.order ?? candidateIndex + 1}</span><span className="replay-event-copy"><strong>{candidate.title ?? candidate.label ?? candidate.type}</strong><small>{replayTiming(candidate)}</small></span><span className="replay-event-kind">{candidate.type.replace("-", " ")}</span></button>)}</div> : files.length ? <div className="replay-file-list">{files.map((file) => <button type="button" key={file.path} onClick={() => { const next = replayIndexForFile(events, files, file.path); if (next >= 0) setIndex(next); }}><code>{file.path}</code><span>{file.eventIds.length} events</span></button>)}</div> : <div className="empty-state">No repository-relative file was retained for Replay.</div>}</div></aside></div><section className="replay-transport" aria-label="Replay controls"><div className="replay-rail-head"><strong>Session timeline</strong><span>{timed ? `${formatStamp(start)} → ${formatStamp(end)} UTC` : "Sequence axis · no observed event timing"}</span></div><div className="react-replay-rail">{events.map((candidate, candidateIndex) => <button type="button" className={`replay-rail-mark ${candidate.type}${candidate.status === "failed" ? " failed" : ""}`} aria-label={`Event ${candidateIndex + 1}: ${candidate.title ?? candidate.type}`} style={{ left: `${timed && Number.isFinite(candidate.atMs) ? ((Number(candidate.atMs) - Number(start)) / (Number(end) - Number(start))) * 100 : (candidateIndex / Math.max(1, events.length - 1)) * 100}%` }} onClick={() => setIndex(candidateIndex)} key={candidate.id} />)}<i className="react-replay-cursor" style={{ left: `${timed && Number.isFinite(event.atMs) ? ((Number(event.atMs) - Number(start)) / (Number(end) - Number(start))) * 100 : (index / Math.max(1, events.length - 1)) * 100}%` }} /></div><div className="replay-rail-legend">{replayLegend(events).map(([type, label]) => <span className={type} key={type}>{label}</span>)}</div><div className="replay-controls"><button type="button" disabled={index === 0} onClick={() => setIndex(index - 1)}>Previous event <kbd>J</kbd></button><button type="button" className="replay-play" aria-pressed={playing} onClick={togglePlayback}>{playing ? "Pause" : "Play"} <kbd>Space</kbd></button><button type="button" disabled={index === events.length - 1} onClick={() => setIndex(index + 1)}>Next event <kbd>L</kbd></button><span className="replay-position">Event {index + 1} / {events.length}</span><div className="replay-speeds" aria-label="Replay speed">{[1, 2, 4, 8].map((value) => <button type="button" aria-pressed={speed === value} onClick={() => setSpeed(value)} key={value}>{value}x</button>)}</div></div></section></section>;
 }
 
 function itemsForScope(mode: Mode, scope: string, days: Day[], byNode: Map<string, FeatureNode>, byStory: Map<string, Story>, bySession: Map<string, Session>): Item[] {
@@ -328,7 +484,7 @@ function countActions(calls: ToolCall[]): Array<[string, { count: number; family
   return [...counts].sort((left, right) => right[1].count - left[1].count);
 }
 
-function toggle(values: Set<string>, value: string): Set<string> { const next = new Set(values); if (next.has(value)) next.delete(value); else next.add(value); return next; }
+function toggle<T>(values: Set<T>, value: T): Set<T> { const next = new Set(values); if (next.has(value)) next.delete(value); else next.add(value); return next; }
 function toggleNumber(values: Set<number>, value: number): Set<number> { const next = new Set(values); if (next.has(value)) next.delete(value); else next.add(value); return next; }
 function moveInspectorTab<T extends string>(event: React.KeyboardEvent<HTMLButtonElement>, next: T, select: (value: T) => void): void { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); select(next); const target = event.currentTarget.nextElementSibling ?? event.currentTarget.previousElementSibling; (target as HTMLButtonElement | null)?.focus(); }
 function sessionTitle(session: Session): string { return session.prompts?.[0]?.text ?? session.locator ?? session.sessionId; }
@@ -339,6 +495,10 @@ function formatClock(value?: string | null): string { const date = new Date(valu
 function formatDate(value: string): string { const date = new Date(`${value}T00:00:00.000Z`); return Number.isNaN(date.valueOf()) ? value : new Intl.DateTimeFormat("en", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(date); }
 function formatStamp(value?: number | null): string { return Number.isFinite(value) ? new Date(Number(value)).toISOString().slice(11, 19) : "time unavailable"; }
 function formatDuration(value?: number | null): string { if (!Number.isFinite(value)) return "duration unavailable"; const ms = Math.max(0, Number(value)); return ms < 1_000 ? `${Math.round(ms)} ms` : ms < 60_000 ? `${(ms / 1_000).toFixed(ms < 10_000 ? 1 : 0)} s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1_000)}s`; }
+function formatToolRunDuration(calls: ToolCall[]): string { const duration = observedDurationTotal(calls); return duration === undefined ? "—" : `${formatDuration(duration)} total`; }
+function replayTiming(event: ReplayEvent): string { return event.timeBasis === "observed" ? `${formatStamp(event.atMs)} UTC · observed time` : event.timeBasis === "turn-boundary" ? `${formatStamp(event.atMs)} UTC · Turn boundary, not exact event time` : "Sequence only · timestamp unavailable"; }
+function replayLegend(events: ReplayEvent[]): Array<[string, string]> { const present = new Set(events.map((event) => event.type)); const labels: Array<[string, string]> = [["prompt", "Prompt"], ["intermediate", "Intermediate"], ["response", "Response"], ["tool-call", "Tool call"], ["commit", "Commit"]]; const entries = labels.filter(([type]) => present.has(type)); if (events.some((event) => event.status === "failed")) entries.push(["failed", "Failed"]); return entries; }
+function formatTokenUsage(usage?: Session["tokenUsage"]): string { const total = (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0) + (usage?.cacheReadInputTokens ?? 0); return total > 0 ? new Intl.NumberFormat("en", { notation: total >= 10_000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(total) : "unavailable"; }
 /**
  * The standalone report carries its own literal copy of the palette so it can
  * open offline. Studio owns the active *theme*, so the report's literal
@@ -375,5 +535,5 @@ const LINK_FOCUS_CSS = ".date-session-row:focus-visible{outline:2px solid var(--
 const REACT_CSS = `
   ${NARROW_METRIC_CSS}
   ${LINK_FOCUS_CSS}
-  :host,.native-inspector-root{display:block;width:100%;height:100%;min-height:0}.date-session-row{text-decoration:none}.react-action-list{display:grid;max-height:280px;overflow:auto;border-top:1px solid var(--color-border)}.react-action-list .session-tool-row{grid-template-columns:52px minmax(100px,1fr) 74px}.workbench-unevidenced .workbench-head{border-bottom:0}.workbench-unevidenced-note{margin:0;padding:0 12px 10px 12px;color:var(--color-text-muted);font-size:12px;line-height:16px}.react-diagnostics{margin:10px 12px 0;border:1px solid var(--color-border);border-radius:var(--radius-lg);color:var(--color-text-muted);background:var(--color-surface-subtle);font-size:12px}.react-diagnostics summary{padding:7px 9px;cursor:pointer;font-weight:700}.react-diagnostics ul{margin:0;padding:0 26px 9px}.react-replay-controls{position:sticky;bottom:0;margin-top:14px;padding:10px 12px;display:flex;align-items:center;justify-content:center;gap:12px;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-surface);box-shadow:var(--shadow-popover)}.react-replay-controls button{min-height:30px;border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:4px 9px;color:var(--color-text);background:var(--color-surface);cursor:pointer}.react-replay-controls button:disabled{opacity:.45;cursor:not-allowed}.react-replay-controls strong{font-size:12px}
+  :host,.native-inspector-root{display:block;width:100%;height:100%;min-height:0}.native-inspector-root{position:relative}.native-inspector-root .session-view{position:absolute;inset:0;width:100%;height:100%}.date-session-row{text-decoration:none}.react-action-list{display:grid;max-height:280px;overflow:auto;border-top:1px solid var(--color-border)}.react-action-list .session-tool-row{grid-template-columns:52px minmax(100px,1fr) 74px}.workbench-unevidenced .workbench-head{border-bottom:0}.workbench-unevidenced-note{margin:0;padding:0 12px 10px 12px;color:var(--color-text-muted);font-size:12px;line-height:16px}.react-diagnostics{margin:10px 12px 0;border:1px solid var(--color-border);border-radius:var(--radius-lg);color:var(--color-text-muted);background:var(--color-surface-subtle);font-size:12px}.react-diagnostics summary{padding:7px 9px;cursor:pointer;font-weight:700}.react-diagnostics ul{margin:0;padding:0 26px 9px}.react-session-axis{position:relative;height:52px;margin:4px 0 10px;border-bottom:1px solid var(--color-border);background:linear-gradient(to right,var(--color-border) 1px,transparent 1px);background-size:25% 100%}.react-session-axis>i{position:absolute;bottom:0;width:2px;min-height:12px;height:58%;transform:translateX(-1px);border-radius:1px}.react-session-axis>span{display:grid;height:100%;place-items:center;color:var(--color-text-muted);font-size:12px}.replay-transport{background:var(--color-surface);box-shadow:var(--shadow-popover)}.react-replay-rail{position:relative;height:30px;margin:4px 8px 10px;border-bottom:2px solid var(--color-border-strong)}.react-replay-rail .replay-rail-mark{position:absolute;bottom:-4px;width:7px;height:14px;transform:translateX(-50%);border:0;border-radius:2px;background:var(--color-categorical-2);cursor:pointer}.react-replay-rail .replay-rail-mark.prompt{background:var(--color-categorical-1)}.react-replay-rail .replay-rail-mark.response{background:var(--color-success)}.react-replay-rail .replay-rail-mark.commit{background:var(--color-warning)}.react-replay-rail .replay-rail-mark.failed{box-shadow:0 0 0 2px var(--color-danger)}.react-replay-cursor{position:absolute;top:0;bottom:-5px;width:2px;transform:translateX(-1px);background:var(--color-primary);pointer-events:none}.session-view button:focus-visible,.session-view summary:focus-visible,.session-view select:focus-visible{outline:2px solid var(--color-focus);outline-offset:2px}.session-tool-copy .family-dot{flex:none}.session-process-stream>.session-process-facts{padding:10px}.session-markdown{display:block}
 `;
