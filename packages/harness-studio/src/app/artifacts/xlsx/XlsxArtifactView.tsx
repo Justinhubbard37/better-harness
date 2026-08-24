@@ -1,3 +1,4 @@
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMemo, useState, type CSSProperties, type KeyboardEvent } from "react";
 import type {
   XlsxCellSnapshot,
@@ -12,6 +13,7 @@ export function XlsxArtifactView({ artifact }: ArtifactSurfaceMountContext): Rea
   const { snapshot, failure } = useArtifactSnapshot(artifact, "xlsx/v1", "XLSX");
   const [sheetRequest, setSheetRequest] = useState<{ revisionId: string; sheetIndex: number }>();
   const [selection, setSelection] = useState<{ revisionId: string; address: string }>();
+  const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
   const requestedSheetIndex = sheetRequest?.revisionId === artifact.revision.id ? sheetRequest.sheetIndex : undefined;
   const selectedAddress = selection?.revisionId === artifact.revision.id ? selection.address : undefined;
   const setSelectedAddress = (address: string): void => {
@@ -30,8 +32,8 @@ export function XlsxArtifactView({ artifact }: ArtifactSurfaceMountContext): Rea
       <strong>{selectedAddress ?? sheet.label}</strong>
       <span>{selectedCell?.formula === undefined ? (selectedCell?.display ?? "Read-only workbook") : `=${selectedCell.formula}`}</span>
     </header>
-    <div className="xlsx-grid-scroll" aria-label={`${sheet.label} worksheet`}>
-      <XlsxGrid sheet={sheet} selectedAddress={selectedAddress} onSelect={setSelectedAddress} />
+    <div ref={setScrollElement} className="xlsx-grid-scroll" aria-label={`${sheet.label} worksheet`}>
+      <XlsxGrid sheet={sheet} selectedAddress={selectedAddress} onSelect={setSelectedAddress} scrollElement={scrollElement} />
     </div>
     <nav className="xlsx-sheet-tabs" aria-label="Worksheets">
       {snapshot.payload.sheets.map((candidate, index) => <button
@@ -56,14 +58,26 @@ function XlsxGrid(props: {
   sheet: XlsxWorksheetSnapshot;
   selectedAddress?: string;
   onSelect: (address: string) => void;
+  scrollElement: HTMLDivElement | null;
 }): React.JSX.Element {
   const model = useMemo(() => gridModel(props.sheet), [props.sheet]);
+  const rowVirtualizer = useVirtualizer({
+    count: props.sheet.rowCount,
+    getScrollElement: () => props.scrollElement,
+    estimateSize: (index) => rowHeight(props.sheet, index + 1),
+    overscan: 8,
+  });
+  const rows = rowVirtualizer.getVirtualItems();
+  const topSpacer = rows[0]?.start ?? 0;
+  const bottomSpacer = rows.length === 0 ? 0 : rowVirtualizer.getTotalSize() - rows[rows.length - 1]!.end;
   return <table className="xlsx-grid" role="grid" aria-rowcount={props.sheet.rowCount} aria-colcount={props.sheet.columnCount}>
     <colgroup><col className="xlsx-row-number-column" />{Array.from({ length: props.sheet.columnCount }, (_, index) => <col key={index} style={{ width: `${columnWidth(props.sheet, index + 1)}px` }} />)}</colgroup>
     <thead><tr><th aria-hidden="true" />{Array.from({ length: props.sheet.columnCount }, (_, index) => <th key={index} scope="col">{columnLabel(index + 1)}</th>)}</tr></thead>
-    <tbody>{Array.from({ length: props.sheet.rowCount }, (_, rowOffset) => {
-      const row = rowOffset + 1;
-      return <tr key={row} style={{ height: `${rowHeight(props.sheet, row)}px` }}>
+    <tbody>
+      {topSpacer > 0 && <tr className="xlsx-virtual-spacer" aria-hidden="true"><td colSpan={props.sheet.columnCount + 1} style={{ height: `${topSpacer}px` }} /></tr>}
+      {rows.map((virtualRow) => {
+      const row = virtualRow.index + 1;
+      return <tr key={row} data-index={virtualRow.index} ref={rowVirtualizer.measureElement} style={{ height: `${rowHeight(props.sheet, row)}px` }}>
         <th scope="row">{row}</th>
         {Array.from({ length: props.sheet.columnCount }, (_, columnOffset) => {
           const column = columnOffset + 1;
@@ -93,11 +107,14 @@ function XlsxGrid(props: {
               props.sheet.rowCount,
               props.sheet.columnCount,
               props.onSelect,
+              (index, options) => rowVirtualizer.scrollToIndex(index, options),
             )}
           >{cell?.display ?? ""}</td>;
         })}
       </tr>;
-    })}</tbody>
+      })}
+      {bottomSpacer > 0 && <tr className="xlsx-virtual-spacer" aria-hidden="true"><td colSpan={props.sheet.columnCount + 1} style={{ height: `${bottomSpacer}px` }} /></tr>}
+    </tbody>
   </table>;
 }
 
@@ -128,6 +145,7 @@ function handleCellKeyDown(
   rowCount: number,
   columnCount: number,
   onSelect: (address: string) => void,
+  scrollToRow: (index: number, options?: { align?: "auto" | "center" | "end" | "start" }) => void,
 ): void {
   if (event.key === "Enter" || event.key === " ") {
     event.preventDefault();
@@ -147,15 +165,21 @@ function handleCellKeyDown(
   let row = Number(event.currentTarget.dataset.row) + delta[0];
   let column = Number(event.currentTarget.dataset.column) + delta[1];
   while (row >= 1 && row <= rowCount && column >= 1 && column <= columnCount) {
-    const target = grid?.querySelector<HTMLElement>(`[role='gridcell'][data-row='${row}'][data-column='${column}']`);
+    let target = grid?.querySelector<HTMLElement>(`[role='gridcell'][data-row='${row}'][data-column='${column}']`);
     if (target !== undefined && target !== null) {
       const targetAddress = target.dataset.address;
       if (targetAddress !== undefined) onSelect(targetAddress);
       target.focus();
       return;
     }
-    row += delta[0];
-    column += delta[1];
+    const address = `${columnLabel(column)}${row}`;
+    onSelect(address);
+    scrollToRow(row - 1, { align: "auto" });
+    globalThis.requestAnimationFrame?.(() => {
+      target = grid?.querySelector<HTMLElement>(`[role='gridcell'][data-row='${row}'][data-column='${column}']`);
+      target?.focus();
+    });
+    return;
   }
 }
 

@@ -176,6 +176,18 @@ function proposedIntentFixture(packet: IntentCorrelationPacketV1) {
 }
 
 describe("harness-studio server", () => {
+  it("serves ESM worker assets with a JavaScript MIME type", async () => {
+    const appDir = await makeAppDir();
+    await mkdir(join(appDir, "assets"));
+    await writeFile(join(appDir, "assets", "worker.mjs"), "export {};\n", "utf8");
+    started = await startHarnessStudioServer({ appDir });
+
+    const response = await fetch(`${started.url}/assets/worker.mjs`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+  });
+
   it("reports which surfaces are enabled through /api/config", async () => {
     const appDir = await makeAppDir();
     const evidenceDir = await makeTempDir("studio-evidence-");

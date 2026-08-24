@@ -36,6 +36,7 @@ import {
 } from "./artifact-build-runtimes.js";
 import { DOCX_ARTIFACT_ADAPTER } from "./docx-artifact-adapter.js";
 import { MARKDOWN_ARTIFACT_ADAPTER } from "./markdown-artifact-adapter.js";
+import { PDF_ARTIFACT_ADAPTER } from "./pdf-artifact-adapter.js";
 import { PPTX_ARTIFACT_ADAPTER } from "./pptx-artifact-adapter.js";
 import { XLSX_ARTIFACT_ADAPTER } from "./xlsx-artifact-adapter.js";
 
@@ -128,6 +129,15 @@ function nativeResolution(kind: ArtifactKind): ArtifactPluginBinding | undefined
       capabilities: ["navigate", "outline", "select", "zoom"],
     };
   }
+  if (kind === "pdf") {
+    return {
+      backing: "data",
+      adapter: PDF_ARTIFACT_ADAPTER,
+      renderer: { id: "studio.pdf-canvas", label: "Studio PDF", provider: "studio", type: "native", status: "ready" },
+      surface: { kind: "native", rendererId: "studio.pdf-canvas" },
+      capabilities: ["navigate", "zoom"],
+    };
+  }
   if (kind === "xlsx") {
     return {
       backing: "data",
@@ -188,7 +198,7 @@ function studioDocumentPreviewResolution(entry: ArtifactEntry): ArtifactPluginBi
   };
 }
 
-function nativeRendererLabel(kind: Exclude<ArtifactKind, "unknown" | "docx" | "pptx" | "xlsx" | "mermaid">): string {
+function nativeRendererLabel(kind: Exclude<ArtifactKind, "unknown" | "docx" | "pdf" | "pptx" | "xlsx" | "mermaid">): string {
   return ({
     code: "Studio code",
     diff: "Studio diff",

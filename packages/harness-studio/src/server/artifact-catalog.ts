@@ -72,7 +72,7 @@ const FORMAT_BY_EXTENSION = new Map<string, ArtifactFormat>([
   [".mermaid", { kind: "mermaid", mediaType: "text/plain; charset=utf-8" }],
   [".mmd", { kind: "mermaid", mediaType: "text/plain; charset=utf-8" }],
   [".patch", { kind: "diff", mediaType: "text/plain; charset=utf-8" }],
-  [".pdf", { kind: "unknown", mediaType: "application/pdf" }],
+  [".pdf", { kind: "pdf", mediaType: "application/pdf" }],
   [".png", { kind: "image", mediaType: "image/png" }],
   [".pptx", { kind: "pptx", mediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }],
   [".sh", { kind: "code", mediaType: "text/plain; charset=utf-8" }],

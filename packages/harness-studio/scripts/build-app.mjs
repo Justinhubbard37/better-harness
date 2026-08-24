@@ -45,6 +45,7 @@ await Promise.all([
     copyFile(join(packageRoot, "src", "app", "styles", file), join(appDir, "assets", file)),
   ),
   copyFile(join(inspectorAssetRoot, "workbench.css"), join(appDir, "assets", "inspector-workbench.css")),
+  copyFile(join(repositoryRoot, "node_modules", "pdfjs-dist", "legacy", "build", "pdf.worker.mjs"), join(appDir, "assets", "pdf.worker.mjs")),
 ]);
 process.stdout.write(`Built studio app into ${appDir}\n`);
 process.exit(0);

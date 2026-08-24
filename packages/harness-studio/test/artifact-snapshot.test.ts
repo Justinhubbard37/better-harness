@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isArtifactDataSnapshot, type ArtifactDataSnapshot, type ArtifactDescriptor } from "../src/artifact-model.js";
+import { isArtifactDataSnapshot, type ArtifactDataSnapshot, type ArtifactDescriptor, XLSX_ARTIFACT_PREVIEW_LIMITS } from "../src/artifact-model.js";
 import { isArtifactSnapshotFor } from "../src/app/artifacts/useArtifactSnapshot.js";
 
 const DIGEST_A = `sha256:${"1".repeat(64)}` as const;
@@ -52,7 +52,7 @@ describe("Artifact snapshot loading contract", () => {
     expect(isArtifactDataSnapshot(xlsx)).toBe(true);
     expect(isArtifactDataSnapshot({
       ...xlsx,
-      payload: { ...xlsx.payload, sheets: [{ ...worksheet, rowCount: 201 }] },
+      payload: { ...xlsx.payload, sheets: [{ ...worksheet, rowCount: XLSX_ARTIFACT_PREVIEW_LIMITS.rowsPerSheet + 1 }] },
     })).toBe(false);
     expect(isArtifactDataSnapshot({
       ...xlsx,
@@ -73,6 +73,29 @@ describe("Artifact snapshot loading contract", () => {
           mergedRanges: [{ ref: "A2:A1", startRow: 2, startColumn: 1, endRow: 1, endColumn: 1 }],
         }],
       },
+    })).toBe(false);
+  });
+
+  it("rejects PDF page counts, order, and geometry that could over-allocate canvas memory", () => {
+    const snapshot = docxSnapshot();
+    const page = { index: 1, width: 612, height: 792, rotation: 0 };
+    const pdf = {
+      ...snapshot,
+      schemaId: "pdf/v1",
+      payload: { kind: "pdf/v1", resourceId: "document", pageCount: 1, pages: [page] },
+    };
+    expect(isArtifactDataSnapshot(pdf)).toBe(true);
+    expect(isArtifactDataSnapshot({
+      ...pdf,
+      payload: { ...pdf.payload, pages: [{ ...page, index: 2 }] },
+    })).toBe(false);
+    expect(isArtifactDataSnapshot({
+      ...pdf,
+      payload: { ...pdf.payload, pages: [{ ...page, width: 10_001 }] },
+    })).toBe(false);
+    expect(isArtifactDataSnapshot({
+      ...pdf,
+      payload: { ...pdf.payload, pages: [{ ...page, width: 6_000, height: 6_000 }] },
     })).toBe(false);
   });
 });

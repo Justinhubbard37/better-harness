@@ -51,6 +51,7 @@
     "esbuild-wasm": "0.28.1",
     "fast-xml-parser": "^5.11.0",
     "fflate": "^0.8.3",
+    "pdfjs-dist": "^6.2.108",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

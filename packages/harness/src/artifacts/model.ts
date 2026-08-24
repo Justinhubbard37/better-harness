@@ -244,6 +244,31 @@ export interface PptxArtifactPayload {
   slides: PptxSlideSnapshot[];
 }
 
+export interface PdfPageSnapshot {
+  index: number;
+  width: number;
+  height: number;
+  rotation: 0 | 90 | 180 | 270;
+}
+
+/** Public safety bounds for Studio's browser-consumable PDF projection. */
+export const PDF_ARTIFACT_PREVIEW_LIMITS = Object.freeze({
+  inputBytes: 64 * 1024 * 1024,
+  pages: 500,
+  pageDimensionPoints: 10_000,
+  pageAreaPoints: 25_000_000,
+  canvasDimensionPixels: 8_192,
+  canvasAreaPixels: 16_000_000,
+});
+
+/** Bounded read-only projection; page pixels are rendered from the exact resource bytes. */
+export interface PdfArtifactPayload {
+  kind: "pdf/v1";
+  resourceId: string;
+  pageCount: number;
+  pages: PdfPageSnapshot[];
+}
+
 export interface DocxTextRun {
   kind: "text";
   text: string;
@@ -353,8 +378,8 @@ export interface XlsxRowSnapshot {
 /** Public safety bounds for the browser-consumable XLSX projection. */
 export const XLSX_ARTIFACT_PREVIEW_LIMITS = Object.freeze({
   sheets: 64,
-  rowsPerSheet: 200,
-  columnsPerSheet: 64,
+  rowsPerSheet: 10_000,
+  columnsPerSheet: 256,
   populatedCells: 50_000,
 });
 
@@ -437,6 +462,7 @@ export type ArtifactSnapshotPayload =
   | DocxArtifactPayload
   | XlsxArtifactPayload
   | PptxArtifactPayload
+  | PdfArtifactPayload
   | MarkdownArtifactPayload
   | QoderCanvasArtifactPayload
   | ExternalArtifactPayload;
@@ -566,10 +592,31 @@ function isKnownArtifactPayload(value: Record<string, unknown>): boolean {
       && Array.isArray(value.slides)
       && value.slides.every(isPptxSlide);
   }
+  if (value.kind === "pdf/v1") {
+    return typeof value.resourceId === "string"
+      && Number.isInteger(value.pageCount)
+      && (value.pageCount as number) > 0
+      && (value.pageCount as number) <= PDF_ARTIFACT_PREVIEW_LIMITS.pages
+      && Array.isArray(value.pages)
+      && value.pages.length === value.pageCount
+      && value.pages.every((page, index) => isPdfPage(page, index + 1));
+  }
   if (value.kind === "xlsx/v1") {
     return isXlsxPayload(value);
   }
   return true;
+}
+
+function isPdfPage(value: unknown, expectedIndex: number): boolean {
+  return isRecord(value)
+    && Number.isInteger(value.index)
+    && value.index === expectedIndex
+    && isPositiveFiniteNumber(value.width)
+    && isPositiveFiniteNumber(value.height)
+    && (value.width as number) <= PDF_ARTIFACT_PREVIEW_LIMITS.pageDimensionPoints
+    && (value.height as number) <= PDF_ARTIFACT_PREVIEW_LIMITS.pageDimensionPoints
+    && (value.width as number) * (value.height as number) <= PDF_ARTIFACT_PREVIEW_LIMITS.pageAreaPoints
+    && (value.rotation === 0 || value.rotation === 90 || value.rotation === 180 || value.rotation === 270);
 }
 
 function isArtifactStructureNode(value: unknown): boolean {

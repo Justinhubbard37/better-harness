@@ -52,6 +52,7 @@ describe("resolveArtifactKind", () => {
 
   it("classifies native Office adapters without guessing unknown binaries", () => {
     expect(resolveArtifactKind("document.docx")).toBe("docx");
+    expect(resolveArtifactKind("document.pdf")).toBe("pdf");
     expect(resolveArtifactKind("deck.pptx")).toBe("pptx");
     expect(resolveArtifactKind("workbook.xlsx")).toBe("xlsx");
     expect(resolveArtifactKind("archive.bin")).toBe("unknown");

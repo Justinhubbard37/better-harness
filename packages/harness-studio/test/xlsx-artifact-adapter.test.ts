@@ -109,6 +109,18 @@ describe("XLSX ArtifactDataAdapter", () => {
     expect(payload.sheets[1]!.cells.find((cell) => cell.address === "C2")?.display).toBe("Canvas TSX");
   });
 
+  it("retains populated cells beyond the former 200-row preview window", async () => {
+    const directory = await makeTempDirectory();
+    await writeFile(join(directory, "large.xlsx"), createXlsxFixture({ farRow: 420 }));
+    const index = await indexArtifactDirectory(directory, { includeDigests: true });
+    const descriptor = describeArtifactCatalog(index, (entry) => resolveArtifactPlugin(entry)).artifacts[0]!;
+    const snapshot = await XLSX_ARTIFACT_ADAPTER.adapt({ entry: index.entries[0]!, descriptor });
+    const payload = snapshot.payload as XlsxArtifactPayload;
+    expect(payload.sheets[0]).toMatchObject({ rowCount: 420 });
+    expect(payload.sheets[0]!.cells.find((cell) => cell.address === "A420")).toMatchObject({ display: "Virtualized row" });
+    expect(snapshot.diagnostics.some((diagnostic) => diagnostic.code === "XLSX_SHEET_TRUNCATED")).toBe(false);
+  });
+
   it("rejects invalid ZIP, unsafe paths, XML entities, and a missing workbook target", async () => {
     await expectRejectedBytes(strToU8("not a zip archive"), /zip|archive|invalid|data/iu);
     await expectRejectedBytes(zipSync({ "../outside.xml": strToU8("escape") }), /unsafe entry path/u);

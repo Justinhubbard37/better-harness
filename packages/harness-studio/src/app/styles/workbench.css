@@ -1320,6 +1320,25 @@
 .docx-outline-pane strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .docx-outline-pane small { color: var(--color-text-muted); font-size: var(--type-meta-size); }
 
+.pdf-artifact-viewer { min-width: 0; min-height: 0; display: grid; grid-template-rows: var(--pane-header-height) minmax(0, 1fr) var(--statusbar-height); background: var(--color-workspace); }
+.pdf-view-toolbar { min-width: 0; padding: 0 var(--space-sm); display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); border-bottom: 1px solid var(--color-border); background: var(--color-panel); }
+.pdf-view-toolbar > div { height: 100%; display: flex; align-items: center; }
+.pdf-view-toolbar button { width: var(--toolbar-target); height: var(--toolbar-target); display: grid; place-items: center; border: 0; border-radius: var(--radius-xs); color: var(--color-text); background: transparent; }
+.pdf-view-toolbar button:hover { background: var(--color-surface-hover); }
+.pdf-view-toolbar button:disabled { color: var(--color-text-subtle); }
+.pdf-view-toolbar button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.pdf-page-navigation output { min-width: 72px; color: var(--color-text-muted); font-size: var(--type-meta-size); text-align: center; font-variant-numeric: tabular-nums; }
+.pdf-page-scroll { min-width: 0; min-height: 0; overflow: auto; padding: var(--space-lg); background: var(--color-canvas); }
+.pdf-page-scroll:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.pdf-page-stack { position: relative; min-width: 100%; }
+.pdf-page-slot { position: absolute; top: 0; left: 0; width: 100%; padding-bottom: 24px; display: flex; justify-content: center; }
+.pdf-page-frame { position: relative; flex: none; margin: 0; overflow: hidden; outline: 1px solid var(--color-border-strong); background: var(--color-document-paper); box-shadow: var(--shadow-popover); }
+.pdf-page-frame canvas { display: block; }
+.pdf-page-frame figcaption { position: absolute; inset: 0; padding: var(--space-md); display: grid; place-items: center; color: var(--color-danger); background: var(--color-document-paper); }
+.pdf-diagnostics { min-width: 0; padding: 0 var(--space-sm); display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); border-top: 1px solid var(--color-border); color: var(--color-text-muted); background: var(--color-surface-subtle); font-size: var(--type-meta-size); }
+.pdf-diagnostics > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pdf-diagnostics .artifact-diagnostics { position: relative; min-width: 0; }
+
 .xlsx-artifact-viewer { min-width: 0; min-height: 0; display: grid; grid-template-rows: var(--pane-header-height) minmax(0, 1fr) var(--pane-header-height) var(--statusbar-height); color: var(--color-document-ink); color-scheme: light; background: var(--color-document-paper); }
 .xlsx-formula-bar { min-width: 0; display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: center; border-bottom: 1px solid var(--color-border); color: var(--color-text); background: var(--color-panel); font-size: var(--type-meta-size); }
 .xlsx-formula-bar strong { align-self: stretch; padding: 0 var(--space-sm); display: flex; align-items: center; overflow: hidden; border-right: 1px solid var(--color-border); font-family: var(--font-code); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
@@ -1335,6 +1354,7 @@
 .xlsx-grid td:hover { outline: 1px solid var(--color-border-strong); outline-offset: -1px; }
 .xlsx-grid td.selected { position: relative; z-index: 1; outline: 2px solid var(--color-primary); outline-offset: -2px; }
 .xlsx-grid td:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.xlsx-grid .xlsx-virtual-spacer td { height: 0; padding: 0; border: 0; }
 .xlsx-sheet-tabs { min-width: 0; padding: 0 var(--space-sm); display: flex; align-items: end; gap: 1px; overflow-x: auto; border-top: 1px solid var(--color-border); background: var(--color-panel); }
 .xlsx-sheet-tabs button { height: calc(var(--pane-header-height) - 4px); min-width: 72px; padding: 0 var(--space-md); border: 0; border-top: 2px solid transparent; color: var(--color-text-muted); background: transparent; font: inherit; font-size: var(--type-meta-size); white-space: nowrap; }
 .xlsx-sheet-tabs button:hover { color: var(--color-text); background: var(--color-surface-hover); }

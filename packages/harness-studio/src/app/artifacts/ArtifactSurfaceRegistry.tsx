@@ -5,6 +5,7 @@ import { DocxArtifactView } from "./docx/DocxArtifactView.js";
 import { ExternalHostedArtifactView } from "./ExternalHostedArtifactView.js";
 import { ImageArtifactView } from "./ImageArtifactView.js";
 import { PptxArtifactView } from "./pptx/PptxArtifactView.js";
+import { PdfArtifactView } from "./pdf/PdfArtifactView.js";
 import { TextArtifactView } from "./TextArtifactView.js";
 import { XlsxArtifactView } from "./xlsx/XlsxArtifactView.js";
 import type { ArtifactSurfaceKind, ArtifactSurfaceMount } from "./ArtifactSurface.js";
@@ -45,6 +46,11 @@ export const ARTIFACT_SURFACE_MOUNTS: readonly ArtifactSurfaceMount[] = Object.f
     id: "studio.docx-dom",
     matches: (artifact) => normalizeArtifactSurfaceKind(artifact) === "native" && artifact.renderer.id === "studio.docx-dom",
     Component: DocxArtifactView,
+  },
+  {
+    id: "studio.pdf-canvas",
+    matches: (artifact) => normalizeArtifactSurfaceKind(artifact) === "native" && artifact.renderer.id === "studio.pdf-canvas",
+    Component: PdfArtifactView,
   },
   {
     id: "studio.pptx-dom",

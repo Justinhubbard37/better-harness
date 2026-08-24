@@ -9,6 +9,7 @@ export type ArtifactKind =
   | "json"
   | "markdown"
   | "mermaid"
+  | "pdf"
   | "pptx"
   | "svg"
   | "text"
