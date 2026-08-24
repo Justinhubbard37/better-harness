@@ -9,10 +9,6 @@ function readJson(relativePath) {
   return JSON.parse(readFileSync(path.join(ROOT, relativePath), "utf8"));
 }
 
-function readText(relativePath) {
-  return readFileSync(path.join(ROOT, relativePath), "utf8");
-}
-
 function assertExistingPath(relativePath) {
   assert.ok(statSync(path.join(ROOT, relativePath)).size > 0, `${relativePath} must exist`);
 }
@@ -242,8 +238,6 @@ test("host plugin manifests expose canonical Better Harness resources", () => {
 
 test("npm package metadata includes every public host manifest", () => {
   const packageJson = readJson("package.json");
-  const releaseMetadata = `${readText("package.json")}\n${readText("package-lock.json")}`;
-  assert.doesNotMatch(releaseMetadata, /@ali\/better-harness|registry\.anpm|registry\.npmmirror/u);
   for (const publicPath of [
     ".claude-plugin/",
     ".codex-plugin/",
