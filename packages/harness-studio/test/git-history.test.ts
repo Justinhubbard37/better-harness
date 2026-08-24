@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   isGitRepository,
   layoutCommitGraph,
+  layoutCommitGraphPage,
   parseLogRecords,
   parseNameStatus,
   parseNumstat,
@@ -135,7 +136,29 @@ describe("workspace Git history", () => {
     expect(stats.get("after.txt")).toEqual({ additions: 1, deletions: 2, binary: false });
     expect(stats.get("other.txt")).toEqual({ additions: 3, deletions: 4, binary: false });
   });
+
+  it("breaks reused lanes between independent branch heads while preserving parent continuation", () => {
+    const sharedParent = "c".repeat(40);
+    const records = parseLogRecords([
+      logRecord("a".repeat(40), "branch one", sharedParent),
+      logRecord("b".repeat(40), "branch two", sharedParent),
+      logRecord(sharedParent, "shared parent", "d".repeat(40)),
+    ].join(""));
+
+    const graph = layoutCommitGraph(records);
+    expect(graph[0]).toMatchObject({ lane: 0, activeLanes: [] });
+    expect(graph[1]).toMatchObject({ lane: 1, activeLanes: [0], graphEdges: [{ fromLane: 1, toLane: 0, isMerge: false }] });
+    expect(graph[2]).toMatchObject({ lane: 0, activeLanes: [0] });
+
+    const firstPage = layoutCommitGraphPage(records.slice(0, 1));
+    const secondPage = layoutCommitGraphPage(records.slice(2), firstPage.lanes);
+    expect(secondPage.commits[0]).toMatchObject({ lane: 0, activeLanes: [0] });
+  });
 });
+
+function logRecord(sha: string, summary: string, parent: string): string {
+  return `${sha}\x1f${sha.slice(0, 7)}\x1f${summary}\x1fAlice\x1falice@example.com\x1f2026-08-24T10:00:00Z\x1f${parent}\x00`;
+}
 
 async function makeRepository(): Promise<{
   path: string;

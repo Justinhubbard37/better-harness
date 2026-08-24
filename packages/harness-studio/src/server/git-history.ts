@@ -321,11 +321,11 @@ export function layoutCommitGraphPage(
   const lanes = [...initialLanes];
   const laidOut = commits.map((commit) => {
     let lane = lanes.indexOf(commit.sha);
+    const activeLanes = lanes.flatMap((value, index) => value === undefined ? [] : [index]);
     if (lane < 0) {
       lane = firstEmptyLane(lanes);
       lanes[lane] = commit.sha;
     }
-    const activeLanes = lanes.flatMap((value, index) => value === undefined ? [] : [index]);
     lanes[lane] = undefined;
     const graphEdges: GitGraphEdge[] = [];
     commit.parents.forEach((parent, parentIndex) => {
