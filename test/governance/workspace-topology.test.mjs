@@ -12,9 +12,86 @@ import {
   findingTargetErrors,
   findingTargetFromTopology,
   ownerRouteForPath,
+  resolveConfiguredCwd,
   resolveWorkspaceTopology,
   validateWorkspaceTopology,
 } from "../../scripts/workspace-topology/index.mjs";
+
+test("configured cwd uses segment-aware canonical containment", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-configured-cwd-"));
+  const workspace = path.join(root, "work");
+  const dottedChild = path.join(workspace, "..valid-child");
+  const nestedDottedChild = path.join(dottedChild, "nested");
+  const sibling = path.join(root, "work-other");
+  const outside = path.join(root, "outside");
+  const escape = path.join(workspace, "escape");
+  try {
+    await Promise.all([
+      mkdir(nestedDottedChild, { recursive: true }),
+      mkdir(sibling, { recursive: true }),
+      mkdir(outside, { recursive: true }),
+    ]);
+    await symlink(outside, escape, "dir");
+
+    const canonicalWorkspace = await realpath(workspace);
+    assert.deepEqual(resolveConfiguredCwd({ workspace }), {
+      workspace: canonicalWorkspace,
+      cwd: canonicalWorkspace,
+    });
+    assert.equal(resolveConfiguredCwd({ workspace, cwd: dottedChild }).cwd, await realpath(dottedChild));
+    assert.equal(resolveConfiguredCwd({ workspace, cwd: nestedDottedChild }).cwd, await realpath(nestedDottedChild));
+
+    for (const cwd of [path.join(workspace, "..", "outside"), sibling, escape]) {
+      assert.throws(
+        () => resolveConfiguredCwd({ workspace, cwd }),
+        (error) => error?.code === "CONFIGURED_CWD_OUTSIDE_WORKSPACE",
+        cwd,
+      );
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("configured cwd delegates equivalent aliases to one canonical path authority", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "better-harness-configured-cwd-authority-"));
+  const canonicalWorkspace = path.join(root, "canonical-workspace");
+  const canonicalCwd = path.join(canonicalWorkspace, "packages", "api");
+  const firstWorkspaceAlias = path.join(root, "workspace-alias-a");
+  const firstCwdAlias = path.join(firstWorkspaceAlias, "packages", "api");
+  const secondWorkspaceAlias = path.join(root, "workspace-alias-b");
+  const secondCwdAlias = path.join(secondWorkspaceAlias, "packages", "api");
+  try {
+    await Promise.all([
+      mkdir(canonicalCwd, { recursive: true }),
+      mkdir(firstCwdAlias, { recursive: true }),
+      mkdir(secondCwdAlias, { recursive: true }),
+    ]);
+    const identities = new Map([
+      [path.resolve(firstWorkspaceAlias), canonicalWorkspace],
+      [path.resolve(firstCwdAlias), canonicalCwd],
+      [path.resolve(secondWorkspaceAlias), canonicalWorkspace],
+      [path.resolve(secondCwdAlias), canonicalCwd],
+    ]);
+    const dependencies = {
+      canonicalizePath: (value) => identities.get(path.resolve(value)) ?? path.resolve(value),
+    };
+
+    const first = resolveConfiguredCwd({
+      workspace: firstWorkspaceAlias,
+      cwd: firstCwdAlias,
+    }, dependencies);
+    const second = resolveConfiguredCwd({
+      workspace: secondWorkspaceAlias,
+      cwd: secondCwdAlias,
+    }, dependencies);
+
+    assert.deepEqual(first, { workspace: canonicalWorkspace, cwd: canonicalCwd });
+    assert.deepEqual(second, first);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 function git(cwd, args) {
   const result = spawnSync("git", args, {
