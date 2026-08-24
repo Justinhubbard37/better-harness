@@ -25,6 +25,7 @@ import { redactTraceValue } from "./qoder-sdk.js";
 const ACP_SDK_MODULE = "@agentclientprotocol/sdk";
 const MAX_PROTOCOL_EVENTS = 2_000;
 const MAX_PROTOCOL_PAYLOAD_BYTES = 65_536;
+const AGENT_EXIT_GRACE_MS = 2_000;
 
 type AcpSdk = typeof import("@agentclientprotocol/sdk");
 
@@ -253,11 +254,33 @@ export class AcpSdkExecutor implements HarnessExecutor {
         },
       };
     } finally {
-      if (child !== undefined && child.exitCode === null && child.signalCode === null) {
-        child.kill();
-      }
+      await reapAgent(child);
     }
   }
+}
+
+/**
+ * Terminate the Agent and wait for its exit before the run resolves. A live
+ * child holds an open handle on its cwd, so a caller that removes the run
+ * workspace right after `execute` fails with EBUSY on Windows.
+ */
+async function reapAgent(child: ChildProcessWithoutNullStreams | undefined): Promise<void> {
+  if (child === undefined || child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise<void>((resolvePromise) => {
+    child.once("exit", () => resolvePromise());
+    child.once("error", () => resolvePromise());
+  });
+  child.kill();
+  await Promise.race([exited, delay(AGENT_EXIT_GRACE_MS)]);
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGKILL");
+  await Promise.race([exited, delay(AGENT_EXIT_GRACE_MS)]);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolvePromise) => {
+    setTimeout(resolvePromise, ms).unref();
+  });
 }
 
 async function requestWithAbort<T>(

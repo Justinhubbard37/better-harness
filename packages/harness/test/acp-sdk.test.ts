@@ -1,4 +1,7 @@
-import { dirname, resolve } from "node:path";
+import { spawn, type ChildProcess } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { compileHarness } from "../src/compiler/compile.js";
@@ -134,5 +137,40 @@ describe("AcpSdkExecutor", () => {
     expect(result.errorOutput).toContain("ACP session/new cancelled.");
     expect(methods).toContain("$/cancel_request");
     expect(Date.now() - startedAt).toBeLessThan(5_000);
+  });
+
+  it("reaps the Agent before resolving so the run workspace can be removed", async () => {
+    const { bundle } = await compileHarness(SOURCE);
+    const { revision } = resolveHarness(bundle!, "live-acp", "acp", {
+      adapter: () => ACP_ADAPTER_DESCRIPTOR,
+    });
+    const workspace = await mkdtemp(join(tmpdir(), "acp-agent-cwd-"));
+    const agents: ChildProcess[] = [];
+    const executor = new AcpSdkExecutor({
+      command: process.execPath,
+      args: [FIXTURE],
+      requestPermission: async (_requestId, request) => ({
+        outcome: { outcome: "selected", optionId: request.options[0]!.optionId },
+      }),
+      spawnAgent: ((command, args, options) => {
+        const child = spawn(command as string, args as string[], options as object);
+        agents.push(child);
+        return child;
+      }) as typeof spawn,
+    });
+
+    // The fixture Agent stays alive until its stdio closes, so a run that
+    // resolves without reaping it leaves the process holding this cwd.
+    const result = await executor.execute(revision!, bundle!, {
+      prompt: "Prove ACP works",
+      cwd: workspace,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(agents).toHaveLength(1);
+    const agentProcess = agents[0]!;
+    expect(agentProcess.exitCode === null && agentProcess.signalCode === null).toBe(false);
+    // Windows refuses to remove a directory that is a live process' cwd.
+    await rm(workspace, { recursive: true });
   });
 });
