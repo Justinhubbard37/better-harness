@@ -90,6 +90,7 @@
     "harness-ui:build": "npm run build -w @qoder-ai/harness-ui",
     "harness-ui:test": "npm test -w @qoder-ai/harness-ui",
     "harness-studio:build": "npm run build -w @qoder-ai/harness-studio",
+    "harness-studio:dev": "npm run dev -w @qoder-ai/harness-studio --",
     "harness-studio:test": "npm test -w @qoder-ai/harness-studio",
     "harness-studio:test:browser": "npm run test:browser -w @qoder-ai/harness-studio",
     "inspector": "node scripts/harness-inspector/cli.mjs render",

@@ -124,10 +124,20 @@ of their outputs.
 ## Development
 
 ```sh
+npm run harness-studio:dev                  # live reload at http://127.0.0.1:3311
+npm run harness-studio:dev -- --port 4311   # forward workspace launcher options
 npm run harness-studio:build   # tsc + esbuild-wasm bundle
 npm run harness-studio:test
 npm run harness-studio:test:browser   # built-app Playwright interaction
 ```
+
+Run the development command from the repository root. It incrementally rebuilds
+Studio browser dependencies plus its HTML and styles, then reloads open pages
+after a successful build. A browser build error leaves the server running and
+the next valid edit recovers normally. The repository's local workspace launcher
+supplies Session discovery and the default ACP Agent. Server-side source changes
+still require restarting the command; this is live reload rather than React Fast
+Refresh.
 
 Publication is repository-owned: select `harness-studio` in the protected
 GitHub Actions `Publish npm` workflow. Local commands only build, test, pack,
