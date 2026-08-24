@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import { CaretRight } from "@phosphor-icons/react/CaretRight";
 import { File } from "@phosphor-icons/react/File";
 import { Folder } from "@phosphor-icons/react/Folder";
 import { MagnifyingGlass } from "@phosphor-icons/react/MagnifyingGlass";
 import { X } from "@phosphor-icons/react/X";
+import { Tree, type NodeRendererProps, type RowRendererProps } from "react-arborist";
 import {
   buildUserInputFileTree,
   isUserInputTrace,
@@ -31,6 +33,8 @@ export function InputTraceView(props: { intentAnalysisEnabled: boolean }): React
   const [analysis, setAnalysis] = useState<IntentCorrelationAnalysisV1>();
   const [analysisState, setAnalysisState] = useState<"idle" | "running">("idle");
   const [analysisFailure, setAnalysisFailure] = useState<string>();
+  const [fileTreeElement, setFileTreeElement] = useState<HTMLDivElement | null>(null);
+  const [fileTreeMetrics, setFileTreeMetrics] = useState({ height: 1, rowHeight: 30, indent: 12, padding: 4 });
 
   useEffect(() => {
     let cancelled = false;
@@ -50,6 +54,27 @@ export function InputTraceView(props: { intentAnalysisEnabled: boolean }): React
     })();
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (fileTreeElement === null) return;
+    const measure = (): void => {
+      const styles = getComputedStyle(fileTreeElement);
+      const next = {
+        height: Math.max(fileTreeElement.clientHeight, 1),
+        rowHeight: cssPixelValue(styles, "--row-height", 30),
+        indent: cssPixelValue(styles, "--space-md", 12),
+        padding: cssPixelValue(styles, "--space-xs", 4),
+      };
+      setFileTreeMetrics((current) => current.height === next.height
+        && current.rowHeight === next.rowHeight
+        && current.indent === next.indent
+        && current.padding === next.padding ? current : next);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(fileTreeElement);
+    return () => observer.disconnect();
+  }, [fileTreeElement]);
 
   const providers = useMemo(() => trace === undefined ? [] : [...new Set(trace.inputs.map((input) => input.provider))].sort(), [trace]);
   const filteredInputs = useMemo(() => {
@@ -105,7 +130,35 @@ export function InputTraceView(props: { intentAnalysisEnabled: boolean }): React
       <header><strong>Files</strong><span>{treeFileCount(tree)}</span></header>
       {tree.length === 0
         ? <p>No exact file links in this filter.</p>
-        : <ul className="input-file-tree" role="tree">{tree.map((node) => <FileTreeNode key={node.id} node={node} selectedPath={selectedPath} highlightedPaths={highlightedPaths} onSelect={(path) => { setSelectedPath((current) => current === path ? undefined : path); setNarrowSurface("inputs"); }} />)}</ul>}
+        : <div className="input-file-tree" ref={setFileTreeElement}>
+          <Tree<UserInputFileTreeNode>
+            aria-label="Workspace files linked to user inputs"
+            childrenAccessor={(node) => node.kind === "directory" ? node.children : null}
+            data={tree}
+            disableDrag
+            disableDrop
+            disableEdit
+            disableMultiSelection
+            disableSelect={(node) => node.kind === "directory"}
+            height={fileTreeMetrics.height}
+            indent={fileTreeMetrics.indent}
+            openByDefault
+            paddingBottom={fileTreeMetrics.padding}
+            paddingTop={fileTreeMetrics.padding}
+            rowClassName="input-file-tree-row"
+            rowHeight={fileTreeMetrics.rowHeight}
+            selection={selectedPath === undefined ? undefined : `file:${selectedPath}`}
+            width="100%"
+            renderRow={FileTreeRow}
+            onActivate={(node) => {
+              if (!node.isLeaf) return;
+              setSelectedPath((current) => current === node.data.path ? undefined : node.data.path);
+              setNarrowSurface("inputs");
+            }}
+          >
+            {(nodeProps) => <FileTreeNode {...nodeProps} highlighted={highlightedPaths.has(nodeProps.node.data.path)} />}
+          </Tree>
+        </div>}
     </aside>
     <section className={`input-list-pane${trace.summary.truncatedSessionCount > 0 ? " has-boundary" : ""}${analysis !== undefined || analysisFailure !== undefined ? " has-analysis" : ""}`} aria-label="Retained user inputs">
       <header><div><strong>{trace.workspace.label}</strong><span>Retained inputs and exact observed file operations</span></div>{selectedPath !== undefined && <button type="button" onClick={() => setSelectedPath(undefined)}><X aria-hidden="true" size={13} />{selectedPath}</button>}</header>
@@ -132,17 +185,34 @@ function IntentProposalRow(props: { proposal: IntentProposal; analysis: IntentCo
   return <article><header><span>Proposed</span><strong>{props.proposal.title}</strong><small>{claims.length} claim{claims.length === 1 ? "" : "s"}</small></header><p>{props.proposal.summary}</p>{claims.length > 0 && <ul>{claims.map((claim) => <li key={claim.id}><code>{claim.predicate}</code><span>{claim.reason}</span><small title={claim.limitations.join("\n")}>{claim.evidenceStrength} · {claim.evidenceRefs.length} evidence ref{claim.evidenceRefs.length === 1 ? "" : "s"}</small></li>)}</ul>}</article>;
 }
 
-function FileTreeNode(props: {
-  node: UserInputFileTreeNode;
-  selectedPath?: string;
-  highlightedPaths: Set<string>;
-  onSelect: (path: string) => void;
-}): React.JSX.Element {
+function FileTreeRow(props: RowRendererProps<UserInputFileTreeNode>): React.JSX.Element {
+  return <div
+    {...props.attrs}
+    ref={props.innerRef}
+    aria-label={props.node.data.path}
+    className={`${props.attrs.className ?? ""}${props.node.data.kind === "directory" ? " directory" : " file"}`}
+    onClick={props.node.handleClick}
+    onFocus={(event) => event.stopPropagation()}
+  >{props.children}</div>;
+}
+
+function FileTreeNode(props: NodeRendererProps<UserInputFileTreeNode> & { highlighted: boolean }): React.JSX.Element {
   const { node } = props;
-  if (node.kind === "directory") {
-    return <li role="treeitem" aria-expanded="true"><div className="input-tree-directory"><Folder aria-hidden="true" size={14} weight="fill" /><span>{node.name}</span></div><ul role="group">{node.children.map((child) => <FileTreeNode key={child.id} {...props} node={child} />)}</ul></li>;
-  }
-  return <li role="treeitem"><button type="button" aria-pressed={props.selectedPath === node.path} className={props.highlightedPaths.has(node.path) ? "linked" : undefined} title={node.path} onClick={() => props.onSelect(node.path)}><File aria-hidden="true" size={14} /><span>{node.name}</span><small>{node.readCount > 0 ? `R${node.readCount}` : ""}{node.readCount > 0 && node.editTargetCount > 0 ? " " : ""}{node.editTargetCount > 0 ? `T${node.editTargetCount}` : ""}</small></button></li>;
+  const activity = node.data.readCount > 0 || node.data.editTargetCount > 0
+    ? `${node.data.readCount > 0 ? `R${node.data.readCount}` : ""}${node.data.readCount > 0 && node.data.editTargetCount > 0 ? " " : ""}${node.data.editTargetCount > 0 ? `T${node.data.editTargetCount}` : ""}`
+    : "";
+  return <div
+    className={`input-tree-node${node.isInternal ? " directory" : " file"}${props.highlighted && node.isLeaf ? " linked" : ""}`}
+    style={props.style}
+    title={node.data.path}
+  >
+    {node.isInternal
+      ? <button type="button" tabIndex={-1} aria-label={`${node.isOpen ? "Collapse" : "Expand"} ${node.data.path}`} aria-expanded={node.isOpen} onClick={(event) => { event.stopPropagation(); node.toggle(); }}><CaretRight aria-hidden="true" size={13} /></button>
+      : <span className="input-tree-spacer" aria-hidden="true" />}
+    {node.isInternal ? <Folder aria-hidden="true" size={14} weight="fill" /> : <File aria-hidden="true" size={14} />}
+    <span>{node.data.name}</span>
+    {node.isLeaf && <small>{activity}</small>}
+  </div>;
 }
 
 function InputRow(props: { input: UserInputRecord; selected: boolean; onSelect: () => void }): React.JSX.Element {
@@ -154,6 +224,11 @@ function InputRow(props: { input: UserInputRecord; selected: boolean; onSelect: 
     <span className="input-row-prompt">{props.input.text}</span>
     <span className="input-row-evidence">{reads > 0 && <em data-activity="read">{reads} read</em>}{editTargets > 0 && <em data-activity="edit-targeted">{editTargets} edit targeted</em>}{files.length === 0 ? <small>No observed file operation</small> : <small title={files.join("\n")}>{files.length} file{files.length === 1 ? "" : "s"}</small>}</span>
   </button></li>;
+}
+
+function cssPixelValue(styles: CSSStyleDeclaration, property: string, fallback: number): number {
+  const parsed = Number.parseFloat(styles.getPropertyValue(property));
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function treeFileCount(nodes: readonly UserInputFileTreeNode[]): number {

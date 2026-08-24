@@ -53,6 +53,7 @@
     "fflate": "^0.8.3",
     "pdfjs-dist": "^6.2.108",
     "react": "19.2.8",
+    "react-arborist": "^3.16.0",
     "react-dom": "19.2.8"
   },
   "devDependencies": {

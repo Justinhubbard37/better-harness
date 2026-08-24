@@ -940,21 +940,25 @@
 .input-file-pane > header span,
 .input-list-pane > header span { color: var(--color-text-muted); font-size: var(--type-meta-size); }
 .input-file-pane > p { margin: var(--space-md); color: var(--color-text-muted); }
-.input-file-tree,
-.input-file-tree ul { margin: 0; padding: 0; list-style: none; }
-.input-file-tree { min-height: 0; overflow: auto; padding: var(--space-xs) 0; }
-.input-file-tree ul { padding-left: var(--space-md); }
-.input-tree-directory,
-.input-file-tree button { width: 100%; min-width: 0; min-height: var(--row-height); display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: var(--space-xs); padding: 0 var(--space-sm); }
-.input-tree-directory { color: var(--color-text-muted); }
-.input-file-tree button { border: 0; border-left: 2px solid transparent; border-radius: var(--radius-none); color: var(--color-text); background: transparent; text-align: left; font-weight: var(--weight-regular); }
-.input-file-tree button:hover { background: var(--color-surface-hover); }
-.input-file-tree button.linked { color: var(--color-primary); background: var(--color-primary-soft); }
-.input-file-tree button[aria-pressed="true"] { border-left-color: var(--color-primary); color: var(--color-primary); background: var(--color-surface-selected); }
-.input-file-tree button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
-.input-tree-directory span,
-.input-file-tree button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.input-file-tree button small { color: var(--color-text-muted); font-family: var(--font-code); font-size: var(--type-meta-size); }
+.input-file-tree { min-width: 0; min-height: 0; overflow: hidden; }
+.input-file-tree > [role="tree"] { outline: 0; }
+.input-file-tree > [role="tree"]:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.input-file-tree-row { min-width: 100%; color: var(--color-text); cursor: default; }
+.input-tree-node { width: 100%; min-width: max-content; height: 100%; display: grid; grid-template-columns: 20px 16px minmax(0, 1fr) auto; align-items: center; gap: var(--space-xs); border-left: 2px solid transparent; padding-right: var(--space-sm); }
+.input-tree-node.directory { color: var(--color-text-muted); }
+.input-tree-node > button { width: 20px; height: 100%; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-none); color: var(--color-text-muted); background: transparent; }
+.input-tree-node > button:hover { color: var(--color-text); background: var(--color-surface-hover); }
+.input-tree-node > button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.input-tree-node > button svg { transition: transform var(--motion-fast); }
+.input-tree-node > button[aria-expanded="true"] svg { transform: rotate(90deg); }
+.input-tree-spacer { width: 20px; }
+.input-tree-node > span:not(.input-tree-spacer) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.input-tree-node small { color: var(--color-text-muted); font-family: var(--font-code); font-size: var(--type-meta-size); }
+.input-file-tree-row:hover .input-tree-node { background: var(--color-surface-hover); }
+.input-tree-node.linked { color: var(--color-primary); background: var(--color-primary-soft); }
+.input-file-tree-row[aria-selected="true"] .input-tree-node { border-left-color: var(--color-primary); color: var(--color-primary); background: var(--color-surface-selected); }
+.input-file-tree-row:focus-visible { outline: 0; }
+.input-file-tree-row:focus-visible .input-tree-node { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .input-list-pane { min-width: 0; min-height: 0; overflow: hidden; display: grid; grid-template-rows: var(--pane-header-height) minmax(0, 1fr); background: var(--color-workspace); }
 .input-list-pane.has-boundary { grid-template-rows: var(--pane-header-height) auto minmax(0, 1fr); }
 .input-list-pane.has-analysis { grid-template-rows: var(--pane-header-height) minmax(150px, 38%) minmax(0, 1fr); }
@@ -1029,7 +1033,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tool-chevron { transition: none; }
+  .tool-chevron,
+  .input-tree-node > button svg { transition: none; }
 }
 
 /* Artifacts: grouped explorer plus a revision-bound renderer host. */

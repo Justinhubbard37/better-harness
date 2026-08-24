@@ -23,7 +23,8 @@ before Better Harness groups inputs into versioned Intents.
   `read`; `edit-files` links are classified as `edit-targeted` because a tool
   target does not prove a content delta. Repeated calls to the
   same path aggregate call ids and counts without duplicating the path.
-- AC-3: The left pane presents the linked paths as a deterministic file tree.
+- AC-3: The left pane presents the linked paths as a deterministic, virtualized
+  file tree with collapsible directories and standard tree keyboard navigation.
   Selecting an input highlights its files; selecting a file filters the input
   list to Turns linked to that exact file. Text, provider, and activity filters
   compose without changing the underlying evidence.
@@ -62,17 +63,23 @@ before Better Harness groups inputs into versioned Intents.
    a docked file-tree/input-list workbench with exact-path and activity filters.
 4. Cover projection, validation, API errors, navigation, filtering, keyboard,
    responsive overflow, and current-project reconciliation.
+5. Replace the bespoke recursive tree markup with `react-arborist`, keep the
+   existing evidence model and exact-file filtering semantics, and render
+   project-owned rows with Phosphor icons and shared Studio tokens.
 
 ## Test and Review Evidence
 
 - AC-1..AC-5: focused model and server tests over synthetic multi-Session,
   repeated-path, missing-text, and malformed/absolute-path cases.
 - AC-3/AC-6: Playwright interactions at 1440x900, 900x760, and 390x844,
-  including input selection, file filtering, activity filtering, focus, and
-  document-width checks.
+  including folder disclosure with pointer and arrow keys, input selection,
+  exact-file filtering, activity filtering, focus, and document-width checks.
 - AC-7: a read-only current-project reconciliation command that compares the
   projector result with an independent traversal of the discovered Inspector
   report and prints provider/input/read/change/unlinked totals.
+- Risk: the tree library owns composite focus, disclosure, and virtualization.
+  Keep file selection separate from directory disclosure, disable mutation
+  affordances, and verify the rendered ARIA tree through browser behavior.
 - Risk: normalized provider evidence can omit text or file paths. The view
   reports only retained facts and keeps unlinked inputs visible.
 - Risk: one tool call may report several paths or the same path repeatedly.
@@ -95,3 +102,12 @@ before Better Harness groups inputs into versioned Intents.
 - Current-project browser smoke: API, navigation status, rendered input rows,
   and rendered file rows matched the fixture evidence, with 0 console or
   page errors and no document-level horizontal overflow.
+- `react-arborist` replacement validation on 2026-08-24: Studio build and
+  typecheck passed; the focused three-case Input Trace model test and the
+  Playwright Input Trace scenario passed. Pointer disclosure, ArrowLeft/Right
+  disclosure, exact-file selection, wide/compact/narrow layouts, and zero
+  console/page errors were also verified against the running Studio.
+- The full Studio unit suite had 243 passing and 4 failing tests. The failures
+  are confined to concurrent Artifact provider routing changes in
+  `artifact-provider-server`, `docx-artifact-server`, and
+  `xlsx-artifact-server`; no Input Trace test failed.
