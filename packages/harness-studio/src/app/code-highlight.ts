@@ -46,15 +46,16 @@ const languageLoaders: Record<StudioCodeLanguage, () => Promise<{ default: Langu
   yaml: () => import("@shikijs/langs/yaml"),
 };
 
+// Shiki reads `settings` first; an empty `settings` array suppresses its
+// `tokenColors` fallback and makes every token inherit the editor foreground.
 const studioLightTheme: ThemeRegistrationRaw = {
   name: "harness-studio-light",
   type: "light",
-  settings: [],
   colors: {
     "editor.background": "#ffffff",
     "editor.foreground": "#27334a",
   },
-  tokenColors: [
+  settings: [
     { scope: ["comment", "punctuation.definition.comment"], settings: { foreground: "#718096", fontStyle: "italic" } },
     { scope: ["string", "string.quoted", "string.template"], settings: { foreground: "#0b7a55" } },
     { scope: ["constant.numeric", "constant.language", "constant.character"], settings: { foreground: "#8b5b13" } },
@@ -68,12 +69,11 @@ const studioLightTheme: ThemeRegistrationRaw = {
 const studioDarkTheme: ThemeRegistrationRaw = {
   name: "harness-studio-dark",
   type: "dark",
-  settings: [],
   colors: {
     "editor.background": "#101319",
     "editor.foreground": "#e8ecf3",
   },
-  tokenColors: [
+  settings: [
     { scope: ["comment", "punctuation.definition.comment"], settings: { foreground: "#8c97a9", fontStyle: "italic" } },
     { scope: ["string", "string.quoted", "string.template"], settings: { foreground: "#46d3a3" } },
     { scope: ["constant.numeric", "constant.language", "constant.character"], settings: { foreground: "#f0b667" } },

@@ -7,7 +7,7 @@ describe("Studio syntax highlighting", () => {
     const lines = await highlightStudioCode(source, "result.json");
     expect(lines).toBeDefined();
     expect(lines!.map((line) => line.map((token) => token.content).join("")).join("\n")).toBe(source);
-    expect(lines!.flat().some((token) => token.color !== undefined)).toBe(true);
+    expect(tokenPalette(lines!)).toHaveLength(3);
   });
 
   it("preserves common repository source across light and dark token themes", async () => {
@@ -22,6 +22,8 @@ describe("Studio syntax highlighting", () => {
     expect(dark).toBeDefined();
     expect(reconstruct(light!)).toBe(source);
     expect(reconstruct(dark!)).toBe(source);
+    expect(tokenPalette(light!).length).toBeGreaterThan(1);
+    expect(tokenPalette(dark!).length).toBeGreaterThan(1);
     expect(new Set(light!.flat().map((token) => token.color))).not.toEqual(new Set(dark!.flat().map((token) => token.color)));
   });
 
@@ -34,6 +36,10 @@ describe("Studio syntax highlighting", () => {
     const lines = await highlightStudioCode(source, "workbench.css", "dark");
     expect(lines).toBeDefined();
     expect(lines!.map((line) => line.map((token) => token.content).join("")).join("\n")).toBe(source);
-    expect(lines!.flat().some((token) => token.color !== undefined)).toBe(true);
+    expect(tokenPalette(lines!).length).toBeGreaterThan(1);
   });
 });
+
+function tokenPalette(lines: NonNullable<Awaited<ReturnType<typeof highlightStudioCode>>>): string[] {
+  return [...new Set(lines.flat().flatMap((token) => token.color === undefined ? [] : [token.color]))];
+}

@@ -119,6 +119,9 @@ current exact bytes and revision digest from the workspace.
   exercises `beautiful-mermaid`, `entities`, `elkjs`, React DOM, and Scheduler.
 - AC-9: bounded unknown-text/binary catalog tests plus browser checks for
   highlighted source, failed-preview fallback, padding, and selection reset.
+  Syntax-highlighting evidence must prove that representative source produces
+  more than one semantic token color in both themes; a `highlighted` state with
+  only the editor foreground color is a plain-text regression, not a pass.
 - Package gates: `npm run typecheck`, focused Vitest, full
   `packages/harness-studio` tests, preview `/health` and `/canvas-module.js`,
   `git diff --check`, and the Markdown doc-link graph after regenerating it.
@@ -133,6 +136,11 @@ current exact bytes and revision digest from the workspace.
   padded source layout; the repository Mermaid graph with YAML front matter
   rendered successfully; no document-level overflow was observed at the three
   acceptance viewports.
+- Syntax-highlighting regression repair: representative MJS source now renders
+  five computed token colors in both dark and light themes instead of marking a
+  single-color foreground as highlighted. The focused highlighter tests pass
+  4/4 and the Artifact Workspace browser suite passes 3/3, including the
+  multi-color assertion and wide/compact/narrow overflow checks.
 - Preview smoke: existing `127.0.0.1:58575` process returned `ok` from
   `/health` and JavaScript from `/canvas-module.js`.
 - Documentation routing: regenerated `docs/better-harness-doc-links.mmd`; all

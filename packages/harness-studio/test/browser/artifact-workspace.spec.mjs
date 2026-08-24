@@ -177,6 +177,7 @@ test("keeps ordinary TSX source-only while Canvas TSX remains the executable for
   const source = page.locator('[aria-label="Artifact source: src/ordinary.tsx"]');
   await expect(source).toContainText("Source only");
   await expect(source.locator('[data-highlight-state="highlighted"]')).toBeVisible();
+  await expect.poll(async () => new Set(await source.locator("span[style]").evaluateAll((tokens) => tokens.map((token) => getComputedStyle(token).color))).size).toBeGreaterThan(1);
   expect(Number.parseFloat(await source.evaluate((element) => getComputedStyle(element).paddingLeft))).toBeGreaterThanOrEqual(12);
   await expect(page.locator(".artifact-runtime-tabs")).toHaveCount(0);
 });
