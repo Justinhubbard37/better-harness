@@ -195,8 +195,13 @@ describe("generic external hosted Artifact routes", () => {
 
     await writeFile(sdkPath, "export const mountCanvas = () => 'changed';\n", "utf8");
     expect((await fetch(`${server.url}${descriptor.renderer.viewUri}`)).status).toBe(415);
-    const refreshed = await (await fetch(`${server.url}/api/artifacts`)).json() as { artifacts: Array<{ renderer: { status: string } }> };
-    expect(refreshed.artifacts[0]!.renderer.status).toBe("unavailable");
+    const refreshed = await (await fetch(`${server.url}/api/artifacts`)).json() as { artifacts: Array<{ renderer: { id: string; status: string } }> };
+    expect(refreshed.artifacts[0]!.renderer).toMatchObject({
+      id: "studio.text",
+      provider: "studio",
+      type: "native",
+      status: "ready",
+    });
   });
 });
 

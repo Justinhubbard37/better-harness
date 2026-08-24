@@ -3,31 +3,17 @@ import type { Icon } from "@phosphor-icons/react";
 import { ArrowRight } from "@phosphor-icons/react/ArrowRight";
 import { Binoculars } from "@phosphor-icons/react/Binoculars";
 import { BugBeetle } from "@phosphor-icons/react/BugBeetle";
-import { CaretDown } from "@phosphor-icons/react/CaretDown";
-import { CaretRight } from "@phosphor-icons/react/CaretRight";
 import { ChatText } from "@phosphor-icons/react/ChatText";
-import { EyeSlash } from "@phosphor-icons/react/EyeSlash";
-import { File } from "@phosphor-icons/react/File";
-import { FileCode } from "@phosphor-icons/react/FileCode";
-import { FileImage } from "@phosphor-icons/react/FileImage";
-import { FilePpt } from "@phosphor-icons/react/FilePpt";
 import { Flask } from "@phosphor-icons/react/Flask";
 import { FolderOpen } from "@phosphor-icons/react/FolderOpen";
 import { GitBranch } from "@phosphor-icons/react/GitBranch";
 import { Moon } from "@phosphor-icons/react/Moon";
-import { MagnifyingGlass } from "@phosphor-icons/react/MagnifyingGlass";
 import { Package } from "@phosphor-icons/react/Package";
 import { PuzzlePiece } from "@phosphor-icons/react/PuzzlePiece";
 import { SidebarSimple } from "@phosphor-icons/react/SidebarSimple";
 import { SquaresFour } from "@phosphor-icons/react/SquaresFour";
 import { Sun } from "@phosphor-icons/react/Sun";
-import {
-  isArtifactCatalogResponse,
-  type ArtifactCatalogResponse,
-  type ArtifactDescriptor,
-  type ArtifactFamily,
-} from "../artifact-model.js";
-import { ArtifactView } from "./ArtifactView.js";
+import { ArtifactsWorkspace } from "./ArtifactsWorkspace.js";
 import { CompareView } from "./CompareView.js";
 import { CustomizationView } from "./CustomizationView.js";
 import { ExperimentView } from "./ExperimentView.js";
@@ -126,7 +112,6 @@ export function App(): React.JSX.Element {
   const [sources, setSources] = useState<StudioSourceOption[]>([]);
   const [dataRevision, setDataRevision] = useState(0);
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
-  const [selectedSessionId, setSelectedSessionId] = useState<string>();
   const [sessionCompareIds, setSessionCompareIds] = useState<[string, string] | undefined>();
   const [configFailure, setConfigFailure] = useState<string | null>(null);
   const [area, setArea] = useState<StudioArea>(areaFromHash);
@@ -224,7 +209,6 @@ export function App(): React.JSX.Element {
     setConfigFailure(null);
     setSources(loaded.sources);
     setConfig(loaded.config);
-    setSelectedSessionId(undefined);
     setSessionCompareIds(undefined);
     setCompareSurface((currentSurface) => compareSurfaces(loaded.config).includes(currentSurface) ? currentSurface : compareSurfaces(loaded.config)[0] ?? "sessions");
     setWorkspaceRevision((revision) => revision + 1);
@@ -272,6 +256,7 @@ export function App(): React.JSX.Element {
         <button ref={navigationToggleRef} className="studio-nav-toggle" type="button" title={navigationOpen ? "Close navigation" : "Open navigation"} aria-label={navigationOpen ? "Close Studio navigation" : "Open Studio navigation"} aria-expanded={navigationOpen} onClick={() => setNavigationOpen((value) => !value)}><SidebarSimple aria-hidden="true" size={17} /></button>
         <div className="studio-context-title"><h1>{AREA_COPY[area]}</h1></div>
         {contextNavigation && <div className="studio-context-navigation">{contextNavigation}</div>}
+        {config.workspaceDiscoveryEnabled && config.workspaceConnected && <WorkspaceFolderControls compact onWorkspaceChanged={workspaceChanged} />}
         <ThemeToggle theme={theme} onChange={setTheme} />
         {sources.length > 0 && <SourceSwitcher sources={sources} onSelect={(source) => void selectSource(source)} />}
         <div className="studio-context-state"><span className={`availability-dot availability-${current.availability}`} /><strong>{current.status}</strong></div>
@@ -282,9 +267,9 @@ export function App(): React.JSX.Element {
           ? <CustomizationView key={`customizations-${workspaceRevision}`} analyzed={config.customizationAnalyzed} onAnalyzed={customizationAnalyzed} />
           : <EmptyWorkspace eyebrow="Customization catalog" title={config.workspaceConnected ? "Customization analysis is unavailable" : "Open a project workspace"} detail={config.workspaceConnected ? "This Studio launcher does not include the local customization collector." : "Choose the project directory in Sessions before analyzing Host customizations."} />)}
         {area === "inputs" && (config.workspaceWorkbenchEnabled ? <InputTraceView key={`inputs-${workspaceRevision}`} intentAnalysisEnabled={config.intentAnalysisEnabled} /> : <EmptyWorkspace eyebrow="User input trace" title={config.workspaceConnected ? "No retained input trace is available" : "Open a project workspace"} detail={config.workspaceConnected ? "This workspace source does not include structured Inspector dialogue evidence." : "Choose the project directory in Sessions before browsing retained user inputs and exact file operations."} />)}
-        {area === "sessions" && <SessionsWorkspace key={`sessions-${dataRevision}-${workspaceRevision}`} config={config} onWorkspaceChanged={workspaceChanged} onSelectSession={setSelectedSessionId} onCompare={(ids) => { setSessionCompareIds(ids); setCompareSurface("sessions"); openArea("compare"); }} />}
+        {area === "sessions" && <SessionsWorkspace key={`sessions-${dataRevision}-${workspaceRevision}`} config={config} onWorkspaceChanged={workspaceChanged} onCompare={(ids) => { setSessionCompareIds(ids); setCompareSurface("sessions"); openArea("compare"); }} />}
         {area === "commits" && (config.gitEnabled ? <GitHistoryView key={`commits-${workspaceRevision}`} /> : <EmptyWorkspace eyebrow="Repository history" title={config.workspaceConnected ? "The open workspace is not a Git repository" : "Open a project workspace"} detail={config.workspaceConnected ? "Commit history is available only for a local workspace backed by Git." : "Choose the project directory in Sessions before browsing its local commit history."} />)}
-        {area === "artifacts" && <ArtifactsWorkspace key={`artifacts-${dataRevision}-${config.artifactsEnabled}-${selectedSessionId ?? "none"}`} config={config} selectedSessionId={selectedSessionId} />}
+        {area === "artifacts" && <ArtifactsWorkspace key={`artifacts-${dataRevision}-${workspaceRevision}-${config.artifactsEnabled}`} config={config} />}
         {area === "debugger" && <DebuggerWorkspace config={config} />}
         {area === "compare" && <CompareWorkspace key={`compare-${dataRevision}-${workspaceRevision}-${config.experimentEnabled}-${config.evidenceEnabled}`} config={config} surface={compareSurface} navigation={compareNavigation} sessionIds={sessionCompareIds} />}
       </div>
@@ -448,7 +433,6 @@ interface SessionSummary {
 function SessionsWorkspace(props: {
   config: StudioConfig;
   onWorkspaceChanged: () => Promise<void>;
-  onSelectSession: (id: string) => void;
   onCompare: (ids: [string, string]) => void;
 }): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionSummary[]>();
@@ -492,7 +476,6 @@ function SessionsWorkspace(props: {
       setDetailFailure(undefined);
       setSelected(id);
       setDetail(loaded);
-      props.onSelectSession(id);
     } catch (error) {
       if (cancelled()) return;
       const message = error instanceof Error ? error.message : "Session detail failed to load.";
@@ -535,7 +518,7 @@ function SessionsWorkspace(props: {
         <label title="Select for comparison"><input type="checkbox" checked={compareIds.has(session.id)} disabled={!compareIds.has(session.id) && compareIds.size >= 2} onChange={() => toggleCompare(session.id)} /></label>
         <button type="button" className={selected === session.id ? "selected" : undefined} onClick={() => void openSession(session.id)}><small>{session.provider ?? "Local agent"} · {formatSessionTime(session.savedAt)}</small><strong>{session.prompt}</strong><small>{session.status} · {session.toolCallCount} calls</small></button>
       </li>)}</ul>
-      <footer><button type="button" className="primary" disabled={pair.length !== 2} onClick={() => props.onCompare(pair as [string, string])}>Compare {pair.length}/2</button><WorkspaceFolderControls compact onWorkspaceChanged={props.onWorkspaceChanged} /><button type="button" onClick={() => void disconnect()}>Disconnect</button></footer>
+      <footer><button type="button" className="primary" disabled={pair.length !== 2} onClick={() => props.onCompare(pair as [string, string])}>Compare {pair.length}/2</button><button type="button" onClick={() => void disconnect()}>Disconnect</button></footer>
     </aside>
     <main className="session-detail-pane">
       {detailFailure !== undefined
@@ -628,7 +611,7 @@ function WorkspaceFolderControls(props: { autoFocus?: boolean; compact?: boolean
       : "Waiting for a project folder selection…";
 
   return <div className={`workspace-folder-controls${props.compact ? " is-compact" : ""}`}>
-    <button autoFocus={props.autoFocus} className={props.compact ? undefined : "primary"} type="button" disabled={busy} onClick={() => void openWorkspace()}><FolderOpen aria-hidden="true" size={14} />{busy ? "Opening…" : props.compact ? "Change workspace" : "Choose workspace"}</button>
+    <button autoFocus={props.autoFocus} className={props.compact ? undefined : "primary"} type="button" disabled={busy} aria-label={busy ? "Opening workspace" : props.compact ? "Change workspace" : "Choose workspace"} onClick={() => void openWorkspace()}><FolderOpen aria-hidden="true" size={14} /><span>{busy ? "Opening…" : props.compact ? "Change workspace" : "Choose workspace"}</span></button>
     {busy && <span className="workspace-open-progress" role="status" aria-live="polite"><i aria-hidden="true" /><small>{progressMessage}</small></span>}
     {failure !== undefined && <small className="workspace-folder-error" role="alert">{failure}</small>}
   </div>;
@@ -639,207 +622,6 @@ function formatSessionTime(value: string): string {
   return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
 }
 
-/**
- * Artifacts pane: a row list of run outputs plus a sandboxed preview.
- *
- * The preview frame withholds `allow-same-origin`, so artifact code runs on an
- * opaque origin and cannot reach the Studio shell.
- */
-type ArtifactNarrowSurface = "explorer" | "preview";
-
-function ArtifactsWorkspace(props: { config: StudioConfig; selectedSessionId?: string }): React.JSX.Element {
-  const [catalog, setCatalog] = useState<ArtifactCatalogResponse | undefined>(undefined);
-  const [failure, setFailure] = useState<string | undefined>(undefined);
-  const [selected, setSelected] = useState<string | undefined>(undefined);
-  const [query, setQuery] = useState("");
-  const [view, setView] = useState<"grouped" | "flat">("grouped");
-  const [collapsed, setCollapsed] = useState<Set<ArtifactFamily>>(() => new Set());
-  const [narrowSurface, setNarrowSurface] = useState<ArtifactNarrowSurface>("explorer");
-  const [liveGeneration, setLiveGeneration] = useState(0);
-  const [liveUpdates, setLiveUpdates] = useState(true);
-
-  useEffect(() => {
-    if (!props.config.artifactsEnabled) return;
-    let cancelled = false;
-    let requestSequence = 0;
-    const refreshCatalog = async (liveUpdate = false): Promise<void> => {
-      const request = ++requestSequence;
-      try {
-        const response = await fetch("/api/artifacts");
-        if (!response.ok) throw new Error(`Artifact catalog failed (${response.status}).`);
-        const payload: unknown = await response.json();
-        if (!isArtifactCatalogResponse(payload)) throw new Error("Artifact catalog contract is unsupported.");
-        if (cancelled || request !== requestSequence) return;
-        setFailure(undefined);
-        setCatalog(payload);
-        if (liveUpdate) setLiveGeneration((value) => value + 1);
-      } catch (error) {
-        if (!cancelled && request === requestSequence) setFailure(error instanceof Error ? error.message : String(error));
-      }
-    };
-    void refreshCatalog();
-    const events = new EventSource("/api/artifacts/events");
-    const invalidate = (): void => {
-      // Refetch the authoritative descriptor before asking the active Host to
-      // rebuild. Starting from the stale descriptor would intentionally hit the
-      // revision route's 409 guard during every ordinary file update.
-      void refreshCatalog(true);
-    };
-    events.addEventListener("artifacts.invalidated", invalidate);
-    events.addEventListener("open", () => { if (!cancelled) setLiveUpdates(true); });
-    events.addEventListener("error", () => {
-      // EventSource retries a dropped transport on its own, but gives up for
-      // good when the route answers with something that is not an event stream.
-      // Only that second case is worth telling an operator about, because the
-      // catalog on screen then stops tracking the directory silently.
-      if (!cancelled && events.readyState === EventSource.CLOSED) setLiveUpdates(false);
-    });
-    return () => { cancelled = true; events.close(); };
-  }, [props.config.artifactsEnabled]);
-
-  const narrowTabs = useRovingFocus<ArtifactNarrowSurface>({ ids: ["explorer", "preview"], active: narrowSurface, onSelect: setNarrowSurface });
-
-  if (!props.config.artifactsEnabled) {
-    return props.config.workspaceConnected
-      ? <EmptyWorkspace eyebrow="Session artifacts" title={props.selectedSessionId === undefined ? "Select a Session first" : "No artifacts indexed for this Session"} detail={props.selectedSessionId === undefined ? "Open Sessions and select retained evidence before viewing its outputs." : "The current Session adapter did not expose an artifact set. Studio does not substitute a loose global folder."} />
-      : <EmptyWorkspace eyebrow="Session artifacts" title="Open a project workspace" detail="Artifacts belong to a discovered Session. Choose the project directory in Sessions before opening its outputs." />;
-  }
-  if (failure !== undefined) {
-    return <EmptyWorkspace eyebrow="Session artifacts" title="Cannot read the compatibility artifact catalog" detail={failure} />;
-  }
-  if (catalog === undefined) {
-    return <p className="artifact-status" role="status">Loading artifacts…</p>;
-  }
-  const artifacts = catalog.artifacts;
-  if (artifacts.length === 0) {
-    return <EmptyWorkspace eyebrow="Session artifacts" title="No artifacts in this set" detail={catalog.omitted.length === 0
-      ? "The catalog contains no readable files."
-      : `The catalog declined every entry in this directory: ${describeOmissions(catalog.omitted)}.`} />;
-  }
-
-  const active = artifacts.find((entry) => entry.id === selected);
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  const visible = artifacts.filter((entry) => entry.label.toLocaleLowerCase().includes(normalizedQuery));
-  const groups = artifactGroups(visible);
-  const selectArtifact = (id: string): void => {
-    setSelected(id);
-    // Wide layouts keep both panes visible; on narrow layouts selecting a row
-    // should reveal the result instead of requiring a second, hidden action.
-    setNarrowSurface("preview");
-  };
-  const toggleGroup = (family: ArtifactFamily): void => setCollapsed((current) => {
-    const next = new Set(current);
-    if (next.has(family)) next.delete(family); else next.add(family);
-    return next;
-  });
-  return <section className="artifact-workspace" data-narrow-surface={narrowSurface} aria-label="Artifacts workspace">
-    <div className="artifact-narrow-tabs" role="tablist" aria-label="Artifact workspace view" onKeyDown={narrowTabs.onKeyDown}>
-      <button type="button" role="tab" id="artifact-tab-explorer" aria-controls="artifact-explorer-pane" aria-selected={narrowSurface === "explorer"} ref={narrowTabs.itemRef("explorer")} tabIndex={narrowTabs.tabIndexFor("explorer")} onClick={() => setNarrowSurface("explorer")}>Explorer</button>
-      <button type="button" role="tab" id="artifact-tab-preview" aria-controls="artifact-preview-pane" aria-selected={narrowSurface === "preview"} disabled={active === undefined} ref={narrowTabs.itemRef("preview")} tabIndex={narrowTabs.tabIndexFor("preview")} onClick={() => setNarrowSurface("preview")}>Preview</button>
-    </div>
-    <div className="artifact-list-pane" id="artifact-explorer-pane" role="tabpanel" aria-labelledby="artifact-tab-explorer">
-      <header><div><small>Revision-bound outputs</small><h2>Artifact Explorer</h2></div><span title={`Catalog revision ${catalog.snapshot.revision}`}>{normalizedQuery === "" ? artifacts.length : `${visible.length}/${artifacts.length}`}</span></header>
-      <div className="artifact-explorer-toolbar">
-        <label><MagnifyingGlass aria-hidden="true" size={14} /><span className="sr-only">Search artifacts</span><input value={query} type="search" placeholder="Search artifacts…" onChange={(event) => setQuery(event.currentTarget.value)} /></label>
-        <div className="artifact-view-switch" role="group" aria-label="Artifact list view">
-          <button type="button" aria-pressed={view === "grouped"} onClick={() => setView("grouped")}>Grouped</button>
-          <button type="button" aria-pressed={view === "flat"} onClick={() => setView("flat")}>Flat</button>
-        </div>
-      </div>
-      <nav className="artifact-rows" aria-label="Artifacts">
-        {visible.length === 0
-          ? <p className="artifact-list-empty">No filenames match “{query}”.</p>
-          : view === "flat"
-            ? visible.map((entry) => <ArtifactRow key={entry.id} artifact={entry} selected={entry.id === selected} onSelect={selectArtifact} />)
-            : groups.map((group) => <section className="artifact-group" key={group.family} aria-label={group.label}>
-              <button type="button" className="artifact-group-header" aria-expanded={!collapsed.has(group.family)} onClick={() => toggleGroup(group.family)}>
-                {collapsed.has(group.family) ? <CaretRight aria-hidden="true" size={14} /> : <CaretDown aria-hidden="true" size={14} />}
-                <span>{group.label}</span><small>{group.artifacts.length}</small>
-              </button>
-              {!collapsed.has(group.family) && group.artifacts.map((entry) => <ArtifactRow key={entry.id} artifact={entry} selected={entry.id === selected} onSelect={selectArtifact} />)}
-            </section>)}
-      </nav>
-      {catalog.omitted.length > 0 && <p className="artifact-omissions" role="note">Not listed: {describeOmissions(catalog.omitted)}.</p>}
-      {!liveUpdates && <p className="artifact-omissions" role="note">Live updates stopped. Reopen Artifacts to resume tracking this directory.</p>}
-    </div>
-    <div className="artifact-preview-pane" id="artifact-preview-pane" role="tabpanel" aria-labelledby="artifact-tab-preview">
-      {active === undefined
-        ? <p className="artifact-status" role="status">Select an artifact to preview it.</p>
-        : <><header className="artifact-editor-header"><div><strong>{active.label}</strong><small>{formatLabel(active.format)} · {formatBytes(active.size)} · {shortRevision(active.revision.id)}</small></div><span>{active.adapter.id} → {active.renderer.label}</span></header><ArtifactView authorityId={catalog.snapshot.catalogId} artifact={active} liveGeneration={liveGeneration} /></>}
-    </div>
-  </section>;
-}
-
-const OMISSION_LABELS: Record<string, string> = {
-  "hard-link": "hard-linked",
-  "not-a-file": "not a file",
-  "outside-root": "resolving outside the artifact directory",
-  symlink: "symlinked",
-};
-
-/** Says which entries the catalog declined and why, rather than dropping them. */
-function describeOmissions(omitted: ArtifactCatalogResponse["omitted"]): string {
-  return [...new Set(omitted.map((omission) => omission.reason))]
-    .map((reason) => {
-      const labels = omitted.filter((omission) => omission.reason === reason).map((omission) => omission.label);
-      return `${labels.length} ${OMISSION_LABELS[reason] ?? reason} (${labels.slice(0, 3).join(", ")}${labels.length > 3 ? ", …" : ""})`;
-    })
-    .join("; ");
-}
-
-const ARTIFACT_GROUPS: Array<{ family: ArtifactFamily; label: string }> = [
-  { family: "documents", label: "Documents" },
-  { family: "images-diagrams", label: "Images & diagrams" },
-  { family: "data", label: "Data" },
-  { family: "source-text", label: "Source & text" },
-  { family: "other", label: "Other" },
-];
-
-function artifactGroups(artifacts: ArtifactDescriptor[]): Array<{ family: ArtifactFamily; label: string; artifacts: ArtifactDescriptor[] }> {
-  return ARTIFACT_GROUPS.map((group) => ({ ...group, artifacts: artifacts.filter((artifact) => artifact.family === group.family) }))
-    .filter((group) => group.artifacts.length > 0);
-}
-
-function ArtifactRow(props: { artifact: ArtifactDescriptor; selected: boolean; onSelect: (id: string) => void }): React.JSX.Element {
-  const ArtifactIcon = props.artifact.format === "pptx" ? FilePpt : props.artifact.family === "images-diagrams" ? FileImage : props.artifact.family === "source-text" ? FileCode : File;
-  return <button
-    type="button"
-    className={`artifact-row${props.selected ? " selected" : ""}`}
-    aria-current={props.selected ? "true" : undefined}
-    onClick={() => props.onSelect(props.artifact.id)}
-  >
-    <ArtifactIcon aria-hidden="true" size={16} />
-    <span className="artifact-row-copy"><strong>{props.artifact.label}</strong><small>{formatLabel(props.artifact.format)} · {formatBytes(props.artifact.size)}</small></span>
-    {props.artifact.renderer.status === "unavailable" && <EyeSlash aria-label={props.artifact.renderer.reason ?? "Preview unavailable"} size={15} />}
-  </button>;
-}
-
-/** Display names live here, not in the versioned catalog contract. */
-const FORMAT_LABELS: Record<string, string> = {
-  docx: "Word",
-  file: "File",
-  lottie: "Lottie",
-  md: "Markdown",
-  mermaid: "Mermaid",
-  mmd: "Mermaid",
-  pdf: "PDF",
-  pptx: "PowerPoint",
-  xlsx: "Excel",
-};
-
-function formatLabel(format: string): string {
-  return FORMAT_LABELS[format] ?? format.toUpperCase();
-}
-
-function shortRevision(value: string): string {
-  return `${value.slice(0, 14)}…${value.slice(-6)}`;
-}
-
-function formatBytes(size: number): string {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function DebuggerWorkspace(props: { config: StudioConfig }): React.JSX.Element {
   if (!props.config.aguiEnabled) {

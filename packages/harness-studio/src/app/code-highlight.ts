@@ -26,6 +26,7 @@ const languageLoaders: Record<StudioCodeLanguage, () => Promise<{ default: Langu
   kotlin: () => import("@shikijs/langs/kotlin"),
   make: () => import("@shikijs/langs/make"),
   markdown: () => import("@shikijs/langs/markdown"),
+  mermaid: () => import("@shikijs/langs/mermaid"),
   mdx: () => import("@shikijs/langs/mdx"),
   php: () => import("@shikijs/langs/php"),
   powershell: () => import("@shikijs/langs/powershell"),

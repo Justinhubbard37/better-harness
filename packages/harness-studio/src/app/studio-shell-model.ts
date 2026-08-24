@@ -16,6 +16,7 @@ export interface StudioConfig {
   acpEnabled: boolean;
   acpAgentLabel?: string;
   artifactsEnabled: boolean;
+  artifactCount?: number;
   evidenceEnabled: boolean;
   experimentEnabled: boolean;
   gitEnabled: boolean;
@@ -88,7 +89,11 @@ export function studioDestinations(config: StudioConfig): readonly StudioDestina
       label: "Artifacts",
       group: "Observe",
       availability: config.artifactsEnabled ? "ready" : config.workspaceConnected ? "partial" : "foundation",
-      status: config.artifactsEnabled ? "Session outputs" : config.workspaceConnected ? "Select a session" : "Workspace required",
+      status: config.artifactsEnabled
+        ? config.artifactCount === undefined
+          ? "Compatibility catalog"
+          : `${config.artifactCount} artifact${config.artifactCount === 1 ? "" : "s"}`
+        : config.workspaceConnected ? "No observed outputs" : "Workspace required",
     },
     {
       id: "debugger",

@@ -56,6 +56,7 @@ import { sessionFromRetainedRun, type DebuggerSession } from "../app/session-deb
 import { pickLocalWorkspaceDirectory } from "./native-directory-picker.js";
 import {
   ArtifactCatalogContractError,
+  artifactIdForLabel,
   artifactRevisionBase,
   assertArtifactId,
   describeArtifactCatalog,
@@ -68,6 +69,7 @@ import {
   type ArtifactIndex,
   type IndexArtifactDirectoryOptions,
 } from "./artifact-catalog.js";
+import { collectWorkspaceArtifactObservations, type WorkspaceArtifactSourceObservation } from "./workspace-artifacts.js";
 import { formatTrustedRendererCompileError } from "./trusted-renderer-compiler.js";
 import {
   type ArtifactCompileLimits,
@@ -111,6 +113,7 @@ import {
 } from "../intent-correlation-model.js";
 import { buildIntentCorrelationPacket } from "./intent-correlation.js";
 import { validateStudioCustomizationAnalysis, type StudioCustomizationCollector } from "./customization-collector.js";
+import { WORKSPACE_ARTIFACT_NAVIGATION_KIND } from "../workspace-artifact-model.js";
 
 const builtInExecutorFactory: HarnessUiExecutorFactory = (context) => {
   if (context.runtimeId === "qoder") {
@@ -214,6 +217,8 @@ export interface HarnessStudioServerOptions {
   runDirectory?: string;
   /** Directory of run-produced artifacts exposed read-only under /api/artifacts. */
   artifactDirectory?: string;
+  /** Optional portable paths below artifactDirectory; omitted for a flat compatibility catalog. */
+  artifactPaths?: readonly string[];
   /** Provisioned Canvas format viewers (default: $QODER_HOME/canvas/canvases). */
   canvasViewerRoot?: string;
   /** Canvas SDK checkout used to host trusted format viewers. */
@@ -302,6 +307,7 @@ export function createHarnessStudioServer(options: HarnessStudioServerOptions): 
         : createCheckpointHistoryCatalogAdapter(resolvedOptions.checkpointHistoryCatalogPath)),
     observedIndexes: new Map(),
     artifactDirectory: resolvedOptions.artifactDirectory,
+    artifactPaths: resolvedOptions.artifactPaths,
     artifactImports: new Map(),
     artifactEventStreams: 0,
     workspaceImports: new Map(),
@@ -367,6 +373,8 @@ interface StudioWorkspace {
   inputTrace?: UserInputTraceV1;
   /** Server-only execution root for the selected local project. Never serialized. */
   localDirectory?: string;
+  /** Current workspace files supported by retained change/deliver evidence. */
+  artifactObservations?: WorkspaceArtifactSourceObservation[];
   /** Canonical server-only repository root. Never serialized. */
   gitRoot?: string;
   /** Ref snapshot shared by refs and log requests until the next explicit refresh. */
@@ -390,6 +398,7 @@ interface HarnessStudioState {
   lockReceipt?: ExperimentLockReceipt;
   observedIndexes: Map<string, ObservedCallIndex>;
   artifactDirectory?: string;
+  artifactPaths?: readonly string[];
   ownedArtifactDirectory?: string;
   artifactImports: Map<string, ArtifactImportSession>;
   artifactEventStreams: number;
@@ -413,9 +422,11 @@ interface AcpPendingPermission {
 }
 
 function artifactOptions(options: HarnessStudioServerOptions, state: HarnessStudioState): HarnessStudioServerOptions {
-  return state.artifactDirectory === options.artifactDirectory
-    ? options
-    : { ...options, artifactDirectory: state.artifactDirectory };
+  return {
+    ...options,
+    artifactDirectory: state.artifactDirectory,
+    ...(state.artifactPaths === undefined ? {} : { artifactPaths: state.artifactPaths }),
+  };
 }
 
 async function route(
@@ -432,6 +443,7 @@ async function route(
       acpEnabled: acpAgentEnabled(options),
       acpAgentLabel: options.acpAgent?.label ?? "ACP Agent",
       artifactsEnabled: state.artifactDirectory !== undefined,
+      artifactCount: state.artifactPaths?.length,
       evidenceEnabled: activeSourcePath(state.sourceCatalog, state.activeSources, "evidence") !== undefined,
       experimentEnabled: state.activeManifestPath !== undefined,
       harnessMode: options.harnessSource === undefined ? "none" : options.harnessMode ?? "configured",
@@ -457,7 +469,7 @@ async function route(
     return;
   }
   if (request.method === "DELETE" && url.pathname === "/api/workspace") {
-    await disconnectWorkspace(request, response, state);
+    await disconnectWorkspace(request, response, options, state);
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/workspace/open/status") {
@@ -619,7 +631,7 @@ async function route(
   }
   if (request.method === "GET" && url.pathname === "/api/artifacts") {
     if (!allowArtifactRead(request, response)) return;
-    await serveArtifactCatalog(response, artifactOptions(options, state));
+    await serveArtifactCatalog(response, artifactOptions(options, state), state.workspace);
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/artifact-providers") {
@@ -1003,6 +1015,8 @@ async function openWorkspace(
     const inputTrace = inspectorReport === undefined ? undefined : projectUserInputTrace(inspectorReport);
     const previous = state.workspace?.ownedDirectory;
     const gitRoot = await resolveGitRepositoryRoot(workspacePath);
+    const artifactObservations = await collectWorkspaceArtifactObservations(workspacePath, [...sessions.values()]);
+    const artifactPaths = [...new Set(artifactObservations.map((observation) => observation.relativePath))];
     state.workspace = {
       label: portableWorkspaceLabel(discovered.label),
       sessionCount: sessions.size,
@@ -1011,8 +1025,11 @@ async function openWorkspace(
       providers,
       ...(inspectorReport === undefined ? {} : { inspectorReport, inputTrace }),
       localDirectory: workspacePath,
+      artifactObservations,
       ...(gitRoot === undefined ? {} : { gitRoot, gitCommitCache: new Map<string, GitCommitDetail>() }),
     };
+    state.artifactDirectory = workspacePath;
+    state.artifactPaths = artifactPaths;
     state.customizationAnalysis = undefined;
     if (previous !== undefined) await rm(previous, { recursive: true, force: true }).catch(() => undefined);
     respondJson(response, 200, {
@@ -1220,6 +1237,7 @@ async function abortWorkspaceImport(
 async function disconnectWorkspace(
   request: IncomingMessage,
   response: ServerResponse,
+  options: HarnessStudioServerOptions,
   state: HarnessStudioState,
 ): Promise<void> {
   if (!sameOriginRequest(request)) {
@@ -1228,6 +1246,8 @@ async function disconnectWorkspace(
   }
   const workspace = state.workspace;
   state.workspace = undefined;
+  state.artifactDirectory = options.artifactDirectory;
+  state.artifactPaths = options.artifactPaths;
   state.customizationAnalysis = undefined;
   if (workspace?.ownedDirectory !== undefined) await rm(workspace.ownedDirectory, { recursive: true, force: true });
   respondJson(response, 200, { disconnected: workspace !== undefined });
@@ -1638,6 +1658,8 @@ async function commitArtifactImport(
   state.artifactImports.delete(sessionId);
   const previous = state.ownedArtifactDirectory;
   state.artifactDirectory = session.directory;
+  state.artifactPaths = undefined;
+  if (state.workspace !== undefined) delete state.workspace.artifactObservations;
   state.ownedArtifactDirectory = session.directory;
   if (previous !== undefined && previous !== session.directory) {
     await rm(previous, { recursive: true, force: true }).catch(() => undefined);
@@ -1735,13 +1757,14 @@ async function resolveArtifactRevision(
   directory: string | undefined,
   id: string,
   revision: string,
+  includePaths?: readonly string[],
 ): Promise<{ entry: ArtifactEntry; index: ArtifactIndex } | { error: string; status: number }> {
   try {
     assertArtifactId(id);
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error), status: 400 };
   }
-  const index = await resolveArtifactIndex(directory, { includeDigests: true });
+  const index = await resolveArtifactIndex(directory, { includeDigests: true, includePaths });
   if ("error" in index) return index;
   const entry = findArtifact(index.entries, id);
   if (entry === undefined) {
@@ -1761,7 +1784,7 @@ async function resolveArtifactRevisionPlugin(
   id: string,
   revision: string,
 ): Promise<{ entry: ArtifactEntry; descriptor: ArtifactDescriptor; resolution: ArtifactPluginResolution } | { error: string; status: number }> {
-  const resolved = await resolveArtifactRevision(options.artifactDirectory, id, revision);
+  const resolved = await resolveArtifactRevision(options.artifactDirectory, id, revision, options.artifactPaths);
   if ("error" in resolved) return resolved;
   const runtime = await discoverArtifactProviderRuntime(options);
   const resolution = runtime.registry.resolve(resolved.entry);
@@ -1772,18 +1795,36 @@ async function resolveArtifactRevisionPlugin(
   return { entry: resolved.entry, descriptor, resolution };
 }
 
-async function serveArtifactCatalog(response: ServerResponse, options: HarnessStudioServerOptions): Promise<void> {
-  const index = await resolveArtifactIndex(options.artifactDirectory, { includeDigests: true });
+async function serveArtifactCatalog(
+  response: ServerResponse,
+  options: HarnessStudioServerOptions,
+  workspace?: StudioWorkspace,
+): Promise<void> {
+  const index = await resolveArtifactIndex(options.artifactDirectory, { includeDigests: true, includePaths: options.artifactPaths });
   if ("error" in index) {
     respondJson(response, index.status, { error: index.error });
     return;
   }
   const runtime = await discoverArtifactProviderRuntime(options);
   try {
-    respondJson(response, 200, describeArtifactCatalog(
+    const catalog = describeArtifactCatalog(
       index,
       (entry) => runtime.registry.resolve(entry),
-    ));
+    );
+    const navigation = workspace?.artifactObservations === undefined
+      ? undefined
+      : {
+        kind: WORKSPACE_ARTIFACT_NAVIGATION_KIND,
+        workspaceLabel: workspace.label,
+        observations: workspace.artifactObservations.map((observation) => ({
+          artifactId: artifactIdForLabel(observation.relativePath),
+          sessionId: observation.sessionId,
+          savedAt: observation.savedAt,
+          prompt: observation.prompt,
+          ...(observation.provider === undefined ? {} : { provider: observation.provider }),
+        })),
+      };
+    respondJson(response, 200, navigation === undefined ? catalog : { ...catalog, navigation });
   } catch (error) {
     const message = error instanceof ArtifactCatalogContractError
       ? "Artifact catalog contract validation failed."
@@ -1897,7 +1938,7 @@ async function serveArtifactContent(
   revision: string,
   ifNoneMatch: string | undefined,
 ): Promise<void> {
-  const resolved = await resolveArtifactRevision(options.artifactDirectory, id, revision);
+  const resolved = await resolveArtifactRevision(options.artifactDirectory, id, revision, options.artifactPaths);
   if ("error" in resolved) {
     respondArtifactJson(response, resolved.status, { error: resolved.error });
     return;
@@ -1916,7 +1957,7 @@ async function serveArtifactContent(
       return;
     }
     const headers: Record<string, string | number> = {
-      "Content-Type": resolveArtifactMediaType(entry.label),
+      "Content-Type": resolveArtifactMediaType(entry.label, entry.kind),
       "Content-Length": stats.size,
       ETag: etag,
       "Cache-Control": IMMUTABLE_REVISION_CACHE,

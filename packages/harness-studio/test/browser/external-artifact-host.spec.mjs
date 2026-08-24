@@ -68,9 +68,9 @@ test("mounts every provider-defined external renderer through the generic hosted
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.goto(`${server.url}/#/artifacts`);
     for (const fixture of fixtures) {
-      const explorer = page.getByRole("tab", { name: "Explorer" });
-      if (await explorer.isVisible() && await explorer.getAttribute("aria-selected") !== "true") await explorer.click();
-      await page.getByRole("button", { name: new RegExp(escapeRegex(fixture.label)) }).click();
+      const artifactsPane = page.getByRole("tab", { name: "Artifacts", exact: true });
+      if (await artifactsPane.isVisible() && await artifactsPane.getAttribute("aria-selected") !== "true") await artifactsPane.click();
+      await page.locator(".artifact-list-pane").getByRole("button", { name: new RegExp(escapeRegex(fixture.label)) }).click();
       const frameElement = page.locator(`iframe[title="Artifact preview: ${fixture.label}"]`);
       await expect(frameElement).toBeVisible();
       await expect(frameElement).toHaveAttribute("sandbox", "allow-scripts");

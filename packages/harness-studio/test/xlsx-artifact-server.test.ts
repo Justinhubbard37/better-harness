@@ -23,9 +23,10 @@ describe("XLSX artifact HTTP boundary", () => {
   it("serves typed revision snapshots and invalidates stale snapshot URIs", async () => {
     const appDir = await makeTempDirectory("studio-app-");
     const artifactDirectory = await makeTempDirectory("studio-xlsx-http-");
+    const canvasViewerRoot = await makeTempDirectory("studio-empty-canvas-viewers-");
     await writeFile(join(appDir, "index.html"), "<!doctype html><title>fixture</title>");
     await writeFile(join(artifactDirectory, "workbook.xlsx"), createXlsxFixture());
-    server = await startHarnessStudioServer({ appDir, artifactDirectory });
+    server = await startHarnessStudioServer({ appDir, artifactDirectory, canvasViewerRoot });
 
     const catalogValue: unknown = await (await fetch(`${server.url}/api/artifacts`)).json();
     expect(isArtifactCatalogResponse(catalogValue)).toBe(true);

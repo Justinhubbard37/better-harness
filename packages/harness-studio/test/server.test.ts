@@ -354,6 +354,100 @@ describe("harness-studio server", () => {
     });
   });
 
+  it("aggregates current workspace Artifacts without requiring a selected Session", async () => {
+    const appDir = await makeAppDir();
+    const workspace = await makeTempDir("studio-artifact-workspace-");
+    await mkdir(join(workspace, "outputs"));
+    await writeFile(join(workspace, "outputs", "report.md"), "# Current report\n", "utf8");
+    await writeFile(join(workspace, "outputs", "diagram.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\" />\n", "utf8");
+    await writeFile(join(workspace, "not-observed.txt"), "private workspace file\n", "utf8");
+    const discovery: StudioWorkspaceDiscovery = {
+      label: "artifact-fixture",
+      sessions: [{
+        summary: {
+          id: "qoder:artifact-session",
+          savedAt: "2026-08-24T04:30:00.000Z",
+          prompt: "Create the report and diagram",
+          status: "observed",
+          toolCallCount: 1,
+          provider: "qoder",
+        },
+        debugger: {
+          id: "qoder:artifact-session",
+          name: "Create the report and diagram",
+          agent: "qoder",
+          protocol: "Inspector normalized local evidence",
+          connection: "observed",
+          mode: "Retained run",
+          startedAt: "12:29:00",
+          finishedAt: "12:30:00",
+          events: [{
+            id: "change-1",
+            kind: "change",
+            phase: "Change",
+            title: "Deliver outputs",
+            summary: "Two output files were observed.",
+            timestamp: "12:30:00",
+            relativeTime: "retained",
+            stopConditions: [],
+            toolCalls: ["outputs/report.md", "outputs/diagram.svg", "not-present.md"].map((resource, index) => ({
+              id: `write-${index}`,
+              name: "Write",
+              summary: "Observed output",
+              input: "retained",
+              output: "retained",
+              duration: "1 ms",
+              resource,
+            })),
+            evidence: [],
+            rawAcp: {
+              direction: "Agent → Client",
+              method: "session/tool-call",
+              rpcId: "change-1",
+              sessionId: "artifact-session",
+              traceContext: "fixture",
+              payload: {},
+            },
+          }],
+        },
+      }],
+    };
+    started = await startHarnessStudioServer({
+      appDir,
+      workspaceDirectoryPicker: async () => workspace,
+      workspaceSessionProvider: { discover: async () => discovery },
+    });
+
+    expect((await fetch(`${started.url}/api/artifacts`)).status).toBe(404);
+    expect(await (await fetch(`${started.url}/api/workspace/open`, { method: "POST" })).json()).toMatchObject({ opened: true });
+    expect(await (await fetch(`${started.url}/api/config`)).json()).toMatchObject({ artifactsEnabled: true, artifactCount: 2 });
+
+    const catalogResponse = await fetch(`${started.url}/api/artifacts`);
+    const catalog = await catalogResponse.json();
+    expect(catalogResponse.status).toBe(200);
+    expect(isArtifactCatalogResponse(catalog)).toBe(true);
+    expect(catalog.artifacts.map((artifact: { label: string }) => artifact.label)).toEqual(["outputs/diagram.svg", "outputs/report.md"]);
+    expect(catalog.navigation).toMatchObject({
+      kind: "HarnessStudioWorkspaceArtifactNavigationV1",
+      workspaceLabel: "artifact-fixture",
+      observations: [
+        { sessionId: "qoder:artifact-session", prompt: "Create the report and diagram", provider: "qoder" },
+        { sessionId: "qoder:artifact-session", prompt: "Create the report and diagram", provider: "qoder" },
+      ],
+    });
+    expect(JSON.stringify(catalog)).not.toContain(workspace);
+    expect(JSON.stringify(catalog)).not.toContain("not-observed.txt");
+
+    const report = catalog.artifacts.find((artifact: { label: string }) => artifact.label === "outputs/report.md");
+    expect(await (await fetch(`${started.url}${report.revision.content.uri}`)).text()).toBe("# Current report\n");
+    await writeFile(join(workspace, "outputs", "report.md"), "# Revised report\n", "utf8");
+    expect((await fetch(`${started.url}${report.revision.content.uri}`)).status).toBe(409);
+
+    expect((await fetch(`${started.url}/api/workspace`, { method: "DELETE" })).status).toBe(200);
+    expect(await (await fetch(`${started.url}/api/config`)).json()).toMatchObject({ artifactsEnabled: false });
+    expect((await fetch(`${started.url}/api/artifacts`)).status).toBe(404);
+  });
+
   it("serves online Intent proposals only after local evidence validation", async () => {
     const appDir = await makeAppDir();
     const workspace = await makeTempDir("studio-intent-workspace-");
@@ -1271,10 +1365,11 @@ describe("harness-studio CLI", () => {
     expect(await discoverDefaultInspectorReport(cwd)).toBe(join(reportDir, "inspector.html"));
   });
 
-  it("serves TSX through a revision-bound sandboxed build while preserving source", async () => {
+  it("serves Canvas TSX through a revision-bound build and keeps ordinary TSX source-only", async () => {
     const appDir = await makeAppDir();
     const artifactDirectory = await makeTempDir("studio-artifacts-");
-    await writeFile(join(artifactDirectory, "card.tsx"), "export default () => <p>hi</p>;\n", "utf8");
+    await writeFile(join(artifactDirectory, "card.canvas.tsx"), "export default () => <p>hi</p>;\n", "utf8");
+    await writeFile(join(artifactDirectory, "ordinary.tsx"), "export const value = <p>source only</p>;\n", "utf8");
     await writeFile(join(artifactDirectory, "report.pdf"), "%PDF fixture", "utf8");
     await writeFile(join(artifactDirectory, "active.html"), "<script>top.location='https://example.invalid'</script>", "utf8");
     await writeFile(join(artifactDirectory, "diagram.svg"), "<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>", "utf8");
@@ -1289,14 +1384,21 @@ describe("harness-studio CLI", () => {
       catalogId: expect.stringMatching(/^artifacts-[0-9a-f]{16}$/u),
       revision: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
     }));
-    const card = catalog.artifacts.find((entry) => entry.label === "card.tsx")!;
+    const card = catalog.artifacts.find((entry) => entry.label === "card.canvas.tsx")!;
     expect(card).toEqual(expect.objectContaining({
-      format: "tsx",
+      format: "cursor-canvas-tsx",
       backing: "code",
       build: { snapshotUri: expect.stringMatching(/\/build$/u) },
       renderer: expect.objectContaining({ id: "studio.react-preview", type: "sandboxed-web" }),
       capabilities: expect.arrayContaining(["execute", "live-update"]),
     }));
+    expect(catalog.artifacts.find((entry) => entry.label === "ordinary.tsx")).toMatchObject({
+      format: "tsx",
+      backing: "data",
+      renderer: { id: "studio.code", type: "native", status: "ready" },
+      capabilities: [],
+    });
+    expect(catalog.artifacts.find((entry) => entry.label === "ordinary.tsx")?.build).toBeUndefined();
     expect(card.revision.content).toEqual(expect.objectContaining({
       digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
       uri: `/api/artifacts/${card.id}/revisions/${card.revision.digest.slice(7)}/content`,
@@ -1354,12 +1456,12 @@ describe("harness-studio CLI", () => {
 
     // A revision-scoped URL must never answer with different bytes. Once the
     // file moves on, the stale handle is a conflict the client refetches.
-    await writeFile(join(artifactDirectory, "card.tsx"), "export default () => <p>changed</p>;\n", "utf8");
+    await writeFile(join(artifactDirectory, "card.canvas.tsx"), "export default () => <p>changed</p>;\n", "utf8");
     const stale = await fetch(`${started.url}${card.revision.content.uri}`);
     expect(stale.status).toBe(409);
     const refreshed: unknown = await (await fetch(`${started.url}/api/artifacts`)).json();
     if (!isArtifactCatalogResponse(refreshed)) throw new Error("expected typed artifact catalog");
-    const updated = refreshed.artifacts.find((entry) => entry.label === "card.tsx")!;
+    const updated = refreshed.artifacts.find((entry) => entry.label === "card.canvas.tsx")!;
     expect(updated.id).toBe(card.id);
     expect(updated.threadId).toBe(card.threadId);
     expect(updated.revision.digest).not.toBe(card.revision.digest);

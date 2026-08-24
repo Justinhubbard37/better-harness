@@ -24,7 +24,8 @@ describe("Artifact plugin registry and the Qoder Canvas provider", () => {
       ["document.docx", "docx", ["navigate", "outline", "select", "zoom"]],
       ["deck.pptx", "pptx", ["navigate", "outline", "select", "zoom"]],
       ["workbook.xlsx", "xlsx", ["navigate", "select"]],
-      ["component.tsx", "code", ["execute", "live-update"]],
+      ["component.tsx", "code", []],
+      ["component.canvas.tsx", "code", ["execute", "live-update"]],
       ["diagram.svg", "svg", ["live-update"]],
       ["diagram.mmd", "mermaid", ["live-update"]],
       ["source.ts", "code", []],
@@ -113,7 +114,7 @@ describe("Artifact plugin registry and the Qoder Canvas provider", () => {
     expect(createArtifactPluginRegistry().resolve(canvasEntry).renderer.id).toBe("studio.react-preview");
     expect(resolve_(canvasEntry, [exact], "external-fallback").renderer.id).toBe("qoder-canvas.pptx");
     expect(resolve_(entry("ordinary.tsx", "code"), [exact], "external-fallback").renderer.id)
-      .toBe("studio.react-preview");
+      .toBe("studio.code");
 
     for (const matcher of [{ extensions: ["tsx"] }, { pathGlobs: ["**/*.canvas.tsx"] }]) {
       const broad = {

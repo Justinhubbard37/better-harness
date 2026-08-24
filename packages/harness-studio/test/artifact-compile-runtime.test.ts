@@ -1,6 +1,7 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { describeArtifactCatalog, indexArtifactDirectory } from "../src/server/artifact-catalog.js";
 import {
@@ -27,14 +28,14 @@ describe("ArtifactCompileRuntime", () => {
     const directory = await mkdtemp(join(tmpdir(), "artifact-compile-"));
     await writeFile(join(directory, "copy.ts"), 'export const copy = "first render";\n', "utf8");
     await writeFile(join(directory, "card.css"), ".card { color: rebeccapurple; }\n", "utf8");
-    await writeFile(join(directory, "card.tsx"), [
+    await writeFile(join(directory, "card.canvas.tsx"), [
       'import { copy } from "./copy.ts";',
       'import "./card.css";',
       'export default () => <main className="card">{copy}</main>;',
     ].join("\n"), "utf8");
 
-    const first = await compileEntry(directory, "card.tsx");
-    const second = await compileEntry(directory, "card.tsx");
+    const first = await compileEntry(directory, "card.canvas.tsx");
+    const second = await compileEntry(directory, "card.canvas.tsx");
     expect(first.snapshot.status).toBe("ready");
     expect(first.snapshot.buildId).toBe(second.snapshot.buildId);
     expect(first.snapshot.sequence).toBe(second.snapshot.sequence);
@@ -47,7 +48,7 @@ describe("ArtifactCompileRuntime", () => {
     expect(html).not.toContain(directory);
 
     await writeFile(join(directory, "copy.ts"), 'export const copy = "newer render";\n', "utf8");
-    const changed = await compileEntry(directory, "card.tsx");
+    const changed = await compileEntry(directory, "card.canvas.tsx");
     expect(changed.snapshot.status).toBe("ready");
     expect(changed.snapshot.buildId).not.toBe(first.snapshot.buildId);
     expect(changed.snapshot.revisionId).toBe(first.snapshot.revisionId);
@@ -58,14 +59,14 @@ describe("ArtifactCompileRuntime", () => {
   it("compiles one revision once when its build is requested concurrently", async () => {
     resetArtifactCompileRuntime();
     const directory = await mkdtemp(join(tmpdir(), "artifact-compile-"));
-    await writeFile(join(directory, "concurrent.tsx"), 'export default () => <p>shared</p>;\n', "utf8");
+    await writeFile(join(directory, "concurrent.canvas.tsx"), 'export default () => <p>shared</p>;\n', "utf8");
 
     // The build route and the preview route both compile on demand, so two
     // Studio tabs opening the same artifact would otherwise run esbuild twice
     // over identical bytes.
     const [first, second] = await Promise.all([
-      compileEntry(directory, "concurrent.tsx"),
-      compileEntry(directory, "concurrent.tsx"),
+      compileEntry(directory, "concurrent.canvas.tsx"),
+      compileEntry(directory, "concurrent.canvas.tsx"),
     ]);
     expect(first.snapshot.status).toBe("ready");
     expect(second.snapshot.buildId).toBe(first.snapshot.buildId);
@@ -76,15 +77,15 @@ describe("ArtifactCompileRuntime", () => {
   it("fails closed for package imports and filesystem escapes", async () => {
     resetArtifactCompileRuntime();
     const directory = await mkdtemp(join(tmpdir(), "artifact-compile-"));
-    await writeFile(join(directory, "package.tsx"), 'import thing from "not-installed"; export default () => <p>{thing}</p>;\n', "utf8");
-    await writeFile(join(directory, "escape.tsx"), 'import "../outside.ts"; export default () => <p>unsafe</p>;\n', "utf8");
+    await writeFile(join(directory, "package.canvas.tsx"), 'import thing from "not-installed"; export default () => <p>{thing}</p>;\n', "utf8");
+    await writeFile(join(directory, "escape.canvas.tsx"), 'import "../outside.ts"; export default () => <p>unsafe</p>;\n', "utf8");
 
-    const packageBuild = await compileEntry(directory, "package.tsx");
+    const packageBuild = await compileEntry(directory, "package.canvas.tsx");
     expect(packageBuild.snapshot.status).toBe("failed");
     expect(packageBuild.snapshot.previewUri).toBeUndefined();
     expect(packageBuild.snapshot.diagnostics[0]?.message).toContain("is not available in Artifact Preview");
 
-    const escapeBuild = await compileEntry(directory, "escape.tsx");
+    const escapeBuild = await compileEntry(directory, "escape.canvas.tsx");
     expect(escapeBuild.snapshot.status).toBe("failed");
     expect(escapeBuild.snapshot.diagnostics[0]?.message).toContain("escapes the artifact directory");
     expect(JSON.stringify(escapeBuild.snapshot)).not.toContain(directory);
@@ -107,15 +108,30 @@ describe("ArtifactCompileRuntime", () => {
     expect(mermaid.snapshot.buildId).not.toBe(svg.snapshot.buildId);
   });
 
+  it("keeps the Studio Mermaid dependency closure trusted inside an open repository", async () => {
+    resetArtifactCompileRuntime();
+    const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+    const label = "docs/better-harness-doc-links.mmd";
+    const index = await indexArtifactDirectory(repositoryRoot, { includeDigests: true, includePaths: [label] });
+    const entry = index.entries[0]!;
+    const resolution = resolveArtifactPlugin(entry);
+    const descriptor = describeArtifactCatalog(index, (candidate) => resolveArtifactPlugin(candidate)).artifacts[0]!;
+
+    const mermaid = await compileArtifactPreview({ artifactRoot: repositoryRoot, entry, descriptor, buildRuntime: resolution.buildRuntime });
+
+    expect(mermaid.snapshot.status).toBe("ready");
+    expect(mermaid.snapshot.diagnostics).toEqual([]);
+  });
+
   it("keeps Beautiful Mermaid private to Studio-generated modules", async () => {
     resetArtifactCompileRuntime();
     const directory = await mkdtemp(join(tmpdir(), "artifact-packages-"));
-    await writeFile(join(directory, "package.tsx"), [
+    await writeFile(join(directory, "package.canvas.tsx"), [
       'import { renderMermaidSVG } from "beautiful-mermaid";',
       'export default () => <p>{renderMermaidSVG("graph TD\\nA-->B")}</p>;',
     ].join("\n"), "utf8");
 
-    const build = await compileEntry(directory, "package.tsx");
+    const build = await compileEntry(directory, "package.canvas.tsx");
     expect(build.snapshot.status).toBe("failed");
     expect(build.snapshot.diagnostics[0]?.message).toContain("is not available in Artifact Preview");
   });
@@ -123,10 +139,10 @@ describe("ArtifactCompileRuntime", () => {
   it("binds bounded host limit overrides into build and cache identity", async () => {
     resetArtifactCompileRuntime();
     const directory = await mkdtemp(join(tmpdir(), "artifact-limits-"));
-    await writeFile(join(directory, "limited.tsx"), 'export default () => <p>bounded</p>;\n', "utf8");
+    await writeFile(join(directory, "limited.canvas.tsx"), 'export default () => <p>bounded</p>;\n', "utf8");
 
-    const first = await compileEntry(directory, "limited.tsx", { maxSourceBytes: 1_024 });
-    const second = await compileEntry(directory, "limited.tsx", { maxSourceBytes: 2_048 });
+    const first = await compileEntry(directory, "limited.canvas.tsx", { maxSourceBytes: 1_024 });
+    const second = await compileEntry(directory, "limited.canvas.tsx", { maxSourceBytes: 2_048 });
     expect(first.snapshot.status).toBe("ready");
     expect(second.snapshot.status).toBe("ready");
     expect(second.snapshot.buildId).not.toBe(first.snapshot.buildId);

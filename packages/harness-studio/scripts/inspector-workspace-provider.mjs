@@ -152,6 +152,19 @@ function debuggerProjection(summary, identity) {
   }
   for (const [index, call] of calls.entries()) {
     const kind = debuggerKind(call.family);
+    const resources = [...new Set([
+      ...(Array.isArray(call.filePaths) ? call.filePaths : []),
+      call.filePath,
+    ].filter((value) => typeof value === "string" && value.trim() !== ""))];
+    const projectedCalls = (resources.length === 0 ? [undefined] : resources).map((resource, resourceIndex) => ({
+      id: resourceIndex === 0 ? call.id || `tool_${index + 1}` : `${call.id || `tool_${index + 1}`}_${resourceIndex + 1}`,
+      name: call.toolName || "Unknown tool",
+      summary: call.actionLabel || "Observed tool call",
+      input: call.detail || "Input not retained in the privacy-safe Inspector projection.",
+      output: call.status === "failed" ? "Inspector observed a failed call." : "Result payload not retained in the summary projection.",
+      duration: Number.isFinite(call.durationMs) ? `${call.durationMs} ms` : "not retained",
+      ...(resource === undefined ? {} : { resource }),
+    }));
     events.push(debuggerEvent({
       id: `tool_${index + 1}`,
       kind,
@@ -163,15 +176,7 @@ function debuggerProjection(summary, identity) {
       rpcId: `t${index + 1}`,
       direction: "Agent → Client",
       method: "session/tool-call",
-      toolCalls: [{
-        id: call.id || `tool_${index + 1}`,
-        name: call.toolName || "Unknown tool",
-        summary: call.actionLabel || "Observed tool call",
-        input: call.detail || "Input not retained in the privacy-safe Inspector projection.",
-        output: call.status === "failed" ? "Inspector observed a failed call." : "Result payload not retained in the summary projection.",
-        duration: Number.isFinite(call.durationMs) ? `${call.durationMs} ms` : "not retained",
-        ...(call.filePath ? { resource: call.filePath } : {}),
-      }],
+      toolCalls: projectedCalls,
     }));
   }
   for (const [index, turn] of responses.entries()) {

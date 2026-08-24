@@ -43,6 +43,20 @@ export function ArtifactPreviewHost(props: {
   const tablist = useRovingTablist<PreviewSurface>({ ids: ["preview", "source"], active: surface, onSelect: setSurface, panelId: ARTIFACT_PREVIEW_PANEL_ID });
 
   useEffect(() => {
+    // A newly selected artifact starts from its rendered surface. Failure may
+    // subsequently move this exact revision to Source, but that state must not
+    // leak into the next artifact selected in the workbench.
+    setSurface("preview");
+  }, [props.artifact.id]);
+
+  useEffect(() => {
+    // A blank failed canvas is a dead end. Keep the failure in the status bar
+    // and expose Retry, while moving the main editor surface to the exact
+    // source revision so the user still has useful, syntax-aware content.
+    if (previewState.endsWith("failed")) setSurface("source");
+  }, [previewState]);
+
+  useEffect(() => {
     const buildUri = props.artifact.build?.snapshotUri;
     const request = ++requestRef.current;
     const controller = new AbortController();

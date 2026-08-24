@@ -125,6 +125,26 @@ describe("indexArtifactDirectory", () => {
     }
   });
 
+  it("offers bounded unknown text as Source while leaving binary bytes unavailable", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "artifact-sniff-"));
+    await writeFile(join(directory, "build.transcript"), "step one\nstep two\n", "utf8");
+    await writeFile(join(directory, "payload.custom"), Buffer.from([0x50, 0x4b, 0x00, 0x03, 0x04]));
+
+    const index = await indexArtifactDirectory(directory, { includeDigests: true });
+    const transcript = index.entries.find((entry) => entry.label === "build.transcript")!;
+    const payload = index.entries.find((entry) => entry.label === "payload.custom")!;
+    expect(transcript.kind).toBe("text");
+    expect(resolveArtifactPlugin(transcript)).toMatchObject({
+      backing: "data",
+      renderer: { id: "studio.text", status: "ready" },
+    });
+    expect(resolveArtifactMediaType(transcript.label, transcript.kind)).toBe("text/plain; charset=utf-8");
+    expect(payload.kind).toBe("unknown");
+    expect(resolveArtifactPlugin(payload)).toMatchObject({
+      renderer: { id: "studio.unavailable", reason: expect.stringMatching(/Binary artifacts/u) },
+    });
+  });
+
   it("keeps ids and thread identity independent of what else the directory holds", async () => {
     const directory = await mkdtemp(join(tmpdir(), "artifact-catalog-"));
     await writeFile(join(directory, "report.md"), "one", "utf8");
@@ -163,7 +183,7 @@ describe("indexArtifactDirectory", () => {
       if (descriptor.renderer.status === "ready") {
         expect(descriptor.renderer.bindingId).toMatch(/^sha256:[0-9a-f]{64}$/u);
       }
-      if (["tsx", "jsx", "svg", "mmd", "mermaid"].includes(descriptor.format)) {
+      if (["cursor-canvas-tsx", "svg", "mmd", "mermaid"].includes(descriptor.format)) {
         expect(descriptor.backing).toBe("code");
         expect(descriptor.build?.snapshotUri).toBe(`${base}/build`);
       } else {

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream, type Stats } from "node:fs";
-import { lstat, readdir, realpath } from "node:fs/promises";
+import { lstat, open, readdir, realpath } from "node:fs/promises";
 import { basename, extname, normalize, resolve, sep } from "node:path";
 import type {
   ArtifactCatalogResponse,
@@ -32,6 +32,12 @@ export interface IndexArtifactDirectoryOptions {
   /** Exact-byte SHA-256 digests are required for public revision snapshots. */
   includeDigests?: boolean;
   /**
+   * Optional, already-confined portable paths below the root. Workspace mode
+   * uses this to index observed outputs without recursively publishing the
+   * project tree. Omit it for the legacy one-directory catalog.
+   */
+  includePaths?: readonly string[];
+  /**
    * Multiply-linked files are omitted by default. A hard link inside a
    * run-output directory is indistinguishable from an alias to arbitrary bytes
    * elsewhere on the same filesystem, so the read-only catalog declines it
@@ -44,6 +50,7 @@ export interface IndexArtifactDirectoryOptions {
 const ARTIFACT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const MAX_ID_STEM_LENGTH = 48;
 const MAX_DIGEST_CACHE_ENTRIES = 1_024;
+const TEXT_SNIFF_BYTES = 64 * 1_024;
 
 interface ArtifactFormat {
   kind: ArtifactKind;
@@ -276,7 +283,13 @@ export async function indexArtifactDirectory(
   const physicalRoot = await realpath(root);
   const entries: ArtifactEntry[] = [];
   const omitted: ArtifactOmission[] = [];
-  for (const name of (await readdir(root)).sort()) {
+  const names = options.includePaths === undefined
+    ? (await readdir(root)).sort()
+    : [...new Set(options.includePaths)].sort();
+  for (const name of names) {
+    if (name === "" || name.includes("\u0000") || name.includes("\\") || name.startsWith("/") || /^[A-Za-z]:\//u.test(name) || name.split("/").some((part) => part === "" || part === "." || part === "..")) {
+      throw new ArtifactCatalogContractError("Artifact include paths must be bounded portable relative paths.");
+    }
     const path = confineToRoot(root, name);
     // lstat never follows the final component, so a symlink reports as a link
     // rather than as the file it points at. Artifact directories are data
@@ -308,10 +321,15 @@ export async function indexArtifactDirectory(
       continue;
     }
     const digest = options.includeDigests === true ? await digestArtifactFile(path, stats) : undefined;
+    const kind = resolveArtifactKind(name) === "unknown" && !FORMAT_BY_EXTENSION.has(extname(name).toLowerCase())
+      ? await isProbablyTextFile(path, stats)
+        ? "text"
+        : "unknown"
+      : resolveArtifactKind(name);
     entries.push({
       id: artifactIdForLabel(name),
       threadId: artifactThreadIdForLabel(name),
-      kind: resolveArtifactKind(name),
+      kind,
       label: name,
       path,
       size: stats.size,
@@ -372,7 +390,7 @@ export function describeArtifactCatalog(
         id: digest,
         digest,
         content: {
-          mediaType: resolveArtifactMediaType(entry.label),
+          mediaType: resolveArtifactMediaType(entry.label, entry.kind),
           uri: `${base}/content`,
           digest,
         },
@@ -469,8 +487,11 @@ export function resolveArtifactFormatCode(path: string): string {
   return extension === "" ? "file" : extension.slice(1);
 }
 
-export function resolveArtifactMediaType(path: string): string {
-  return resolveArtifactFormat(path).mediaType;
+export function resolveArtifactMediaType(path: string, kind = resolveArtifactKind(path)): string {
+  const format = resolveArtifactFormat(path);
+  return format === UNKNOWN_FORMAT && kind === "text"
+    ? "text/plain; charset=utf-8"
+    : format.mediaType;
 }
 
 export function isActiveArtifactContent(path: string): boolean {
@@ -524,6 +545,39 @@ export async function digestArtifactFile(path: string, stats: Stats): Promise<Ar
 
 export function resetArtifactDigestCache(): void {
   digestCache.clear();
+}
+
+async function isProbablyTextFile(path: string, stats: Stats): Promise<boolean> {
+  if (stats.size === 0) return true;
+  const length = Math.min(stats.size, TEXT_SNIFF_BYTES);
+  const bytes = Buffer.allocUnsafe(length);
+  const handle = await open(path, "r");
+  try {
+    const { bytesRead } = await handle.read(bytes, 0, length, 0);
+    const sample = bytes.subarray(0, bytesRead);
+    if (sample.includes(0)) return false;
+    let decoded: string | undefined;
+    // A bounded sample can end halfway through one UTF-8 sequence. Trimming at
+    // most three bytes distinguishes that boundary from genuinely invalid
+    // bytes without reading an unbounded artifact into memory.
+    for (let trim = 0; trim <= 3 && trim < sample.length; trim += 1) {
+      try {
+        decoded = new TextDecoder("utf-8", { fatal: true }).decode(sample.subarray(0, sample.length - trim));
+        break;
+      } catch {
+        // Try the next possible UTF-8 boundary.
+      }
+    }
+    if (decoded === undefined) return false;
+    let controls = 0;
+    for (const character of decoded) {
+      const code = character.codePointAt(0)!;
+      if (code < 32 && character !== "\n" && character !== "\r" && character !== "\t" && character !== "\f") controls += 1;
+    }
+    return controls / Math.max(decoded.length, 1) < 0.01;
+  } finally {
+    await handle.close();
+  }
 }
 
 function resolveArtifactFormat(path: string): ArtifactFormat {

@@ -17,9 +17,12 @@ describe("Inspector workspace provider", () => {
         prompts: [{ text: "Review the workspace", timestamp: "2026-08-20T09:00:00.000Z" }],
         promptCount: 1,
         assistantMessageCount: 1,
-        toolCallCount: 1,
+        toolCallCount: 2,
         toolActivity: {
-          calls: [{ id: "A1", family: "inspect", actionLabel: "Read files", toolName: "Read", status: "observed", filePath: "README.md" }],
+          calls: [
+            { id: "A1", family: "inspect", actionLabel: "Read files", toolName: "Read", status: "observed", filePath: "README.md" },
+            { id: "A2", family: "deliver", actionLabel: "Deliver outputs", toolName: "Write", status: "observed", filePaths: ["outputs/report.md", "outputs/diagram.svg"] },
+          ],
         },
         dialogue: { turns: [{ response: "Workspace reviewed." }] },
       }],
@@ -69,13 +72,17 @@ describe("Inspector workspace provider", () => {
       },
       providers: [{ provider: "qoder", status: "ok" }, { provider: "codex", status: "no-evidence" }],
       sessions: [{
-        summary: { id: "qoder:session-123", prompt: "Review the workspace", provider: "qoder", status: "observed", toolCallCount: 1 },
+        summary: { id: "qoder:session-123", prompt: "Review the workspace", provider: "qoder", status: "observed", toolCallCount: 2 },
         debugger: { agent: "qoder", protocol: "Inspector normalized local evidence" },
       }],
     });
     expect(result.sessions[0].debugger.events).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: "prompt", summary: "Review the workspace" }),
       expect.objectContaining({ kind: "explore", toolCalls: [expect.objectContaining({ name: "Read", resource: "README.md" })] }),
+      expect.objectContaining({ kind: "change", toolCalls: [
+        expect.objectContaining({ name: "Write", resource: "outputs/report.md" }),
+        expect.objectContaining({ name: "Write", resource: "outputs/diagram.svg" }),
+      ] }),
       expect.objectContaining({ kind: "response", summary: "Workspace reviewed." }),
     ]));
     expect(JSON.stringify(result)).not.toContain("/private/repository");

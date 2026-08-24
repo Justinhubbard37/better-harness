@@ -15,7 +15,7 @@ import type { ArtifactBuildRuntimeImplementation } from "./artifact-adapter-cont
 import { REACT_SOURCE_BUILD_RUNTIME } from "./artifact-build-runtimes.js";
 import { digestHex, type ArtifactEntry } from "./artifact-catalog.js";
 
-const COMPILE_RUNTIME_VERSION = "2";
+const COMPILE_RUNTIME_VERSION = "3";
 const MAX_DIAGNOSTICS = 32;
 const MAX_DIAGNOSTIC_LENGTH = 600;
 const MAX_RETAINED_BUILDS = 64;
@@ -26,7 +26,14 @@ const MAX_RETAINED_BUILDS = 64;
  * with a diagnostic instead and the next request is free to try again.
  */
 const SOURCE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mjs", ".json", ".css"] as const;
-const ALLOWED_PACKAGES = new Set(["react", "react/jsx-runtime", "react/jsx-dev-runtime", "react-dom/client"]);
+const ALLOWED_PACKAGES = new Set([
+  "react",
+  "react/jsx-runtime",
+  "react/jsx-dev-runtime",
+  "react-dom",
+  "react-dom/client",
+  "scheduler",
+]);
 
 interface SourceStamp {
   signature: string;
@@ -289,6 +296,12 @@ function confinedArtifactPlugin(
 ): Plugin {
   let sourceBytes = 0;
   const virtualModule = buildRuntime.module.kind === "virtual" ? buildRuntime.module : undefined;
+  const trustedRuntimePackages = new Set([
+    ...ALLOWED_PACKAGES,
+    ...(virtualModule?.runtimePackages ?? []),
+  ]);
+  const trustedRuntimeRoots = [...new Set([...trustedRuntimePackages].map(runtimePackageRoot))];
+  const isTrustedRuntimePath = (path: string): boolean => trustedRuntimeRoots.some((packageRoot) => isWithin(packageRoot, path));
   return {
     name: "studio-confined-artifact",
     setup(buildApi) {
@@ -327,18 +340,21 @@ function confinedArtifactPlugin(
       buildApi.onResolve({ filter: /^artifact-source$/, namespace: "artifact-generated" }, () => ({ path: entryPath }));
       buildApi.onResolve({ filter: /^[^./]|^\// }, (args) => {
         const generated = args.namespace === "artifact-generated";
-        if (args.namespace !== "artifact-runtime" && !generated && !isWithin(root, args.importer)) return undefined;
+        const trustedImporter = isTrustedRuntimePath(args.importer);
+        if (args.namespace !== "artifact-runtime" && !generated && !trustedImporter && !isWithin(root, args.importer)) return undefined;
         const allowed = ALLOWED_PACKAGES.has(args.path)
-          || (generated && virtualModule?.runtimePackages.includes(args.path) === true);
+          || ((generated || trustedImporter) && virtualModule?.runtimePackages.includes(args.path) === true);
         if (!allowed) return { errors: [{ text: `Package import '${args.path}' is not available in Artifact Preview.` }] };
         return { path: fileURLToPath(import.meta.resolve(args.path)) };
       });
       buildApi.onResolve({ filter: /^\.{1,2}\// }, async (args) => {
+        if (isTrustedRuntimePath(args.importer)) return undefined;
         if (!isWithin(root, args.importer)) return undefined;
         const resolved = await resolveArtifactSource(root, dirname(args.importer), args.path);
         return typeof resolved === "string" ? { path: resolved } : { errors: [{ text: resolved.error }] };
       });
       buildApi.onLoad({ filter: /.*/ }, async (args) => {
+        if (isTrustedRuntimePath(args.path)) return undefined;
         if (!isWithin(root, args.path)) return undefined;
         const stats = await lstat(args.path);
         if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink > 1) {
@@ -363,6 +379,17 @@ function confinedArtifactPlugin(
       });
     },
   };
+}
+
+function runtimePackageRoot(specifier: string): string {
+  const entry = fileURLToPath(import.meta.resolve(specifier));
+  const packageName = specifier.startsWith("@")
+    ? specifier.split("/").slice(0, 2).join("/")
+    : specifier.split("/")[0]!;
+  const marker = `${sep}node_modules${sep}${packageName.split("/").join(sep)}${sep}`;
+  const markerAt = entry.lastIndexOf(marker);
+  if (markerAt < 0) return dirname(entry);
+  return entry.slice(0, markerAt + marker.length - 1);
 }
 
 async function resolveArtifactSource(

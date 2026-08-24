@@ -26,6 +26,7 @@ import type {
 import {
   PROVIDER_HOSTED_CANVAS_TSX_FORMAT,
   resolveArtifactFormatCode,
+  resolveArtifactKind,
   type ArtifactEntry,
   type ArtifactKind,
 } from "./artifact-catalog.js";
@@ -159,7 +160,11 @@ function nativeResolution(kind: ArtifactKind): ArtifactPluginBinding | undefined
 }
 
 function studioCodePreviewResolution(entry: ArtifactEntry): ArtifactPluginBinding | undefined {
-  if (entry.kind !== "code" || ![".tsx", ".jsx"].includes(extname(entry.label).toLowerCase())) return undefined;
+  // An observed source file is not executable merely because it contains JSX.
+  // Studio reserves its built-in React compiler for the explicit Canvas
+  // container suffix; ordinary .tsx/.jsx files stay on the read-only native
+  // source surface.
+  if (entry.kind !== "code" || resolveArtifactFormatCode(entry.label) !== PROVIDER_HOSTED_CANVAS_TSX_FORMAT) return undefined;
   return {
     backing: "code",
     adapter: RAW_ARTIFACT_ADAPTER,
@@ -256,14 +261,27 @@ export function createArtifactPluginRegistry(
       if (protectedBinding !== undefined) return protectedBinding;
       const overrides = externalBindings(entry, "external-override", providers, activations);
       if (overrides.length === 1) return overrides[0]!;
+      const fallbacks = externalBindings(entry, "external-fallback", providers, activations);
+      // Content sniffing may safely expose an unregistered extension as text,
+      // but it must not erase an explicitly activated Provider for that custom
+      // format. Known native text formats keep their normal Studio priority.
+      if (entry.kind === "text" && resolveArtifactKind(entry.label) === "unknown") {
+        if (fallbacks.length === 1) return fallbacks[0]!;
+        if (fallbacks.length > 1) {
+          return unavailableBinding(
+            "Multiple activated external Artifact contributions match the same lane; narrow or remove an activation.",
+          );
+        }
+      }
       const nativeBinding = resolvePlugins(entry, nativePlugins);
       if (nativeBinding !== undefined) return nativeBinding;
-      const fallbacks = externalBindings(entry, "external-fallback", providers, activations);
       if (fallbacks.length === 1) return fallbacks[0]!;
       const conflict = overrides.length > 1 || fallbacks.length > 1;
       return unavailableBinding(conflict
         ? "Multiple activated external Artifact contributions match the same lane; narrow or remove an activation."
-        : "No native renderer or activated external Artifact contribution matches this file.");
+        : entry.kind === "unknown"
+          ? "Binary artifacts do not have a text preview, and no activated Artifact contribution matches this file."
+          : "No native renderer or activated external Artifact contribution matches this file.");
     },
   });
 }

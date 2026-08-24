@@ -1,5 +1,5 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
@@ -14,7 +14,10 @@ import { createXlsxFixture } from "../xlsx-fixture.ts";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const ARTIFACT_PREVIEW_PANEL_ID = "artifact-preview-panel";
 const canvasSdkRoot = process.env.CANVAS_SDK_ROOT ?? resolve(packageRoot, "../../../canvas-sdk");
-const canvasViewerRoot = join(homedir(), ".qoder", "canvas", "canvases");
+// Native fallback coverage must not vary with the viewers installed in the
+// developer's home directory. Provisioned viewer behavior has its own provider
+// and server contract tests.
+const canvasViewerRoot = resolve(packageRoot, "test/fixtures/missing-canvas-viewers");
 let studio;
 let emptyStudio;
 let selectedWorkspace;
@@ -25,11 +28,11 @@ test.beforeAll(async () => {
   await writeFile(join(artifactDirectory, "document.docx"), createDocxFixture("Studio Word Fixture"));
   await writeFile(join(artifactDirectory, "deck.pptx"), createPptxFixture("01"));
   await writeFile(join(artifactDirectory, "workbook.xlsx"), createXlsxFixture());
-  await writeFile(join(artifactDirectory, "component.tsx"), 'document.body.dataset.moduleEvaluated = "yes"; export default () => <p data-preview="current">first render</p>;\n', "utf8");
+  await writeFile(join(artifactDirectory, "component.canvas.tsx"), 'document.body.dataset.moduleEvaluated = "yes"; export default () => <p data-preview="current">first render</p>;\n', "utf8");
   await writeFile(join(artifactDirectory, "fallback.canvas.tsx"), 'export default () => <p data-preview="canvas-fallback">Studio React fallback</p>;\n', "utf8");
-  await writeFile(join(artifactDirectory, "broken.tsx"), 'export default () => <main>broken;\n', "utf8");
-  await writeFile(join(artifactDirectory, "throws.tsx"), 'export default function Boom() { throw new Error("render exploded"); }\n', "utf8");
-  await writeFile(join(artifactDirectory, "late-throw.tsx"), [
+  await writeFile(join(artifactDirectory, "broken.canvas.tsx"), 'export default () => <main>broken;\n', "utf8");
+  await writeFile(join(artifactDirectory, "throws.canvas.tsx"), 'export default function Boom() { throw new Error("render exploded"); }\n', "utf8");
+  await writeFile(join(artifactDirectory, "late-throw.canvas.tsx"), [
     'import { useEffect } from "react";',
     "export default function Late() {",
     '  useEffect(() => { setTimeout(() => { throw new Error("late boom"); }, 0); }, []);',
@@ -51,7 +54,7 @@ test.beforeAll(async () => {
     "+Second file remains visible.",
   ].join("\n"), "utf8");
   await writeFile(join(artifactDirectory, "diagram.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><script>parent.document.body.dataset.svgExecuted="yes"</script><text x="12" y="44">Safe SVG artifact</text></svg>', "utf8");
-  await writeFile(join(artifactDirectory, "diagram.mmd"), "graph TD\n  Start --> Finish\n", "utf8");
+  await writeFile(join(artifactDirectory, "diagram.mmd"), "---\ntitle: Fixture diagram\n---\ngraph TD\n  Start --> Finish\n", "utf8");
   await writeFile(join(artifactDirectory, "invalid.mmd"), "not a supported diagram\n", "utf8");
   await writeFile(join(artifactDirectory, "notes.txt"), "followed the declared content reference\n", "utf8");
   await writeFile(join(artifactDirectory, "badge.png"), Buffer.from(
@@ -193,19 +196,22 @@ function watchFailures(page) {
 
 async function openArtifacts(page) {
   await page.goto(`${studio.url}/#/artifacts`);
-  const explorerTab = page.getByRole("tab", { name: "Explorer" });
-  if (await explorerTab.isVisible() && await explorerTab.getAttribute("aria-selected") !== "true") await explorerTab.click();
+  const artifactsPaneTab = page.getByRole("tab", { name: "Artifacts", exact: true });
+  if ((page.viewportSize()?.width ?? 0) <= 760) {
+    await expect(artifactsPaneTab).toBeVisible({ timeout: 15_000 });
+    if (await artifactsPaneTab.getAttribute("aria-selected") !== "true") await artifactsPaneTab.click();
+  }
   // The first viewer discovery can be cold on machines with a provisioned
   // Canvas catalog, so wait for the catalog boundary instead of assuming a
   // five-second filesystem scan.
-  await expect(page.getByRole("button", { name: /component\.tsx/ })).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(".artifact-list-pane").getByRole("button", { name: /component\.canvas\.tsx/ })).toBeVisible({ timeout: 15_000 });
 }
 
 test("renders generated TSX in the sandbox and keeps its source reachable", async ({ page }, testInfo) => {
   const failures = watchFailures(page);
   await openArtifacts(page);
-  await page.getByRole("button", { name: /component\.tsx/ }).click();
-  const preview = page.frameLocator('iframe[title="Live artifact preview: component.tsx"]');
+  await page.getByRole("button", { name: /component\.canvas\.tsx/ }).click();
+  const preview = page.frameLocator('iframe[title="Live artifact preview: component.canvas.tsx"]');
   await expect(preview.locator('[data-preview="current"]')).toHaveText("first render");
   await expect(preview.locator("body")).toHaveAttribute("data-module-evaluated", "yes");
   await expect(preview.locator("html")).toHaveAttribute("data-artifact-theme", "dark");
@@ -228,7 +234,7 @@ test("renders generated TSX in the sandbox and keeps its source reachable", asyn
   await expect(preview.locator("html")).toHaveAttribute("data-artifact-theme", "light");
   await page.getByRole("button", { name: /Light theme active/ }).click();
   await expect(preview.locator("html")).toHaveAttribute("data-artifact-theme", "dark");
-  const frame = page.locator('iframe[title="Live artifact preview: component.tsx"]');
+  const frame = page.locator('iframe[title="Live artifact preview: component.canvas.tsx"]');
   await expect(frame).toHaveAttribute("sandbox", "allow-scripts");
   const direct = await page.context().newPage();
   await direct.goto(`${studio.url}${await frame.getAttribute("src")}`);
@@ -266,10 +272,13 @@ test("keeps an unactivated Canvas TSX file on the Studio React fallback", async 
 test("reports code Artifact compile diagnostics without executing a partial build", async ({ page }) => {
   const failures = watchFailures(page);
   await openArtifacts(page);
-  await page.getByRole("button", { name: /broken\.tsx/ }).click();
-  await expect(page.locator(".artifact-build-diagnostics")).toContainText("Build failed");
-  await expect(page.locator(".artifact-build-diagnostics")).toContainText("closing \"main\" tag");
-  await expect(page.locator('iframe[title="Live artifact preview: broken.tsx"]')).toHaveCount(0);
+  await page.getByRole("button", { name: /broken\.canvas\.tsx/ }).click();
+  await expect(page.getByRole("tab", { name: "Source" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".artifact-code-preview")).toContainText("<main>broken");
+  await expect(page.locator(".artifact-code-preview [data-highlight-state=\"highlighted\"]")).toBeVisible();
+  await expect(page.locator(".artifact-runtime-status")).toContainText("closing \"main\" tag");
+  await expect(page.locator(".artifact-runtime-status").getByRole("button", { name: "Retry" })).toBeVisible();
+  await expect(page.locator('iframe[title="Live artifact preview: broken.canvas.tsx"]')).toHaveCount(0);
   expect(failures).toEqual([]);
 });
 
@@ -280,31 +289,32 @@ test("reports a runtime failure instead of claiming a completed render", async (
   // A component that throws while rendering commits nothing. React reports the
   // error out of band, so a host that only watched the mount call would show a
   // ready status over an empty frame.
-  await page.getByRole("button", { name: /throws\.tsx/ }).click();
+  await page.getByRole("button", { name: /throws\.canvas\.tsx/ }).click();
   const status = page.locator(".artifact-runtime-status");
   await expect(status).toContainText("render exploded");
   await expect(status).toHaveClass(/state-runtime-failed/);
-  await expect(page.frameLocator('iframe[title="Live artifact preview: throws.tsx"]').locator("#artifact-root")).toBeEmpty();
+  await expect(page.getByRole("tab", { name: "Source" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".artifact-code-preview")).toContainText("render exploded");
 
   // A preview can also break after it mounts, and the host has to leave the
   // ready state it already committed.
-  await page.getByRole("button", { name: /late-throw\.tsx/ }).click();
-  const late = page.frameLocator('iframe[title="Live artifact preview: late-throw.tsx"]');
-  await expect(late.locator('[data-preview="late"]')).toHaveText("mounted");
+  await page.getByRole("button", { name: /late-throw\.canvas\.tsx/ }).click();
   await expect(status).toContainText("late boom");
   await expect(status).toHaveClass(/state-runtime-failed/);
+  await expect(page.getByRole("tab", { name: "Source" })).toHaveAttribute("aria-selected", "true");
   await expect(status.getByRole("button", { name: "Retry" })).toBeVisible();
 
   // Recovering must not need a page reload.
-  await page.getByRole("button", { name: /component\.tsx/ }).click();
-  await expect(page.frameLocator('iframe[title="Live artifact preview: component.tsx"]').locator('[data-preview="current"]')).toHaveText("first render");
+  await page.getByRole("button", { name: /component\.canvas\.tsx/ }).click();
+  await expect(page.getByRole("tab", { name: "Preview" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.frameLocator('iframe[title="Live artifact preview: component.canvas.tsx"]').locator('[data-preview="current"]')).toHaveText("first render");
   await expect(page.getByText("Preview rendered from the current build.")).toBeVisible();
 });
 
 test("moves between Preview and Source with arrow keys from one tab stop", async ({ page }) => {
   const failures = watchFailures(page);
   await openArtifacts(page);
-  await page.getByRole("button", { name: /component\.tsx/ }).click();
+  await page.getByRole("button", { name: /component\.canvas\.tsx/ }).click();
   const tabs = page.locator(".artifact-runtime-tabs");
   await expect(page.locator(`#${ARTIFACT_PREVIEW_PANEL_ID}`)).toHaveAttribute("role", "tabpanel");
   await expect(tabs.locator("span")).toHaveCount(0);
@@ -321,16 +331,16 @@ test("moves between Preview and Source with arrow keys from one tab stop", async
 test("commits a changed TSX build without reloading Studio and retains the selected Host tab", async ({ page }, testInfo) => {
   const failures = watchFailures(page);
   await openArtifacts(page);
-  await page.getByRole("button", { name: /component\.tsx/ }).click();
-  const frame = page.locator('iframe[title="Live artifact preview: component.tsx"]');
-  const preview = page.frameLocator('iframe[title="Live artifact preview: component.tsx"]');
+  await page.getByRole("button", { name: /component\.canvas\.tsx/ }).click();
+  const frame = page.locator('iframe[title="Live artifact preview: component.canvas.tsx"]');
+  const preview = page.frameLocator('iframe[title="Live artifact preview: component.canvas.tsx"]');
   await expect(preview.locator('[data-preview="current"]')).toHaveText("first render");
   const firstBuild = await frame.getAttribute("src");
   const sourceTab = page.getByRole("tab", { name: "Source", exact: true });
   try {
     await sourceTab.click();
     await expect(sourceTab).toHaveAttribute("aria-selected", "true");
-    await writeFile(join(artifactDirectory, "component.tsx"), 'document.body.dataset.moduleEvaluated = "yes"; export default () => <p data-preview="current">second render</p>;\n', "utf8");
+    await writeFile(join(artifactDirectory, "component.canvas.tsx"), 'document.body.dataset.moduleEvaluated = "yes"; export default () => <p data-preview="current">second render</p>;\n', "utf8");
     await expect(sourceTab).toHaveAttribute("aria-selected", "true");
     await expect(page.locator(".artifact-code-preview")).toContainText("second render", { timeout: 10_000 });
     await page.locator(".artifact-runtime-tabs").getByRole("tab", { name: "Preview", exact: true }).click();
@@ -338,7 +348,7 @@ test("commits a changed TSX build without reloading Studio and retains the selec
     await expect(frame).not.toHaveAttribute("src", firstBuild);
     await page.screenshot({ path: testInfo.outputPath("artifact-retained-host-tab.png"), fullPage: true });
   } finally {
-    await writeFile(join(artifactDirectory, "component.tsx"), 'document.body.dataset.moduleEvaluated = "yes"; export default () => <p data-preview="current">first render</p>;\n', "utf8");
+    await writeFile(join(artifactDirectory, "component.canvas.tsx"), 'document.body.dataset.moduleEvaluated = "yes"; export default () => <p data-preview="current">first render</p>;\n', "utf8");
   }
   expect(failures).toEqual([]);
 });
@@ -350,13 +360,13 @@ test("loads artifact bytes from the catalog content reference", async ({ page })
   await page.route("**/api/artifacts", async (route) => {
     const response = await route.fetch();
     const catalog = await response.json();
-    const component = catalog.artifacts.find((entry) => entry.label === "component.tsx");
+    const component = catalog.artifacts.find((entry) => entry.label === "component.canvas.tsx");
     const other = catalog.artifacts.find((entry) => entry.label === "notes.txt");
     component.revision.content.uri = other.revision.content.uri;
     await route.fulfill({ response, json: catalog });
   });
   await openArtifacts(page);
-  await page.getByRole("button", { name: /component\.tsx/ }).click();
+  await page.getByRole("button", { name: /component\.canvas\.tsx/ }).click();
   await page.getByRole("tab", { name: "Source", exact: true }).click();
   await expect(page.locator(".artifact-code-preview")).toContainText("followed the declared content reference");
   await expect(page.locator(".artifact-code-preview")).not.toContainText("data-preview");
@@ -461,9 +471,11 @@ test("renders diff, SVG, and Beautiful Mermaid through the shared sandbox", asyn
     // next click would only test scheduler timing, not the invalid fixture.
     await page.getByRole("button", { name: /invalid\.mmd/ }).click();
     await expect(page.getByText(/Invalid mermaid header/u)).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Source" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator(".artifact-code-preview [data-highlight-state=\"highlighted\"]")).toBeVisible();
     await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
   } finally {
-    await writeFile(join(artifactDirectory, "diagram.mmd"), "graph TD\n  Start --> Finish\n", "utf8");
+    await writeFile(join(artifactDirectory, "diagram.mmd"), "---\ntitle: Fixture diagram\n---\ngraph TD\n  Start --> Finish\n", "utf8");
   }
   expect(failures).toEqual([]);
 });
@@ -766,8 +778,8 @@ test("keeps live Artifact Preview primary at wide, compact, and narrow widths", 
   ]) {
     await page.setViewportSize({ width: layout.width, height: layout.height });
     await openArtifacts(page);
-    await page.getByRole("button", { name: /component\.tsx/ }).click();
-    await expect(page.frameLocator('iframe[title="Live artifact preview: component.tsx"]').locator('[data-preview="current"]')).toHaveText("first render");
+    await page.getByRole("button", { name: /component\.canvas\.tsx/ }).click();
+    await expect(page.frameLocator('iframe[title="Live artifact preview: component.canvas.tsx"]').locator('[data-preview="current"]')).toHaveText("first render");
     await expect(page.getByText("Preview rendered from the current build.")).toBeVisible();
     const overflows = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
     expect(overflows, `${layout.name} live preview overflows horizontally`).toBe(false);
@@ -779,7 +791,7 @@ test("keeps live Artifact Preview primary at wide, compact, and narrow widths", 
 
 test("gives artifact rows a visible keyboard focus ring", async ({ page }) => {
   await openArtifacts(page);
-  const row = page.getByRole("button", { name: /component\.tsx/ });
+  const row = page.getByRole("button", { name: /component\.canvas\.tsx/ });
   await row.focus();
   expect(Number.parseFloat(await row.evaluate((element) => getComputedStyle(element).outlineWidth))).toBeGreaterThan(0);
 });
@@ -847,7 +859,7 @@ test("opens a project workspace and compares Inspector-discovered Sessions", asy
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("button", { name: "Choose workspace" }).click();
-  await expect(page.getByRole("button", { name: "Opening…" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Opening workspace" })).toBeDisabled();
   await expect(page.locator(".workspace-open-progress")).toContainText("Finding matching Sessions across local providers");
   await expect(page.locator(".workspace-open-progress > i")).toHaveCSS("animation-name", "workspace-progress-spin");
   await page.screenshot({ path: "test-results/session-workspace-loading-wide.png", fullPage: true });

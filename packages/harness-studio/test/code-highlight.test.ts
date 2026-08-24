@@ -28,4 +28,12 @@ describe("Studio syntax highlighting", () => {
   it("keeps unknown sources as plain text", async () => {
     await expect(highlightStudioCode("plain output", "terminal.txt")).resolves.toBeUndefined();
   });
+
+  it("highlights a large stylesheet without changing its text", async () => {
+    const source = Array.from({ length: 2_000 }, (_, index) => `.row-${index} { color: var(--color-text); }`).join("\n");
+    const lines = await highlightStudioCode(source, "workbench.css", "dark");
+    expect(lines).toBeDefined();
+    expect(lines!.map((line) => line.map((token) => token.content).join("")).join("\n")).toBe(source);
+    expect(lines!.flat().some((token) => token.color !== undefined)).toBe(true);
+  });
 });

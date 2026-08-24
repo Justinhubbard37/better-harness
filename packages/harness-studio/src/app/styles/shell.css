@@ -531,6 +531,8 @@
      word would otherwise squeeze the title down to a single letter, and the
      same state is already labelled on the navigation row it came from. */
   .studio-context-state strong { display: none; }
+  .studio-context-bar > .workspace-folder-controls.is-compact button { width: var(--toolbar-target); height: var(--toolbar-target); min-height: var(--toolbar-target); justify-content: center; padding: 0; }
+  .studio-context-bar > .workspace-folder-controls.is-compact button span { display: none; }
   .studio-theme-toggle { width: var(--toolbar-target); height: var(--toolbar-target); min-height: var(--toolbar-target); justify-content: center; padding: 0; }
   .studio-theme-toggle span { display: none; }
   .studio-context-bar.has-surface-navigation .studio-context-title { display: none; }

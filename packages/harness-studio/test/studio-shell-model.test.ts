@@ -110,11 +110,20 @@ describe("Studio control-plane navigation", () => {
 
     expect(studioDestinations(config).find((destination) => destination.id === "artifacts")).toMatchObject({
       availability: "ready",
-      status: "Session outputs",
+      status: "Compatibility catalog",
     });
     // Artifacts must not imply retained Inspector evidence or a Compare input.
     expect(inspectorSurfaces(config)).toEqual([]);
     expect(compareSurfaces(config)).toEqual([]);
+  });
+
+  it("reports the workspace Artifact aggregate without requiring a Session selection", () => {
+    const config: StudioConfig = { ...EMPTY, artifactsEnabled: true, artifactCount: 12, workspaceConnected: true };
+
+    expect(studioDestinations(config).find((destination) => destination.id === "artifacts")).toMatchObject({
+      availability: "ready",
+      status: "12 artifacts",
+    });
   });
 
   it("does not present a live AG-UI endpoint as retained Inspector evidence or a Compare input", () => {

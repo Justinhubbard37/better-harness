@@ -17,6 +17,7 @@ export type StudioCodeLanguage =
   | "kotlin"
   | "make"
   | "markdown"
+  | "mermaid"
   | "mdx"
   | "php"
   | "powershell"
@@ -71,6 +72,8 @@ export function studioCodeLanguage(sourceHint: string): StudioCodeLanguage | und
     md: "markdown",
     markdown: "markdown",
     mdx: "mdx",
+    mermaid: "mermaid",
+    mmd: "mermaid",
     mjs: "javascript",
     php: "php",
     ps1: "powershell",

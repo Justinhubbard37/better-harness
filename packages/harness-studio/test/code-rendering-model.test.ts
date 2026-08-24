@@ -13,6 +13,8 @@ describe("Studio code rendering model", () => {
     expect(studioCodeLanguage("src/lib.rs")).toBe("rust");
     expect(studioCodeLanguage("trace.jsonl")).toBe("json");
     expect(studioCodeLanguage("shader.unknown")).toBeUndefined();
+    expect(studioCodeLanguage("docs/architecture.mmd")).toBe("mermaid");
+    expect(studioCodeLanguage("docs/architecture.mermaid")).toBe("mermaid");
   });
 
   it("builds a normalized Git patch for the dedicated diff renderer", () => {
