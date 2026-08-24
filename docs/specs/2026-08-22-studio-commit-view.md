@@ -3,7 +3,7 @@
 ## Traceability
 
 - Spec ID: studio-commit-view
-- Status: Implemented (graph color follow-up; Windows CI receipt pending)
+- Status: Implemented (automatic pagination follow-up; Windows CI receipt pending)
 
 ## Intent
 
@@ -69,14 +69,17 @@ the server-owned open workspace instead of accepting an arbitrary client path.
   default combined-diff presentation omitted them.
 - AC-11: History pagination uses an opaque continuation cursor, keeps the graph
   stable across pages, exposes an honest 5,000-row presentation cap, and leaves
-  already loaded commits usable when a later page fails.
+  already loaded commits usable when a later page fails. A failed automatic page
+  load pauses further attempts until the user explicitly retries.
 - AC-12: The ordinary refs -> first history page -> commit -> patch flow reuses
   workspace refs and commit detail instead of repeating full Git reads. Git
   execution failures remain sanitized errors and are never converted into an
   empty repository result.
-- AC-13: The commit table virtualizes accumulated rows, keeps Load more
-  reachable at wide, compact, and narrow widths, and labels search according to
-  its actual subject/hash/author contract.
+- AC-13: The commit table virtualizes accumulated rows and automatically requests
+  the next cursor page as the final loaded rows enter the viewport at wide,
+  compact, and narrow widths. It exposes loading progress without a manual Load
+  more action, keeps an explicit Retry action after failure, and labels search
+  according to its actual subject/hash/author contract.
 - AC-14: Git repository labels and their test fixtures derive native filesystem
   basenames with the host path implementation. Windows drive-letter and
   backslash paths never become the full repository label, while browser-facing
@@ -124,8 +127,10 @@ the server-owned open workspace instead of accepting an arbitrary client path.
 8. Replace offset pagination with a query-bound continuation cursor carrying
    graph lane state. Reuse the refs snapshot and a bounded commit-detail cache,
    stop cleanly at 5,000 visible rows, and preserve prior pages on failure.
-9. Virtualize commit rows with the existing TanStack dependency, give the log
-   grid stable toolbar/status/content/footer rows, and make search copy honest.
+9. Virtualize commit rows with the existing TanStack dependency, trigger cursor
+   pagination when the virtualized viewport reaches the final loaded rows, retain
+   explicit retry after a page failure, give the log grid stable
+   toolbar/status/content/footer rows, and make search copy honest.
 10. Remove POSIX-only path splitting from the Git history fixture and document
     the repository-wide boundary between native filesystem paths, portable
     protocol paths, line endings, and shell execution.
@@ -160,8 +165,9 @@ the server-owned open workspace instead of accepting an arbitrary client path.
   non-empty, exact patches.
 - AC-11, AC-12: assert cursor query binding, page uniqueness, the 5,000-row
   terminal receipt, cached HTTP reads, and sanitized Git execution failures.
-- AC-11, AC-13: browser-click Load more, scroll through virtualized rows, and
-  inspect DOM bounds at wide, compact, and narrow widths.
+- AC-11, AC-13: scroll the virtualized browser table to trigger the next page
+  without a manual action, inject one page failure, explicitly retry, and inspect
+  DOM bounds at wide, compact, and narrow widths.
 - AC-14: run the Git history fixture on the host-native path implementation and
   retain the GitHub Actions Windows job as the authoritative backslash/drive
   receipt; local non-Windows runs are supporting evidence, not Windows proof.
@@ -179,12 +185,12 @@ the server-owned open workspace instead of accepting an arbitrary client path.
   merge detail/patch, signed cursor binding, Git failures, and the 5,000-row
   terminal cap.
 - AC-2 through AC-5, AC-7, AC-11, and AC-13: `git-history.spec.mjs` passes a
-  real browser flow for ref filtering, author search, cursor pagination,
-  bounded virtual rows, commit/file selection, and patch rendering at
-  `1440x960`, `900x760`, and `390x844` with no unexpected console/page errors
-  or horizontal overflow. The injected 422 page failure produces one expected
-  browser resource error and leaves prior rows usable. The full Studio
-  Playwright suite passes (`21` tests).
+  real browser flow for ref filtering, author search, automatic cursor pagination
+  at the virtualized scroll boundary, explicit retry after an injected page
+  failure, bounded virtual rows, commit/file selection, and patch rendering at
+  `1440x960`, `900x760`, and `390x844` with no unexpected console/page errors or
+  horizontal overflow. The injected 422 page failure produces one expected
+  browser resource error and leaves prior rows usable.
 - The current `better-harness` repository was paged through all `326` reachable
   commits: order exactly matches `git log --date-order`, all SHAs are unique,
   `59` merges retain valid graph edges, and no commits are omitted.
@@ -206,10 +212,11 @@ the server-owned open workspace instead of accepting an arbitrary client path.
   clean candidate passes the full Studio suite (`24` files, `151` tests), the
   focused Git browser scenario, the doc-link suite (`8` tests), and
   `git diff --check`.
-- `npm run typecheck --workspace @qoder-ai/harness-studio` and
-  `npm test --workspace @qoder-ai/harness-studio` pass.
-- `git diff --check` passes.
-- The repository preview smoke command is blocked before startup because this
-  checkout has no Canvas SDK runtime configured. `npm run preview` reports
-  `Missing Canvas SDK runtime`; therefore `/health` and `/canvas-module.js`
-  could not be probed in this environment.
+- The automatic pagination follow-up passes Studio typecheck/build, the focused
+  Git contract and shell suite (`3` files, `14` tests), the focused Git browser
+  scenario, preview smoke checks for `/health` and `/canvas-module.js`, and
+  `git diff --check`. The full Studio unit suite was also run: `37` files and
+  `233` tests pass, while two unrelated DOCX/XLSX artifact-server descriptor
+  expectations fail against the configured Qoder Canvas adapters.
+- Windows CI remains pending; the local macOS verification does not establish a
+  fresh cross-platform receipt.

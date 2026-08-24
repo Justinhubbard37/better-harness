@@ -95,8 +95,9 @@ test("browses refs, commits, changed files, and patches across Studio layouts", 
   await page.getByRole("button", { name: /Light theme active/ }).click();
   await expect(page.getByRole("button", { name: /Dark theme active/ })).toBeVisible();
 
-  const loadMore = page.getByRole("button", { name: /Load more/ });
-  await expect(loadMore).toBeVisible();
+  const commitTable = page.getByRole("table", { name: "Commits" });
+  await expect(page.getByText("40 of 45 · More loads automatically", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Load more/ })).toHaveCount(0);
   let failNextPage = true;
   await page.route("**/api/git/log?*", async (route) => {
     if (failNextPage && new URL(route.request().url()).searchParams.has("cursor")) {
@@ -106,15 +107,17 @@ test("browses refs, commits, changed files, and patches across Studio layouts", 
     }
     await route.continue();
   });
-  await loadMore.click();
+  const failedPage = page.waitForResponse((response) => response.url().includes("/git/log?") && response.url().includes("cursor=") && response.status() === 422);
+  await commitTable.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  expect((await failedPage).status()).toBe(422);
   await expect(page.getByRole("alert")).toContainText("Previously loaded commits remain available.");
+  await commitTable.evaluate((element) => { element.scrollTop = 0; });
   await expect(page.getByRole("row", { name: /feat: add filtered branch commit/ })).toBeVisible();
   await page.unroute("**/api/git/log?*");
   const nextPage = page.waitForResponse((response) => response.url().includes("/git/log?") && response.url().includes("cursor="));
   await page.getByRole("button", { name: "Retry loading history" }).click();
   expect((await nextPage).ok()).toBe(true);
-  await expect(loadMore).toHaveCount(0);
-  const commitTable = page.getByRole("table", { name: "Commits" });
+  await expect(page.getByText(/More loads automatically/)).toHaveCount(0);
   await commitTable.evaluate((element) => { element.scrollTop = element.scrollHeight; });
   await expect(page.getByRole("row", { name: /docs: add commit view fixture/ })).toBeVisible();
   expect(await page.locator(".git-commit-rows > button").count()).toBeLessThan(45);
