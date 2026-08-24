@@ -615,6 +615,31 @@ test("renders a read-only XLSX snapshot with sheets, formulas, merges, and style
   expect(failures).toEqual([]);
 });
 
+test("virtualizes wide XLSX columns and keeps the far edge selectable", async ({ page }) => {
+  const failures = watchFailures(page);
+  await page.setViewportSize({ width: 1024, height: 768 });
+  try {
+    await writeFile(join(artifactDirectory, "workbook.xlsx"), createXlsxFixture({ farColumn: 256 }));
+    await openArtifacts(page);
+    await page.getByRole("button", { name: /workbook\.xlsx/ }).click();
+    const viewer = page.locator(".xlsx-artifact-viewer");
+    await viewer.getByRole("button", { name: "Summary" }).click();
+    await expect(viewer.locator(".xlsx-column-spacer").first()).toBeVisible();
+    expect(await viewer.getByRole("gridcell").count()).toBeLessThan(100);
+    await viewer.locator(".xlsx-grid-scroll").evaluate((element) => {
+      element.scrollLeft = element.scrollWidth;
+      element.dispatchEvent(new Event("scroll"));
+    });
+    const farCell = viewer.locator('[data-address="IV4"]');
+    await expect(farCell).toBeVisible();
+    await farCell.click();
+    await expect(viewer.locator(".xlsx-formula-bar strong")).toHaveText("IV4");
+  } finally {
+    await writeFile(join(artifactDirectory, "workbook.xlsx"), createXlsxFixture());
+  }
+  expect(failures).toEqual([]);
+});
+
 test("resets XLSX sheet and cell state to the new snapshot default", async ({ page }, testInfo) => {
   const failures = watchFailures(page);
   await page.setViewportSize({ width: 1440, height: 900 });

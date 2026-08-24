@@ -67,20 +67,61 @@ function XlsxGrid(props: {
     estimateSize: (index) => rowHeight(props.sheet, index + 1),
     overscan: 8,
   });
-  const rows = rowVirtualizer.getVirtualItems();
-  const topSpacer = rows[0]?.start ?? 0;
-  const bottomSpacer = rows.length === 0 ? 0 : rowVirtualizer.getTotalSize() - rows[rows.length - 1]!.end;
+  const columnVirtualizer = useVirtualizer({
+    count: props.sheet.columnCount,
+    getScrollElement: () => props.scrollElement,
+    estimateSize: (index) => columnWidth(props.sheet, index + 1),
+    horizontal: true,
+    overscan: 4,
+  });
+  const rowItems = rowVirtualizer.getVirtualItems();
+  const columnItems = columnVirtualizer.getVirtualItems();
+  const rowOffsets = useMemo(
+    () => dimensionOffsets(props.sheet.rowCount, (index) => rowHeight(props.sheet, index)),
+    [props.sheet],
+  );
+  const columnOffsets = useMemo(
+    () => dimensionOffsets(props.sheet.columnCount, (index) => columnWidth(props.sheet, index)),
+    [props.sheet],
+  );
+  const rowWindow = expandMergedWindow(
+    rowItems[0]?.index === undefined ? 1 : rowItems[0].index + 1,
+    rowItems.at(-1)?.index === undefined ? Math.min(1, props.sheet.rowCount) : rowItems.at(-1)!.index + 1,
+    props.sheet.mergedRanges,
+    "row",
+  );
+  const columnWindow = expandMergedWindow(
+    columnItems[0]?.index === undefined ? 1 : columnItems[0].index + 1,
+    columnItems.at(-1)?.index === undefined ? Math.min(1, props.sheet.columnCount) : columnItems.at(-1)!.index + 1,
+    props.sheet.mergedRanges,
+    "column",
+  );
+  const rows = integerRange(rowWindow.start, rowWindow.end);
+  const columns = integerRange(columnWindow.start, columnWindow.end);
+  const topSpacer = rowOffsets[rowWindow.start - 1] ?? 0;
+  const bottomSpacer = (rowOffsets.at(-1) ?? 0) - (rowOffsets[rowWindow.end] ?? 0);
+  const leftSpacer = columnOffsets[columnWindow.start - 1] ?? 0;
+  const rightSpacer = (columnOffsets.at(-1) ?? 0) - (columnOffsets[columnWindow.end] ?? 0);
+  const physicalColumnCount = 1 + columns.length + Number(leftSpacer > 0) + Number(rightSpacer > 0);
   return <table className="xlsx-grid" role="grid" aria-rowcount={props.sheet.rowCount} aria-colcount={props.sheet.columnCount}>
-    <colgroup><col className="xlsx-row-number-column" />{Array.from({ length: props.sheet.columnCount }, (_, index) => <col key={index} style={{ width: `${columnWidth(props.sheet, index + 1)}px` }} />)}</colgroup>
-    <thead><tr><th aria-hidden="true" />{Array.from({ length: props.sheet.columnCount }, (_, index) => <th key={index} scope="col">{columnLabel(index + 1)}</th>)}</tr></thead>
+    <colgroup>
+      <col className="xlsx-row-number-column" />
+      {leftSpacer > 0 && <col className="xlsx-column-spacer" style={{ width: `${leftSpacer}px` }} />}
+      {columns.map((column) => <col key={column} style={{ width: `${columnWidth(props.sheet, column)}px` }} />)}
+      {rightSpacer > 0 && <col className="xlsx-column-spacer" style={{ width: `${rightSpacer}px` }} />}
+    </colgroup>
+    <thead><tr>
+      <th aria-hidden="true" />
+      {leftSpacer > 0 && <th className="xlsx-column-spacer" aria-hidden="true" />}
+      {columns.map((column) => <th key={column} scope="col">{columnLabel(column)}</th>)}
+      {rightSpacer > 0 && <th className="xlsx-column-spacer" aria-hidden="true" />}
+    </tr></thead>
     <tbody>
-      {topSpacer > 0 && <tr className="xlsx-virtual-spacer" aria-hidden="true"><td colSpan={props.sheet.columnCount + 1} style={{ height: `${topSpacer}px` }} /></tr>}
-      {rows.map((virtualRow) => {
-      const row = virtualRow.index + 1;
-      return <tr key={row} data-index={virtualRow.index} ref={rowVirtualizer.measureElement} style={{ height: `${rowHeight(props.sheet, row)}px` }}>
+      {topSpacer > 0 && <tr className="xlsx-virtual-spacer" aria-hidden="true"><td colSpan={physicalColumnCount} style={{ height: `${topSpacer}px` }} /></tr>}
+      {rows.map((row) => <tr key={row} data-index={row - 1} ref={rowVirtualizer.measureElement} style={{ height: `${rowHeight(props.sheet, row)}px` }}>
         <th scope="row">{row}</th>
-        {Array.from({ length: props.sheet.columnCount }, (_, columnOffset) => {
-          const column = columnOffset + 1;
+        {leftSpacer > 0 && <td className="xlsx-column-spacer" aria-hidden="true" />}
+        {columns.map((column) => {
           const key = coordinateKey(row, column);
           if (model.covered.has(key)) return undefined;
           const cell = model.cells.get(key);
@@ -108,14 +149,53 @@ function XlsxGrid(props: {
               props.sheet.columnCount,
               props.onSelect,
               (index, options) => rowVirtualizer.scrollToIndex(index, options),
+              (index, options) => columnVirtualizer.scrollToIndex(index, options),
             )}
           >{cell?.display ?? ""}</td>;
         })}
-      </tr>;
-      })}
-      {bottomSpacer > 0 && <tr className="xlsx-virtual-spacer" aria-hidden="true"><td colSpan={props.sheet.columnCount + 1} style={{ height: `${bottomSpacer}px` }} /></tr>}
+        {rightSpacer > 0 && <td className="xlsx-column-spacer" aria-hidden="true" />}
+      </tr>)}
+      {bottomSpacer > 0 && <tr className="xlsx-virtual-spacer" aria-hidden="true"><td colSpan={physicalColumnCount} style={{ height: `${bottomSpacer}px` }} /></tr>}
     </tbody>
   </table>;
+}
+
+function dimensionOffsets(count: number, size: (index: number) => number): number[] {
+  const offsets = Array.from({ length: count + 1 }, () => 0);
+  for (let index = 1; index <= count; index += 1) offsets[index] = offsets[index - 1]! + size(index);
+  return offsets;
+}
+
+function expandMergedWindow(
+  start: number,
+  end: number,
+  merges: readonly XlsxMergedRange[],
+  axis: "column" | "row",
+): { start: number; end: number } {
+  let nextStart = start;
+  let nextEnd = end;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const merge of merges) {
+      const mergeStart = axis === "row" ? merge.startRow : merge.startColumn;
+      const mergeEnd = axis === "row" ? merge.endRow : merge.endColumn;
+      if (mergeEnd < nextStart || mergeStart > nextEnd) continue;
+      if (mergeStart < nextStart) {
+        nextStart = mergeStart;
+        changed = true;
+      }
+      if (mergeEnd > nextEnd) {
+        nextEnd = mergeEnd;
+        changed = true;
+      }
+    }
+  }
+  return { start: nextStart, end: nextEnd };
+}
+
+function integerRange(start: number, end: number): number[] {
+  return end < start ? [] : Array.from({ length: end - start + 1 }, (_, index) => start + index);
 }
 
 function gridModel(sheet: XlsxWorksheetSnapshot): {
@@ -146,6 +226,7 @@ function handleCellKeyDown(
   columnCount: number,
   onSelect: (address: string) => void,
   scrollToRow: (index: number, options?: { align?: "auto" | "center" | "end" | "start" }) => void,
+  scrollToColumn: (index: number, options?: { align?: "auto" | "center" | "end" | "start" }) => void,
 ): void {
   if (event.key === "Enter" || event.key === " ") {
     event.preventDefault();
@@ -175,6 +256,7 @@ function handleCellKeyDown(
     const address = `${columnLabel(column)}${row}`;
     onSelect(address);
     scrollToRow(row - 1, { align: "auto" });
+    scrollToColumn(column - 1, { align: "auto" });
     globalThis.requestAnimationFrame?.(() => {
       target = grid?.querySelector<HTMLElement>(`[role='gridcell'][data-row='${row}'][data-column='${column}']`);
       target?.focus();

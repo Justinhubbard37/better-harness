@@ -5,6 +5,7 @@ export interface XlsxFixtureOptions {
   workbookRelationshipTarget?: string;
   formulaResult?: number;
   farRow?: number;
+  farColumn?: number;
 }
 
 /** Produces real ZIP/OPC XLSX bytes with two sheets, formulas, merges, and styles. */
@@ -82,7 +83,7 @@ export function createXlsxFixture(options: XlsxFixtureOptions = {}): Uint8Array 
         <x:sheetData>
           <x:row r="1" ht="30" customHeight="1"><x:c r="A1" s="1" t="str"><x:v>Studio XLSX Fixture</x:v></x:c><x:c r="B1" s="1"/></x:row>
           <x:row r="3"><x:c r="A3" t="str"><x:v>Planned</x:v></x:c><x:c r="B3" s="4" t="n"><x:f>SUM('Data'!B2:B3)</x:f><x:v>${formulaResult}</x:v></x:c></x:row>
-          <x:row r="4"><x:c r="A4" t="str"><x:v>Completion</x:v></x:c><x:c r="B4" s="2" t="n"><x:v>0.75</x:v></x:c></x:row>
+          <x:row r="4"><x:c r="A4" t="str"><x:v>Completion</x:v></x:c><x:c r="B4" s="2" t="n"><x:v>0.75</x:v></x:c>${options.farColumn === undefined ? "" : `<x:c r="${xlsxColumnLabel(options.farColumn)}4" t="str"><x:v>Virtualized column</x:v></x:c>`}</x:row>
           ${options.farRow === undefined ? "" : `<x:row r="${options.farRow}"><x:c r="A${options.farRow}" t="str"><x:v>Virtualized row</x:v></x:c><x:c r="B${options.farRow}" t="n"><x:v>${options.farRow}</x:v></x:c></x:row>`}
         </x:sheetData>
         <x:mergeCells count="1"><x:mergeCell ref="A1:B1"/></x:mergeCells>
@@ -96,4 +97,14 @@ export function createXlsxFixture(options: XlsxFixtureOptions = {}): Uint8Array 
         </x:sheetData>
       </x:worksheet>`),
   });
+}
+
+function xlsxColumnLabel(column: number): string {
+  let value = column;
+  let label = "";
+  while (value > 0) {
+    label = String.fromCharCode(65 + (value - 1) % 26) + label;
+    value = Math.floor((value - 1) / 26);
+  }
+  return label;
 }
