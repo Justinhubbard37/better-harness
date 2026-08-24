@@ -1,5 +1,6 @@
 import type { HarnessRunEvent } from "@qoder-ai/harness/exec";
 import {
+  HARNESS_PROTOCOL_EVENT,
   HARNESS_TOOL_RESULT_META_EVENT,
   type AguiEvent,
   type HarnessToolResultMeta,
@@ -103,6 +104,19 @@ export function createAguiTranslator(options: AguiTranslatorOptions): AguiTransl
             { type: "CUSTOM", name: HARNESS_TOOL_RESULT_META_EVENT, value: metadata },
           ];
         }
+        case "protocol-event":
+          return [{
+            type: "CUSTOM",
+            name: HARNESS_PROTOCOL_EVENT,
+            value: {
+              protocol: event.protocol,
+              direction: event.direction,
+              method: event.method,
+              ...(event.rpcId !== undefined ? { rpcId: event.rpcId } : {}),
+              ...(event.sessionId !== undefined ? { sessionId: event.sessionId } : {}),
+              payload: event.payload,
+            },
+          }];
         case "run-error":
           terminated = true;
           return [{ type: "RUN_ERROR", message: event.message }];

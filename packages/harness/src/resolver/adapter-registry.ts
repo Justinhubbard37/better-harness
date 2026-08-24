@@ -38,8 +38,25 @@ export const PI_ADAPTER_DESCRIPTOR = describeAdapter({
   programmaticLanguages: Object.freeze([]),
 });
 
+/**
+ * ACP is a transport/session contract, not proof of any Agent-owned tool.
+ * Keep the built-in descriptor at the honest prompt-session floor; a future
+ * Agent-specific adapter may expose tools only from its own verified contract.
+ */
+export const ACP_ADAPTER_DESCRIPTOR = describeAdapter({
+  adapterId: "@harness/adapter-acp",
+  specificationVersion: "harness-adapter-v1",
+  implementationVersion: "0.1.0",
+  skillDelivery: { mechanism: "prompt-preamble" },
+  toolExposure: Object.freeze({}),
+  mcpSupport: null,
+  workflowModes: Object.freeze(["session"]),
+  programmaticLanguages: Object.freeze([]),
+});
+
 export const ADAPTER_DESCRIPTOR_REGISTRY: Readonly<Record<string, AdapterRealizationDescriptor>> =
   Object.freeze({
+    [ACP_ADAPTER_DESCRIPTOR.adapterId]: ACP_ADAPTER_DESCRIPTOR,
     [QODER_ADAPTER_DESCRIPTOR.adapterId]: QODER_ADAPTER_DESCRIPTOR,
     [PI_ADAPTER_DESCRIPTOR.adapterId]: PI_ADAPTER_DESCRIPTOR,
   });

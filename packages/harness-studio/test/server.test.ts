@@ -12,7 +12,7 @@ import { parseSourceCatalog } from "../src/server/source-catalog.js";
 import { startHarnessStudioServer, type StartedHarnessStudioServer, type StudioWorkspaceDiscovery } from "../src/server/server.js";
 import { sessionFromRetainedRun } from "../src/app/session-debugger-model.js";
 import { extractInspectorReportJson } from "../src/server/query/inspector-query.js";
-import { DEFAULT_LOCAL_HARNESS_ID, DEFAULT_LOCAL_RUNTIME_ID } from "../src/server/default-local-harness.js";
+import { DEFAULT_LOCAL_ACP_RUNTIME_ID, DEFAULT_LOCAL_HARNESS_ID, DEFAULT_LOCAL_RUNTIME_ID } from "../src/server/default-local-harness.js";
 import type { IntentCorrelationPacketV1 } from "../src/intent-correlation-model.js";
 import type { CheckpointHistoryAdapter } from "../src/server/query/checkpoint-history.js";
 import { FIXTURE_VERDICT } from "./compare-model.test.js";
@@ -20,6 +20,10 @@ import { FIXTURE_VERDICT } from "./compare-model.test.js";
 const EXPERIMENT_MANIFEST = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../../harness/examples/checkpoint-experiment/experiment.json",
+);
+const ACP_AGENT_FIXTURE = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../harness/test/fixtures/acp-agent.mjs",
 );
 
 const SOURCE = `
@@ -197,6 +201,8 @@ describe("harness-studio server", () => {
     const config = await (await fetch(`${started.url}/api/config`)).json();
 
     expect(config).toEqual({
+      acpAgentLabel: "ACP Agent",
+      acpEnabled: false,
       aguiEnabled: false,
       artifactsEnabled: false,
       evidenceEnabled: true,
@@ -458,6 +464,71 @@ describe("harness-studio server", () => {
     const canonicalWorkspace = await realpath(workspace);
     expect(observedTask).toMatchObject({ cwd: canonicalWorkspace, sourceRoot: canonicalWorkspace });
     expect(observedRevision).toEqual({ harnessId: DEFAULT_LOCAL_HARNESS_ID, runtimeId: DEFAULT_LOCAL_RUNTIME_ID });
+  });
+
+  it("runs the configured ACP Agent, forwards permission decisions, and exposes real protocol evidence", async () => {
+    const appDir = await makeAppDir();
+    const workspace = await makeTempDir("studio-acp-workspace-");
+    started = await startHarnessStudioServer({
+      appDir,
+      workspaceDirectoryPicker: async () => workspace,
+      workspaceSessionProvider: { discover: async () => ({ label: "acp-project", sessions: [] }) },
+      acpAgent: { command: process.execPath, args: [ACP_AGENT_FIXTURE], label: "Fixture ACP" },
+    });
+    expect(await (await fetch(`${started.url}/api/config`)).json()).toMatchObject({
+      acpEnabled: true,
+      acpAgentLabel: "Fixture ACP",
+    });
+    await fetch(`${started.url}/api/workspace/open`, { method: "POST" });
+
+    const runId = "acp-run";
+    const response = await fetch(`${started.url}/agui/acp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        threadId: "acp-thread",
+        runId,
+        messages: [{ role: "user", content: "prove the ACP bridge" }],
+      }),
+    });
+    expect(response.status).toBe(200);
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let body = "";
+    let permissionRequestId: string | undefined;
+    while (permissionRequestId === undefined) {
+      const chunk = await reader.read();
+      expect(chunk.done).toBe(false);
+      body += decoder.decode(chunk.value, { stream: true });
+      const permission = decodeSseStream(body).find((event) => event.type === "CUSTOM"
+        && event.name === "harness.protocol-event"
+        && (event.value as { method?: string }).method === "session/request_permission");
+      if (permission?.type === "CUSTOM") {
+        permissionRequestId = (permission.value as { rpcId?: string }).rpcId;
+      }
+    }
+    const decision = await fetch(`${started.url}/api/acp/runs/${runId}/permissions/${permissionRequestId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ optionId: "allow-once" }),
+    });
+    expect(decision.status).toBe(200);
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      body += decoder.decode(chunk.value, { stream: true });
+    }
+    body += decoder.decode();
+    const events = decodeSseStream(body);
+    expect(events).toContainEqual(expect.objectContaining({ type: "TEXT_MESSAGE_CONTENT", delta: "fixture:allow-once" }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "RUN_FINISHED" }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "CUSTOM",
+      name: "harness.protocol-event",
+      value: expect.objectContaining({ protocol: "acp", method: "session/prompt" }),
+    }));
+    expect(events.find((event) => event.type === "RUN_STARTED")).toBeDefined();
+    expect(DEFAULT_LOCAL_ACP_RUNTIME_ID).toBe("acp");
   });
 
   it("keeps an explicitly configured harness and cwd authoritative after workspace selection", async () => {
@@ -1176,6 +1247,17 @@ describe("harness-studio CLI", () => {
     expect(parseSourceCatalog({ sources: [{ kind: "evidence", id: "ev_local", label: "Local evidence", path: "evidence" }] }, "/workspace")).toEqual([
       { kind: "evidence", id: "ev_local", label: "Local evidence", path: resolve("/workspace/evidence") },
     ]);
+  });
+
+  it("keeps the ACP executable and repeated argv in server-owned CLI configuration", () => {
+    expect(parseHarnessStudioArgs([
+      "--acp-agent", "codex-acp",
+      "--acp-arg", "-c",
+      "--acp-arg", 'service_tier="fast"',
+    ])).toMatchObject({
+      acpAgent: "codex-acp",
+      acpArgs: ["-c", 'service_tier="fast"'],
+    });
   });
 
   it("discovers the conventional Inspector report only at its fixed path", async () => {

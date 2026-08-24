@@ -44,6 +44,8 @@ Options:
                       JSON catalog of bounded switchable Studio inputs
   --harness-id <id>   Harness to resolve (default: the file's only harness)
   --runtime <id>      Target runtime (default: the file's only target)
+  --acp-agent <cmd>   Server-owned ACP Agent executable (requires --harness)
+  --acp-arg <arg>     Repeatable argv item for --acp-agent
   --port <n>          Listen port (default: 3311)
   --host <addr>       Bind address (default: 127.0.0.1)
   --cwd <dir>         Working directory for executor runs (default: process cwd)
@@ -89,6 +91,8 @@ interface ParsedArgs {
   experimentLocks?: string;
   harnessId?: string;
   runtime?: string;
+  acpAgent?: string;
+  acpArgs: string[];
   runs?: string;
   artifacts?: string;
   canvasViewers?: string;
@@ -107,7 +111,7 @@ interface ParsedArgs {
 }
 
 export function parseHarnessStudioArgs(argv: string[]): ParsedArgs {
-  const parsed: ParsedArgs = { port: 3311, host: "127.0.0.1", allowRemote: false, help: false };
+  const parsed: ParsedArgs = { port: 3311, host: "127.0.0.1", allowRemote: false, help: false, acpArgs: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     const takeValue = (): string | undefined => {
@@ -146,6 +150,14 @@ export function parseHarnessStudioArgs(argv: string[]): ParsedArgs {
       case "--runtime":
         parsed.runtime = takeValue();
         break;
+      case "--acp-agent":
+        parsed.acpAgent = takeValue();
+        break;
+      case "--acp-arg": {
+        const value = takeValue();
+        if (value !== undefined) parsed.acpArgs.push(value);
+        break;
+      }
       case "--runs":
         parsed.runs = takeValue();
         break;
@@ -224,6 +236,10 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
   const inspectorPath = parsed.inspector ?? discoveredInspector;
   const sourceCatalog = parsed.sourceCatalog === undefined ? [] : await readSourceCatalogFile(parsed.sourceCatalog);
   const harnessSource = parsed.harness !== undefined ? await readFile(parsed.harness, "utf8") : undefined;
+  if (parsed.acpAgent !== undefined && harnessSource === undefined) {
+    io.stderr("--acp-agent requires --harness so the ACP runtime contract is explicit.\n");
+    return 2;
+  }
   // Skills are conventionally declared relative to their `.harness` file (see
   // examples/*.harness), so loading one without a flag still delivers them.
   const sourceRoot = resolveHarnessStudioSourceRoot(parsed.harness, parsed.sourceRoot);
@@ -238,6 +254,15 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     ...(harnessSource !== undefined ? { harnessSource } : {}),
     ...(parsed.harnessId !== undefined ? { harnessId: parsed.harnessId } : {}),
     ...(parsed.runtime !== undefined ? { runtimeId: parsed.runtime } : {}),
+    ...(parsed.acpAgent !== undefined && harnessSource !== undefined ? {
+      acpAgent: {
+        command: parsed.acpAgent,
+        args: parsed.acpArgs,
+        harnessSource,
+        ...(parsed.harnessId !== undefined ? { harnessId: parsed.harnessId } : {}),
+        runtimeId: "acp",
+      },
+    } : {}),
     ...(parsed.runs !== undefined ? { runDirectory: resolve(parsed.runs) } : {}),
     ...(parsed.artifacts !== undefined ? { artifactDirectory: resolve(parsed.artifacts) } : {}),
     ...(parsed.canvasViewers !== undefined ? { canvasViewerRoot: resolve(parsed.canvasViewers) } : {}),

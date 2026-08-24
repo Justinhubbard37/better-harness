@@ -7,6 +7,15 @@ export interface HarnessToolResultOptions {
   isError?: boolean;
 }
 
+export interface HarnessProtocolEvent {
+  protocol: "acp";
+  direction: "Client → Agent" | "Agent → Client";
+  method: string;
+  rpcId?: string;
+  sessionId?: string;
+  payload: unknown;
+}
+
 /**
  * Host-neutral streaming run events.
  *
@@ -46,6 +55,7 @@ export type HarnessRunEvent =
       truncated?: boolean;
       originalBytes?: number;
     }
+  | ({ type: "protocol-event" } & HarnessProtocolEvent)
   | { type: "run-error"; message: string }
   | { type: "run-finished"; exitCode: number; metrics?: HarnessRunMetrics };
 
@@ -133,6 +143,14 @@ export class HarnessRunEmitter {
       ...(options.isError === true ? { isError: true } : {}),
       ...(retained.truncated ? { truncated: true, originalBytes: retained.originalBytes } : {}),
     });
+  }
+
+  /** Retain one bounded, already-redacted host protocol envelope. */
+  protocol(event: HarnessProtocolEvent): void {
+    if (this.currentPhase !== "running") {
+      return;
+    }
+    this.deliver({ type: "protocol-event", ...event });
   }
 
   error(message: string): void {

@@ -8,6 +8,25 @@
   background: var(--color-workspace);
 }
 
+/* Debugger-owned ACP controls and bounded protocol evidence. */
+.live-runtime-select { display: grid; gap: var(--space-xs); color: var(--color-text-muted); font-size: var(--type-meta-size); }
+.live-runtime-select select { width: 100%; height: var(--control-height); padding: 0 var(--space-sm); border: 1px solid var(--color-border-strong); border-radius: var(--radius-xs); color: var(--color-text); background: var(--color-surface); font: inherit; }
+.live-runtime-select select:focus-visible,
+.acp-permission button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.debugger-top-actions .cancel-live-run { color: var(--color-danger); }
+.acp-permission { display: grid; gap: var(--space-sm); }
+.acp-permission > small { color: var(--color-text-muted); font-family: var(--font-code); }
+.acp-permission > div { display: grid; gap: var(--space-xs); }
+.acp-permission button { min-width: 0; padding: var(--space-xs) var(--space-sm); display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); border: 1px solid var(--color-border-strong); border-radius: var(--radius-xs); color: var(--color-text); background: var(--color-surface); text-align: left; }
+.acp-permission button:hover { background: var(--color-surface-hover); }
+.acp-permission button span { color: var(--color-text-muted); font-size: var(--type-meta-size); }
+.acp-protocol-list { display: grid; gap: 1px; border: 1px solid var(--color-border); background: var(--color-border); }
+.acp-protocol-list details { min-width: 0; background: var(--color-surface); }
+.acp-protocol-list summary { min-width: 0; padding: var(--space-xs) var(--space-sm); display: grid; gap: 2px; cursor: pointer; }
+.acp-protocol-list summary span { color: var(--color-text-muted); font-size: var(--type-meta-size); }
+.acp-protocol-list summary strong { overflow: hidden; font-family: var(--font-code); font-size: var(--type-meta-size); text-overflow: ellipsis; white-space: nowrap; }
+.acp-protocol-list pre { max-height: 220px; margin: 0; padding: var(--space-sm); overflow: auto; border-top: 1px solid var(--color-border); color: var(--color-text-muted); background: var(--color-workspace); font-size: var(--type-meta-size); white-space: pre-wrap; word-break: break-word; }
+
 .builder-topbar,
 .experiment-notebook-bar,
 .debugger-topbar {

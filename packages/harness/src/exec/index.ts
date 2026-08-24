@@ -20,6 +20,7 @@ export {
   type HarnessRunEvent,
   type HarnessRunEventListener,
   type HarnessRunPhase,
+  type HarnessProtocolEvent,
   type HarnessToolResultOptions,
 } from "./events.js";
 export {
@@ -65,6 +66,11 @@ export {
   type QoderToolPermissionResult,
   redactTraceValue,
 } from "./qoder-sdk.js";
+export {
+  AcpSdkExecutor,
+  type AcpPermissionHandler,
+  type AcpSdkExecutorOptions,
+} from "./acp-sdk.js";
 export {
   PiSdkAdapter,
   PiSdkExecutor,

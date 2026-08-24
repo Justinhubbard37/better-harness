@@ -37,6 +37,7 @@ export {
   type WorkflowRealizationFact,
 } from "./resolver/adapter-descriptor.js";
 export {
+  ACP_ADAPTER_DESCRIPTOR,
   ADAPTER_DESCRIPTOR_REGISTRY,
   PI_ADAPTER_DESCRIPTOR,
   QODER_ADAPTER_DESCRIPTOR,

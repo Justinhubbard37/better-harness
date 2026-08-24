@@ -3,6 +3,7 @@ import type { HarnessRunEvent } from "@qoder-ai/harness/exec";
 import { createAguiTranslator } from "../src/translate.js";
 import { decodeSseStream, encodeSseEvent } from "../src/sse.js";
 import {
+  HARNESS_PROTOCOL_EVENT,
   HARNESS_TOOL_RESULT_META_EVENT,
   latestUserPrompt,
   parseRunAgentInput,
@@ -111,6 +112,32 @@ describe("createAguiTranslator", () => {
         },
       },
     ]);
+  });
+
+  it("projects bounded ACP protocol evidence without synthesizing a second trace", () => {
+    const agui = translateAll([
+      { type: "run-started", revisionId: "hr_1", host: "acp" },
+      {
+        type: "protocol-event",
+        protocol: "acp",
+        direction: "Client → Agent",
+        method: "initialize",
+        rpcId: "1",
+        payload: { jsonrpc: "2.0", id: 1, method: "initialize" },
+      },
+    ]);
+
+    expect(agui.at(-1)).toEqual({
+      type: "CUSTOM",
+      name: HARNESS_PROTOCOL_EVENT,
+      value: {
+        protocol: "acp",
+        direction: "Client → Agent",
+        method: "initialize",
+        rpcId: "1",
+        payload: { jsonrpc: "2.0", id: 1, method: "initialize" },
+      },
+    });
   });
 
   it("namespaces message and tool ids by run and maps non-zero exits to RUN_ERROR", () => {

@@ -13,6 +13,8 @@ export type StudioInspectorSurface = "workbench";
 
 export interface StudioConfig {
   aguiEnabled: boolean;
+  acpEnabled: boolean;
+  acpAgentLabel?: string;
   artifactsEnabled: boolean;
   evidenceEnabled: boolean;
   experimentEnabled: boolean;

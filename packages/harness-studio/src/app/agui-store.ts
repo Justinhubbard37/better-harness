@@ -1,6 +1,8 @@
 import {
+  HARNESS_PROTOCOL_EVENT,
   HARNESS_TOOL_RESULT_META_EVENT,
   type AguiEvent,
+  type HarnessProtocolEvidence,
   type HarnessToolResultMeta,
 } from "@qoder-ai/harness-ui/protocol";
 
@@ -28,12 +30,22 @@ export interface AguiRunState {
   timelineRevision: number;
   toolCallCount: number;
   warnings: string[];
+  protocolEvents: HarnessProtocolEvidence[];
+  pendingPermission?: AcpPendingPermission;
   error?: string;
   result?: unknown;
 }
 
+export interface AcpPendingPermission {
+  requestId: string;
+  sessionId: string;
+  title: string;
+  toolCallId: string;
+  options: Array<{ optionId: string; name: string; kind: string }>;
+}
+
 export function initialRunState(): AguiRunState {
-  return { status: "idle", timelineKeys: [], timelineByKey: new Map(), timelineRevision: 0, toolCallCount: 0, warnings: [] };
+  return { status: "idle", timelineKeys: [], timelineByKey: new Map(), timelineRevision: 0, toolCallCount: 0, warnings: [], protocolEvents: [] };
 }
 
 export function timelineItems(state: AguiRunState): TimelineItem[] {
@@ -92,6 +104,22 @@ export function applyAguiEvent(state: AguiRunState, event: AguiEvent): AguiRunSt
       const metadata = event.name === HARNESS_TOOL_RESULT_META_EVENT
         ? parseToolResultMeta(event.value)
         : undefined;
+      if (metadata === undefined && event.name === HARNESS_PROTOCOL_EVENT) {
+        const protocol = parseProtocolEvidence(event.value);
+        if (protocol === undefined) return state;
+        const pendingPermission = permissionFromProtocolEvent(protocol);
+        const resolvedPermission = protocol.method === "session/request_permission:response"
+          ? protocol.rpcId
+          : undefined;
+        return {
+          ...state,
+          protocolEvents: [...state.protocolEvents, protocol].slice(-2_000),
+          ...(pendingPermission !== undefined ? { pendingPermission } : {}),
+          ...(resolvedPermission !== undefined && state.pendingPermission?.requestId === resolvedPermission
+            ? { pendingPermission: undefined }
+            : {}),
+        };
+      }
       return metadata === undefined
         ? state
         : patchItem(state, "tool-call", metadata.toolCallId, (item) => ({
@@ -110,6 +138,52 @@ export function applyAguiEvent(state: AguiRunState, event: AguiEvent): AguiRunSt
         ...(event.result !== undefined ? { result: event.result } : {}),
       }, "result-unavailable");
   }
+}
+
+function parseProtocolEvidence(value: unknown): HarnessProtocolEvidence | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const event = value as Record<string, unknown>;
+  if (
+    event.protocol !== "acp" ||
+    (event.direction !== "Client → Agent" && event.direction !== "Agent → Client") ||
+    typeof event.method !== "string"
+  ) return undefined;
+  return {
+    protocol: "acp",
+    direction: event.direction,
+    method: event.method,
+    ...(typeof event.rpcId === "string" ? { rpcId: event.rpcId } : {}),
+    ...(typeof event.sessionId === "string" ? { sessionId: event.sessionId } : {}),
+    payload: event.payload,
+  };
+}
+
+function permissionFromProtocolEvent(event: HarnessProtocolEvidence): AcpPendingPermission | undefined {
+  if (event.method !== "session/request_permission" || event.direction !== "Agent → Client" || event.rpcId === undefined) return undefined;
+  const envelope = recordValue(event.payload);
+  const params = recordValue(envelope?.params);
+  const toolCall = recordValue(params?.toolCall);
+  if (typeof params?.sessionId !== "string" || typeof toolCall?.toolCallId !== "string" || !Array.isArray(params.options)) return undefined;
+  const options = params.options.flatMap((value) => {
+    const option = recordValue(value);
+    return typeof option?.optionId === "string" && typeof option.name === "string" && typeof option.kind === "string"
+      ? [{ optionId: option.optionId, name: option.name, kind: option.kind }]
+      : [];
+  });
+  if (options.length === 0) return undefined;
+  return {
+    requestId: event.rpcId,
+    sessionId: params.sessionId,
+    title: typeof toolCall.title === "string" ? toolCall.title : "ACP Agent action",
+    toolCallId: toolCall.toolCallId,
+    options,
+  };
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 function settleTools(

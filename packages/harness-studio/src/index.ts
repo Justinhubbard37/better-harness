@@ -28,6 +28,7 @@ export {
   createHarnessStudioServer,
   startHarnessStudioServer,
   type HarnessStudioServerOptions,
+  type StudioAcpAgentOptions,
   type StudioIntentAnalyzer,
   type StartedHarnessStudioServer,
 } from "./server/server.js";

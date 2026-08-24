@@ -88,10 +88,14 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
+    "@agentclientprotocol/sdk": "^1.4.0",
     "@earendil-works/pi-coding-agent": "^0.84.2",
     "@qoder-ai/qoder-agent-sdk": "^1.0.21"
   },
   "peerDependenciesMeta": {
+    "@agentclientprotocol/sdk": {
+      "optional": true
+    },
     "@earendil-works/pi-coding-agent": {
       "optional": true
     },
@@ -106,6 +110,7 @@
     "shiki": "4.4.3"
   },
   "devDependencies": {
+    "@agentclientprotocol/sdk": "1.4.0",
     "@earendil-works/pi-coding-agent": "0.84.2",
     "@qoder-ai/qoder-agent-sdk": "1.0.21",
     "@types/node": "26.2.0",

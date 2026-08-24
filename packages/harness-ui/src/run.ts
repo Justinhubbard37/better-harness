@@ -15,6 +15,8 @@ import { createAguiTranslator } from "./translate.js";
 
 export interface HarnessUiExecutorContext {
   runtimeId: string;
+  threadId: string;
+  runId: string;
   onRunEvent: HarnessRunEventListener;
 }
 
@@ -45,6 +47,7 @@ export interface HarnessAguiRunOptions {
   threadId: string;
   runId: string;
   onEvent: (event: AguiEvent) => void;
+  abortSignal?: AbortSignal;
   executorFactory: HarnessUiExecutorFactory;
   /**
    * Realization facts for the runtime that resolves. Defaults to the adapters
@@ -118,12 +121,15 @@ export async function runHarnessAgui(options: HarnessAguiRunOptions): Promise<Ha
   try {
     const executor = options.executorFactory({
       runtimeId: revision.target.runtime,
+      threadId: options.threadId,
+      runId: options.runId,
       onRunEvent: (event) => deliver(translator.translate(event)),
     });
     const result = await executor.execute(revision, compiled.bundle, {
       prompt: options.prompt,
       ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
       ...(options.sourceRoot !== undefined ? { sourceRoot: options.sourceRoot } : {}),
+      ...(options.abortSignal !== undefined ? { abortSignal: options.abortSignal } : {}),
     });
     if (!translator.terminated) {
       if (result.exitCode === 0) {

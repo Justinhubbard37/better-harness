@@ -9,6 +9,7 @@ import {
 
 const EMPTY: StudioConfig = {
   aguiEnabled: false,
+  acpEnabled: false,
   artifactsEnabled: false,
   evidenceEnabled: false,
   experimentEnabled: false,
@@ -72,6 +73,7 @@ describe("Studio control-plane navigation", () => {
   it("routes configured artifacts to Debugger, Compare, and Inspector surfaces", () => {
     const config: StudioConfig = {
       aguiEnabled: true,
+      acpEnabled: false,
       artifactsEnabled: true,
       evidenceEnabled: true,
       experimentEnabled: true,

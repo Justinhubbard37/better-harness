@@ -23,6 +23,16 @@ export const AGUI_EVENT_TYPES = [
 
 /** Namespaced metadata for retained Tool Call results beyond the AG-UI core shape. */
 export const HARNESS_TOOL_RESULT_META_EVENT = "harness.tool-result-meta";
+export const HARNESS_PROTOCOL_EVENT = "harness.protocol-event";
+
+export interface HarnessProtocolEvidence {
+  protocol: "acp";
+  direction: "Client → Agent" | "Agent → Client";
+  method: string;
+  rpcId?: string;
+  sessionId?: string;
+  payload: unknown;
+}
 
 export interface HarnessToolResultMeta {
   toolCallId: string;

@@ -23,6 +23,8 @@ export interface HarnessUiServerOptions {
   executorFactory: HarnessUiExecutorFactory;
   /** Exact browser origins allowed in addition to this server's own origin. */
   allowedOrigins?: readonly string[];
+  /** Optional server-owned cancellation signal for one validated browser run id. */
+  runAbortSignal?: (runId: string) => AbortSignal | undefined;
 }
 
 /**
@@ -126,6 +128,7 @@ export async function handleAguiRun(
     response.write(encodeSseEvent(event));
   };
   try {
+    const abortSignal = options.runAbortSignal?.(input.runId);
     await runHarnessAgui({
       source: options.source,
       prompt,
@@ -137,6 +140,7 @@ export async function handleAguiRun(
       ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
       ...(options.sourceRoot !== undefined ? { sourceRoot: options.sourceRoot } : {}),
       executorFactory: options.executorFactory,
+      ...(abortSignal !== undefined ? { abortSignal } : {}),
     });
   } catch (error) {
     // runHarnessAgui normally reports failures itself. Preserve a complete

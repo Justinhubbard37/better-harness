@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HARNESS_TOOL_RESULT_META_EVENT, type AguiEvent } from "@qoder-ai/harness-ui";
+import { HARNESS_PROTOCOL_EVENT, HARNESS_TOOL_RESULT_META_EVENT, type AguiEvent } from "@qoder-ai/harness-ui";
 import { applyAguiEvent, initialRunState, timelineItems, type AguiRunState } from "../src/app/agui-store.js";
 import { createSseParser } from "../src/app/sse-client.js";
 
@@ -123,6 +123,37 @@ describe("applyAguiEvent", () => {
     ]);
 
     expect(timelineItems(state)[0]).toMatchObject({ kind: "tool-call", status: "result-unavailable" });
+  });
+
+  it("retains ACP frames and projects a real permission request until its response", () => {
+    const request = {
+      protocol: "acp" as const,
+      direction: "Agent → Client" as const,
+      method: "session/request_permission",
+      rpcId: "permission-1",
+      payload: {
+        params: {
+          sessionId: "session-1",
+          toolCall: { toolCallId: "tool-1", title: "Read workspace" },
+          options: [{ optionId: "allow", name: "Allow once", kind: "allow_once" }],
+        },
+      },
+    };
+    const waiting = reduce([
+      { type: "RUN_STARTED", threadId: "t1", runId: "r1" },
+      { type: "CUSTOM", name: HARNESS_PROTOCOL_EVENT, value: request },
+    ]);
+
+    expect(waiting.protocolEvents).toEqual([request]);
+    expect(waiting.pendingPermission).toMatchObject({ requestId: "permission-1", toolCallId: "tool-1" });
+
+    const settled = applyAguiEvent(waiting, {
+      type: "CUSTOM",
+      name: HARNESS_PROTOCOL_EVENT,
+      value: { ...request, direction: "Client → Agent", method: "session/request_permission:response" },
+    });
+    expect(settled.pendingPermission).toBeUndefined();
+    expect(settled.protocolEvents).toHaveLength(2);
   });
 });
 

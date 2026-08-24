@@ -14,10 +14,19 @@ const portIndex = process.argv.indexOf("--port");
 const requestedPort = portIndex >= 0 ? Number(process.argv[portIndex + 1]) : 3311;
 const port = Number.isInteger(requestedPort) && requestedPort >= 0 && requestedPort <= 65535 ? requestedPort : 3311;
 const intentAnalysisEnabled = process.argv.includes("--intent-analysis");
+const acpAgentArgs = JSON.parse(process.env.BETTER_HARNESS_ACP_ARGS_JSON || "[]");
+if (!Array.isArray(acpAgentArgs) || !acpAgentArgs.every((value) => typeof value === "string")) {
+  throw new Error("BETTER_HARNESS_ACP_ARGS_JSON must be a JSON string array.");
+}
 const started = await startHarnessStudioServer({
   appDir: path.join(packageRoot, "dist", "app"),
   port,
   workspaceSessionProvider: createInspectorWorkspaceSessionProvider(),
+  acpAgent: {
+    command: process.env.BETTER_HARNESS_ACP_AGENT || "codex-acp",
+    args: acpAgentArgs,
+    label: process.env.BETTER_HARNESS_ACP_AGENT_LABEL || "Codex ACP",
+  },
   customizationCollector: createBundledAgentCustomizationCollector(),
   ...(intentAnalysisEnabled ? { intentAnalyzer: createQoderCliIntentAnalyzer({ pluginRoot: repositoryRoot }) } : {}),
 });

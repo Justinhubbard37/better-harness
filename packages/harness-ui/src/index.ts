@@ -1,4 +1,5 @@
 export {
+  HARNESS_PROTOCOL_EVENT,
   AGUI_EVENT_TYPES,
   HARNESS_TOOL_RESULT_META_EVENT,
   latestUserPrompt,
@@ -19,6 +20,7 @@ export {
   type AguiToolCallStartEvent,
   type AguiToolCallResultEvent,
   type HarnessToolResultMeta,
+  type HarnessProtocolEvidence,
   type RunAgentInput,
 } from "./protocol.js";
 export { createAguiTranslator, type AguiTranslator, type AguiTranslatorOptions } from "./translate.js";

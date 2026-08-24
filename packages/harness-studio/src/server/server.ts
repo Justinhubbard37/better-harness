@@ -10,7 +10,12 @@ import {
   handleAguiRun,
   type HarnessUiExecutorFactory,
 } from "@qoder-ai/harness-ui";
-import { PiSdkExecutor, QoderSdkExecutor } from "@qoder-ai/harness/exec";
+import {
+  AcpSdkExecutor,
+  PiSdkExecutor,
+  QoderSdkExecutor,
+  type AcpPermissionHandler,
+} from "@qoder-ai/harness/exec";
 import type { CustomizationAnalysisResponseV1 } from "@qoder-ai/harness/customization";
 import {
   loadHarnessExperimentManifest,
@@ -84,6 +89,8 @@ import { discoverArtifactProviderRuntime } from "./artifact-provider-discovery.j
 import type { GitCommitDetail, GitRefsSnapshot } from "../git-history-model.js";
 import {
   DEFAULT_LOCAL_HARNESS_ID,
+  DEFAULT_LOCAL_ACP_HARNESS_SOURCE,
+  DEFAULT_LOCAL_ACP_RUNTIME_ID,
   DEFAULT_LOCAL_HARNESS_SOURCE,
   DEFAULT_LOCAL_RUNTIME_ID,
 } from "./default-local-harness.js";
@@ -224,6 +231,8 @@ export interface HarnessStudioServerOptions {
   /** Additional bounded source candidates selectable from inside Studio. */
   sourceCatalog?: StudioSourceCandidate[];
   executorFactory?: HarnessUiExecutorFactory;
+  /** Explicit local ACP Agent. The browser can select it but cannot alter its command or argv. */
+  acpAgent?: StudioAcpAgentOptions;
   /** `harness-experiment.v1` manifest; enables the live three-lane trace view. */
   experimentManifestPath?: string;
   /** Runtime-only trajectory sources, useful for previewing imported host history before it is copied. */
@@ -248,6 +257,17 @@ export interface HarnessStudioServerOptions {
   intentAnalyzer?: StudioIntentAnalyzer;
   /** On-demand local customization collector. Constructing the server never invokes it. */
   customizationCollector?: StudioCustomizationCollector;
+}
+
+export interface StudioAcpAgentOptions {
+  command: string;
+  args?: readonly string[];
+  label?: string;
+  env?: NodeJS.ProcessEnv;
+  /** Optional ACP-specific Harness source; workspace-default Studio uses its built-in source. */
+  harnessSource?: string;
+  harnessId?: string;
+  runtimeId?: string;
 }
 
 /**
@@ -288,6 +308,7 @@ export function createHarnessStudioServer(options: HarnessStudioServerOptions): 
     workspaceOpenStage: "idle",
     intentAnalysisRunning: false,
     customizationAnalysisRunning: false,
+    acpRuns: new Map(),
   };
   const server = createServer((request, response) => {
     void route(request, response, resolvedOptions, state, experimentRuns).catch((error: unknown) => {
@@ -299,6 +320,7 @@ export function createHarnessStudioServer(options: HarnessStudioServerOptions): 
     });
   });
   server.once("close", () => {
+    cancelAllAcpRuns(state);
     void Promise.all([cleanupArtifactImports(state), cleanupWorkspaceImports(state)]);
   });
   return server;
@@ -377,6 +399,17 @@ interface HarnessStudioState {
   intentAnalysisRunning: boolean;
   customizationAnalysisRunning: boolean;
   customizationAnalysis?: CustomizationAnalysisResponseV1;
+  acpRuns: Map<string, AcpRunControl>;
+}
+
+interface AcpRunControl {
+  abortController: AbortController;
+  pendingPermissions: Map<string, AcpPendingPermission>;
+}
+
+interface AcpPendingPermission {
+  optionIds: Set<string>;
+  settle: (response: Awaited<ReturnType<AcpPermissionHandler>>) => void;
 }
 
 function artifactOptions(options: HarnessStudioServerOptions, state: HarnessStudioState): HarnessStudioServerOptions {
@@ -396,6 +429,8 @@ async function route(
   if (request.method === "GET" && url.pathname === "/api/config") {
     respondJson(response, 200, {
       aguiEnabled: options.harnessSource !== undefined,
+      acpEnabled: acpAgentEnabled(options),
+      acpAgentLabel: options.acpAgent?.label ?? "ACP Agent",
       artifactsEnabled: state.artifactDirectory !== undefined,
       evidenceEnabled: activeSourcePath(state.sourceCatalog, state.activeSources, "evidence") !== undefined,
       experimentEnabled: state.activeManifestPath !== undefined,
@@ -673,6 +708,38 @@ async function route(
     await serveCanvasSdk(response, options, url.pathname.endsWith(".map"));
     return;
   }
+  const acpPermissionMatch = url.pathname.match(/^\/api\/acp\/runs\/([^/]+)\/permissions\/([^/]+)$/);
+  if (request.method === "POST" && acpPermissionMatch !== null) {
+    await decideAcpPermission(request, response, state, acpPermissionMatch[1]!, acpPermissionMatch[2]!);
+    return;
+  }
+  const acpCancelMatch = url.pathname.match(/^\/api\/acp\/runs\/([^/]+)\/cancel$/);
+  if (request.method === "POST" && acpCancelMatch !== null) {
+    cancelAcpRun(request, response, state, acpCancelMatch[1]!);
+    return;
+  }
+  if (url.pathname === "/agui/acp") {
+    if (!acpAgentEnabled(options)) {
+      respondJson(response, 404, { error: "No ACP Agent is configured for Harness Studio." });
+      return;
+    }
+    if (request.method !== "POST") {
+      respondJson(response, 405, { error: "Use POST for /agui/acp." });
+      return;
+    }
+    const runtimeOptions = activeWorkspaceOptions(options, state);
+    const acpAgent = options.acpAgent!;
+    await handleAguiRun(request, response, {
+      source: acpAgent.harnessSource ?? DEFAULT_LOCAL_ACP_HARNESS_SOURCE,
+      harnessId: acpAgent.harnessId ?? DEFAULT_LOCAL_HARNESS_ID,
+      runtimeId: acpAgent.runtimeId ?? DEFAULT_LOCAL_ACP_RUNTIME_ID,
+      ...(runtimeOptions.cwd !== undefined ? { cwd: runtimeOptions.cwd } : {}),
+      ...(runtimeOptions.sourceRoot !== undefined ? { sourceRoot: runtimeOptions.sourceRoot } : {}),
+      executorFactory: acpExecutorFactory(acpAgent, state),
+      runAbortSignal: (runId) => ensureAcpRun(state, runId).abortController.signal,
+    });
+    return;
+  }
   if (url.pathname === "/agui" || url.pathname === "/healthz") {
     if (options.harnessSource === undefined) {
       respondJson(response, 404, { error: "No harness loaded; start with --harness <file.harness>." });
@@ -713,6 +780,146 @@ function activeWorkspaceOptions(
     cwd: localDirectory,
     sourceRoot: options.sourceRoot ?? localDirectory,
   };
+}
+
+function acpAgentEnabled(options: HarnessStudioServerOptions): boolean {
+  return options.acpAgent !== undefined
+    && (options.harnessMode === "workspace-default" || options.acpAgent.harnessSource !== undefined);
+}
+
+function ensureAcpRun(state: HarnessStudioState, runId: string): AcpRunControl {
+  const existing = state.acpRuns.get(runId);
+  if (existing !== undefined) return existing;
+  const control: AcpRunControl = {
+    abortController: new AbortController(),
+    pendingPermissions: new Map(),
+  };
+  state.acpRuns.set(runId, control);
+  return control;
+}
+
+function acpExecutorFactory(
+  agent: StudioAcpAgentOptions,
+  state: HarnessStudioState,
+): HarnessUiExecutorFactory {
+  return (context) => {
+    const control = ensureAcpRun(state, context.runId);
+    const executor = new AcpSdkExecutor({
+      command: agent.command,
+      args: agent.args,
+      env: agent.env,
+      onRunEvent: context.onRunEvent,
+      abortSignal: control.abortController.signal,
+      requestPermission: (requestId, request, signal) => waitForAcpPermission(
+        control,
+        requestId,
+        request,
+        signal,
+      ),
+    });
+    return {
+      host: executor.host,
+      execute: async (revision, bundle, task) => {
+        try {
+          return await executor.execute(revision, bundle, task);
+        } finally {
+          finishAcpRun(state, context.runId);
+        }
+      },
+    };
+  };
+}
+
+function waitForAcpPermission(
+  control: AcpRunControl,
+  requestId: string,
+  request: Parameters<AcpPermissionHandler>[1],
+  signal: AbortSignal,
+): ReturnType<AcpPermissionHandler> {
+  if (control.abortController.signal.aborted || signal.aborted) {
+    return Promise.resolve({ outcome: { outcome: "cancelled" } });
+  }
+  return new Promise((resolvePromise) => {
+    let settled = false;
+    const optionIds = new Set(request.options.map((option) => option.optionId));
+    const timeout = setTimeout(() => settle({ outcome: { outcome: "cancelled" } }), 5 * 60_000);
+    const abort = (): void => settle({ outcome: { outcome: "cancelled" } });
+    const settle = (response: Awaited<ReturnType<AcpPermissionHandler>>): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", abort);
+      control.abortController.signal.removeEventListener("abort", abort);
+      control.pendingPermissions.delete(requestId);
+      resolvePromise(response);
+    };
+    control.pendingPermissions.set(requestId, { optionIds, settle });
+    signal.addEventListener("abort", abort, { once: true });
+    control.abortController.signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
+async function decideAcpPermission(
+  request: IncomingMessage,
+  response: ServerResponse,
+  state: HarnessStudioState,
+  encodedRunId: string,
+  encodedRequestId: string,
+): Promise<void> {
+  if (!sameOriginRequest(request)) {
+    respondJson(response, 403, { error: "Cross-origin ACP permission decisions are not allowed." });
+    return;
+  }
+  const runId = decodeURIComponent(encodedRunId);
+  const requestId = decodeURIComponent(encodedRequestId);
+  const pending = state.acpRuns.get(runId)?.pendingPermissions.get(requestId);
+  if (pending === undefined) {
+    respondJson(response, 404, { error: "No matching ACP permission request is pending." });
+    return;
+  }
+  const body = await readJsonBody(request).catch(() => ({})) as { optionId?: unknown };
+  if (typeof body.optionId !== "string" || !pending.optionIds.has(body.optionId)) {
+    respondJson(response, 400, { error: "optionId must select an option offered by the ACP Agent." });
+    return;
+  }
+  pending.settle({ outcome: { outcome: "selected", optionId: body.optionId } });
+  respondJson(response, 200, { status: "selected", optionId: body.optionId });
+}
+
+function cancelAcpRun(
+  request: IncomingMessage,
+  response: ServerResponse,
+  state: HarnessStudioState,
+  encodedRunId: string,
+): void {
+  if (!sameOriginRequest(request)) {
+    respondJson(response, 403, { error: "Cross-origin ACP cancellation is not allowed." });
+    return;
+  }
+  const runId = decodeURIComponent(encodedRunId);
+  const control = state.acpRuns.get(runId);
+  if (control === undefined) {
+    respondJson(response, 404, { error: "No matching ACP run is active." });
+    return;
+  }
+  control.abortController.abort();
+  respondJson(response, 202, { status: "cancelling" });
+}
+
+function finishAcpRun(state: HarnessStudioState, runId: string): void {
+  const control = state.acpRuns.get(runId);
+  if (control === undefined) return;
+  for (const pending of control.pendingPermissions.values()) {
+    pending.settle({ outcome: { outcome: "cancelled" } });
+  }
+  state.acpRuns.delete(runId);
+}
+
+function cancelAllAcpRuns(state: HarnessStudioState): void {
+  for (const [runId, control] of state.acpRuns) {
+    control.abortController.abort();
+    finishAcpRun(state, runId);
+  }
 }
 
 async function createWorkspaceImport(

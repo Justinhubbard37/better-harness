@@ -85,14 +85,16 @@ import { buildTimelineBins, groupLiveTimeline, semanticToolKind, type LiveTimeli
 async function streamRun(
   endpoint: string,
   prompt: string,
+  threadId: string,
+  runId: string,
   onEvents: (events: AguiEvent[]) => void,
 ): Promise<void> {
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      threadId: `thread_${Date.now()}`,
-      runId: `run_${Date.now()}`,
+      threadId,
+      runId,
       messages: [{ id: "m1", role: "user", content: prompt }],
     }),
   });
@@ -130,6 +132,7 @@ type MessageTimelineItem = Extract<TimelineItem, { kind: "message" }>;
 type ToolCallTimelineItem = Extract<TimelineItem, { kind: "tool-call" }>;
 type InspectorTab = "changes" | "files" | "artifacts" | "tests" | "terminal" | "plan" | "evidence" | "raw";
 type SurfaceMode = "recorded" | "live";
+type LiveRuntime = "qoder" | "acp";
 
 interface SavedRunSummary {
   id: string;
@@ -238,12 +241,16 @@ function stopConditionLabel(enabled: StopConditionState): string {
 
 export function RunView({
   aguiEndpoint,
+  acpEndpoint,
+  acpAgentLabel = "ACP Agent",
   artifactEndpoint,
   harnessLabel = "Live Trial",
   navigation,
   initialMode = "live",
 }: {
   aguiEndpoint: string;
+  acpEndpoint?: string;
+  acpAgentLabel?: string;
   artifactEndpoint?: string;
   harnessLabel?: string;
   navigation?: ReactNode;
@@ -251,6 +258,8 @@ export function RunView({
 }): React.JSX.Element {
   const [surfaceMode, setSurfaceMode] = useState<SurfaceMode>(initialMode);
   const [prompt, setPrompt] = useState("");
+  const [runtime, setRuntime] = useState<LiveRuntime>("qoder");
+  const [activeRuntime, setActiveRuntime] = useState<LiveRuntime>("qoder");
   const [submittedPrompt, setSubmittedPrompt] = useState("");
   const [state, setState] = useState<AguiRunState>(initialRunState);
   const [cursor, setCursor] = useState<DebuggerCursor>(DEFAULT_DEBUGGER_CURSOR);
@@ -265,6 +274,7 @@ export function RunView({
   const [treeCollapsed, setTreeCollapsed] = useState(() => globalThis.matchMedia?.("(max-width: 900px)").matches ?? false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(() => globalThis.matchMedia?.("(max-width: 900px)").matches ?? false);
   const busy = useRef(false);
+  const permissionOpenedInspector = useRef(false);
   const firstCursorRender = useRef(true);
   const liveStateRef = useRef<AguiRunState>(initialRunState());
 
@@ -288,6 +298,18 @@ export function RunView({
     media.addEventListener("change", listener);
     return () => media.removeEventListener("change", listener);
   }, []);
+
+  useEffect(() => {
+    if (state.pendingPermission !== undefined && inspectorCollapsed) {
+      permissionOpenedInspector.current = true;
+      setInspectorCollapsed(false);
+      return;
+    }
+    if (state.pendingPermission === undefined && permissionOpenedInspector.current) {
+      permissionOpenedInspector.current = false;
+      setInspectorCollapsed(true);
+    }
+  }, [inspectorCollapsed, state.pendingPermission]);
 
   useEffect(() => {
     if (firstCursorRender.current) {
@@ -355,6 +377,12 @@ export function RunView({
     if (busy.current || prompt.trim().length === 0) return;
     busy.current = true;
     const promptText = prompt.trim();
+    const selectedRuntime = runtime === "acp" && acpEndpoint !== undefined ? "acp" : "qoder";
+    const endpoint = selectedRuntime === "acp" ? acpEndpoint! : aguiEndpoint;
+    const stamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const threadId = `thread_${stamp}`;
+    const runId = `run_${stamp}`;
+    setActiveRuntime(selectedRuntime);
     setSubmittedPrompt(promptText);
     setSurfaceMode("live");
     setSavedRun(null);
@@ -365,7 +393,7 @@ export function RunView({
     liveStateRef.current = fresh;
     setState(fresh);
     try {
-      await streamRun(aguiEndpoint, promptText, (events) => {
+      await streamRun(endpoint, promptText, threadId, runId, (events) => {
         // Fold outside any React updater: applyAguiEvent mutates the keyed
         // map for O(1) deltas and each batch must be applied exactly once.
         liveStateRef.current = events.reduce(applyAguiEvent, liveStateRef.current);
@@ -399,7 +427,21 @@ export function RunView({
         // Saving is best-effort evidence retention; the live view already holds the run.
       }
     }
-  }, [aguiEndpoint, prompt, refreshRuns]);
+  }, [acpEndpoint, aguiEndpoint, prompt, refreshRuns, runtime]);
+
+  const cancelLiveRun = useCallback(async (): Promise<void> => {
+    if (activeRuntime !== "acp" || state.runId === undefined) return;
+    await fetch(`/api/acp/runs/${encodeURIComponent(state.runId)}/cancel`, { method: "POST" }).catch(() => undefined);
+  }, [activeRuntime, state.runId]);
+
+  const decidePermission = useCallback(async (requestId: string, optionId: string): Promise<void> => {
+    if (state.runId === undefined) return;
+    await fetch(`/api/acp/runs/${encodeURIComponent(state.runId)}/permissions/${encodeURIComponent(requestId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ optionId }),
+    });
+  }, [state.runId]);
 
   const live = surfaceMode === "live";
   const saved = savedRun !== null;
@@ -411,8 +453,8 @@ export function RunView({
     <header className="debugger-topbar">
       <div className="debugger-brand"><span className="debugger-mark"><BugBeetle size={18} weight="fill" /></span><strong>{live ? "Harness Run" : "Inspector"}</strong><span>{live ? harnessLabel : saved ? "Retained Session Debugger" : "Session Debugger · Demo"}</span></div>
       <div className="debugger-session-meta"><span>Session</span><strong title={sessionName}>{sessionName}</strong><em className={live ? "live" : "recorded"}>{runMode}</em></div>
-      <div className="debugger-runtime-meta"><span className={`connection-dot status-${connectionState}`} /><strong>{connectionState}</strong><i /><span>Agent</span><strong>{live ? "local harness" : retainedSession.agent}</strong><i /><span>Protocol</span><strong>{live ? "AG-UI / ACP evidence" : retainedSession.protocol}</strong></div>
-      <div className="debugger-top-actions">{navigation}<div className="saved-runs"><button type="button" onClick={() => { setRunsPanelOpen((value) => !value); void refreshRuns(); }} aria-expanded={runsPanelOpen} aria-haspopup="true"><ClockCounterClockwise size={15} /><span>Saved runs{savedRuns.length > 0 ? ` (${savedRuns.length})` : ""}</span></button>{runsPanelOpen && <div className="saved-runs-panel" role="menu" aria-label="Saved runs">{saved && <button type="button" role="menuitem" className="saved-runs-live" onClick={() => { setSavedRun(null); setRetainedSession(SAMPLE_DEBUGGER_SESSION); setSurfaceMode("live"); setRunsPanelOpen(false); }}>Back to live view</button>}{savedRuns.length === 0 ? <p className="saved-runs-empty">No saved runs yet. Finished runs are saved automatically.</p> : savedRuns.map((run) => <button type="button" role="menuitem" key={run.id} className={savedRun?.id === run.id ? "selected" : ""} onClick={() => void openSavedRun(run.id)}><strong title={run.prompt}>{run.prompt}</strong><span><em className={`run-badge status-${run.status}`}>{run.status}</em>{run.toolCallCount} call{run.toolCallCount === 1 ? "" : "s"} · {run.savedAt.slice(0, 19).replace("T", " ")}</span></button>)}</div>}</div><button type="button" onClick={() => setTreeCollapsed((value) => !value)} aria-pressed={!treeCollapsed} title="Toggle Execution Tree"><TreeStructure size={15} /></button><button type="button" onClick={() => setInspectorCollapsed((value) => !value)} aria-pressed={!inspectorCollapsed} title="Toggle State Inspector"><SidebarSimple size={15} /></button><button type="button" className="new-run" onClick={() => setComposerOpen(true)}><Plus size={14} weight="bold" />New live run</button></div>
+      <div className="debugger-runtime-meta"><span className={`connection-dot status-${connectionState}`} /><strong>{connectionState}</strong><i /><span>Agent</span><strong>{live ? activeRuntime === "acp" ? acpAgentLabel : "local harness" : retainedSession.agent}</strong><i /><span>Protocol</span><strong>{live ? activeRuntime === "acp" ? "ACP v1 · AG-UI projection" : "AG-UI" : retainedSession.protocol}</strong></div>
+      <div className="debugger-top-actions">{navigation}{live && activeRuntime === "acp" && state.status === "running" ? <button type="button" className="cancel-live-run" onClick={() => void cancelLiveRun()}><XCircle size={15} />Cancel run</button> : null}<div className="saved-runs"><button type="button" onClick={() => { setRunsPanelOpen((value) => !value); void refreshRuns(); }} aria-expanded={runsPanelOpen} aria-haspopup="true"><ClockCounterClockwise size={15} /><span>Saved runs{savedRuns.length > 0 ? ` (${savedRuns.length})` : ""}</span></button>{runsPanelOpen && <div className="saved-runs-panel" role="menu" aria-label="Saved runs">{saved && <button type="button" role="menuitem" className="saved-runs-live" onClick={() => { setSavedRun(null); setRetainedSession(SAMPLE_DEBUGGER_SESSION); setSurfaceMode("live"); setRunsPanelOpen(false); }}>Back to live view</button>}{savedRuns.length === 0 ? <p className="saved-runs-empty">No saved runs yet. Finished runs are saved automatically.</p> : savedRuns.map((run) => <button type="button" role="menuitem" key={run.id} className={savedRun?.id === run.id ? "selected" : ""} onClick={() => void openSavedRun(run.id)}><strong title={run.prompt}>{run.prompt}</strong><span><em className={`run-badge status-${run.status}`}>{run.status}</em>{run.toolCallCount} call{run.toolCallCount === 1 ? "" : "s"} · {run.savedAt.slice(0, 19).replace("T", " ")}</span></button>)}</div>}</div><button type="button" onClick={() => setTreeCollapsed((value) => !value)} aria-pressed={!treeCollapsed} title="Toggle Execution Tree"><TreeStructure size={15} /></button><button type="button" onClick={() => setInspectorCollapsed((value) => !value)} aria-pressed={!inspectorCollapsed} title="Toggle State Inspector"><SidebarSimple size={15} /></button><button type="button" className="new-run" onClick={() => setComposerOpen(true)}><Plus size={14} weight="bold" />New live run</button></div>
     </header>
 
     {!live ? <nav className="debugger-toolbar" aria-label="Session debugger controls">
@@ -433,12 +475,12 @@ export function RunView({
     <div className="debugger-grid">
       {live ? <LiveExecutionTree state={viewState} prompt={viewPrompt} /> : <ExecutionTree session={retainedSession} cursor={cursor} expanded={expandedNodes} onToggle={toggleExpanded} onSelect={selectNode} />}
       {live ? <LiveNotebook state={viewState} prompt={viewPrompt} groups={liveGroups} /> : <SessionNotebook session={retainedSession} cursor={cursor} expanded={expandedNodes} onSelect={selectCursor} onToggle={toggleExpanded} />}
-      {live ? <LiveInspector state={viewState} /> : <StateInspector session={retainedSession} cursor={cursor} activeTab={inspectorTab} artifactEndpoint={artifactEndpoint} onTab={setInspectorTab} onPrevious={() => selectCursor(previousStateCursor(retainedSession, cursor))} />}
+      {live ? <LiveInspector state={viewState} runtime={activeRuntime} onPermission={decidePermission} /> : <StateInspector session={retainedSession} cursor={cursor} activeTab={inspectorTab} artifactEndpoint={artifactEndpoint} onTab={setInspectorTab} onPrevious={() => selectCursor(previousStateCursor(retainedSession, cursor))} />}
     </div>
 
     {live ? <LiveTimeline state={viewState} bins={liveBins} eventCount={liveTimeline.length} /> : <TimelineMinimap session={retainedSession} cursor={cursor} onSelect={selectCursor} />}
 
-    {composerOpen && <div className="live-composer-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setComposerOpen(false); }}><section className="live-composer" role="dialog" aria-modal="true" aria-labelledby="live-composer-title"><header><div><small>{harnessLabel}</small><h2 id="live-composer-title">Start a live harness session</h2></div><button type="button" onClick={() => setComposerOpen(false)} aria-label="Close live run dialog"><XCircle size={19} /></button></header><p>Live events use the selected workspace and current AG-UI endpoint. Pausing this view only stops auto-follow; it does not stop the Agent unless a real gate is reported.</p><textarea value={prompt} placeholder="Task prompt for the harness run…" onChange={(event) => setPrompt(event.target.value)} rows={5} autoFocus /><footer><button type="button" onClick={() => setComposerOpen(false)}>Cancel</button><button type="button" className="primary" onClick={() => void start()} disabled={state.status === "running" || prompt.trim().length === 0}><Play size={14} weight="fill" />Run harness</button></footer></section></div>}
+    {composerOpen && <div className="live-composer-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setComposerOpen(false); }}><section className="live-composer" role="dialog" aria-modal="true" aria-labelledby="live-composer-title"><header><div><small>{harnessLabel}</small><h2 id="live-composer-title">Start a live harness session</h2></div><button type="button" onClick={() => setComposerOpen(false)} aria-label="Close live run dialog"><XCircle size={19} /></button></header><p>Live events use the selected workspace. ACP runs launch the server-configured local Agent and expose its real protocol evidence.</p>{acpEndpoint !== undefined ? <label className="live-runtime-select"><span>Runtime</span><select value={runtime} onChange={(event) => setRuntime(event.target.value as LiveRuntime)}><option value="qoder">Qoder SDK · AG-UI</option><option value="acp">{acpAgentLabel} · ACP v1</option></select></label> : null}<textarea value={prompt} placeholder="Task prompt for the harness run…" onChange={(event) => setPrompt(event.target.value)} rows={5} autoFocus /><footer><button type="button" onClick={() => setComposerOpen(false)}>Cancel</button><button type="button" className="primary" onClick={() => void start()} disabled={state.status === "running" || prompt.trim().length === 0}><Play size={14} weight="fill" />Run harness</button></footer></section></div>}
   </section>;
 }
 
@@ -686,8 +728,8 @@ function LiveGroupEntry({ group }: { group: LiveTimelineGroup }): React.JSX.Elem
   return <details className={`live-tool-group kind-${group.kind}`}><summary><span>{group.kind}</span><strong>{tool.name} ×{group.items.length}</strong><em>Tool Group</em></summary><div>{group.items.map((item) => <ToolCallEntry item={item as ToolCallTimelineItem} key={item.id} />)}</div></details>;
 }
 
-function LiveInspector({ state }: { state: AguiRunState }): React.JSX.Element {
-  return <aside className="state-inspector live-inspector" aria-label="State Inspector"><header><div><small>State Inspector</small><strong>Live observation</strong></div><span>Soft Pause</span></header><div className="inspector-scroll"><InspectorSection title="Runtime boundary"><ul className="checkpoint-boundary"><li className="available"><CheckCircle size={13} weight="fill" /><span><strong>Evidence stream</strong><small>{state.status}</small></span></li><li><WarningCircle size={13} weight="fill" /><span><strong>Gate pause</strong><small>Not reported</small></span></li><li><WarningCircle size={13} weight="fill" /><span><strong>Hard pause</strong><small>Not reported</small></span></li></ul></InspectorSection><InspectorSection title="Observed state"><dl className="fact-list"><div><dt>Run ID</dt><dd>{state.runId ?? "Pending"}</dd></div><div><dt>Thread ID</dt><dd>{state.threadId ?? "Pending"}</dd></div><div><dt>Tool calls</dt><dd>{state.toolCallCount}</dd></div><div><dt>Warnings</dt><dd>{state.warnings.length}</dd></div></dl></InspectorSection><InspectorSection title="Meaning"><p className="inspector-note">Soft Pause stops this UI from claiming auto-follow. It does not cancel, gate, or suspend the running Agent.</p></InspectorSection></div></aside>;
+function LiveInspector({ state, runtime, onPermission }: { state: AguiRunState; runtime: LiveRuntime; onPermission: (requestId: string, optionId: string) => Promise<void> }): React.JSX.Element {
+  return <aside className="state-inspector live-inspector" aria-label="State Inspector"><header><div><small>State Inspector</small><strong>Live observation</strong></div><span>{state.pendingPermission === undefined ? "Soft Pause" : "Permission gate"}</span></header><div className="inspector-scroll"><InspectorSection title="Runtime boundary"><ul className="checkpoint-boundary"><li className="available"><CheckCircle size={13} weight="fill" /><span><strong>Evidence stream</strong><small>{state.status}</small></span></li><li className={state.pendingPermission === undefined ? "" : "available"}>{state.pendingPermission === undefined ? <WarningCircle size={13} weight="fill" /> : <CheckCircle size={13} weight="fill" />}<span><strong>Gate pause</strong><small>{state.pendingPermission === undefined ? "Not reported" : "ACP permission requested"}</small></span></li><li><WarningCircle size={13} weight="fill" /><span><strong>Hard pause</strong><small>Not reported</small></span></li></ul></InspectorSection>{state.pendingPermission !== undefined ? <InspectorSection title="ACP permission"><div className="acp-permission"><strong>{state.pendingPermission.title}</strong><small>Tool call {state.pendingPermission.toolCallId}</small><div>{state.pendingPermission.options.map((option) => <button type="button" key={option.optionId} onClick={() => void onPermission(state.pendingPermission!.requestId, option.optionId)}>{option.name}<span>{option.kind}</span></button>)}</div></div></InspectorSection> : null}<InspectorSection title="Observed state"><dl className="fact-list"><div><dt>Run ID</dt><dd>{state.runId ?? "Pending"}</dd></div><div><dt>Thread ID</dt><dd>{state.threadId ?? "Pending"}</dd></div><div><dt>Tool calls</dt><dd>{state.toolCallCount}</dd></div><div><dt>Warnings</dt><dd>{state.warnings.length}</dd></div>{runtime === "acp" ? <div><dt>ACP frames</dt><dd>{state.protocolEvents.length}</dd></div> : null}</dl></InspectorSection>{runtime === "acp" ? <InspectorSection title="Raw ACP"><div className="acp-protocol-list">{state.protocolEvents.length === 0 ? <p className="inspector-note">Waiting for ACP protocol frames.</p> : state.protocolEvents.slice(-12).map((event, index) => <details key={`${event.direction}:${event.rpcId ?? index}:${index}`}><summary><span>{event.direction}</span><strong>{event.method}</strong></summary><pre>{JSON.stringify(event.payload, null, 2)}</pre></details>)}</div></InspectorSection> : null}<InspectorSection title="Meaning"><p className="inspector-note">{runtime === "acp" ? "ACP frames are redacted, bounded evidence from the server-owned stdio connection. Cancel sends session/cancel to the Agent." : "Soft Pause stops this UI from claiming auto-follow. It does not cancel, gate, or suspend the running Agent."}</p></InspectorSection></div></aside>;
 }
 
 function LiveTimeline({ state, bins, eventCount }: { state: AguiRunState; bins: TimelineBin<DebuggerEventKind>[]; eventCount: number }): React.JSX.Element {
