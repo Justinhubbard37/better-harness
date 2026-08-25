@@ -1,14 +1,14 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { ArtifactDescriptor, ArtifactRendererReference } from "../src/artifact-model.js";
+import type { ArtifactDescriptor, ArtifactRendererReference } from "../src/contracts/artifact.js";
 import {
   ARTIFACT_SURFACE_MOUNTS,
   ArtifactView,
   artifactSurfaceInstanceKey,
   normalizeArtifactSurfaceKind,
   resolveArtifactSurfaceMount,
-} from "../src/app/ArtifactView.js";
+} from "../src/app/artifacts/ArtifactView.js";
 
 describe("Artifact View surface registry", () => {
   it("keeps one stable ordered composition boundary for every view family", () => {

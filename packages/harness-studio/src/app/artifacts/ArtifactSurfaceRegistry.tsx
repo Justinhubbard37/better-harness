@@ -1,6 +1,6 @@
-import type { ArtifactDescriptor } from "../../artifact-model.js";
-import { ArtifactPreviewHost } from "../ArtifactPreviewHost.js";
-import { MarkdownArtifactView } from "../MarkdownArtifactView.js";
+import type { ArtifactDescriptor } from "../../contracts/artifact.js";
+import { ArtifactPreviewHost } from "./ArtifactPreviewHost.js";
+import { MarkdownArtifactView } from "./MarkdownArtifactView.js";
 import { DocxArtifactView } from "./docx/DocxArtifactView.js";
 import { ExternalHostedArtifactView } from "./ExternalHostedArtifactView.js";
 import { ImageArtifactView } from "./ImageArtifactView.js";

@@ -4,7 +4,7 @@ import {
   type ArtifactDataSnapshot,
   type ArtifactDescriptor,
   type ArtifactSnapshotPayload,
-} from "../../artifact-model.js";
+} from "../../contracts/artifact.js";
 import { studioApiError } from "../studio-api.js";
 
 type PayloadKind = ArtifactSnapshotPayload["kind"];

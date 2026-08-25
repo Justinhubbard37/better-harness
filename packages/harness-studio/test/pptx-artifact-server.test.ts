@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { isArtifactCatalogResponse, isArtifactDataSnapshot, type PptxArtifactPayload } from "../src/artifact-model.js";
+import { isArtifactCatalogResponse, isArtifactDataSnapshot, type PptxArtifactPayload } from "../src/contracts/artifact.js";
 import { startHarnessStudioServer, type StartedHarnessStudioServer } from "../src/server/server.js";
 import { createPptxFixture, TINY_PNG } from "./pptx-fixture.js";
 

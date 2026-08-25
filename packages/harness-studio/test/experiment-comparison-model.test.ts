@@ -6,8 +6,8 @@ import {
   relationCounts,
   resourceLedger,
   roleFor,
-} from "../src/app/experiment-comparison-model.js";
-import type { ExperimentPreview, LaneDefinition, LaneTrace } from "../src/app/experiment-view-types.js";
+} from "../src/app/experiment/experiment-comparison-model.js";
+import type { ExperimentPreview, LaneDefinition, LaneTrace } from "../src/app/experiment/experiment-view-types.js";
 
 const freshDefault: LaneDefinition = {
   id: "fresh-default",

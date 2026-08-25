@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalToolEvents, projectObservedCalls } from "../src/server/experiment-events.js";
+import { canonicalToolEvents, projectObservedCalls } from "../src/server/experiment/events.js";
 
 describe("server experiment event projection", () => {
   it("normalizes ACP, AG-UI, and Anthropic tool shapes before browser delivery", () => {

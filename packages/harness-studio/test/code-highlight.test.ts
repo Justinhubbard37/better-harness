@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { highlightStudioCode } from "../src/app/code-highlight.js";
+import { highlightStudioCode } from "../src/app/code/code-highlight.js";
 
 describe("Studio syntax highlighting", () => {
   it("loads one grammar on demand without changing the source text", async () => {

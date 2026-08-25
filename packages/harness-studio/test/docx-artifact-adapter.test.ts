@@ -9,11 +9,11 @@ import {
   type DocxArtifactPayload,
   type DocxParagraph,
   type DocxTable,
-} from "../src/artifact-model.js";
-import { describeArtifactCatalog, indexArtifactDirectory } from "../src/server/artifact-catalog.js";
-import type { ArtifactEntry } from "../src/server/artifact-catalog.js";
-import { DOCX_ARTIFACT_ADAPTER, resetDocxArtifactCache } from "../src/server/docx-artifact-adapter.js";
-import { resolveArtifactPlugin } from "../src/server/artifact-plugin-registry.js";
+} from "../src/contracts/artifact.js";
+import { describeArtifactCatalog, indexArtifactDirectory } from "../src/server/artifacts/registry/artifact-catalog.js";
+import type { ArtifactEntry } from "../src/server/artifacts/registry/artifact-catalog.js";
+import { DOCX_ARTIFACT_ADAPTER, resetDocxArtifactCache } from "../src/server/artifacts/adapters/docx-artifact-adapter.js";
+import { resolveArtifactPlugin } from "../src/server/artifacts/registry/artifact-plugin-registry.js";
 import { createDocxFixture, TINY_PNG } from "./docx-fixture.js";
 
 const tempDirectories: string[] = [];

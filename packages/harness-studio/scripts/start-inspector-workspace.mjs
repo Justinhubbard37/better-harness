@@ -8,7 +8,7 @@ import { createInspectorWorkspaceSessionProvider } from "./inspector-workspace-p
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = path.resolve(packageRoot, "../..");
 const { startHarnessStudioServer } = await import(path.join(packageRoot, "dist", "server", "server.js"));
-const { createQoderCliIntentAnalyzer } = await import(path.join(packageRoot, "dist", "server", "qoder-intent-analyzer.js"));
+const { createQoderCliIntentAnalyzer } = await import(path.join(packageRoot, "dist", "server", "providers", "qoder", "intent-analyzer.js"));
 const { createBundledAgentCustomizationCollector } = await import(path.join(packageRoot, "dist", "server", "customization-collector.js"));
 const portIndex = process.argv.indexOf("--port");
 const requestedPort = portIndex >= 0 ? Number(process.argv[portIndex + 1]) : 3311;

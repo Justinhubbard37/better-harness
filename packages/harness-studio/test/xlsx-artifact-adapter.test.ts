@@ -7,11 +7,11 @@ import {
   isArtifactDataSnapshot,
   type ArtifactDescriptor,
   type XlsxArtifactPayload,
-} from "../src/artifact-model.js";
-import { describeArtifactCatalog, indexArtifactDirectory } from "../src/server/artifact-catalog.js";
-import type { ArtifactEntry } from "../src/server/artifact-catalog.js";
-import { resolveArtifactPlugin } from "../src/server/artifact-plugin-registry.js";
-import { resetXlsxArtifactCache, XLSX_ARTIFACT_ADAPTER } from "../src/server/xlsx-artifact-adapter.js";
+} from "../src/contracts/artifact.js";
+import { describeArtifactCatalog, indexArtifactDirectory } from "../src/server/artifacts/registry/artifact-catalog.js";
+import type { ArtifactEntry } from "../src/server/artifacts/registry/artifact-catalog.js";
+import { resolveArtifactPlugin } from "../src/server/artifacts/registry/artifact-plugin-registry.js";
+import { resetXlsxArtifactCache, XLSX_ARTIFACT_ADAPTER } from "../src/server/artifacts/adapters/xlsx-artifact-adapter.js";
 import { createXlsxFixture } from "./xlsx-fixture.js";
 
 const tempDirectories: string[] = [];

@@ -3,12 +3,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { isArtifactCatalogResponse, isArtifactDataSnapshot } from "../src/artifact-model.js";
-import { activateArtifactContribution } from "../src/server/artifact-provider-activation.js";
-import { PROVIDER_HOSTED_CANVAS_TSX_FORMAT } from "../src/server/artifact-catalog.js";
-import { discoverCanvasViewers } from "../src/server/artifact-viewers.js";
-import { envelopeSnapshot, type ExternalArtifactProvider } from "../src/server/artifact-plugin-registry.js";
-import { createQoderArtifactProvider } from "../src/server/qoder-artifact-provider.js";
+import { isArtifactCatalogResponse, isArtifactDataSnapshot } from "../src/contracts/artifact.js";
+import { activateArtifactContribution } from "../src/server/artifacts/registry/artifact-provider-activation.js";
+import { PROVIDER_HOSTED_CANVAS_TSX_FORMAT } from "../src/server/artifacts/registry/artifact-catalog.js";
+import { discoverCanvasViewers } from "../src/server/artifacts/registry/artifact-viewers.js";
+import { envelopeSnapshot, type ExternalArtifactProvider } from "../src/server/artifacts/registry/artifact-plugin-registry.js";
+import { createQoderArtifactProvider } from "../src/server/providers/qoder/artifact-provider.js";
 import { startHarnessStudioServer, type HarnessStudioServerHandle } from "../src/server/server.js";
 
 const temporary: string[] = [];

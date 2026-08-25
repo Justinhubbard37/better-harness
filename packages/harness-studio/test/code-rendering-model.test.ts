@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDebuggerPatch, normalizePatchPath, studioCodeLanguage } from "../src/app/code-rendering-model.js";
+import { buildDebuggerPatch, normalizePatchPath, studioCodeLanguage } from "../src/app/code/code-rendering-model.js";
 
 describe("Studio code rendering model", () => {
   it("infers the bounded lazy grammar set across portable paths", () => {

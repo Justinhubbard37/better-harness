@@ -1,38 +1,14 @@
-export {
-  applyAguiEvent,
-  initialRunState,
-  type AguiRunState,
-  type TimelineItem,
-} from "./app/agui-store.js";
-export {
-  CompareVerdictError,
-  parseVerdict,
-  summarizeVerdict,
-  type CompareRow,
-  type CompareSummary,
-  type CompareTrialRow,
-} from "./app/compare-model.js";
-export { createSseParser, type SseParser } from "./app/sse-client.js";
-export {
-  alignToolCalls,
-  compareToolCalls,
-  localToolChain,
-  normalizeToolCall,
-  relatedCallFor,
-  type ExperimentToolCall,
-  type NormalizedToolCall,
-  type RelatedToolCall,
-  type ToolRelation,
-} from "./app/experiment-trace-model.js";
+// Node entry point: re-exports the browser-safe surface (see `./client.js`)
+// plus the server, CLI, and Provider APIs that only run under Node.
+export * from "./client.js";
 export {
   createHarnessStudioServer,
   startHarnessStudioServer,
-  type HarnessStudioServerOptions,
-  type StudioAcpAgentOptions,
-  type StudioIntentAnalyzer,
   type StartedHarnessStudioServer,
 } from "./server/server.js";
-export { createQoderCliIntentAnalyzer, type QoderCliIntentAnalyzerOptions } from "./server/qoder-intent-analyzer.js";
+export type { HarnessStudioServerOptions, StudioAcpAgentOptions } from "./server/studio-types.js";
+export type { StudioIntentAnalyzer } from "./server/intent-analyzer.js";
+export { createQoderCliIntentAnalyzer, type QoderCliIntentAnalyzerOptions } from "./server/providers/qoder/intent-analyzer.js";
 export {
   createAgentCustomizationCollector,
   createBundledAgentCustomizationCollector,
@@ -51,7 +27,7 @@ export {
   type IntentCorrelationAnalysisV1,
   type IntentCorrelationPacketV1,
   type IntentProposal,
-} from "./intent-correlation-model.js";
+} from "./contracts/intent-correlation.js";
 export {
   defaultAppDir,
   parseHarnessStudioArgs,
@@ -64,9 +40,9 @@ export {
   readArtifactProviderActivationState,
   type ArtifactProviderActivationState,
   type ArtifactProviderActivationStoreOptions,
-} from "./server/artifact-provider-activation.js";
+} from "./server/artifacts/registry/artifact-provider-activation.js";
 export {
   DEFAULT_ARTIFACT_COMPILE_LIMITS,
   resolveArtifactCompileLimits,
   type ArtifactCompileLimits,
-} from "./server/artifact-compile-runtime.js";
+} from "./server/artifacts/registry/artifact-compile-runtime.js";

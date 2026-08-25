@@ -1,4 +1,4 @@
-import type { ArtifactDataSnapshot } from "../../artifact-model.js";
+import type { ArtifactDataSnapshot } from "../../contracts/artifact.js";
 
 export function ArtifactDiagnostics({ diagnostics }: {
   diagnostics: ArtifactDataSnapshot["diagnostics"];

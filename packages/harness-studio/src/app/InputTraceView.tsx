@@ -12,12 +12,12 @@ import {
   type UserInputFileTreeNode,
   type UserInputRecord,
   type UserInputTraceV1,
-} from "../input-trace-model.js";
+} from "../contracts/input-trace.js";
 import {
   isIntentCorrelationAnalysis,
   type IntentCorrelationAnalysisV1,
   type IntentProposal,
-} from "../intent-correlation-model.js";
+} from "../contracts/intent-correlation.js";
 
 type ActivityFilter = "all" | UserInputActivity | "unlinked";
 

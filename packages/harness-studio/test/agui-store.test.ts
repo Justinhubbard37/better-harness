@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HARNESS_PROTOCOL_EVENT, HARNESS_TOOL_RESULT_META_EVENT, type AguiEvent } from "@qoder-ai/harness-ui";
-import { applyAguiEvent, initialRunState, timelineItems, type AguiRunState } from "../src/app/agui-store.js";
+import { applyAguiEvent, initialRunState, timelineItems, type AguiRunState } from "../src/app/run/agui-store.js";
 import { createSseParser } from "../src/app/sse-client.js";
 
 function reduce(events: AguiEvent[]): AguiRunState {

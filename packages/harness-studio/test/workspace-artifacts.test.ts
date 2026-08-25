@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import type { DebuggerSession } from "../src/app/session-debugger-model.js";
-import { indexArtifactDirectory } from "../src/server/artifact-catalog.js";
-import { collectWorkspaceArtifactObservations } from "../src/server/workspace-artifacts.js";
+import type { DebuggerSession } from "../src/contracts/debugger-session.js";
+import { indexArtifactDirectory } from "../src/server/artifacts/registry/artifact-catalog.js";
+import { collectWorkspaceArtifactObservations } from "../src/server/workspace/workspace-artifacts.js";
 
 function session(id: string, savedAt: string, resources: string[]): { summary: { id: string; savedAt: string; prompt: string; provider: string }; debugger: DebuggerSession } {
   return {

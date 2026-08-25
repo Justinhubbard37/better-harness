@@ -7,7 +7,7 @@ import { CURRENT_SESSION_VERSION } from "@earendil-works/pi-coding-agent";
 import { createSessionExecutionPlan } from "@qoder-ai/harness/session-executor";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCheckpointHistoryCatalogAdapter } from "../../src/server/query/checkpoint-history.js";
-import { lockHistoryExperiment } from "../../src/server/experiment-lock.js";
+import { lockHistoryExperiment } from "../../src/server/experiment/lock.js";
 
 const temporaryDirectories: string[] = [];
 

@@ -8,7 +8,7 @@ import {
   isArtifactDataSnapshot,
   type DocxArtifactPayload,
   type DocxParagraph,
-} from "../src/artifact-model.js";
+} from "../src/contracts/artifact.js";
 import { startHarnessStudioServer, type StartedHarnessStudioServer } from "../src/server/server.js";
 import { createDocxFixture, TINY_PNG } from "./docx-fixture.js";
 

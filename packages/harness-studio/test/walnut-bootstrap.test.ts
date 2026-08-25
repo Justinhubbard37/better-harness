@@ -11,8 +11,8 @@ import {
   removeWalnutProvider,
   verifyActiveWalnutProvider,
   type WalnutApplicationIdentity,
-} from "../src/server/walnut-bootstrap.js";
-import { discoverWalnutArtifactProvider } from "../src/server/walnut-artifact-provider.js";
+} from "../src/server/providers/walnut/bootstrap.js";
+import { discoverWalnutArtifactProvider } from "../src/server/providers/walnut/artifact-provider.js";
 
 const IDENTITY: WalnutApplicationIdentity = {
   version: "fixture-1",

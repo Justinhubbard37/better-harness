@@ -3,15 +3,15 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { describeArtifactCatalog, indexArtifactDirectory } from "../src/server/artifact-catalog.js";
+import { describeArtifactCatalog, indexArtifactDirectory } from "../src/server/artifacts/registry/artifact-catalog.js";
 import {
   artifactCompileCount,
   artifactPreviewHtml,
   compileArtifactPreview,
   resetArtifactCompileRuntime,
   resolveArtifactCompileLimits,
-} from "../src/server/artifact-compile-runtime.js";
-import { resolveArtifactPlugin } from "../src/server/artifact-plugin-registry.js";
+} from "../src/server/artifacts/registry/artifact-compile-runtime.js";
+import { resolveArtifactPlugin } from "../src/server/artifacts/registry/artifact-plugin-registry.js";
 
 async function compileEntry(directory: string, label: string, limits?: Parameters<typeof compileArtifactPreview>[0]["limits"]) {
   const index = await indexArtifactDirectory(directory, { includeDigests: true });

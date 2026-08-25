@@ -16,11 +16,11 @@ import {
   resolveArtifactFormatCode,
   resolveArtifactMediaType,
   resolveArtifactKind,
-} from "../src/server/artifact-catalog.js";
-import { isArtifactCatalogResponse } from "../src/artifact-model.js";
-import type { ArtifactEntry } from "../src/server/artifact-catalog.js";
-import type { ArtifactPluginResolution } from "../src/server/artifact-adapter-contract.js";
-import { resolveArtifactPlugin } from "../src/server/artifact-plugin-registry.js";
+} from "../src/server/artifacts/registry/artifact-catalog.js";
+import { isArtifactCatalogResponse } from "../src/contracts/artifact.js";
+import type { ArtifactEntry } from "../src/server/artifacts/registry/artifact-catalog.js";
+import type { ArtifactPluginResolution } from "../src/contracts/artifact.js";
+import { resolveArtifactPlugin } from "../src/server/artifacts/registry/artifact-plugin-registry.js";
 
 const fixtures = fileURLToPath(new URL("./fixtures/artifacts/", import.meta.url));
 const presentationFor = (entry: ArtifactEntry) => resolveArtifactPlugin(entry);

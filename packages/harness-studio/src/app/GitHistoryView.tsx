@@ -27,8 +27,8 @@ import {
   type GitHistoryRef,
   type GitLogPage,
   type GitRefsSnapshot,
-} from "../git-history-model.js";
-import { ArtifactCodeView } from "./ArtifactCodeView.js";
+} from "../contracts/git-history.js";
+import { ArtifactCodeView } from "./code/ArtifactCodeView.js";
 
 const PAGE_SIZE = 40;
 const GIT_LANE_COLOR_TOKENS = [5, 4, 2, 1, 6, 7, 3] as const;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseStudioPatchFiles, studioPatchCacheKey } from "../src/app/StudioDiff.js";
+import { parseStudioPatchFiles, studioPatchCacheKey } from "../src/app/code/StudioDiff.js";
 
 describe("Artifact Diff rendering model", () => {
   it("retains every file and hunk from a multi-file patch", () => {

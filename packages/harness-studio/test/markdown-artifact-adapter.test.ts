@@ -2,14 +2,14 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { MarkdownArtifactPayload, MarkdownBlock, MarkdownInline } from "../src/artifact-model.js";
-import { describeArtifactCatalog, indexArtifactDirectory } from "../src/server/artifact-catalog.js";
+import type { MarkdownArtifactPayload, MarkdownBlock, MarkdownInline } from "../src/contracts/artifact.js";
+import { describeArtifactCatalog, indexArtifactDirectory } from "../src/server/artifacts/registry/artifact-catalog.js";
 import {
   MARKDOWN_ARTIFACT_ADAPTER,
   parseMarkdown,
   resetMarkdownArtifactCache,
-} from "../src/server/markdown-artifact-adapter.js";
-import { resolveArtifactPlugin } from "../src/server/artifact-plugin-registry.js";
+} from "../src/server/artifacts/adapters/markdown-artifact-adapter.js";
+import { resolveArtifactPlugin } from "../src/server/artifacts/registry/artifact-plugin-registry.js";
 
 const temporary: string[] = [];
 

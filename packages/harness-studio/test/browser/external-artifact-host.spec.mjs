@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
-import { activateArtifactContribution } from "../../dist/server/artifact-provider-activation.js";
+import { activateArtifactContribution } from "../../dist/server/artifacts/registry/artifact-provider-activation.js";
 import { startHarnessStudioServer } from "../../dist/server/server.js";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");

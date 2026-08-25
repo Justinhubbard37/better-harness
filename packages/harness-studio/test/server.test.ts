@@ -6,14 +6,14 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { HarnessRunEmitter, loadSkillDeliveries, type HarnessExecutor } from "@qoder-ai/harness/exec";
 import { decodeSseStream, type HarnessUiExecutorFactory } from "@qoder-ai/harness-ui";
-import { isArtifactCatalogResponse } from "../src/artifact-model.js";
+import { isArtifactCatalogResponse } from "../src/contracts/artifact.js";
 import { parseHarnessStudioArgs, resolveHarnessStudioSourceRoot, runHarnessStudioCli, discoverDefaultInspectorReport } from "../src/server/cli.js";
-import { parseSourceCatalog } from "../src/server/source-catalog.js";
+import { parseSourceCatalog } from "../src/server/workspace/source-catalog.js";
 import { startHarnessStudioServer, type StartedHarnessStudioServer, type StudioWorkspaceDiscovery } from "../src/server/server.js";
-import { sessionFromRetainedRun } from "../src/app/session-debugger-model.js";
+import { sessionFromRetainedRun } from "../src/server/debugger-session-transform.js";
 import { extractInspectorReportJson } from "../src/server/query/inspector-query.js";
 import { DEFAULT_LOCAL_ACP_RUNTIME_ID, DEFAULT_LOCAL_HARNESS_ID, DEFAULT_LOCAL_RUNTIME_ID } from "../src/server/default-local-harness.js";
-import type { IntentCorrelationPacketV1 } from "../src/intent-correlation-model.js";
+import type { IntentCorrelationPacketV1 } from "../src/contracts/intent-correlation.js";
 import type { CheckpointHistoryAdapter } from "../src/server/query/checkpoint-history.js";
 import { FIXTURE_VERDICT } from "./compare-model.test.js";
 

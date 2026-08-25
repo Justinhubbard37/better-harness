@@ -6,7 +6,7 @@ import { expect, test } from "@playwright/test";
 import { HarnessRunEmitter } from "@qoder-ai/harness/exec";
 import { buildHarnessInspectorReport, emptyFeatureTree } from "../../../../scripts/harness-inspector/index.mjs";
 import { startHarnessStudioServer } from "../../dist/server/server.js";
-import { sessionFromRetainedRun } from "../../dist/app/session-debugger-model.js";
+import { sessionFromRetainedRun } from "../../dist/server/debugger-session-transform.js";
 import { createDocxFixture } from "../docx-fixture.ts";
 import { createPptxFixture } from "../pptx-fixture.ts";
 import { createXlsxFixture } from "../xlsx-fixture.ts";

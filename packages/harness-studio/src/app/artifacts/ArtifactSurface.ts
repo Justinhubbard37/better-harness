@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import type { ArtifactDescriptor } from "../../artifact-model.js";
+import type { ArtifactDescriptor } from "../../contracts/artifact.js";
 
 export interface ArtifactSurfaceMountContext {
   artifact: ArtifactDescriptor;

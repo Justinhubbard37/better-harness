@@ -5,7 +5,7 @@ import type {
   DocxImageInline,
   DocxParagraph,
   DocxTextRun,
-} from "../../../artifact-model.js";
+} from "../../../contracts/artifact.js";
 import { ArtifactDiagnostics } from "../ArtifactDiagnostics.js";
 import type { ArtifactSurfaceMountContext } from "../ArtifactSurface.js";
 import { DocumentZoomControls } from "../DocumentZoomControls.js";

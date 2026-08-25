@@ -7,7 +7,7 @@ import {
   projectActivities,
   relatedCallFor,
   type ExperimentToolCall,
-} from "../src/app/experiment-trace-model.js";
+} from "../src/app/experiment/experiment-trace-model.js";
 
 const call = (
   id: string,

@@ -3,11 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { strToU8, zipSync } from "fflate";
 import { afterEach, describe, expect, it } from "vitest";
-import { isArtifactDataSnapshot, type ArtifactDescriptor, type PptxArtifactPayload } from "../src/artifact-model.js";
-import { describeArtifactCatalog, indexArtifactDirectory } from "../src/server/artifact-catalog.js";
-import { PPTX_ARTIFACT_ADAPTER, resetPptxArtifactCache } from "../src/server/pptx-artifact-adapter.js";
-import { resolveArtifactPlugin } from "../src/server/artifact-plugin-registry.js";
-import type { ArtifactEntry } from "../src/server/artifact-catalog.js";
+import { isArtifactDataSnapshot, type ArtifactDescriptor, type PptxArtifactPayload } from "../src/contracts/artifact.js";
+import { describeArtifactCatalog, indexArtifactDirectory } from "../src/server/artifacts/registry/artifact-catalog.js";
+import { PPTX_ARTIFACT_ADAPTER, resetPptxArtifactCache } from "../src/server/artifacts/adapters/pptx-artifact-adapter.js";
+import { resolveArtifactPlugin } from "../src/server/artifacts/registry/artifact-plugin-registry.js";
+import type { ArtifactEntry } from "../src/server/artifacts/registry/artifact-catalog.js";
 import { createPptxFixture, TINY_PNG } from "./pptx-fixture.js";
 
 const tempDirectories: string[] = [];

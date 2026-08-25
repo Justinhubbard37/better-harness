@@ -1,10 +1,10 @@
 import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";
-import type { ExperimentToolCall } from "../src/experiment-stream-contract.js";
-import { aggregateToolCalls } from "../src/app/experiment-comparison-model.js";
-import { buildTimelineBins, groupLiveTimeline } from "../src/app/timeline-model.js";
-import { fixedVirtualWindow } from "../src/app/virtual-list-model.js";
-import { applyAguiEvent, initialRunState } from "../src/app/agui-store.js";
+import type { ExperimentToolCall } from "../src/contracts/experiment-stream-contract.js";
+import { aggregateToolCalls } from "../src/app/experiment/experiment-comparison-model.js";
+import { buildTimelineBins, groupLiveTimeline } from "../src/app/run/timeline-model.js";
+import { fixedVirtualWindow } from "../src/app/experiment/virtual-list-model.js";
+import { applyAguiEvent, initialRunState } from "../src/app/run/agui-store.js";
 
 describe("session scale gates", () => {
   for (const eventCount of [100, 1_000, 10_000]) {

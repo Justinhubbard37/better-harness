@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeToolPayload } from "../src/app/tool-call-model.js";
+import { describeToolPayload } from "../src/app/run/tool-call-model.js";
 
 describe("describeToolPayload", () => {
   it("formats structured arguments and promotes a useful path summary", () => {

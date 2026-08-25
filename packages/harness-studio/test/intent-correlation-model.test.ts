@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { UserInputTraceV1 } from "../src/input-trace-model.js";
+import type { UserInputTraceV1 } from "../src/contracts/input-trace.js";
 import {
   IntentCorrelationContractError,
   validateIntentCorrelationAnalysis,
   type IntentCorrelationAnalysisV1,
-} from "../src/intent-correlation-model.js";
+} from "../src/contracts/intent-correlation.js";
 import { buildIntentCorrelationPacket } from "../src/server/intent-correlation.js";
 
 const TRACE: UserInputTraceV1 = {

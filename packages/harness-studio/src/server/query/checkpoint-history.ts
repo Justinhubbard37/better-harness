@@ -5,7 +5,7 @@ import type {
   CheckpointHistoryItemPreview,
   CheckpointHistoryPreview,
   CheckpointSourcePreview,
-} from "../../experiment-setup.js";
+} from "../../contracts/experiment-setup.js";
 import { loadCheckpointSourcePreview } from "./checkpoint-source.js";
 
 const CATALOG_VERSION = "checkpoint-history.v1";

@@ -2,19 +2,19 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { compileTrustedRendererModule } from "../src/server/trusted-renderer-compiler.js";
+import { compileTrustedRendererModule } from "../src/server/artifacts/registry/trusted-renderer-compiler.js";
 import {
   artifactIdForLabel,
   artifactThreadIdForLabel,
   PROVIDER_HOSTED_CANVAS_TSX_FORMAT,
   type ArtifactEntry,
-} from "../src/server/artifact-catalog.js";
-import { adaptQoderCanvasViewerData } from "../src/server/qoder-canvas-viewer-bridge.js";
-import { createArtifactPluginRegistry } from "../src/server/artifact-plugin-registry.js";
-import { defaultCanvasViewerRoot, discoverCanvasViewers } from "../src/server/artifact-viewers.js";
-import { createQoderArtifactProvider } from "../src/server/qoder-artifact-provider.js";
-import type { ArtifactExternalLane, ArtifactProviderActivation, ExternalArtifactProvider } from "../src/server/artifact-adapter-contract.js";
-import type { QoderCanvasRuntime } from "../src/server/qoder-canvas-viewer-bridge.js";
+} from "../src/server/artifacts/registry/artifact-catalog.js";
+import { adaptQoderCanvasViewerData } from "../src/server/providers/qoder/canvas-viewer-bridge.js";
+import { createArtifactPluginRegistry } from "../src/server/artifacts/registry/artifact-plugin-registry.js";
+import { defaultCanvasViewerRoot, discoverCanvasViewers } from "../src/server/artifacts/registry/artifact-viewers.js";
+import { createQoderArtifactProvider } from "../src/server/providers/qoder/artifact-provider.js";
+import type { ArtifactExternalLane, ArtifactProviderActivation, ExternalArtifactProvider } from "../src/contracts/artifact.js";
+import type { QoderCanvasRuntime } from "../src/server/providers/qoder/canvas-viewer-bridge.js";
 
 describe("Artifact plugin registry and the Qoder Canvas provider", () => {
   it("advertises only capabilities implemented by each built-in surface", () => {

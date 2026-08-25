@@ -12,8 +12,8 @@ import {
   deriveRequestProvenance,
   type CheckpointSourcePreview,
   type ExperimentLockReceipt,
-} from "../../experiment-setup.js";
-import { projectObservedCalls } from "../experiment-events.js";
+} from "../../contracts/experiment-setup.js";
+import { projectObservedCalls } from "../experiment/events.js";
 import { loadCheckpointSourcePreview } from "./checkpoint-source.js";
 import { ObservedCallIndex, type ObservedCallPage } from "./observed-call-index.js";
 

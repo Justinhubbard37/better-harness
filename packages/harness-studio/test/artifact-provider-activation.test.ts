@@ -2,17 +2,17 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { ExternalArtifactProvider } from "../src/server/artifact-adapter-contract.js";
-import { PROVIDER_HOSTED_CANVAS_TSX_FORMAT } from "../src/server/artifact-catalog.js";
+import type { ExternalArtifactProvider } from "../src/contracts/artifact.js";
+import { PROVIDER_HOSTED_CANVAS_TSX_FORMAT } from "../src/server/artifacts/registry/artifact-catalog.js";
 import {
   activateArtifactContribution,
   defaultArtifactProviderStateRoot,
   deactivateArtifactContribution,
   importLegacyQoderActivationsOnce,
   readArtifactProviderActivationState,
-} from "../src/server/artifact-provider-activation.js";
-import { RAW_ARTIFACT_ADAPTER } from "../src/server/artifact-plugin-registry.js";
-import { parseArtifactProviderArgs, runArtifactProviderCli } from "../src/server/artifact-provider-cli.js";
+} from "../src/server/artifacts/registry/artifact-provider-activation.js";
+import { RAW_ARTIFACT_ADAPTER } from "../src/server/artifacts/registry/artifact-plugin-registry.js";
+import { parseArtifactProviderArgs, runArtifactProviderCli } from "../src/server/artifacts/registry/artifact-provider-cli.js";
 
 const DIGEST_A = `sha256:${"a".repeat(64)}` as const;
 const DIGEST_B = `sha256:${"b".repeat(64)}` as const;

@@ -3,7 +3,7 @@ import {
   buildUserInputFileTree,
   isUserInputTrace,
   projectUserInputTrace,
-} from "../src/input-trace-model.js";
+} from "../src/contracts/input-trace.js";
 
 function report(): Record<string, unknown> {
   return {

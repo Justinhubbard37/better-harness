@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isArtifactDataSnapshot, type ArtifactDataSnapshot, type ArtifactDescriptor, XLSX_ARTIFACT_PREVIEW_LIMITS } from "../src/artifact-model.js";
+import { isArtifactDataSnapshot, type ArtifactDataSnapshot, type ArtifactDescriptor, XLSX_ARTIFACT_PREVIEW_LIMITS } from "../src/contracts/artifact.js";
 import { isArtifactSnapshotFor } from "../src/app/artifacts/useArtifactSnapshot.js";
 
 const DIGEST_A = `sha256:${"1".repeat(64)}` as const;

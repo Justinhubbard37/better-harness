@@ -106,20 +106,41 @@ fingerprint never enters selection.
 ## Architecture
 
 ```text
-dist/app/        esbuild-bundled React app (index.html + assets/app.js)
-src/app/         components plus pure state modules:
-                   agui-store.ts     AG-UI event → run view state reducer
-                   compare-model.ts  verdict.json → table model
-                   sse-client.ts     incremental SSE frame parser
-                   studio-shell-model.ts
-                                        config → IA/readiness projection
-src/server/      static host + /api/config + /api/evidence + embedded /agui
-                 read-only /inspector + checkpoint history list/resolve
-                 + durable experiment lock
+dist/app/          esbuild-bundled React app (index.html + assets/app.js)
+src/contracts/      types and wire formats shared by app and server
+                     (artifact, debugger-session, experiment, git-history,
+                     input-trace, intent-correlation, workspace-artifact)
+src/app/            shell (App.tsx, studio-shell-model.ts, studio-theme.ts)
+                     plus feature areas, each a components+state pair:
+                       run/          live run view, AG-UI reducer, Debugger
+                                     cursor navigation, recorded sample
+                       experiment/   three-lane experiment trace view
+                       artifacts/    per-format Artifact Surface views and
+                                     the surface registry
+                       code/         shared code/diff rendering (Shiki
+                                     highlighting, ArtifactCodeView)
+                     and single-view areas at the top level (Compare,
+                     Customizations, GitHistory, InputTrace, Inspector,
+                     ArtifactsWorkspace)
+src/server/          static host + /api/config + /api/evidence + embedded
+                     /agui, grouped by domain:
+                       artifacts/registry/   catalog, compile runtime,
+                                             Provider activation/discovery
+                       artifacts/adapters/   built-in docx/markdown/pdf/
+                                             pptx/xlsx format adapters
+                       providers/qoder/      Qoder-specific Provider,
+                                             Canvas bridge, intent analyzer
+                       providers/walnut/     Walnut Provider and bootstrap
+                       experiment/           experiment events + locking
+                       workspace/            workspace/session discovery
+                       query/               read-only route query helpers
 ```
 
 The pure modules are the tested seam; the React components are direct renders
-of their outputs.
+of their outputs. `src/index.ts` is the Node entry point (server, CLI,
+Provider activation); `src/client.ts` re-exports only the browser-safe subset
+(also available from the package as `@qoder-ai/harness-studio/client`) so a
+browser bundle never pulls in Node-only code.
 
 ## Development
 

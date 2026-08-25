@@ -3,9 +3,9 @@ import { access, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { startHarnessStudioServer } from "./server.js";
-import { readSourceCatalogFile } from "./source-catalog.js";
-import { runWalnutBootstrapCli } from "./walnut-cli.js";
-import { runArtifactProviderCli } from "./artifact-provider-cli.js";
+import { readSourceCatalogFile } from "./workspace/source-catalog.js";
+import { runWalnutBootstrapCli } from "./providers/walnut/cli.js";
+import { runArtifactProviderCli } from "./artifacts/registry/artifact-provider-cli.js";
 import { createBundledAgentCustomizationCollector } from "./customization-collector.js";
 
 const HELP = `harness-studio — local studio for harness runs and compare evidence

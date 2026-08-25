@@ -1,7 +1,7 @@
 import { createReadStream, type ReadStream } from "node:fs";
 import { createInterface, type Interface } from "node:readline";
-import type { ExperimentToolCall } from "../../experiment-stream-contract.js";
-import { canonicalToolEvents } from "../experiment-events.js";
+import type { ExperimentToolCall } from "../../contracts/experiment-stream-contract.js";
+import { canonicalToolEvents } from "../experiment/events.js";
 
 export interface ObservedCallPage {
   calls: ExperimentToolCall[];

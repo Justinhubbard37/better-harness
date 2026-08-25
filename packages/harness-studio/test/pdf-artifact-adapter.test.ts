@@ -3,9 +3,9 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { describeArtifactCatalog, indexArtifactDirectory } from "../src/server/artifact-catalog.js";
-import { resolveArtifactPlugin } from "../src/server/artifact-plugin-registry.js";
-import { PDF_ARTIFACT_ADAPTER, resetPdfArtifactCache } from "../src/server/pdf-artifact-adapter.js";
+import { describeArtifactCatalog, indexArtifactDirectory } from "../src/server/artifacts/registry/artifact-catalog.js";
+import { resolveArtifactPlugin } from "../src/server/artifacts/registry/artifact-plugin-registry.js";
+import { PDF_ARTIFACT_ADAPTER, resetPdfArtifactCache } from "../src/server/artifacts/adapters/pdf-artifact-adapter.js";
 import { createPdfFixture } from "./pdf-fixture.js";
 
 afterEach(() => resetPdfArtifactCache());

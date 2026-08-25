@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { UserInputRecord, UserInputTraceV1 } from "../input-trace-model.js";
+import type { UserInputRecord, UserInputTraceV1 } from "../contracts/input-trace.js";
 import {
   INTENT_CORRELATION_PACKET_KIND,
   type IntentChangeUnitEvidence,
@@ -8,7 +8,7 @@ import {
   type IntentFileEvidence,
   type IntentInputEvidence,
   type IntentObservedEdge,
-} from "../intent-correlation-model.js";
+} from "../contracts/intent-correlation.js";
 
 const MAX_ANALYSIS_INPUTS = 8;
 const MAX_ANALYSIS_LINKS = 160;

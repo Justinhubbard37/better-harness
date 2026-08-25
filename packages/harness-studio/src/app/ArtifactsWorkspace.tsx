@@ -16,14 +16,14 @@ import { TreeStructure } from "@phosphor-icons/react/TreeStructure";
 import {
   isArtifactCatalogResponse,
   type ArtifactDescriptor,
-} from "../artifact-model.js";
+} from "../contracts/artifact.js";
 import {
   isWorkspaceArtifactNavigation,
   type StudioArtifactCatalogResponse,
   type WorkspaceArtifactNavigation,
   type WorkspaceArtifactObservation,
-} from "../workspace-artifact-model.js";
-import { ArtifactView } from "./ArtifactView.js";
+} from "../contracts/workspace-artifact.js";
+import { ArtifactView } from "./artifacts/ArtifactView.js";
 import { useRovingFocus } from "./roving-tablist.js";
 import type { StudioConfig } from "./studio-shell-model.js";
 

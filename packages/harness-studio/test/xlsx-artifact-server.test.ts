@@ -6,7 +6,7 @@ import {
   isArtifactCatalogResponse,
   isArtifactDataSnapshot,
   type XlsxArtifactPayload,
-} from "../src/artifact-model.js";
+} from "../src/contracts/artifact.js";
 import { startHarnessStudioServer, type StartedHarnessStudioServer } from "../src/server/server.js";
 import { createXlsxFixture } from "./xlsx-fixture.js";
 

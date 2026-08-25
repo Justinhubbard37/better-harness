@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { indexArtifactDirectory } from "../src/server/artifact-catalog.js";
+import { indexArtifactDirectory } from "../src/server/artifacts/registry/artifact-catalog.js";
 import { startHarnessStudioServer, type HarnessStudioServerHandle } from "../src/server/server.js";
 
 const temporary: string[] = [];

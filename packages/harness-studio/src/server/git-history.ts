@@ -11,7 +11,7 @@ import type {
   GitHistoryRef,
   GitLogPage,
   GitRefsSnapshot,
-} from "../git-history-model.js";
+} from "../contracts/git-history.js";
 
 const GIT_OUTPUT_LIMIT = 16 * 1024 * 1024;
 const PATCH_OUTPUT_LIMIT = 4 * 1024 * 1024;

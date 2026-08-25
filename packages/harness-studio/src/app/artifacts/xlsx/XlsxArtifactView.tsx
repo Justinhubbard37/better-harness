@@ -4,7 +4,7 @@ import type {
   XlsxCellSnapshot,
   XlsxMergedRange,
   XlsxWorksheetSnapshot,
-} from "../../../artifact-model.js";
+} from "../../../contracts/artifact.js";
 import { ArtifactDiagnostics } from "../ArtifactDiagnostics.js";
 import type { ArtifactSurfaceMountContext } from "../ArtifactSurface.js";
 import { useArtifactSnapshot } from "../useArtifactSnapshot.js";

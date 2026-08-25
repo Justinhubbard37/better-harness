@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArtifactCodeView } from "../ArtifactCodeView.js";
+import { ArtifactCodeView } from "../code/ArtifactCodeView.js";
 import type { ArtifactSurfaceMountContext } from "./ArtifactSurface.js";
 
 export function TextArtifactView({ artifact }: ArtifactSurfaceMountContext): React.JSX.Element {

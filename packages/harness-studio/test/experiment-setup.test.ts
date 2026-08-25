@@ -5,7 +5,7 @@ import {
   deriveCompareScenario,
   deriveRequestProvenance,
   type ExperimentSetupPreview,
-} from "../src/experiment-setup.js";
+} from "../src/contracts/experiment-setup.js";
 
 describe("checkpoint-backed compare setup", () => {
   it("derives historical replay only when observed history is present", () => {
