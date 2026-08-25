@@ -46,3 +46,7 @@ export {
   resolveArtifactCompileLimits,
   type ArtifactCompileLimits,
 } from "./server/artifacts/registry/artifact-compile-runtime.js";
+export {
+  loadArtifactProviderModules,
+  providerModuleTarget,
+} from "./server/artifacts/registry/artifact-provider-modules.js";

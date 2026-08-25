@@ -61,6 +61,14 @@
     "react-arborist": "^3.16.0",
     "react-dom": "19.2.8"
   },
+  "peerDependencies": {
+    "@homology/integration-harness-notebook-provider": "0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@homology/integration-harness-notebook-provider": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@types/node": "26.2.0",

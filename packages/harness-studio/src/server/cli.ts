@@ -7,6 +7,7 @@ import { readSourceCatalogFile } from "./workspace/source-catalog.js";
 import { runWalnutBootstrapCli } from "./providers/walnut/cli.js";
 import { runArtifactProviderCli } from "./artifacts/registry/artifact-provider-cli.js";
 import { createBundledAgentCustomizationCollector } from "./customization-collector.js";
+import { loadArtifactProviderModules } from "./artifacts/registry/artifact-provider-modules.js";
 
 const HELP = `harness-studio — local studio for harness runs and compare evidence
 
@@ -39,6 +40,9 @@ Options:
                       Prebuilt Canvas SDK media directory
   --provider-state <dir>
                       Studio-private external provider activation state
+  --artifact-provider-module <specifier>
+                      Repeatable operator-provisioned module exporting
+                      createArtifactProvider() (executes trusted local code)
   --walnut-cache <dir> Studio-owned Walnut cache root
   --source-catalog <file>
                       JSON catalog of bounded switchable Studio inputs
@@ -99,6 +103,7 @@ interface ParsedArgs {
   canvasSdkRoot?: string;
   canvasSdkMedia?: string;
   providerState?: string;
+  artifactProviderModules: string[];
   walnutCache?: string;
   sourceCatalog?: string;
   port: number;
@@ -111,7 +116,14 @@ interface ParsedArgs {
 }
 
 export function parseHarnessStudioArgs(argv: string[]): ParsedArgs {
-  const parsed: ParsedArgs = { port: 3311, host: "127.0.0.1", allowRemote: false, help: false, acpArgs: [] };
+  const parsed: ParsedArgs = {
+    port: 3311,
+    host: "127.0.0.1",
+    allowRemote: false,
+    help: false,
+    acpArgs: [],
+    artifactProviderModules: [],
+  };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     const takeValue = (): string | undefined => {
@@ -176,6 +188,12 @@ export function parseHarnessStudioArgs(argv: string[]): ParsedArgs {
       case "--provider-state":
         parsed.providerState = takeValue();
         break;
+      case "--artifact-provider-module": {
+        const value = takeValue();
+        if (value === undefined) parsed.error = "--artifact-provider-module requires a package name or filesystem path.";
+        else parsed.artifactProviderModules.push(value);
+        break;
+      }
       case "--walnut-cache":
         parsed.walnutCache = takeValue();
         break;
@@ -243,6 +261,16 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
   // Skills are conventionally declared relative to their `.harness` file (see
   // examples/*.harness), so loading one without a flag still delivers them.
   const sourceRoot = resolveHarnessStudioSourceRoot(parsed.harness, parsed.sourceRoot);
+  let artifactProviders;
+  try {
+    artifactProviders = await loadArtifactProviderModules(
+      parsed.artifactProviderModules,
+      resolve(parsed.cwd ?? process.cwd()),
+    );
+  } catch (error) {
+    io.stderr(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 2;
+  }
   const started = await startHarnessStudioServer({
     appDir: defaultAppDir(),
     port: parsed.port,
@@ -269,6 +297,7 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     ...(parsed.canvasSdkRoot !== undefined ? { canvasSdkRoot: resolve(parsed.canvasSdkRoot) } : {}),
     ...(parsed.canvasSdkMedia !== undefined ? { canvasSdkMedia: resolve(parsed.canvasSdkMedia) } : {}),
     ...(parsed.providerState !== undefined ? { artifactProviderStateRoot: resolve(parsed.providerState) } : {}),
+    ...(artifactProviders.length > 0 ? { artifactProviders } : {}),
     ...(parsed.walnutCache !== undefined ? { walnutCacheRoot: resolve(parsed.walnutCache) } : {}),
     ...(sourceCatalog.length > 0 ? { sourceCatalog } : {}),
     ...(parsed.cwd !== undefined ? { cwd: parsed.cwd } : {}),

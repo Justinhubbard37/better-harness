@@ -103,6 +103,20 @@ are part of build/cache identity. They do not expand the package allowlist.
 Injected Provider receipts are fingerprint-checked, and an inactive or changed
 fingerprint never enters selection.
 
+The standalone CLI accepts the same boundary without importing Provider-private
+files. Install the Provider beside Studio, then name its public module
+explicitly (loading it executes trusted local code):
+
+```bash
+harness-studio \
+  --artifact-provider-module @homology/integration-harness-notebook-provider \
+  --artifacts ./artifacts
+```
+
+The module must export `createArtifactProvider()`. Contributions remain inactive
+until `harness-studio artifact-provider activate` records the exact Provider
+fingerprint and matcher.
+
 ## Architecture
 
 ```text

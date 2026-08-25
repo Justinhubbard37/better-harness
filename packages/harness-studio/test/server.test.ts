@@ -1311,6 +1311,19 @@ describe("harness-studio CLI", () => {
     expect(parseHarnessStudioArgs([]).error).toBeUndefined();
   });
 
+  it("parses repeated operator-provisioned Artifact Provider modules", () => {
+    expect(parseHarnessStudioArgs([
+      "--artifact-provider-module", "@homology/integration-harness-notebook-provider",
+      "--artifact-provider-module", "./providers/local.mjs",
+    ]).artifactProviderModules).toEqual([
+      "@homology/integration-harness-notebook-provider",
+      "./providers/local.mjs",
+    ]);
+    expect(parseHarnessStudioArgs(["--artifact-provider-module"]).error).toBe(
+      "--artifact-provider-module requires a package name or filesystem path.",
+    );
+  });
+
   it("resolves the default source root from the harness file and honors an override", () => {
     expect(resolveHarnessStudioSourceRoot("/workspace/harnesses/agent.harness")).toBe(
       resolve("/workspace/harnesses"),
