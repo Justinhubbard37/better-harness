@@ -53,6 +53,8 @@ export interface HarnessRuntimeReceipt {
   maxTurns?: number;
   persistSession?: boolean;
   model?: string;
+  /** Session options acknowledged by the host after configuration. */
+  sessionConfig?: Readonly<Record<string, string | boolean>>;
   fileCheckpointing?: boolean;
   partialMessages?: boolean;
   permissionCallback: "configured" | "none";

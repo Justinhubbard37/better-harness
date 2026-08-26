@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { canonicalToolEvents, projectObservedCalls } from "../src/server/experiment/events.js";
 
 describe("server experiment event projection", () => {
+  it("projects assistant message frames without forwarding provider-owned fields", () => {
+    expect(canonicalToolEvents({
+      type: "text-delta",
+      messageId: "message-1",
+      text: "Working on it.",
+      privatePayload: "must-not-cross-browser-boundary",
+    })).toEqual([{ type: "assistant-text-delta", messageId: "message-1", text: "Working on it." }]);
+    expect(canonicalToolEvents({ type: "message-started", messageId: "message-1" }))
+      .toEqual([{ type: "assistant-message-started", messageId: "message-1" }]);
+    expect(canonicalToolEvents({ type: "message-finished", messageId: "message-1" }))
+      .toEqual([{ type: "assistant-message-finished", messageId: "message-1" }]);
+  });
+
   it("normalizes ACP, AG-UI, and Anthropic tool shapes before browser delivery", () => {
     expect(canonicalToolEvents({
       type: "tool.requested",
@@ -44,5 +57,47 @@ describe("server experiment event projection", () => {
       input: { file_path: "src/a.ts" },
       status: "completed",
     })]);
+  });
+
+  it("projects ACP protocol facts and permission choices without forwarding arbitrary payload", () => {
+    expect(canonicalToolEvents({
+      type: "protocol-event",
+      protocol: "acp",
+      direction: "Agent → Client",
+      method: "session/request_permission",
+      rpcId: "permission-7",
+      sessionId: "session-2",
+      payload: {
+        params: {
+          toolCall: { toolCallId: "tool-9", title: "Read package.json", rawInput: "private" },
+          options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
+        },
+        secret: "must-not-cross-browser-boundary",
+      },
+    })).toEqual([{
+      type: "permission-requested",
+      protocol: "acp",
+      requestId: "permission-7",
+      toolCallId: "tool-9",
+      title: "Read package.json",
+      sessionId: "session-2",
+      options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
+    }]);
+    expect(canonicalToolEvents({
+      type: "protocol-event",
+      protocol: "acp",
+      direction: "Client → Agent",
+      method: "session/prompt",
+      rpcId: "4",
+      sessionId: "session-2",
+      payload: { prompt: "private" },
+    })).toEqual([{
+      type: "protocol-observed",
+      protocol: "acp",
+      direction: "Client → Agent",
+      method: "session/prompt",
+      rpcId: "4",
+      sessionId: "session-2",
+    }]);
   });
 });

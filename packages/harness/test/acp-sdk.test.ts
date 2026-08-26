@@ -22,6 +22,7 @@ const SOURCE = `
 `;
 
 const FIXTURE = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures/acp-agent.mjs");
+const LAUNCHER_FIXTURE = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures/acp-agent-launcher.mjs");
 
 describe("AcpSdkExecutor", () => {
   it("runs the stable ACP v1 lifecycle and retains real redacted protocol frames", async () => {
@@ -73,11 +74,63 @@ describe("AcpSdkExecutor", () => {
       adapter: () => ACP_ADAPTER_DESCRIPTOR,
     });
     const executor = new AcpSdkExecutor({ command: resolve("/definitely-missing", "better-harness-acp") });
+    const startedAt = Date.now();
 
     const result = await executor.execute(revision!, bundle!, { prompt: "This cannot start" });
 
     expect(result.exitCode).toBe(1);
     expect(result.errorOutput).toMatch(/ENOENT|not found/u);
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+  });
+
+  it("applies and verifies lane session configuration before prompting", async () => {
+    const { bundle } = await compileHarness(SOURCE);
+    const { revision } = resolveHarness(bundle!, "live-acp", "acp", {
+      adapter: () => ACP_ADAPTER_DESCRIPTOR,
+    });
+    const executor = new AcpSdkExecutor({
+      command: process.execPath,
+      args: [FIXTURE],
+      sessionConfig: { model: "fixture-candidate" },
+      requestPermission: async (_requestId, request) => ({
+        outcome: { outcome: "selected", optionId: request.options[0]!.optionId },
+      }),
+    });
+
+    const result = await executor.execute(revision!, bundle!, { prompt: "Use the configured model" });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toBe("fixture:allow-once:fixture-candidate");
+    expect(result.runtimeReceipt).toMatchObject({
+      model: "fixture-candidate",
+      sessionConfig: { model: "fixture-candidate" },
+    });
+    expect(result.trace).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        direction: "Client → Agent",
+        method: "session/set_config_option",
+      }),
+    ]));
+  });
+
+  it("fails instead of silently running with an unacknowledged session configuration", async () => {
+    const { bundle } = await compileHarness(SOURCE);
+    const { revision } = resolveHarness(bundle!, "live-acp", "acp", {
+      adapter: () => ACP_ADAPTER_DESCRIPTOR,
+    });
+    const executor = new AcpSdkExecutor({
+      command: process.execPath,
+      args: [FIXTURE, "--reject-config"],
+      sessionConfig: { model: "fixture-candidate" },
+    });
+
+    const result = await executor.execute(revision!, bundle!, { prompt: "Do not use a fallback" });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.errorOutput).toContain("did not acknowledge session option 'model'");
+    expect(result.trace).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ method: "session/prompt" }),
+    ]));
   });
 
   it("maps abort to session/cancel on the active ACP session", async () => {
@@ -172,5 +225,24 @@ describe("AcpSdkExecutor", () => {
     expect(agentProcess.exitCode === null && agentProcess.signalCode === null).toBe(false);
     // Windows refuses to remove a directory that is a live process' cwd.
     await rm(workspace, { recursive: true });
+  });
+
+  it("reaps native descendants retained by a package launcher", async () => {
+    const { bundle } = await compileHarness(SOURCE);
+    const { revision } = resolveHarness(bundle!, "live-acp", "acp", {
+      adapter: () => ACP_ADAPTER_DESCRIPTOR,
+    });
+    const executor = new AcpSdkExecutor({
+      command: process.execPath,
+      args: [LAUNCHER_FIXTURE],
+      requestPermission: async (_requestId, request) => ({
+        outcome: { outcome: "selected", optionId: request.options[0]!.optionId },
+      }),
+    });
+
+    const result = await executor.execute(revision!, bundle!, { prompt: "Run through the launcher" });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.metrics).toMatchObject({ sessionId: "fixture-session", stopReason: "end_turn" });
   });
 });

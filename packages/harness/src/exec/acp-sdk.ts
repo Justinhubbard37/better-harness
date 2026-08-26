@@ -2,8 +2,11 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import type {
   AnyMessage,
+  ClientContext,
   RequestPermissionRequest,
   RequestPermissionResponse,
+  SetSessionConfigOptionRequest,
+  SetSessionConfigOptionResponse,
   SessionNotification,
   SessionUpdate,
 } from "@agentclientprotocol/sdk";
@@ -41,6 +44,8 @@ export interface AcpSdkExecutorOptions {
   env?: NodeJS.ProcessEnv;
   onRunEvent?: HarnessRunEventListener;
   requestPermission?: AcpPermissionHandler;
+  /** ACP session configuration applied after session/new and before prompt. */
+  sessionConfig?: Readonly<Record<string, string | boolean>>;
   abortSignal?: AbortSignal;
   loadSdk?: () => Promise<AcpSdk>;
   spawnAgent?: typeof spawn;
@@ -83,6 +88,7 @@ export class AcpSdkExecutor implements HarnessExecutor {
     let child: ChildProcessWithoutNullStreams | undefined;
     let stopReason: string | undefined;
     let sessionId: string | undefined;
+    let acknowledgedSessionConfig: Record<string, string | boolean> = {};
     let stderr = "";
     try {
       const sdk = await (this.options.loadSdk?.() ?? loadAcpSdk());
@@ -94,6 +100,9 @@ export class AcpSdkExecutor implements HarnessExecutor {
           env: this.options.env ?? process.env,
           stdio: ["pipe", "pipe", "pipe"],
           windowsHide: true,
+          // A POSIX process group lets cleanup reach native grandchildren of
+          // package-manager launchers. Windows uses taskkill /T below.
+          detached: process.platform !== "win32",
         },
       ) as ChildProcessWithoutNullStreams;
       child.stderr.setEncoding("utf8");
@@ -165,6 +174,13 @@ export class AcpSdkExecutor implements HarnessExecutor {
           mcpServers: [],
         }, abortSignal === undefined ? undefined : { cancellationSignal: abortSignal }), abortSignal, "session/new");
         sessionId = created.sessionId;
+        acknowledgedSessionConfig = await applySessionConfig(
+          agent,
+          sdk,
+          created.sessionId,
+          this.options.sessionConfig,
+          abortSignal,
+        );
         const cancel = async (): Promise<void> => {
           await agent.notify(sdk.methods.agent.session.cancel, { sessionId: created.sessionId });
         };
@@ -214,6 +230,12 @@ export class AcpSdkExecutor implements HarnessExecutor {
           allowedTools: [],
           disallowedTools: [],
           persistSession: false,
+          ...(typeof acknowledgedSessionConfig.model === "string"
+            ? { model: acknowledgedSessionConfig.model }
+            : {}),
+          ...(Object.keys(acknowledgedSessionConfig).length > 0
+            ? { sessionConfig: acknowledgedSessionConfig }
+            : {}),
           permissionCallback: this.options.requestPermission === undefined ? "none" : "configured",
         },
         materialization: receipt,
@@ -245,6 +267,12 @@ export class AcpSdkExecutor implements HarnessExecutor {
           allowedTools: [],
           disallowedTools: [],
           persistSession: false,
+          ...(typeof acknowledgedSessionConfig.model === "string"
+            ? { model: acknowledgedSessionConfig.model }
+            : {}),
+          ...(Object.keys(acknowledgedSessionConfig).length > 0
+            ? { sessionConfig: acknowledgedSessionConfig }
+            : {}),
           permissionCallback: this.options.requestPermission === undefined ? "none" : "configured",
         },
         materialization: receipt,
@@ -259,22 +287,89 @@ export class AcpSdkExecutor implements HarnessExecutor {
   }
 }
 
+async function applySessionConfig(
+  agent: ClientContext,
+  sdk: AcpSdk,
+  sessionId: string,
+  requested: Readonly<Record<string, string | boolean>> | undefined,
+  abortSignal: AbortSignal | undefined,
+): Promise<Record<string, string | boolean>> {
+  const acknowledged: Record<string, string | boolean> = {};
+  for (const [configId, value] of Object.entries(requested ?? {}).sort(([left], [right]) =>
+    left.localeCompare(right))) {
+    const params: SetSessionConfigOptionRequest = typeof value === "boolean"
+      ? { sessionId, configId, value, type: "boolean" }
+      : { sessionId, configId, value };
+    const response = await requestWithAbort<SetSessionConfigOptionResponse>(() => agent.request<
+      SetSessionConfigOptionResponse,
+      SetSessionConfigOptionRequest
+    >(
+      sdk.methods.agent.session.setConfigOption,
+      params,
+      abortSignal === undefined ? undefined : { cancellationSignal: abortSignal },
+    ), abortSignal, `session/set_config_option (${configId})`);
+    const observed = response.configOptions.find((option) => option.id === configId)?.currentValue;
+    if (observed !== value) {
+      throw new Error(
+        `ACP Agent did not acknowledge session option '${configId}': requested ${JSON.stringify(value)}, ` +
+          `observed ${JSON.stringify(observed)}.`,
+      );
+    }
+    acknowledged[configId] = observed;
+  }
+  return acknowledged;
+}
+
 /**
  * Terminate the Agent and wait for its exit before the run resolves. A live
  * child holds an open handle on its cwd, so a caller that removes the run
  * workspace right after `execute` fails with EBUSY on Windows.
  */
 async function reapAgent(child: ChildProcessWithoutNullStreams | undefined): Promise<void> {
-  if (child === undefined || child.exitCode !== null || child.signalCode !== null) return;
+  if (child === undefined || child.pid === undefined) return;
+  const hasExited = (): boolean => child.exitCode !== null || child.signalCode !== null;
+  if (hasExited()) return;
   const exited = new Promise<void>((resolvePromise) => {
     child.once("exit", () => resolvePromise());
     child.once("error", () => resolvePromise());
   });
-  child.kill();
+  await terminateAgentTree(child, "SIGTERM");
+  if (hasExited()) return;
   await Promise.race([exited, delay(AGENT_EXIT_GRACE_MS)]);
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGKILL");
+  if (hasExited()) return;
+  await terminateAgentTree(child, "SIGKILL");
+  if (hasExited()) return;
   await Promise.race([exited, delay(AGENT_EXIT_GRACE_MS)]);
+}
+
+async function terminateAgentTree(
+  child: ChildProcessWithoutNullStreams,
+  signal: NodeJS.Signals,
+): Promise<void> {
+  if (child.pid === undefined) return;
+  if (process.platform === "win32") {
+    await new Promise<void>((resolvePromise) => {
+      const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      killer.once("error", () => resolvePromise());
+      killer.once("close", () => resolvePromise());
+    });
+    return;
+  }
+  try {
+    process.kill(-child.pid, signal);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EPERM") {
+      // macOS may report EPERM for an already-exited group leader. Retain the
+      // direct-child fallback without turning successful cleanup into a run failure.
+      child.kill(signal);
+      return;
+    }
+    if (code !== "ESRCH") throw error;
+  }
 }
 
 function delay(ms: number): Promise<void> {

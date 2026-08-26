@@ -104,12 +104,14 @@ describe("checkpoint experiment runner", () => {
     let active = 0;
     let maximumActive = 0;
     let arrivals = 0;
+    const receivedPrompts: string[] = [];
     let release!: () => void;
     const bothStarted = new Promise<void>((resolvePromise) => { release = resolvePromise; });
     const events: ExperimentRunEvent[] = [];
     const executorFactory = (context: Parameters<NonNullable<Parameters<typeof runHarnessExperiment>[0]["executorFactory"]>>[0]): HarnessExecutor => ({
       host: "qoder",
-      async execute(revision) {
+      async execute(revision, _bundle, task) {
+        receivedPrompts.push(task.prompt);
         active += 1;
         maximumActive = Math.max(maximumActive, active);
         arrivals += 1;
@@ -121,7 +123,13 @@ describe("checkpoint experiment runner", () => {
           toolUseId: `read-${context.lane.id}`,
           input: { path: join(context.worktree, "README.md") },
         });
+        emitter.toolResult(`read-${context.lane.id}`, JSON.stringify({
+          cwd: context.worktree,
+          stdout: "first line\nsecond line\n",
+          exit_code: 0,
+        }));
         emitter.finish(0);
+        await writeFile(join(context.worktree, "README.md"), "# fixture\n\nchanged by experiment\n", "utf8");
         active -= 1;
         return { host: "qoder", revisionId: revision.revisionId, exitCode: 0, output: "done", errorOutput: "", warnings: [] };
       },
@@ -132,12 +140,34 @@ describe("checkpoint experiment runner", () => {
       manifestPath,
       outputDirectory,
       experimentId: "exp_parallel_test",
+      promptOverride: "Use the live Compare prompt.\n",
+      runtimeSelection: {
+        default: { agentId: "qodercli", agentLabel: "Qoder CLI", protocol: "acp-v1-stdio", modelPolicy: "agent-default" },
+        minimal: { agentId: "codex-acp", agentLabel: "Codex ACP", protocol: "acp-v1-stdio", modelPolicy: "lane" },
+      },
       executorFactory,
       onEvent: (event) => events.push(event),
     });
 
     expect(maximumActive).toBe(2);
+    expect(receivedPrompts).toEqual(["Use the live Compare prompt.\n", "Use the live Compare prompt.\n"]);
+    expect(await readFile(join(outputDirectory, "task-prompt.txt"), "utf8")).toBe("Use the live Compare prompt.\n");
+    expect(JSON.parse(await readFile(join(outputDirectory, "runtime-selection.json"), "utf8"))).toEqual({
+      default: { agentId: "qodercli", agentLabel: "Qoder CLI", protocol: "acp-v1-stdio", modelPolicy: "agent-default" },
+      minimal: { agentId: "codex-acp", agentLabel: "Codex ACP", protocol: "acp-v1-stdio", modelPolicy: "lane" },
+    });
+    expect(compareSet.trials.map((trial) => trial.model)).toEqual(["agent-default", "performance"]);
+    expect(compareSet.contrasts[0]).toMatchObject({
+      status: "descriptive",
+      attribution: {
+        mode: "descriptive",
+        reason: "multi-axis",
+        movedAxes: ["runtime-profile", "agent", "model-policy"],
+      },
+    });
+    expect(compareSet.task.promptHash).toBe(`sha256:${createHash("sha256").update("Use the live Compare prompt.\n").digest("hex")}`);
     expect(compareSet.trials).toHaveLength(2);
+    expect(compareSet.trials.map((trial) => trial.changedFiles)).toEqual([["README.md"], ["README.md"]]);
     expect(compareSet.checkpoint.completeness.kind).toBe("clean-tree");
     expect(events.filter((event) => event.type === "lane-ready")).toHaveLength(2);
     expect(events.filter((event) => event.type === "lane-event")).toEqual(expect.arrayContaining([
@@ -146,6 +176,11 @@ describe("checkpoint experiment runner", () => {
     ]));
     expect(JSON.stringify(events)).not.toContain(root);
     expect(JSON.stringify(events)).toContain("<trial-root>/README.md");
+    const resultEvent = events.find((event) => event.type === "lane-event"
+      && event.event.type === "tool-call-result");
+    expect(resultEvent?.type === "lane-event" && resultEvent.event.type === "tool-call-result"
+      ? JSON.parse(String(resultEvent.event.content))
+      : null).toMatchObject({ cwd: "<trial-root>", stdout: "first line\nsecond line\n", exit_code: 0 });
     expect(JSON.parse(await readFile(join(outputDirectory, "compare-set.json"), "utf8"))).toMatchObject({
       schemaVersion: "harness-compare-set.v2",
     });

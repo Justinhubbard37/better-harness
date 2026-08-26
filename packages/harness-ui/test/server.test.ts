@@ -173,6 +173,64 @@ describe("harness-ui server", () => {
     expect(events.map((event) => event.type)).toEqual(["RUN_STARTED", "RUN_ERROR"]);
   });
 
+  it("notifies the embedder and aborts a run when its SSE client disconnects", async () => {
+    const controller = new AbortController();
+    let resolveDisconnect!: (runId: string) => void;
+    const disconnected = new Promise<string>((resolvePromise) => { resolveDisconnect = resolvePromise; });
+    started = await startHarnessUiServer({
+      source: SOURCE,
+      runAbortSignal: () => controller.signal,
+      onClientDisconnect: (runId) => {
+        controller.abort();
+        resolveDisconnect(runId);
+      },
+      executorFactory: (context) => ({
+        host: "qoder",
+        async execute(revision, _bundle, task) {
+          const emitter = new HarnessRunEmitter(context.onRunEvent);
+          emitter.start({ revisionId: revision.revisionId, host: "qoder" });
+          await new Promise<void>((resolvePromise) => {
+            task.abortSignal?.addEventListener("abort", () => resolvePromise(), { once: true });
+          });
+          emitter.finish(1);
+          return {
+            host: "qoder",
+            revisionId: revision.revisionId,
+            exitCode: 1,
+            output: "",
+            errorOutput: "cancelled",
+            warnings: [],
+          };
+        },
+      }),
+    });
+    const target = new URL(`${started.url}/agui`);
+    const body = JSON.stringify({
+      threadId: "disconnect-thread",
+      runId: "disconnect-run",
+      messages: [{ role: "user", content: "wait" }],
+    });
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      const request = httpRequest({
+        hostname: target.hostname,
+        port: target.port,
+        path: target.pathname,
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Content-Length": String(Buffer.byteLength(body)) },
+      }, (response) => {
+        response.once("data", () => {
+          response.destroy();
+          resolvePromise();
+        });
+      });
+      request.once("error", rejectPromise);
+      request.end(body);
+    });
+
+    await expect(disconnected).resolves.toBe("disconnect-run");
+    expect(controller.signal.aborted).toBe(true);
+  });
+
   it("owns the outer lifecycle when an injected executor throws or emits no lifecycle events", async () => {
     started = await startHarnessUiServer({
       source: SOURCE,

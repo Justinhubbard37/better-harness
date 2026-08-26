@@ -89,6 +89,8 @@ export interface HarnessStudioServerOptions {
   executorFactory?: HarnessUiExecutorFactory;
   /** Explicit local ACP Agent. The browser can select it but cannot alter its command or argv. */
   acpAgent?: StudioAcpAgentOptions;
+  /** Server-owned selectable ACP Agent catalog, including unavailable known presets. */
+  acpAgents?: readonly StudioAcpAgentProfile[];
   /** `harness-experiment.v1` manifest; enables the live three-lane trace view. */
   experimentManifestPath?: string;
   /** Runtime-only trajectory sources, useful for previewing imported host history before it is copied. */
@@ -123,6 +125,15 @@ export interface StudioAcpAgentOptions {
   harnessSource?: string;
   harnessId?: string;
   runtimeId?: string;
+  /** Whether Studio applies the manifest lane model or retains the Agent's configured default. */
+  modelPolicy?: "lane" | "agent-default";
+}
+export interface StudioAcpAgentProfile {
+  id: string;
+  label: string;
+  /** Omitted when the known Agent or its ACP bridge is unavailable on this host. */
+  agent?: StudioAcpAgentOptions;
+  unavailableReason?: string;
 }
 export interface ArtifactImportSession {
   directory: string;

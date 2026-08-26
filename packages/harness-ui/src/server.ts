@@ -25,6 +25,8 @@ export interface HarnessUiServerOptions {
   allowedOrigins?: readonly string[];
   /** Optional server-owned cancellation signal for one validated browser run id. */
   runAbortSignal?: (runId: string) => AbortSignal | undefined;
+  /** Notify an embedder when the browser disconnects before the run terminates. */
+  onClientDisconnect?: (runId: string) => void;
 }
 
 /**
@@ -122,6 +124,10 @@ export async function handleAguiRun(
   });
   let runStarted = false;
   let runTerminated = false;
+  const disconnect = (): void => {
+    if (!runTerminated && !response.writableEnded) options.onClientDisconnect?.(input.runId);
+  };
+  response.once("close", disconnect);
   const writeEvent = (event: AguiEvent): void => {
     if (event.type === "RUN_STARTED") runStarted = true;
     if (event.type === "RUN_FINISHED" || event.type === "RUN_ERROR") runTerminated = true;
@@ -153,6 +159,7 @@ export async function handleAguiRun(
       });
     }
   } finally {
+    response.removeListener("close", disconnect);
     response.end();
   }
 }

@@ -8,6 +8,8 @@ import { runWalnutBootstrapCli } from "./providers/walnut/cli.js";
 import { runArtifactProviderCli } from "./artifacts/registry/artifact-provider-cli.js";
 import { createBundledAgentCustomizationCollector } from "./customization-collector.js";
 import { loadArtifactProviderModules } from "./artifacts/registry/artifact-provider-modules.js";
+import { discoverAcpAgentProfiles } from "./acp-agent-catalog.js";
+import type { StudioAcpAgentOptions } from "./studio-types.js";
 
 const HELP = `harness-studio — local studio for harness runs and compare evidence
 
@@ -48,7 +50,8 @@ Options:
                       JSON catalog of bounded switchable Studio inputs
   --harness-id <id>   Harness to resolve (default: the file's only harness)
   --runtime <id>      Target runtime (default: the file's only target)
-  --acp-agent <cmd>   Server-owned ACP Agent executable (requires --harness)
+  --acp-agent <cmd>   Preferred server-owned ACP Agent executable
+                      (known installed ACP entrypoints are also auto-discovered)
   --acp-arg <arg>     Repeatable argv item for --acp-agent
   --port <n>          Listen port (default: 3311)
   --host <addr>       Bind address (default: 127.0.0.1)
@@ -254,13 +257,26 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
   const inspectorPath = parsed.inspector ?? discoveredInspector;
   const sourceCatalog = parsed.sourceCatalog === undefined ? [] : await readSourceCatalogFile(parsed.sourceCatalog);
   const harnessSource = parsed.harness !== undefined ? await readFile(parsed.harness, "utf8") : undefined;
-  if (parsed.acpAgent !== undefined && harnessSource === undefined) {
-    io.stderr("--acp-agent requires --harness so the ACP runtime contract is explicit.\n");
+  if (parsed.acpAgent !== undefined && harnessSource === undefined && parsed.experiment === undefined) {
+    io.stderr("--acp-agent requires --harness or --experiment so the ACP runtime contract is explicit.\n");
     return 2;
   }
   // Skills are conventionally declared relative to their `.harness` file (see
   // examples/*.harness), so loading one without a flag still delivers them.
   const sourceRoot = resolveHarnessStudioSourceRoot(parsed.harness, parsed.sourceRoot);
+  const explicitAcpAgent: StudioAcpAgentOptions | undefined = parsed.acpAgent === undefined ? undefined : {
+    command: parsed.acpAgent,
+    args: parsed.acpArgs,
+    ...(harnessSource !== undefined ? { harnessSource } : {}),
+    ...(parsed.harnessId !== undefined ? { harnessId: parsed.harnessId } : {}),
+    ...(harnessSource !== undefined ? { runtimeId: "acp" } : {}),
+  };
+  const acpAgents = harnessSource === undefined && parsed.experiment === undefined
+    ? []
+    : await discoverAcpAgentProfiles({ explicit: explicitAcpAgent });
+  const preferredAcpAgent = explicitAcpAgent === undefined
+    ? acpAgents.find((profile) => profile.agent !== undefined)?.agent
+    : acpAgents.find((profile) => profile.agent?.command === explicitAcpAgent.command)?.agent ?? explicitAcpAgent;
   let artifactProviders;
   try {
     artifactProviders = await loadArtifactProviderModules(
@@ -282,15 +298,8 @@ export async function runHarnessStudioCli(argv: string[], io: HarnessStudioCliIo
     ...(harnessSource !== undefined ? { harnessSource } : {}),
     ...(parsed.harnessId !== undefined ? { harnessId: parsed.harnessId } : {}),
     ...(parsed.runtime !== undefined ? { runtimeId: parsed.runtime } : {}),
-    ...(parsed.acpAgent !== undefined && harnessSource !== undefined ? {
-      acpAgent: {
-        command: parsed.acpAgent,
-        args: parsed.acpArgs,
-        harnessSource,
-        ...(parsed.harnessId !== undefined ? { harnessId: parsed.harnessId } : {}),
-        runtimeId: "acp",
-      },
-    } : {}),
+    ...(preferredAcpAgent === undefined ? {} : { acpAgent: preferredAcpAgent }),
+    ...(acpAgents.length === 0 ? {} : { acpAgents }),
     ...(parsed.runs !== undefined ? { runDirectory: resolve(parsed.runs) } : {}),
     ...(parsed.artifacts !== undefined ? { artifactDirectory: resolve(parsed.artifacts) } : {}),
     ...(parsed.canvasViewers !== undefined ? { canvasViewerRoot: resolve(parsed.canvasViewers) } : {}),

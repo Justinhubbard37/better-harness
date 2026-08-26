@@ -10,8 +10,28 @@ export interface ExperimentToolCall {
 }
 
 export type CanonicalToolEvent =
+  | { type: "assistant-message-started"; messageId: string }
+  | { type: "assistant-text-delta"; messageId: string; text: string }
+  | { type: "assistant-message-finished"; messageId: string }
   | { type: "tool-call-started"; toolCallId: string; toolName: string; input?: unknown }
   | { type: "tool-call-result"; toolCallId: string; content?: unknown; isError?: boolean }
+  | {
+      type: "protocol-observed";
+      protocol: "acp";
+      direction: string;
+      method: string;
+      rpcId?: string;
+      sessionId?: string;
+    }
+  | {
+      type: "permission-requested";
+      protocol: "acp";
+      requestId: string;
+      toolCallId: string;
+      title: string;
+      sessionId?: string;
+      options: Array<{ optionId: string; name: string; kind?: string }>;
+    }
   | { type: "run-finished" };
 
 export function foldCanonicalToolEvent(
@@ -40,6 +60,7 @@ export function foldCanonicalToolEvent(
         }
       : call);
   }
+  if (event.type !== "run-finished") return [...calls];
   return calls.map((call) => call.status === "running" && call.runId === runId
     ? { ...call, status: "result-unavailable" as const }
     : call);

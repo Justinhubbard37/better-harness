@@ -24,6 +24,11 @@ const QoderRuntimeProfileSchema = Type.Union([
   Type.Literal("qoder-default-v1"),
   Type.Literal("qoder-minimal-v1"),
 ]);
+const AcpRuntimeProfileSchema = Type.Literal("acp-v1-stdio");
+const ExperimentRuntimeProfileSchema = Type.Union([
+  QoderRuntimeProfileSchema,
+  AcpRuntimeProfileSchema,
+]);
 
 /**
  * A recorded trajectory. It creates no sandbox and is replayed, not run.
@@ -47,7 +52,7 @@ const ObservedLaneSchema = Type.Object(
       {
         harnessId: Type.Optional(IdentifierSchema),
         revisionId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-        profile: Type.Optional(QoderRuntimeProfileSchema),
+        profile: Type.Optional(ExperimentRuntimeProfileSchema),
         model: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         promptHash: Type.Optional(Sha256Schema),
         environmentReceipt: Type.Optional(RelativePathSchema),
@@ -73,7 +78,7 @@ const ExecuteLaneSchema = Type.Object(
     trials: Type.Integer({ minimum: 1, maximum: 20 }),
     runtime: Type.Object(
       {
-        profile: QoderRuntimeProfileSchema,
+        profile: ExperimentRuntimeProfileSchema,
         model: Type.String({ minLength: 1, maxLength: 128 }),
       },
       { additionalProperties: false },
@@ -122,8 +127,8 @@ export const HarnessExperimentManifestSchema = Type.Object(
      */
     runtime: Type.Object(
       {
-        host: Type.Literal("qoder"),
-        tools: Type.Array(Type.String(), { minItems: 1, maxItems: 32, uniqueItems: true }),
+        host: Type.Union([Type.Literal("qoder"), Type.Literal("acp")]),
+        tools: Type.Array(Type.String(), { maxItems: 32, uniqueItems: true }),
         allowedTools: Type.Array(Type.String(), { maxItems: 32, uniqueItems: true }),
         disallowedTools: Type.Array(Type.String(), { maxItems: 32, uniqueItems: true }),
         permissionMode: Type.Literal("default"),

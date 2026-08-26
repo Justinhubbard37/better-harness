@@ -65,6 +65,48 @@ describe("harness-experiment.v1 manifest", () => {
     }
   });
 
+  it("accepts ACP prompt-session lanes without claiming standard Harness tools", async () => {
+    const manifest = await loadExample((draft) => {
+      draft.runtime.host = "acp";
+      draft.runtime.tools = [];
+      draft.runtime.allowedTools = [];
+      draft.runtime.disallowedTools = [];
+      for (const lane of draft.lanes) {
+        if (lane.origin === "execute") lane.runtime.profile = "acp-v1-stdio";
+      }
+    });
+
+    expect(manifest.runtime).toMatchObject({ host: "acp", tools: [] });
+    expect(manifest.lanes.filter((lane) => lane.origin === "execute")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ runtime: expect.objectContaining({ profile: "acp-v1-stdio" }) }),
+      ]),
+    );
+  });
+
+  it("rejects ACP manifests that claim Qoder profiles or Harness-owned tools", async () => {
+    const wrongProfile = await writeManifest((draft) => {
+      draft.runtime.host = "acp";
+      draft.runtime.tools = [];
+      draft.runtime.allowedTools = [];
+      draft.runtime.disallowedTools = [];
+    });
+    await expect(loadHarnessExperimentManifest(wrongProfile)).rejects.toThrow(/does not belong to host 'acp'/);
+
+    const claimedTools = await writeManifest((draft) => {
+      draft.runtime.host = "acp";
+      draft.runtime.tools = ["Read"];
+      draft.runtime.allowedTools = [];
+      draft.runtime.disallowedTools = [];
+      for (const lane of draft.lanes) {
+        if (lane.origin === "execute") lane.runtime.profile = "acp-v1-stdio";
+      }
+    });
+    await expect(loadHarnessExperimentManifest(claimedTools)).rejects.toThrow(
+      /runtime tools, allowedTools, and disallowedTools must be empty/,
+    );
+  });
+
   it("rejects an author-declared axis on a contrast", async () => {
     const path = await writeManifest((manifest) => {
       (manifest.contrasts[0] as unknown as Record<string, unknown>).axis = "model";

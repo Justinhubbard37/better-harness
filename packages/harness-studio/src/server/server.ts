@@ -28,11 +28,13 @@ import { decodeRouteComponent, respondJson } from "./http-utils.js";
 import {
   acpAgentEnabled,
   acpExecutorFactory,
+  abortAcpRun,
   cancelAcpRun,
   cancelAllAcpRuns,
   decideAcpPermission,
   ensureAcpRun,
 } from "./acp-runs.js";
+import { effectiveAcpAgentProfiles } from "./acp-agent-catalog.js";
 import {
   abortWorkspaceImport,
   analyzeWorkspaceCustomizations,
@@ -185,10 +187,12 @@ async function route(
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://localhost");
   if (request.method === "GET" && url.pathname === "/api/config") {
+    const defaultAcpAgent = options.acpAgent
+      ?? effectiveAcpAgentProfiles(options).find((profile) => profile.agent !== undefined)?.agent;
     respondJson(response, 200, {
       aguiEnabled: options.harnessSource !== undefined,
       acpEnabled: acpAgentEnabled(options),
-      acpAgentLabel: options.acpAgent?.label ?? "ACP Agent",
+      acpAgentLabel: defaultAcpAgent?.label ?? "ACP Agent",
       artifactsEnabled: state.artifactDirectory !== undefined,
       artifactCount: state.artifactPaths?.length,
       evidenceEnabled: activeSourcePath(state.sourceCatalog, state.activeSources, "evidence") !== undefined,
@@ -487,7 +491,8 @@ async function route(
       return;
     }
     const runtimeOptions = activeWorkspaceOptions(options, state);
-    const acpAgent = options.acpAgent!;
+    const acpAgent = options.acpAgent
+      ?? effectiveAcpAgentProfiles(options).find((profile) => profile.agent !== undefined)!.agent!;
     await handleAguiRun(request, response, {
       source: acpAgent.harnessSource ?? DEFAULT_LOCAL_ACP_HARNESS_SOURCE,
       harnessId: acpAgent.harnessId ?? DEFAULT_LOCAL_HARNESS_ID,
@@ -496,6 +501,7 @@ async function route(
       ...(runtimeOptions.sourceRoot !== undefined ? { sourceRoot: runtimeOptions.sourceRoot } : {}),
       executorFactory: acpExecutorFactory(acpAgent, state),
       runAbortSignal: (runId) => ensureAcpRun(state, runId).abortController.signal,
+      onClientDisconnect: (runId) => { abortAcpRun(state, runId); },
     });
     return;
   }

@@ -116,6 +116,25 @@ async function makeAppDir(): Promise<string> {
   return dir;
 }
 
+async function makeAcpExperimentManifest(): Promise<string> {
+  const directory = await makeTempDir("studio-acp-experiment-");
+  await cp(dirname(EXPERIMENT_MANIFEST), directory, { recursive: true });
+  const manifestPath = join(directory, "experiment.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+    runtime: { host: string; tools: string[]; allowedTools: string[]; disallowedTools: string[] };
+    lanes: Array<{ origin: string; runtime?: { profile: string } }>;
+  };
+  manifest.runtime.host = "acp";
+  manifest.runtime.tools = [];
+  manifest.runtime.allowedTools = [];
+  manifest.runtime.disallowedTools = [];
+  for (const lane of manifest.lanes) {
+    if (lane.origin === "execute" && lane.runtime !== undefined) lane.runtime.profile = "acp-v1-stdio";
+  }
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  return manifestPath;
+}
+
 async function waitForWorkspaceOpenStage(
   serverUrl: string,
   expected: "idle" | "choosing" | "discovering",
@@ -964,10 +983,12 @@ describe("harness-studio server", () => {
 
   it("serves an experiment preview and multiplexes lane-scoped events", async () => {
     const appDir = await makeAppDir();
+    let submittedPrompt: string | undefined;
     started = await startHarnessStudioServer({
       appDir,
       experimentManifestPath: EXPERIMENT_MANIFEST,
       experimentRunner: async (options) => {
+        submittedPrompt = options.promptOverride;
         options.onEvent?.({
           type: "lane-started",
           experimentId: options.experimentId!,
@@ -987,6 +1008,14 @@ describe("harness-studio server", () => {
             toolName: "Read",
             filePath: "README.md",
           } as never,
+        });
+        options.onEvent?.({
+          type: "lane-event",
+          experimentId: options.experimentId!,
+          laneId: "fresh-default",
+          runId: `${options.experimentId}:fresh-default:1`,
+          at: "2026-08-17T00:00:01.500Z",
+          event: { type: "text-delta", messageId: "message-1", text: "I am checking the project." },
         });
         return {} as never;
       },
@@ -1028,7 +1057,7 @@ describe("harness-studio server", () => {
     const stream = await fetch(`${started.url}/api/experiment/runs`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ experimentId: "exp_server_test" }),
+      body: JSON.stringify({ experimentId: "exp_server_test", prompt: "Use this live request exactly.\n" }),
     });
     const body = await stream.text();
     expect(stream.headers.get("content-type")).toContain("text/event-stream");
@@ -1036,7 +1065,18 @@ describe("harness-studio server", () => {
     expect(body).toContain('"laneId":"fresh-default"');
     expect(body).toContain('"type":"tool-call-started"');
     expect(body).toContain('"toolName":"Read"');
+    expect(body).toContain('"type":"assistant-text-delta"');
+    expect(body).toContain('"text":"I am checking the project."');
     expect(body).not.toContain('"type":"tool.requested"');
+    expect(submittedPrompt).toBe("Use this live request exactly.\n");
+
+    const emptyPrompt = await fetch(`${started.url}/api/experiment/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "   " }),
+    });
+    expect(emptyPrompt.status).toBe(400);
+    expect(await emptyPrompt.json()).toMatchObject({ error: expect.stringContaining("non-empty") });
   });
 
   it("rejects cross-origin experiment execution", async () => {
@@ -1054,6 +1094,132 @@ describe("harness-studio server", () => {
     });
 
     expect(response.status).toBe(403);
+  });
+
+  it("requires a server-configured Agent before starting an ACP experiment stream", async () => {
+    const appDir = await makeAppDir();
+    const experimentManifestPath = await makeAcpExperimentManifest();
+    started = await startHarnessStudioServer({
+      appDir,
+      experimentManifestPath,
+      experimentRunner: async () => ({} as never),
+    });
+
+    const response = await fetch(`${started.url}/api/experiment/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ experimentId: "exp_acp_missing" }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: expect.stringContaining("no available server-registered ACP Agent") });
+  });
+
+  it("selects one registered ACP Agent per lane and retains only runtime identity", async () => {
+    const appDir = await makeAppDir();
+    const experimentManifestPath = await makeAcpExperimentManifest();
+    let runtimeSelection: unknown;
+    const alpha = { command: process.execPath, args: [ACP_AGENT_FIXTURE], label: "Alpha ACP" };
+    const beta = { command: process.execPath, args: [ACP_AGENT_FIXTURE, "--beta"], label: "Beta ACP" };
+    started = await startHarnessStudioServer({
+      appDir,
+      experimentManifestPath,
+      acpAgent: alpha,
+      acpAgents: [
+        { id: "alpha", label: "Alpha ACP", agent: alpha },
+        { id: "beta", label: "Beta ACP", agent: beta },
+        { id: "missing", label: "Missing ACP", unavailableReason: "bridge not installed" },
+      ],
+      experimentRunner: async (options) => {
+        runtimeSelection = options.runtimeSelection;
+        return {} as never;
+      },
+    });
+
+    const preview = await (await fetch(`${started.url}/api/experiment`)).json() as Record<string, unknown>;
+    const agentCatalog = preview.acpAgents as {
+      defaultAgentId?: string;
+      agents: Array<{ id: string; label: string; available: boolean; detail: string }>;
+    };
+    expect(agentCatalog.defaultAgentId).toBe("alpha");
+    expect(agentCatalog.agents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "alpha", label: "Alpha ACP", available: true }),
+      expect.objectContaining({ id: "missing", label: "Missing ACP", available: false, detail: "bridge not installed" }),
+    ]));
+    expect(JSON.stringify(preview)).not.toContain(ACP_AGENT_FIXTURE);
+
+    const response = await fetch(`${started.url}/api/experiment/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        experimentId: "exp_acp_agents",
+        agentIds: { "fresh-default": "beta", "fresh-minimal": "alpha" },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(runtimeSelection).toEqual({
+      "fresh-default": { agentId: "beta", agentLabel: "Beta ACP", protocol: "acp-v1-stdio", modelPolicy: "lane" },
+      "fresh-minimal": { agentId: "alpha", agentLabel: "Alpha ACP", protocol: "acp-v1-stdio", modelPolicy: "lane" },
+    });
+  });
+
+  it("rejects unknown and unavailable ACP Agent ids before starting the stream", async () => {
+    const appDir = await makeAppDir();
+    const experimentManifestPath = await makeAcpExperimentManifest();
+    const alpha = { command: process.execPath, args: [ACP_AGENT_FIXTURE], label: "Alpha ACP" };
+    started = await startHarnessStudioServer({
+      appDir,
+      experimentManifestPath,
+      acpAgent: alpha,
+      acpAgents: [
+        { id: "alpha", label: "Alpha ACP", agent: alpha },
+        { id: "missing", label: "Missing ACP", unavailableReason: "bridge not installed" },
+      ],
+      experimentRunner: async () => ({} as never),
+    });
+
+    const unknown = await fetch(`${started.url}/api/experiment/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentIds: { "fresh-default": "unknown" } }),
+    });
+    const unavailable = await fetch(`${started.url}/api/experiment/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentIds: { "fresh-default": "missing" } }),
+    });
+
+    expect(unknown.status).toBe(400);
+    expect(await unknown.json()).toMatchObject({ error: expect.stringContaining("not registered") });
+    expect(unavailable.status).toBe(409);
+    expect(await unavailable.json()).toMatchObject({ error: expect.stringContaining("bridge not installed") });
+  });
+
+  it("injects the configured ACP lane executor into the experiment runner", async () => {
+    const appDir = await makeAppDir();
+    const experimentManifestPath = await makeAcpExperimentManifest();
+    let factoryConfigured = false;
+    started = await startHarnessStudioServer({
+      appDir,
+      experimentManifestPath,
+      acpAgent: { command: process.execPath, args: [ACP_AGENT_FIXTURE] },
+      experimentRunner: async (options) => {
+        factoryConfigured = options.executorFactory !== undefined;
+        return {} as never;
+      },
+    });
+
+    const response = await fetch(`${started.url}/api/experiment/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ experimentId: "exp_acp_factory" }),
+    });
+
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(factoryConfigured).toBe(true);
   });
 
   it("cancels a running experiment through its lifecycle endpoint", async () => {
@@ -1076,6 +1242,40 @@ describe("harness-studio server", () => {
     expect(cancellation.status).toBe(202);
     expect(await cancellation.json()).toMatchObject({ status: "cancelling" });
     expect(await stream.text()).toContain('"type":"experiment-cancelled"');
+  });
+
+  it("aborts a running experiment when its SSE client disconnects", async () => {
+    const appDir = await makeAppDir();
+    let resolveAborted!: () => void;
+    const aborted = new Promise<void>((resolvePromise) => { resolveAborted = resolvePromise; });
+    started = await startHarnessStudioServer({
+      appDir,
+      experimentManifestPath: EXPERIMENT_MANIFEST,
+      experimentRunner: (options) => new Promise((_, reject) => {
+        options.signal?.addEventListener("abort", () => {
+          resolveAborted();
+          reject(options.signal?.reason);
+        }, { once: true });
+      }),
+    });
+    const target = new URL(`${started.url}/api/experiment/runs`);
+    const body = JSON.stringify({ experimentId: "exp_disconnect_test" });
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      const request = httpRequest({
+        hostname: target.hostname,
+        port: target.port,
+        path: target.pathname,
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Content-Length": String(Buffer.byteLength(body)) },
+      }, (response) => {
+        response.destroy();
+        resolvePromise();
+      });
+      request.once("error", rejectPromise);
+      request.end(body);
+    });
+
+    await expect(aborted).resolves.toBeUndefined();
   });
 
   it("serves the app shell and refuses path escapes", async () => {

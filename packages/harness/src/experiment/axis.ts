@@ -21,8 +21,8 @@ import {
   type ObservedLane,
 } from "./contract.js";
 
-/** The variables a contrast may isolate. Host is shared, so it is never an axis. */
-export type ExperimentTreatmentAxis = "harness" | "runtime-profile" | "model";
+/** Manifest axes plus server-owned runtime selections retained with a live comparison. */
+export type ExperimentTreatmentAxis = "harness" | "runtime-profile" | "model" | "agent" | "model-policy";
 
 export type DescriptiveReason =
   /** Lanes are configured identically; the contrast measures run-to-run noise. */

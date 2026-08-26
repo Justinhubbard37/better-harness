@@ -101,6 +101,7 @@ export interface HarnessExperimentCompareSet {
     promptHash: string;
     graderContractHash: string;
   };
+  runtimeSelection?: Record<string, ExperimentRuntimeSelection>;
   /** The thresholds every attributable contrast was judged under. */
   policy: CompareDecisionPolicy;
   /** Why each observed lane is or is not matched baseline evidence. */
@@ -117,6 +118,7 @@ export interface BuildExperimentCompareSetOptions {
   graderContractHash: string;
   completeness: CheckpointCompleteness;
   trials: readonly ExperimentTrialResult[];
+  runtimeSelection?: Record<string, ExperimentRuntimeSelection>;
   /** Raises the evidence bar; the two-matched-pair floor always applies. */
   policy?: Partial<CompareDecisionPolicy>;
 }
@@ -144,6 +146,7 @@ export function buildExperimentCompareSet(
       trials: options.trials,
       lanes,
       policy,
+      runtimeSelection: options.runtimeSelection,
     }),
   );
   return {
@@ -151,6 +154,7 @@ export function buildExperimentCompareSet(
     manifestHash: options.manifestHash,
     checkpoint: { digest: manifest.checkpointRef.digest, completeness: options.completeness },
     task: { promptHash: options.taskPromptHash, graderContractHash: options.graderContractHash },
+    ...(options.runtimeSelection === undefined ? {} : { runtimeSelection: options.runtimeSelection }),
     policy,
     observedLanes: manifest.lanes
       .filter(isObservedLane)
@@ -177,9 +181,14 @@ export function decideContrast(input: {
   trials: readonly ExperimentTrialResult[];
   lanes: readonly ExperimentLaneAggregate[];
   policy: CompareDecisionPolicy;
+  runtimeSelection?: Record<string, ExperimentRuntimeSelection>;
 }): ContrastResult {
   const { contrast, policy } = input;
-  const attribution = deriveContrastAttribution(input.manifest, contrast, input.context);
+  const attribution = applyRuntimeSelectionAttribution(
+    deriveContrastAttribution(input.manifest, contrast, input.context),
+    contrast.lanes,
+    input.runtimeSelection,
+  );
   if (attribution.mode === "descriptive") {
     return {
       id: contrast.id,
@@ -239,12 +248,54 @@ function aggregateLane(
     origin: lane.origin,
     harnessId: isObservedLane(lane) ? identity?.harnessId ?? null : lane.harnessId,
     runtimeProfile: isObservedLane(lane) ? identity?.profile ?? null : lane.runtime.profile,
-    model: isObservedLane(lane) ? identity?.model ?? null : lane.runtime.model,
+    model: isObservedLane(lane) ? identity?.model ?? null : laneTrials[0]?.model ?? lane.runtime.model,
     graded: gradedRows.length > 0,
     aggregate: aggregateVariant(
       gradedRows.map((trial) => toCompareTrial(trial, "baseline")),
     ),
   };
+}
+
+export interface ExperimentRuntimeSelection {
+  agentId: string;
+  agentLabel: string;
+  protocol: "acp-v1-stdio";
+  modelPolicy: "lane" | "agent-default";
+}
+
+function applyRuntimeSelectionAttribution(
+  manifestAttribution: ContrastAttribution,
+  laneIds: readonly string[],
+  selection: Record<string, ExperimentRuntimeSelection> | undefined,
+): ContrastAttribution {
+  if (selection === undefined || laneIds.length !== 2) return manifestAttribution;
+  const left = selection[laneIds[0]!];
+  const right = selection[laneIds[1]!];
+  if (left === undefined || right === undefined) return manifestAttribution;
+  const anyAgentDefault = left.modelPolicy === "agent-default" || right.modelPolicy === "agent-default";
+  const movedAxes = manifestAttribution.movedAxes.filter((axis) => axis !== "model" || !anyAgentDefault);
+  if (left.agentId !== right.agentId) movedAxes.push("agent");
+  if (left.modelPolicy !== right.modelPolicy) movedAxes.push("model-policy");
+  if (movedAxes.length === 0) {
+    return {
+      mode: "descriptive",
+      reason: "no-axis-moved",
+      movedAxes,
+      detail: anyAgentDefault
+        ? "Both lanes use the same Agent default model; the manifest model values were not applied."
+        : "Both lanes are configured identically; the contrast measures run-to-run variance.",
+    };
+  }
+  if (movedAxes.length > 1) {
+    return {
+      mode: "descriptive",
+      reason: "multi-axis",
+      movedAxes,
+      detail: `Runtime selection differs on ${movedAxes.join(" and ")}; a difference in outcome cannot be attributed to one cause.`,
+    };
+  }
+  const axis = movedAxes[0]!;
+  return { mode: "attributable", axis, movedAxes, detail: `Lanes differ only on ${axis}.` };
 }
 
 /**

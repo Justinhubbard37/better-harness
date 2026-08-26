@@ -11,6 +11,17 @@ import {
 export function canonicalToolEvents(value: unknown): CanonicalToolEvent[] {
   const record = eventRecord(value);
   if (record === null) return [];
+  if (record.type === "message-started" && typeof record.messageId === "string") {
+    return [{ type: "assistant-message-started", messageId: record.messageId }];
+  }
+  if (record.type === "text-delta"
+    && typeof record.messageId === "string"
+    && typeof record.text === "string") {
+    return [{ type: "assistant-text-delta", messageId: record.messageId, text: record.text }];
+  }
+  if (record.type === "message-finished" && typeof record.messageId === "string") {
+    return [{ type: "assistant-message-finished", messageId: record.messageId }];
+  }
   if (record.type === "tool.requested" && typeof record.toolInvocationId === "string") {
     const input = typeof record.filePath === "string"
       ? { file_path: record.filePath }
@@ -46,6 +57,47 @@ export function canonicalToolEvents(value: unknown): CanonicalToolEvent[] {
     }];
   }
   if (record.type === "run-finished") return [{ type: "run-finished" }];
+  if (record.type === "protocol-event" && record.protocol === "acp"
+    && typeof record.direction === "string" && typeof record.method === "string") {
+    const rpcId = typeof record.rpcId === "string" ? record.rpcId : undefined;
+    const sessionId = typeof record.sessionId === "string" ? record.sessionId : undefined;
+    if (record.method === "session/request_permission" && rpcId !== undefined) {
+      const payload = objectValue(record.payload);
+      const params = objectValue(payload?.params);
+      const toolCall = objectValue(params?.toolCall);
+      const options = Array.isArray(params?.options)
+        ? params.options.flatMap((value) => {
+            const option = objectValue(value);
+            return option !== null && typeof option.optionId === "string" && typeof option.name === "string"
+              ? [{
+                  optionId: option.optionId,
+                  name: option.name,
+                  ...(typeof option.kind === "string" ? { kind: option.kind } : {}),
+                }]
+              : [];
+          })
+        : [];
+      if (toolCall !== null && typeof toolCall.toolCallId === "string" && options.length > 0) {
+        return [{
+          type: "permission-requested",
+          protocol: "acp",
+          requestId: rpcId,
+          toolCallId: toolCall.toolCallId,
+          title: typeof toolCall.title === "string" ? toolCall.title : "ACP tool permission",
+          ...(sessionId === undefined ? {} : { sessionId }),
+          options,
+        }];
+      }
+    }
+    return [{
+      type: "protocol-observed",
+      protocol: "acp",
+      direction: record.direction,
+      method: record.method,
+      ...(rpcId === undefined ? {} : { rpcId }),
+      ...(sessionId === undefined ? {} : { sessionId }),
+    }];
+  }
   const wrapped = eventRecord(record.event);
   if (wrapped !== null) return canonicalToolEvents(wrapped);
 

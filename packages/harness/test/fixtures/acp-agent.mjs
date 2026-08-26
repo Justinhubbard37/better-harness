@@ -2,6 +2,7 @@ import { Readable, Writable } from "node:stream";
 import { agent, methods, ndJsonStream } from "@agentclientprotocol/sdk";
 
 let cancelled = false;
+const sessionConfig = {};
 
 const app = agent({ name: "better-harness-acp-fixture" })
   .onRequest(methods.agent.initialize, (context) => ({
@@ -13,7 +14,37 @@ const app = agent({ name: "better-harness-acp-fixture" })
     if (process.argv.includes("--delay-new")) {
       await new Promise((resolve) => setTimeout(resolve, 10_000));
     }
-    return { sessionId: "fixture-session" };
+    return {
+      sessionId: "fixture-session",
+      configOptions: [{
+        id: "model",
+        name: "Model",
+        type: "select",
+        currentValue: "fixture-default",
+        options: [
+          { value: "fixture-default", name: "Fixture default" },
+          { value: "fixture-candidate", name: "Fixture candidate" },
+        ],
+      }],
+    };
+  })
+  .onRequest(methods.agent.session.setConfigOption, (context) => {
+    const { configId, value } = context.params;
+    if (process.argv.includes("--reject-config")) {
+      return { configOptions: [] };
+    }
+    sessionConfig[configId] = value;
+    return {
+      configOptions: [{
+        id: configId,
+        name: configId,
+        type: typeof value === "boolean" ? "boolean" : "select",
+        currentValue: value,
+        ...(typeof value === "string"
+          ? { options: [{ value, name: value }] }
+          : {}),
+      }],
+    };
   })
   .onNotification(methods.agent.session.cancel, () => {
     cancelled = true;
@@ -41,7 +72,7 @@ const app = agent({ name: "better-harness-acp-fixture" })
         content: {
           type: "text",
           text: permission.outcome.outcome === "selected"
-            ? `fixture:${permission.outcome.optionId}`
+            ? `fixture:${permission.outcome.optionId}${sessionConfig.model ? `:${sessionConfig.model}` : ""}`
             : "fixture:cancelled",
         },
       },

@@ -123,6 +123,16 @@ function validateManifestPolicy(manifest: HarnessExperimentManifest): void {
     }
   }
   validateRuntimePolicy(manifest.runtime);
+  for (const lane of manifest.lanes.filter(isExecuteLane)) {
+    const profileMatchesHost = manifest.runtime.host === "qoder"
+      ? lane.runtime.profile === "qoder-default-v1" || lane.runtime.profile === "qoder-minimal-v1"
+      : lane.runtime.profile === "acp-v1-stdio";
+    if (!profileMatchesHost) {
+      throw invalidExperimentManifest(
+        `lane '${lane.id}' profile '${lane.runtime.profile}' does not belong to host '${manifest.runtime.host}'`,
+      );
+    }
+  }
   for (const path of [
     manifest.harness,
     manifest.checkpointRef.plan,
@@ -143,6 +153,15 @@ function validateManifestPolicy(manifest: HarnessExperimentManifest): void {
  * lane field.
  */
 function validateRuntimePolicy(runtime: HarnessExperimentManifest["runtime"]): void {
+  if (runtime.host === "acp") {
+    const claimedTools = [...runtime.tools, ...runtime.allowedTools, ...runtime.disallowedTools];
+    if (claimedTools.length > 0) {
+      throw invalidExperimentManifest(
+        "ACP is a prompt-session host; runtime tools, allowedTools, and disallowedTools must be empty",
+      );
+    }
+    return;
+  }
   const unsupportedTools = runtime.tools.filter((tool) => !SUPPORTED_TOOLS.has(tool));
   if (unsupportedTools.length > 0) {
     throw invalidExperimentManifest(

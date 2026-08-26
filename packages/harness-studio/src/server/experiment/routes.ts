@@ -10,6 +10,13 @@ import { IncomingMessage, ServerResponse } from "node:http";
 import { dirname, resolve } from "node:path";
 import { readJsonBody, respondJson, sameOriginRequest } from "../http-utils.js";
 import { HarnessStudioServerOptions, HarnessStudioState } from "../studio-types.js";
+import { acpExperimentExecutorFactory } from "../acp-runs.js";
+import {
+  effectiveAcpAgentProfiles,
+  publicAcpAgentProfiles,
+  resolveAcpAgent,
+} from "../acp-agent-catalog.js";
+import type { StudioAcpAgentOptions } from "../studio-types.js";
 
 export async function serveExperiment(
   response: ServerResponse,
@@ -22,13 +29,14 @@ export async function serveExperiment(
     return;
   }
   try {
-    respondJson(response, 200, await buildExperimentPreview({
+    const preview = await buildExperimentPreview({
       manifestPath,
       trajectoryOverrides: state.trajectoryOverrides,
       checkpointSourcePreview: state.lockReceipt === undefined ? options.checkpointSourcePreview : undefined,
       lockReceipt: state.lockReceipt,
       observedIndexes: state.observedIndexes,
-    }));
+    });
+    respondJson(response, 200, { ...preview, acpAgents: publicAcpAgentProfiles(options) });
   } catch (error) {
     respondJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
   }
@@ -103,7 +111,7 @@ export async function lockCheckpointHistory(
     state.activeManifestPath = locked.manifestPath;
     state.trajectoryOverrides = undefined;
     state.lockReceipt = locked.receipt;
-    respondJson(response, 200, preview);
+    respondJson(response, 200, { ...preview, acpAgents: publicAcpAgentProfiles(options) });
   } catch (error) {
     respondJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
   }
@@ -169,13 +177,59 @@ export async function streamExperiment(
     respondJson(response, 403, { error: "Cross-origin experiment execution is not allowed." });
     return;
   }
-  const body = await readJsonBody(request).catch(() => ({})) as { experimentId?: unknown };
+  const body = await readJsonBody(request).catch(() => ({})) as {
+    experimentId?: unknown;
+    prompt?: unknown;
+    agentIds?: unknown;
+  };
   const experimentId = typeof body.experimentId === "string" && /^exp_[A-Za-z0-9_-]+$/.test(body.experimentId)
     ? body.experimentId
     : `exp_${Date.now().toString(36)}`;
+  let promptOverride: string | undefined;
+  if (body.prompt !== undefined) {
+    if (typeof body.prompt !== "string" || body.prompt.trim() === "") {
+      respondJson(response, 400, { error: "prompt must be a non-empty string." });
+      return;
+    }
+    if (Buffer.byteLength(body.prompt, "utf8") > 100_000) {
+      respondJson(response, 400, { error: "prompt must be at most 100000 UTF-8 bytes." });
+      return;
+    }
+    promptOverride = body.prompt;
+  }
   if (experimentRuns.has(experimentId)) {
     respondJson(response, 409, { error: `Experiment '${experimentId}' is already running.` });
     return;
+  }
+  let loadedManifest: Awaited<ReturnType<typeof loadHarnessExperimentManifest>>;
+  try {
+    loadedManifest = await loadHarnessExperimentManifest(manifestPath);
+  } catch (error) {
+    respondJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+    return;
+  }
+  const experimentHost = loadedManifest.value.runtime.host;
+  let agentSelections: Map<string, StudioAcpAgentOptions> | undefined;
+  let agentSelectionEvidence: Record<string, {
+    agentId: string;
+    agentLabel: string;
+    protocol: "acp-v1-stdio";
+    modelPolicy: "lane" | "agent-default";
+  }> | undefined;
+  if (experimentHost === "acp") {
+    try {
+      const selected = selectExperimentAcpAgents(
+        body.agentIds,
+        loadedManifest.value.lanes.filter((lane) => lane.origin === "execute").map((lane) => lane.id),
+        options,
+      );
+      agentSelections = selected.agents;
+      agentSelectionEvidence = selected.evidence;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      respondJson(response, message.includes("unavailable") || message.includes("no available") ? 409 : 400, { error: message });
+      return;
+    }
   }
   const controller = new AbortController();
   experimentRuns.set(experimentId, controller);
@@ -186,6 +240,10 @@ export async function streamExperiment(
     "X-Accel-Buffering": "no",
   });
   response.flushHeaders();
+  const disconnect = (): void => {
+    if (!response.writableEnded) controller.abort(new Error("Experiment stream disconnected."));
+  };
+  response.once("close", disconnect);
   const sendPayload = (event: unknown): void => {
     response.write(`event: experiment\ndata: ${JSON.stringify(event)}\n\n`);
   };
@@ -206,7 +264,12 @@ export async function streamExperiment(
       manifestPath,
       outputDirectory,
       experimentId,
+      ...(promptOverride === undefined ? {} : { promptOverride }),
+      ...(agentSelectionEvidence === undefined ? {} : { runtimeSelection: agentSelectionEvidence }),
       signal: controller.signal,
+      ...(experimentHost === "acp"
+        ? { executorFactory: acpExperimentExecutorFactory((laneId) => agentSelections!.get(laneId)!, state) }
+        : {}),
       onEvent: send,
     });
   } catch (error) {
@@ -219,9 +282,62 @@ export async function streamExperiment(
       detail: error instanceof Error ? error.message : String(error),
     });
   } finally {
+    response.removeListener("close", disconnect);
     experimentRuns.delete(experimentId);
     response.end();
   }
+}
+
+export function selectExperimentAcpAgents(
+  value: unknown,
+  laneIds: readonly string[],
+  options: HarnessStudioServerOptions,
+): {
+  agents: Map<string, StudioAcpAgentOptions>;
+  evidence: Record<string, {
+    agentId: string;
+    agentLabel: string;
+    protocol: "acp-v1-stdio";
+    modelPolicy: "lane" | "agent-default";
+  }>;
+} {
+  if (value !== undefined && (value === null || typeof value !== "object" || Array.isArray(value))) {
+    throw new Error("agentIds must be an object keyed by execute lane id.");
+  }
+  const requested = value as Record<string, unknown> | undefined;
+  const unknownLane = requested === undefined ? undefined : Object.keys(requested).find((id) => !laneIds.includes(id));
+  if (unknownLane !== undefined) throw new Error(`agentIds contains unknown execute lane '${unknownLane}'.`);
+  const catalog = publicAcpAgentProfiles(options);
+  if (catalog.defaultAgentId === undefined) {
+    throw new Error("This ACP experiment has no available server-registered ACP Agent.");
+  }
+  const agents = new Map<string, StudioAcpAgentOptions>();
+  const evidence: Record<string, {
+    agentId: string;
+    agentLabel: string;
+    protocol: "acp-v1-stdio";
+    modelPolicy: "lane" | "agent-default";
+  }> = {};
+  for (const laneId of laneIds) {
+    const requestedId = requested?.[laneId] ?? catalog.defaultAgentId;
+    if (typeof requestedId !== "string" || !/^[a-z0-9][a-z0-9_-]{0,63}$/u.test(requestedId)) {
+      throw new Error(`agentIds.${laneId} must be a portable registered Agent id.`);
+    }
+    const profile = effectiveAcpAgentProfiles(options).find((candidate) => candidate.id === requestedId);
+    if (profile === undefined) throw new Error(`ACP Agent '${requestedId}' is not registered on this Studio server.`);
+    const agent = resolveAcpAgent(options, requestedId);
+    if (agent === undefined) {
+      throw new Error(`ACP Agent '${profile.label}' is unavailable: ${profile.unavailableReason ?? "no executable is registered"}`);
+    }
+    agents.set(laneId, agent);
+    evidence[laneId] = {
+      agentId: profile.id,
+      agentLabel: profile.label,
+      protocol: "acp-v1-stdio",
+      modelPolicy: agent.modelPolicy ?? "lane",
+    };
+  }
+  return { agents, evidence };
 }
 export async function serveObservedCalls(response: ServerResponse, url: URL, state: HarnessStudioState): Promise<void> {
   if (state.activeManifestPath === undefined) {
