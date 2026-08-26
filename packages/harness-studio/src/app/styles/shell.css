@@ -365,8 +365,8 @@
 .studio-tabs button.active { border-bottom-color: var(--color-primary); color: var(--color-primary); background: var(--color-surface); font-weight: var(--weight-semibold); }
 .studio-secondary-tabs { min-width: 276px; }
 
-/* Overview is a docked control room: the decision and its one action lead, the
-   input inventory fills the rest of the region so no empty canvas is stranded. */
+/* Overview is an operational home: current context first, retained evidence in
+   the primary pane, and a bounded set of next actions in the secondary pane. */
 .control-overview {
   width: 100%;
   height: 100%;
@@ -377,12 +377,58 @@
   grid-template-rows: auto minmax(0, 1fr);
 }
 
-.control-lead {
+.overview-summary {
   min-width: 0;
-  padding: var(--space-xl);
   border-bottom: 1px solid var(--color-border);
   background: var(--color-workspace);
 }
+
+.overview-lead { padding: var(--space-xl); }
+.overview-lead > small { color: var(--color-primary); font-size: var(--type-meta-size); font-weight: var(--weight-semibold); line-height: var(--type-meta-line); }
+.overview-lead h1 { max-width: 42ch; margin: var(--space-xs) 0 0; font-size: var(--type-page-size); line-height: var(--type-page-line); letter-spacing: var(--type-page-track); }
+.overview-lead p { max-width: 76ch; margin: var(--space-sm) 0 0; color: var(--color-text-muted); }
+.overview-lead > button { min-height: var(--control-height); margin-top: var(--space-lg); display: inline-flex; align-items: center; gap: var(--space-sm); }
+
+.overview-facts { margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--color-border); }
+.overview-facts > div { min-width: 0; padding: var(--space-md) var(--space-lg); border-right: 1px solid var(--color-border); }
+.overview-facts > div:last-child { border-right: 0; }
+.overview-facts dt { color: var(--color-text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
+.overview-facts dd { margin: var(--space-xs) 0 0; font-size: var(--type-section-size); font-weight: var(--weight-semibold); line-height: var(--type-section-line); font-variant-numeric: tabular-nums; }
+.overview-facts small { display: block; margin-top: var(--space-xs); overflow: hidden; color: var(--color-text-subtle); text-overflow: ellipsis; white-space: nowrap; }
+
+.overview-workspace { min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 32%); background: var(--color-panel); }
+.overview-pane { min-width: 0; min-height: 0; display: grid; grid-template-rows: var(--pane-header-height) minmax(0, 1fr); background: var(--color-panel); }
+.overview-pane + .overview-pane { border-left: 1px solid var(--color-border); }
+.overview-pane > header { min-height: var(--pane-header-height); padding: 0 var(--space-md); display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); border-bottom: 1px solid var(--color-border); background: var(--color-surface-subtle); }
+.overview-pane > header h2 { margin: 0; font-size: var(--type-label-size); line-height: var(--type-label-line); }
+.overview-pane > header span { color: var(--color-text-muted); font-size: var(--type-meta-size); font-variant-numeric: tabular-nums; }
+.overview-pane-status { max-width: 64ch; margin: 0; padding: var(--space-xl); color: var(--color-text-muted); }
+
+.overview-session-rows,
+.overview-actions ul { min-height: 0; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.overview-session-rows li,
+.overview-actions li { border-bottom: 1px solid var(--color-border); }
+.overview-session-rows button,
+.overview-actions li button { width: 100%; min-height: var(--navigation-row-height); border: 0; border-radius: var(--radius-none); background: transparent; text-align: left; }
+.overview-session-rows button { padding: var(--space-sm) var(--space-md); display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-md); }
+.overview-session-rows button:hover,
+.overview-actions li button:hover { background: var(--color-surface-hover); }
+.overview-session-rows button > span { min-width: 0; display: grid; gap: var(--space-xs); }
+.overview-session-rows button small { overflow: hidden; color: var(--color-text-muted); text-overflow: ellipsis; white-space: nowrap; }
+.overview-session-rows button strong { overflow: hidden; font-weight: var(--weight-medium); text-overflow: ellipsis; white-space: nowrap; }
+.overview-session-rows button em { color: var(--color-text-subtle); font-size: var(--type-meta-size); font-style: normal; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.overview-session-rows button > svg,
+.overview-actions button > svg { color: var(--color-text-subtle); }
+
+.overview-context-rows { min-height: 0; margin: 0; overflow: auto; }
+.overview-context-rows > div { min-height: var(--navigation-row-height); padding: var(--space-sm) var(--space-lg); display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-md); border-bottom: 1px solid var(--color-border); }
+.overview-context-rows dt { min-width: 0; display: grid; gap: var(--space-xs); }
+.overview-context-rows dt strong { font-weight: var(--weight-medium); }
+.overview-context-rows dt small { overflow: hidden; color: var(--color-text-muted); text-overflow: ellipsis; white-space: nowrap; }
+.overview-context-rows dd { margin: 0; color: var(--color-text-subtle); font-size: var(--type-meta-size); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.overview-actions li button { padding: 0 var(--space-md); display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); }
+.overview-actions li button span { font-weight: var(--weight-medium); }
 
 .empty-workspace > small,
 .evidence-results > header small,
@@ -393,14 +439,6 @@
   line-height: var(--type-meta-line);
 }
 
-.control-lead h1 { max-width: 36ch; margin: 0; font-size: var(--type-page-size); line-height: var(--type-page-line); letter-spacing: var(--type-page-track); }
-.control-lead > p { max-width: 70ch; margin: var(--space-sm) 0 0; color: var(--color-text-muted); }
-.control-lead-actions { margin-top: var(--space-lg); display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-md); }
-.control-lead-actions > button { min-height: var(--control-height); display: inline-flex; align-items: center; gap: var(--space-sm); }
-.control-lead-actions > span { color: var(--color-text-subtle); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
-
-.control-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: var(--pane-header-height) minmax(0, 1fr); background: var(--color-panel); }
-.control-panel > header,
 .evidence-table-pane > header {
   min-height: var(--pane-header-height);
   padding: 0 var(--space-md);
@@ -412,29 +450,8 @@
   background: var(--color-surface-subtle);
 }
 
-.control-panel h2,
 .evidence-table-pane h2 { margin: 0; font-size: var(--type-label-size); line-height: var(--type-label-line); }
-.control-panel > header > span,
 .evidence-table-pane > header > span { color: var(--color-text-muted); font-size: var(--type-meta-size); }
-
-/* A row names the input, what it unlocks, and its state. The state column is
-   the next action when the input is absent, so nothing repeats a bare
-   "Not supplied" down the whole list. */
-.input-readiness { min-height: 0; margin: 0; padding: 0; overflow: auto; list-style: none; }
-.input-readiness li {
-  min-height: var(--navigation-row-height);
-  padding: var(--space-sm) var(--space-lg);
-  display: grid;
-  grid-template-columns: var(--space-sm) minmax(140px, max-content) minmax(0, 1fr) auto;
-  gap: var(--space-md);
-  align-items: center;
-  border-bottom: 1px solid var(--color-border);
-}
-.input-readiness strong { font-size: var(--type-label-size); font-weight: var(--weight-medium); line-height: var(--type-label-line); }
-.input-readiness em { min-width: 0; overflow: hidden; color: var(--color-text-muted); font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
-.input-readiness .input-state { color: var(--color-text-subtle); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
-.input-readiness li[data-connected="true"] .input-state { color: var(--color-success); }
-.input-readiness code { color: var(--color-primary); font-size: var(--type-meta-size); }
 
 .inspector-workspace { width: 100%; height: 100%; display: grid; grid-template-rows: var(--pane-header-height) minmax(0, 1fr); overflow: hidden; }
 .inspector-workspace > header { min-width: 0; padding: 0 var(--space-sm); display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); border-bottom: 1px solid var(--color-border); background: var(--color-surface-subtle); }
@@ -541,14 +558,20 @@
   .studio-secondary-tabs { min-width: 0; }
   .studio-secondary-tabs button { padding-inline: var(--space-xs); }
 
-  .control-lead { padding: var(--space-lg); }
-  .control-lead h1 { font-size: var(--type-section-size); line-height: var(--type-section-line); letter-spacing: var(--type-section-track); }
-  .control-lead-actions > button { width: 100%; justify-content: center; }
-  .control-panel > header { min-height: 44px; }
-  /* The purpose column is the first thing to go: the label and its state stay
-     legible before an explanation has to wrap into narrow words. */
-  .input-readiness li { padding-inline: var(--space-md); grid-template-columns: var(--space-sm) minmax(0, 1fr) auto; }
-  .input-readiness em { display: none; }
+  .overview-lead { padding: var(--space-lg); }
+  .overview-lead h1 { font-size: var(--type-section-size); line-height: var(--type-section-line); letter-spacing: var(--type-section-track); }
+  .overview-lead > button { width: 100%; justify-content: center; }
+  .overview-facts { grid-template-columns: 1fr 1fr; }
+  .overview-facts > div:nth-child(2) { border-right: 0; }
+  .overview-facts > div:nth-child(-n + 2) { border-bottom: 1px solid var(--color-border); }
+  .overview-workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; overflow: auto; }
+  .overview-pane { grid-template-rows: 44px auto; }
+  .overview-pane + .overview-pane { border-top: 1px solid var(--color-border); border-left: 0; }
+  .overview-session-rows,
+  .overview-actions ul,
+  .overview-context-rows { overflow: visible; }
+  .overview-session-rows button { grid-template-columns: minmax(0, 1fr) auto; }
+  .overview-session-rows button em { display: none; }
   .decision-summary > header { align-items: flex-start; flex-direction: column; }
   .decision-summary dl { grid-template-columns: 1fr 1fr; }
   .decision-summary dl > div:nth-child(2) { border-right: 0; }

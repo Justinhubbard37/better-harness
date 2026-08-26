@@ -27,8 +27,8 @@ import { StudioThemeContext, type StudioTheme } from "./studio-theme.js";
 
 const InspectorWorkbench = lazy(async () => ({ default: (await import("./InspectorWorkbench.js")).InspectorWorkbench }));
 import {
-  capabilitySummary,
   compareSurfaces,
+  studioOverview,
   studioDestinations,
   type StudioArea,
   type StudioCompareSurface,
@@ -113,6 +113,7 @@ export function App(): React.JSX.Element {
   const [dataRevision, setDataRevision] = useState(0);
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const [sessionCompareIds, setSessionCompareIds] = useState<[string, string] | undefined>();
+  const [sessionOpenId, setSessionOpenId] = useState<string>();
   const [configFailure, setConfigFailure] = useState<string | null>(null);
   const [area, setArea] = useState<StudioArea>(areaFromHash);
   const [compareSurface, setCompareSurface] = useState<StudioCompareSurface>("sessions");
@@ -210,6 +211,7 @@ export function App(): React.JSX.Element {
     setSources(loaded.sources);
     setConfig(loaded.config);
     setSessionCompareIds(undefined);
+    setSessionOpenId(undefined);
     setCompareSurface((currentSurface) => compareSurfaces(loaded.config).includes(currentSurface) ? currentSurface : compareSurfaces(loaded.config)[0] ?? "sessions");
     setWorkspaceRevision((revision) => revision + 1);
   }
@@ -262,12 +264,12 @@ export function App(): React.JSX.Element {
         <div className="studio-context-state"><span className={`availability-dot availability-${current.availability}`} /><strong>{current.status}</strong></div>
       </header>
       <div className={`studio-surface studio-surface-${area}`}>
-        {area === "overview" && <Overview config={config} onOpen={openArea} />}
+        {area === "overview" && <Overview key={`overview-${workspaceRevision}`} config={config} onOpen={openArea} onOpenSession={(id) => { setSessionOpenId(id); openArea("sessions"); }} />}
         {area === "customizations" && (config.customizationAnalysisEnabled
           ? <CustomizationView key={`customizations-${workspaceRevision}`} analyzed={config.customizationAnalyzed} onAnalyzed={customizationAnalyzed} />
           : <EmptyWorkspace eyebrow="Customization catalog" title={config.workspaceConnected ? "Customization analysis is unavailable" : "Open a project workspace"} detail={config.workspaceConnected ? "This Studio launcher does not include the local customization collector." : "Choose the project directory in Sessions before analyzing Host customizations."} />)}
         {area === "inputs" && (config.workspaceWorkbenchEnabled ? <InputTraceView key={`inputs-${workspaceRevision}`} intentAnalysisEnabled={config.intentAnalysisEnabled} /> : <EmptyWorkspace eyebrow="User input trace" title={config.workspaceConnected ? "No retained input trace is available" : "Open a project workspace"} detail={config.workspaceConnected ? "This workspace source does not include structured Inspector dialogue evidence." : "Choose the project directory in Sessions before browsing retained user inputs and exact file operations."} />)}
-        {area === "sessions" && <SessionsWorkspace key={`sessions-${dataRevision}-${workspaceRevision}`} config={config} onWorkspaceChanged={workspaceChanged} onCompare={(ids) => { setSessionCompareIds(ids); setCompareSurface("sessions"); openArea("compare"); }} />}
+        {area === "sessions" && <SessionsWorkspace key={`sessions-${dataRevision}-${workspaceRevision}-${sessionOpenId ?? "recent"}`} config={config} initialSessionId={sessionOpenId} onWorkspaceChanged={workspaceChanged} onCompare={(ids) => { setSessionCompareIds(ids); setCompareSurface("sessions"); openArea("compare"); }} />}
         {area === "commits" && (config.gitEnabled ? <GitHistoryView key={`commits-${workspaceRevision}`} /> : <EmptyWorkspace eyebrow="Repository history" title={config.workspaceConnected ? "The open workspace is not a Git repository" : "Open a project workspace"} detail={config.workspaceConnected ? "Commit history is available only for a local workspace backed by Git." : "Choose the project directory in Sessions before browsing its local commit history."} />)}
         {area === "artifacts" && <ArtifactsWorkspace key={`artifacts-${dataRevision}-${workspaceRevision}-${config.artifactsEnabled}`} config={config} />}
         {area === "debugger" && <DebuggerWorkspace config={config} />}
@@ -369,55 +371,82 @@ function PrimaryNavigation(props: {
   </aside>;
 }
 
-function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => void }): React.JSX.Element {
-  const summary = capabilitySummary(props.config);
-  const nextArea: StudioArea = props.config.workspaceConnected
-    ? "inputs"
-    : props.config.aguiEnabled
-      ? "debugger"
-      : props.config.experimentEnabled || props.config.evidenceEnabled
-        ? "compare"
-        : "sessions";
-  // Each row states what the input unlocks and how to supply it, so an absent
-  // input teaches its own next action instead of only reporting "Not supplied".
-  const inputs: Array<{ label: string; connected: boolean; purpose: string; flag?: string }> = [
-    { label: "Project workspace", connected: props.config.workspaceConnected, purpose: "Discovers local agent inputs and Sessions" },
-    { label: "Customization collector", connected: props.config.customizationAnalysisEnabled, purpose: "Analyzes Codex, Claude, and Qoder only on request" },
-    { label: "Inspector workbench", connected: props.config.workspaceWorkbenchEnabled || props.config.inspectorEnabled, purpose: "Capability and date evidence", flag: "--inspector" },
-    { label: "Harness runtime", connected: props.config.aguiEnabled, purpose: "Live runs in the Debugger", flag: "--harness" },
-    { label: "Compare evidence", connected: props.config.evidenceEnabled, purpose: "Frozen verdict and trials", flag: "--evidence" },
-    { label: "Experiment manifest", connected: props.config.experimentEnabled, purpose: "Three-lane experiment trace", flag: "--experiment" },
-    { label: "Artifact catalog", connected: props.config.artifactsEnabled, purpose: "Read-only run outputs", flag: "--artifacts" },
-    { label: "History adapter", connected: props.config.historyEnabled, purpose: "Checkpoint picker in the Builder", flag: "--history-catalog" },
-  ];
-  const connectedCount = inputs.filter((input) => input.connected).length;
-  return <main className="control-overview">
-    <section className="control-lead">
-      <h1>{props.config.workspaceConnected
-        ? `${props.config.inputCount} retained inputs discovered in this workspace.`
-        : "Choose a project workspace to begin."}</h1>
-      <p>{props.config.workspaceConnected
-        ? "Open Inputs to trace each retained user prompt to exact observed file reads and changes."
-        : "Studio discovers agent Sessions for the directory you pick, using the same provider code as Inspector. Nothing is read until you choose."}</p>
-      <div className="control-lead-actions">
-        <button className="primary" type="button" onClick={() => props.onOpen(nextArea)}>{props.config.workspaceConnected ? "Open Inputs" : "Open workspace"}<ArrowRight aria-hidden="true" size={15} weight="bold" /></button>
-        <span>{summary.ready} ready · {summary.partial} partial · {summary.foundation} foundations</span>
+function Overview(props: { config: StudioConfig; onOpen: (area: StudioArea) => void; onOpenSession: (id: string) => void }): React.JSX.Element {
+  const model = studioOverview(props.config);
+  const [workspaceLabel, setWorkspaceLabel] = useState<string>();
+  const [recentSessions, setRecentSessions] = useState<SessionSummary[]>();
+  const [recentFailure, setRecentFailure] = useState<string>();
+
+  useEffect(() => {
+    if (!props.config.workspaceConnected) {
+      setWorkspaceLabel(undefined);
+      setRecentSessions(undefined);
+      setRecentFailure(undefined);
+      return undefined;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("api/sessions");
+        if (!response.ok) throw new Error(await studioApiError(response));
+        const payload = await response.json() as { workspace: { label: string }; sessions: SessionSummary[] };
+        if (cancelled) return;
+        setWorkspaceLabel(payload.workspace.label);
+        setRecentSessions(payload.sessions.slice(0, 5));
+        setRecentFailure(undefined);
+      } catch (error) {
+        if (cancelled) return;
+        setRecentFailure(error instanceof Error ? error.message : "Recent Sessions are unavailable.");
+        setRecentSessions([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [props.config.workspaceConnected, props.config.sessionCount]);
+
+  const heading = model.mode === "workspace" ? workspaceLabel ?? "Project workspace" : model.title;
+  const context = model.mode === "workspace"
+    ? "Workspace overview"
+    : model.mode === "configured"
+      ? "Configured local sources"
+      : model.mode === "workspace-required"
+        ? "Workspace setup"
+        : "Studio setup";
+
+  return <main className={`control-overview overview-mode-${model.mode}`}>
+    <section className="overview-summary">
+      <div className="overview-lead">
+        <small>{context}</small>
+        <h1>{heading}</h1>
+        <p>{model.mode === "workspace" && workspaceLabel !== undefined ? `${model.title} ${model.detail}` : model.detail}</p>
+        {model.primaryAction !== undefined && model.mode !== "workspace-required" && <button className="primary" type="button" onClick={() => props.onOpen(model.primaryAction!.area)}>{model.primaryAction.label}<ArrowRight aria-hidden="true" size={15} weight="bold" /></button>}
       </div>
+      {model.mode === "workspace" && <dl className="overview-facts" aria-label="Workspace summary">{model.facts.map((fact) => <div key={fact.id}><dt>{fact.label}</dt><dd>{fact.value}</dd><small>{fact.detail}</small></div>)}</dl>}
     </section>
 
-    <section className="control-panel">
-      <header><h2>Inputs</h2><span>{connectedCount} of {inputs.length} connected</span></header>
-      <ul className="input-readiness">{inputs.map((input) => <li key={input.label} data-connected={input.connected ? "true" : "false"}>
-        <span className={`availability-dot ${input.connected ? "availability-ready" : "availability-foundation"}`} aria-hidden="true" />
-        <strong>{input.label}</strong>
-        <em>{input.purpose}</em>
-        {input.connected
-          ? <span className="input-state">Connected</span>
-          : input.flag
-            ? <code>{input.flag}</code>
-            : <span className="input-state">Choose in Studio</span>}
-      </li>)}</ul>
-    </section>
+    <div className="overview-workspace">
+      {model.mode === "workspace" ? <section className="overview-pane overview-recent">
+        <header><h2>Recent Sessions</h2><span>{props.config.sessionCount}</span></header>
+        {recentFailure !== undefined
+          ? <p className="overview-pane-status" role="alert">{recentFailure}</p>
+          : recentSessions === undefined
+            ? <p className="overview-pane-status" role="status">Loading retained Sessions…</p>
+            : recentSessions.length === 0
+              ? <p className="overview-pane-status">No retained Sessions were discovered in this workspace.</p>
+              : <ol className="overview-session-rows">{recentSessions.map((session) => <li key={session.id}><button type="button" aria-label={`Open Session: ${session.prompt}`} onClick={() => props.onOpenSession(session.id)}><span><small>{session.provider ?? "Local agent"} · {formatSessionTime(session.savedAt)}</small><strong>{session.prompt}</strong></span><em>{session.toolCallCount} calls</em><ArrowRight aria-hidden="true" size={14} /></button></li>)}</ol>}
+      </section> : <section className="overview-pane overview-context">
+        <header><h2>{model.mode === "configured" ? "Loaded context" : "Getting started"}</h2><span>{model.facts.length || undefined}</span></header>
+        {model.facts.length === 0
+          ? <p className="overview-pane-status">{model.detail}</p>
+          : <dl className="overview-context-rows">{model.facts.map((fact) => <div key={fact.id}><dt><strong>{fact.label}</strong><small>{fact.detail}</small></dt><dd>{fact.value}</dd></div>)}</dl>}
+      </section>}
+
+      <aside className="overview-pane overview-actions">
+        <header><h2>Next actions</h2><span>{model.secondaryActions.length}</span></header>
+        {model.secondaryActions.length === 0
+          ? <p className="overview-pane-status">{model.mode === "workspace" ? "Open Sessions to inspect the retained evidence available now." : "Load a working context to enable Studio workbenches."}</p>
+          : <ul>{model.secondaryActions.map((action) => <li key={action.area}><button type="button" onClick={() => props.onOpen(action.area)}><span>{action.label}</span><ArrowRight aria-hidden="true" size={14} /></button></li>)}</ul>}
+      </aside>
+    </div>
   </main>;
 }
 
@@ -432,6 +461,7 @@ interface SessionSummary {
 
 function SessionsWorkspace(props: {
   config: StudioConfig;
+  initialSessionId?: string;
   onWorkspaceChanged: () => Promise<void>;
   onCompare: (ids: [string, string]) => void;
 }): React.JSX.Element {
@@ -459,13 +489,14 @@ function SessionsWorkspace(props: {
         setWorkspaceLabel(payload.workspace.label);
         setOmittedCount(payload.workspace.omittedCount);
         setSessions(payload.sessions);
-        if (payload.sessions[0] !== undefined) await openSession(payload.sessions[0].id, () => cancelled);
+        const initialSession = payload.sessions.find((session) => session.id === props.initialSessionId) ?? payload.sessions[0];
+        if (initialSession !== undefined) await openSession(initialSession.id, () => cancelled);
       } catch (error) {
         if (!cancelled) setFailure(error instanceof Error ? error.message : String(error));
       }
     })();
     return () => { cancelled = true; };
-  }, [props.config.workspaceConnected]);
+  }, [props.config.workspaceConnected, props.initialSessionId]);
 
   async function openSession(id: string, cancelled: () => boolean = () => false): Promise<void> {
     try {

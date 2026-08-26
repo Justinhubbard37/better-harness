@@ -3,6 +3,7 @@ import {
   capabilitySummary,
   compareSurfaces,
   inspectorSurfaces,
+  studioOverview,
   studioDestinations,
   type StudioConfig,
 } from "../src/app/studio-shell-model.js";
@@ -159,5 +160,67 @@ describe("Studio control-plane navigation", () => {
       availability: "ready",
       status: "Frozen results",
     });
+  });
+
+  it("does not offer a workspace command when directory discovery is unavailable", () => {
+    const overview = studioOverview({
+      ...EMPTY,
+      experimentEnabled: true,
+      inspectorEnabled: true,
+      customizationAnalysisEnabled: true,
+    });
+
+    expect(overview).toMatchObject({
+      mode: "configured",
+      title: "Comparison setup is ready.",
+      primaryAction: { area: "compare", label: "Open Compare" },
+    });
+    expect(overview.facts.map((fact) => fact.id)).toEqual(["experiment", "inspector", "customizations"]);
+    expect(overview.secondaryActions).toEqual([
+      { area: "customizations", label: "Analyze Customizations" },
+    ]);
+  });
+
+  it("leaves workspace opening to the modal gate when discovery is available", () => {
+    const overview = studioOverview({ ...EMPTY, workspaceDiscoveryEnabled: true });
+
+    expect(overview).toMatchObject({
+      mode: "workspace-required",
+      secondaryActions: [],
+    });
+    expect(overview.primaryAction).toBeUndefined();
+  });
+
+  it("summarizes connected workspace evidence without capability maturity totals", () => {
+    const overview = studioOverview({
+      ...EMPTY,
+      aguiEnabled: true,
+      artifactsEnabled: true,
+      artifactCount: 6,
+      gitEnabled: true,
+      harnessMode: "workspace-default",
+      workspaceWorkbenchEnabled: true,
+      workspaceDiscoveryEnabled: true,
+      workspaceConnected: true,
+      sessionCount: 12,
+      inputCount: 34,
+    });
+
+    expect(overview).toMatchObject({
+      mode: "workspace",
+      primaryAction: { area: "sessions", label: "Open Sessions" },
+    });
+    expect(overview.facts.map(({ id, value }) => ({ id, value }))).toEqual([
+      { id: "inputs", value: "34" },
+      { id: "sessions", value: "12" },
+      { id: "artifacts", value: "6" },
+      { id: "repository", value: "Git" },
+    ]);
+    expect(overview.secondaryActions).toEqual([
+      { area: "inputs", label: "Review Inputs" },
+      { area: "compare", label: "Open Compare" },
+      { area: "debugger", label: "Open Debugger" },
+      { area: "artifacts", label: "Open Artifacts" },
+    ]);
   });
 });
