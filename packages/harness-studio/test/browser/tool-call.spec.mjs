@@ -138,6 +138,16 @@ test.beforeAll(async () => {
   });
   lockedFixtureDir = await mkdtemp(join(tmpdir(), "studio-browser-lock-"));
   await cp(resolve(packageRoot, "../harness/examples/checkpoint-experiment"), lockedFixtureDir, { recursive: true });
+  const experimentManifestPath = join(lockedFixtureDir, "experiment.json");
+  const experimentManifest = JSON.parse(await readFile(experimentManifestPath, "utf8"));
+  experimentManifest.runtime.host = "acp";
+  experimentManifest.runtime.tools = [];
+  experimentManifest.runtime.allowedTools = [];
+  experimentManifest.runtime.disallowedTools = [];
+  for (const lane of experimentManifest.lanes) {
+    if (lane.origin === "execute") lane.runtime.profile = "acp-v1-stdio";
+  }
+  await writeFile(experimentManifestPath, `${JSON.stringify(experimentManifest, null, 2)}\n`, "utf8");
   const historyDescriptor = { id: "browser-project-history-v1", label: "Project agent history" };
   const historyItems = [
     { id: "episode_alpha", title: "Original checkpoint inspection", requestPreview: "Inspect the original checkpoint.", occurredAt: "2026-08-16T08:00:00.000Z", adapter: historyDescriptor, provenance: "unverified-history", checkpointVerified: false },
@@ -171,12 +181,22 @@ test.beforeAll(async () => {
       };
     },
   };
+  const qoderAcp = { command: process.execPath, args: ["fixture-qoder"], label: "Qoder CLI", modelPolicy: "agent-default" };
+  const codexAcp = { command: process.execPath, args: ["fixture-codex"], label: "Codex ACP", modelPolicy: "lane" };
   experimentStudio = await startHarnessStudioServer({
     appDir: resolve(packageRoot, "dist/app"),
     harnessSource: SOURCE,
     runDirectory: join(runsFixtureDir, "experiment"),
     evidenceDir: resolve(packageRoot, "test/fixtures"),
-    experimentManifestPath: resolve(packageRoot, "../harness/examples/checkpoint-experiment/experiment.json"),
+    experimentManifestPath,
+    acpAgent: qoderAcp,
+    acpAgents: [
+      { id: "qodercli", label: "Qoder CLI", agent: qoderAcp },
+      { id: "pi", label: "Pi ACP", unavailableReason: "pi-acp bridge not installed" },
+      { id: "dsh", label: "DSH ACP", unavailableReason: "DSH ACP entrypoint not configured" },
+      { id: "codex-acp", label: "Codex ACP", agent: codexAcp },
+      { id: "claude-acp", label: "Claude ACP", unavailableReason: "Claude ACP bridge not installed" },
+    ],
     checkpointSourcePreview: {
       status: "ready",
       adapter: { id: "browser-fixture-v1", label: "Versioned project fixture" },
@@ -219,6 +239,9 @@ test.beforeAll(async () => {
         const runId = `${options.experimentId}:${laneId}:1`;
         emit("lane-preparing", laneId, runId);
         emit("lane-started", laneId, runId);
+        emit("lane-event", laneId, runId, { type: "message-started", messageId: "message-1" });
+        emit("lane-event", laneId, runId, { type: "text-delta", messageId: "message-1", text: `${laneId} is working on the project.` });
+        emit("lane-event", laneId, runId, { type: "message-finished", messageId: "message-1" });
         const readInput = laneId === "fresh-default" ? { path: "README.md" } : { file_path: "README.md" };
         emit("lane-event", laneId, runId, { type: "tool-call-started", toolCallId: "read", toolName: "Read", input: readInput });
         emit("lane-event", laneId, runId, { type: "tool-call-result", toolCallId: "read", content: "# fixture" });
@@ -280,20 +303,39 @@ test("compares a focused ACP pair across roles, views, filters, and evidence", a
 
   await page.goto(experimentStudio.url);
   await openDestination(page, "Compare");
-  await expect(page.getByRole("heading", { name: "Compare a past agent run" })).toBeVisible();
-  await expect(page.locator(".setup-details")).not.toHaveAttribute("open", "");
-  await expect(page.getByLabel("History checkpoint")).toHaveValue("episode_alpha");
-  await page.getByLabel("History checkpoint").selectOption("episode_beta");
-  await expect(page.locator(".history-picker-meta")).toContainText("Ready");
-  await expect(page.locator(".setup-summary")).toContainText("beta-42");
-  await expect(page.locator(".setup-summary")).toContainText("qoder-default-v1 vs qoder-minimal-v1");
-  await page.locator(".setup-details > summary").click();
-  await expect(page.locator(".checkpoint-facts")).toContainText("Checkpoint");
-  await expect(page.locator(".checkpoint-facts")).toContainText("beta-42");
-  await expect(page.locator(".request-preview")).toContainText("Compare ACP tool chains across lanes.");
-  await expect(page.locator(".variant-row")).toHaveCount(4);
-  await expect(page.getByRole("button", { name: "Lock and compare" })).toBeEnabled();
-  await page.getByRole("button", { name: "Lock and compare" }).click();
+  await expect(page.getByLabel("Current project")).toHaveValue("better-harness");
+  await expect(page.getByLabel("User prompt")).toBeVisible();
+  await expect(page.getByLabel("AI 1 Agent")).toHaveValue("qodercli");
+  await expect(page.getByLabel("AI 2 Agent")).toHaveValue("qodercli");
+  await page.getByLabel("AI 2 Agent").selectOption("codex-acp");
+  await expect(page.getByLabel("AI 2 Agent")).toHaveValue("codex-acp");
+  await expect(page.locator(".simple-lane")).toHaveCount(2);
+  await page.getByLabel("User prompt").fill("Compare this exact live request.");
+  await page.getByRole("button", { name: "Run compare" }).click();
+  await expect(page.getByRole("tab", { name: "Resources" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".resource-map-header .lane-status-finished")).toHaveCount(2);
+  await expect(page.locator(".resource-map-row")).toHaveCount(2);
+  await expect(page.getByRole("table", { name: "ACP operations aligned by resource" })).toContainText("README.md");
+  await expect(page.getByRole("table", { name: "ACP operations aligned by resource" })).toContainText("Project root");
+  const resultTabs = page.getByRole("tablist", { name: "Comparison result views" });
+  await expect(resultTabs.locator('[role="tab"][tabindex="0"]')).toHaveCount(1);
+  await resultTabs.getByRole("tab", { name: "Resources" }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(resultTabs.getByRole("tab", { name: "Messages" })).toBeFocused();
+  await expect(resultTabs.getByRole("tab", { name: "Messages" })).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("ArrowLeft");
+  await expect(resultTabs.getByRole("tab", { name: "Resources" })).toBeFocused();
+  const readOperation = page.getByRole("button", { name: /AI 1 Read README\.md/ });
+  await readOperation.click();
+  const readCell = readOperation.locator("xpath=ancestor::*[@role='cell']");
+  await expect(readCell.getByRole("complementary", { name: "Tool result" })).toContainText("# fixture");
+  await expect(page.locator(".resource-map-header")).toContainText("Qoder CLI");
+  await expect(page.locator(".resource-map-header")).toContainText("Codex ACP");
+  await page.getByRole("tab", { name: "Messages" }).click();
+  await expect(page.locator(".simple-message.user-message")).toHaveCount(2);
+  await expect(page.locator(".simple-message.assistant-message")).toHaveCount(2);
+  await expect(page.locator(".simple-message.assistant-message").first()).toContainText("fresh-default is working on the project.");
+  await page.getByRole("button", { name: "Advanced evidence" }).click();
   await expect(page.getByRole("region", { name: "Comparison notebook" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Context" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Run comparison" })).toBeVisible();
@@ -310,7 +352,6 @@ test("compares a focused ACP pair across roles, views, filters, and evidence", a
   await expect(page.locator(".comparability")).toContainText("Controlled");
   await expect(page.locator(".call-lane")).toHaveCount(2);
 
-  await page.getByRole("button", { name: "Run comparison" }).click();
   await expect(page.locator(".lane-status-finished")).toHaveCount(2);
   await expect(page.locator(".lane-detail")).toHaveCount(0);
   await expect(page.locator(".lane-relation").nth(0)).toContainText("Exact match");
@@ -401,8 +442,9 @@ test("contains narrow experiment scrolling inside the comparison regions", async
   await page.setViewportSize({ width: 1024, height: 844 });
   await page.goto(experimentStudio.url);
   await openDestination(page, "Compare");
-  await expect(page.getByRole("button", { name: "Lock and compare" })).toBeEnabled();
-  await page.getByRole("button", { name: "Lock and compare" }).click();
+  await page.getByRole("button", { name: "Advanced evidence" }).click();
+  await expect(page.getByRole("button", { name: "Run comparison" })).toBeEnabled();
+  await page.getByRole("button", { name: "Run comparison" }).click();
   await expect(page.locator(".object-card")).toHaveCount(3);
   await expect(page.locator(".call-lane")).toHaveCount(2);
   await expect(page.locator(".experiment-rail")).not.toBeVisible();
@@ -428,10 +470,12 @@ test("contains narrow experiment scrolling inside the comparison regions", async
   await page.getByRole("button", { name: "Evidence results", exact: true }).click();
   await expect(page.locator(".decision-summary")).toContainText("Sufficient");
   await page.getByRole("button", { name: "Bench", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Compare a past agent run" })).toBeVisible();
+  await expect(page.getByLabel("User prompt")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Run compare" })).toBeVisible();
 });
 
 test("renders a keyboard-expandable failed and truncated Tool Call at 390px", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   const browserErrors = [];
   page.on("console", (message) => {
     if (message.type() === "error") browserErrors.push(`console: ${message.text()}`);
@@ -582,21 +626,48 @@ test("keeps Bench decision workspaces primary at all layout modes", async ({ pag
     await page.setViewportSize({ width: layout.width, height: layout.height });
     await page.goto(experimentStudio.url);
     await openDestination(page, "Compare");
-    const action = page.getByRole("button", { name: /^(Lock and compare|Open workbench)$/ });
-    await expect(action).toBeEnabled();
-    await action.click();
-    await expect(page.getByRole("region", { name: "Comparison notebook" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Run comparison" })).toBeInViewport();
+    await expect(page.getByLabel("Current project")).toBeVisible();
+    await expect(page.getByLabel("User prompt")).toBeInViewport();
+    await expect(page.getByRole("button", { name: "Run compare" })).toBeInViewport();
+    await expect(page.locator(".simple-lane")).toHaveCount(2);
+    await expect(page.getByRole("button", { name: "Advanced evidence" })).toBeVisible();
     await assertRenderedContract(page);
-    const ratio = await page.evaluate(() => {
-      const shell = document.querySelector(".experiment-shell")?.getBoundingClientRect();
-      const workspace = document.querySelector(".experiment-workspace")?.getBoundingClientRect();
-      return shell && workspace ? workspace.width / shell.width : 0;
-    });
-    expect(ratio).toBeGreaterThanOrEqual(0.5);
-    if (layout.name === "wide") await expect(page.locator(".experiment-rail")).toBeVisible();
-    else await expect(page.locator(".experiment-rail")).not.toBeVisible();
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(overflow).toBe(0);
     await page.screenshot({ path: testInfo.outputPath(`bench-${layout.name}.png`) });
+  }
+  expect(browserErrors).toEqual([]);
+});
+
+test("keeps resource-oriented ACP results usable at all layout modes", async ({ page }, testInfo) => {
+  const browserErrors = [];
+  page.on("console", (message) => { if (message.type() === "error") browserErrors.push(`console: ${message.text()}`); });
+  page.on("pageerror", (error) => browserErrors.push(`page: ${error.message}`));
+
+  for (const layout of LAYOUTS) {
+    await page.setViewportSize({ width: layout.width, height: layout.height });
+    await page.goto(experimentStudio.url);
+    await openDestination(page, "Compare");
+    await page.getByLabel("User prompt").fill(`Compare resources at ${layout.name}.`);
+    await page.getByRole("button", { name: "Run compare" }).click();
+    await expect(page.getByRole("tab", { name: "Resources" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator(".resource-map-row")).toHaveCount(2);
+    await expect(page.getByRole("table", { name: "ACP operations aligned by resource" })).toContainText("README.md");
+    await page.getByRole("button", { name: /AI 2 Verify Project root/ }).click();
+    await expect(page.getByRole("complementary", { name: "Tool result" })).toContainText("passed");
+    await assertRenderedContract(page);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(overflow).toBe(0);
+    if (layout.name === "narrow") {
+      const inline = await page.evaluate(() => {
+        const table = document.querySelector(".resource-map-table");
+        const inspector = document.querySelector(".operation-inspector");
+        return table !== null && inspector !== null && table.contains(inspector)
+          && inspector.parentElement?.getAttribute("role") === "cell";
+      });
+      expect(inline).toBe(true);
+    }
+    await page.screenshot({ path: testInfo.outputPath(`compare-resource-map-${layout.name}.png`), fullPage: layout.name === "narrow" });
   }
   expect(browserErrors).toEqual([]);
 });
@@ -636,6 +707,7 @@ test("leads Evidence results with the decision at all layout modes", async ({ pa
     await page.setViewportSize({ width: layout.width, height: layout.height });
     await page.goto(experimentStudio.url);
     await openDestination(page, "Compare");
+    await page.getByRole("button", { name: "Advanced evidence" }).click();
     await page.getByRole("button", { name: "Evidence results", exact: true }).click();
     const decision = page.locator(".decision-summary");
     await expect(decision).toContainText("Sufficient");

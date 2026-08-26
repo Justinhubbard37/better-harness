@@ -198,6 +198,7 @@
   --secondary-pane-width: 312px;
   --navigation-row-height: 46px;
   --session-row-height: 64px;
+  --touch-target: 44px;
   --check-size: 16px;
   --sash-size: 1px;
   --motion-press: 90ms;

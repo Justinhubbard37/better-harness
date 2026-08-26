@@ -5,7 +5,9 @@ import {
   compareToolCalls,
   localToolChain,
   projectActivities,
+  projectToolOperations,
   relatedCallFor,
+  summarizeToolResult,
   type ExperimentToolCall,
 } from "../src/app/experiment/experiment-trace-model.js";
 
@@ -112,5 +114,58 @@ describe("experiment tool trace correlation", () => {
       { phase: "Diagnose", basis: "recorded failed tool result" },
       { phase: "Recover", basis: "first recorded call after a failure" },
     ]);
+  });
+
+  it("splits a compound ACP call into resource operations without losing call identity", () => {
+    const compound = call("compound", "List project, Search AGENTS.md, Read package.json", {
+      parsed_cmd: [
+        { type: "list_files", cmd: "ls", path: null },
+        { type: "search", cmd: "find .. -name AGENTS.md", query: "AGENTS.md", path: ".." },
+        { type: "read", cmd: "cat package.json", path: "package.json" },
+      ],
+    }, 3);
+
+    expect(projectToolOperations(compound).map((operation) => ({
+      kind: operation.kind,
+      resource: operation.resource,
+      callId: operation.callId,
+      callSequence: operation.callSequence,
+    }))).toEqual([
+      { kind: "list", resource: ".", callId: "compound", callSequence: 3 },
+      { kind: "search", resource: "AGENTS.md", callId: "compound", callSequence: 3 },
+      { kind: "read", resource: "package.json", callId: "compound", callSequence: 3 },
+    ]);
+  });
+
+  it("redacts an absolute edit path and links diff verification to the changed resource", () => {
+    const edit = call("edit", "Edit <trial-root>/README.md", {
+      changes: {
+        "/private/tmp/experiment/worktree/README.md": { type: "add", content: "# Purpose" },
+      },
+    }, 0);
+    const verify = {
+      ...call("verify", "git diff -- README.md && git status --short", {
+        parsed_cmd: [{ type: "unknown", cmd: "git diff -- README.md && git status --short" }],
+      }, 1),
+      result: JSON.stringify({
+        stdout: "diff --git a/README.md b/README.md\n M README.md\n",
+        exit_code: 0,
+        duration: { secs: 0, nanos: 2_500_000 },
+      }),
+    };
+
+    expect(projectToolOperations(edit)).toMatchObject([{ kind: "edit", resource: "README.md" }]);
+    expect(projectToolOperations(verify)).toMatchObject([{ kind: "verify", resource: "README.md" }]);
+    expect(summarizeToolResult(verify)).toEqual({
+      outcome: "completed",
+      exitCode: 0,
+      durationMs: 3,
+      excerpt: "diff --git a/README.md b/README.md\n M README.md",
+    });
+    expect(summarizeToolResult({ ...verify, result: JSON.stringify(verify.result) })).toMatchObject({
+      outcome: "completed",
+      exitCode: 0,
+      durationMs: 3,
+    });
   });
 });

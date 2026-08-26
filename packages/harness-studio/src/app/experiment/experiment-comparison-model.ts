@@ -3,10 +3,12 @@ import {
   alignToolCalls,
   normalizeToolCall,
   projectActivities,
+  projectToolOperations,
   relatedCallFor,
   type ActivityPhase,
   type ActivityProjection,
   type RelatedToolCall,
+  type ToolOperation,
   type ToolRelation,
 } from "./experiment-trace-model.js";
 import type {
@@ -92,6 +94,7 @@ export function deriveComparability(
   candidate: LaneDefinition | undefined,
   baselineTrace: LaneTrace,
   candidateTrace: LaneTrace,
+  agentIds?: Readonly<Record<string, string>>,
 ): Comparability {
   if (baseline === undefined || candidate === undefined || baseline.id === candidate.id) {
     return { level: "Incomparable", detail: "Select two distinct fresh runs." };
@@ -100,6 +103,25 @@ export function deriveComparability(
     return { level: "Observational", detail: "A recorded reference can provide context but is not a controlled baseline." };
   }
   const contrast = preview.contrasts.find((item) => sameLaneSet(item.lanes, [baseline.id, candidate.id]));
+  const baselineAgent = agentIds?.[baseline.id];
+  const candidateAgent = agentIds?.[candidate.id];
+  const agentChanged = baselineAgent !== undefined && candidateAgent !== undefined && baselineAgent !== candidateAgent;
+  if (agentChanged) {
+    if (contrast?.attribution.mode === "attributable") {
+      return {
+        level: "Partial",
+        detail: "Agent identity and the manifest treatment both changed; this pair does not isolate one cause.",
+        axis: `${contrast.attribution.axis ?? "manifest"}+agent`,
+      };
+    }
+    if ([baselineTrace.status, candidateTrace.status].some((status) => status === "failed" || status === "cancelled")) {
+      return { level: "Partial", detail: "Agent identity changed, but at least one run did not finish.", axis: "agent" };
+    }
+    if (Math.min(baseline.trials ?? 1, candidate.trials ?? 1) < 2) {
+      return { level: "Partial", detail: "Agent identity changed, but one trial per Agent cannot satisfy the evidence floor.", axis: "agent" };
+    }
+    return { level: "Controlled", detail: "The fresh runs share a checkpoint and isolate Agent identity.", axis: "agent" };
+  }
   if (contrast === undefined || contrast.attribution.mode !== "attributable") {
     return { level: "Incomparable", detail: contrast?.attribution.detail ?? "No declared two-run contrast isolates this pair." };
   }
@@ -155,7 +177,8 @@ export function filterCalls(
   return calls.filter((call) => !excluded?.has(call.id)
     && (query === ""
       || call.name.toLowerCase().includes(query)
-      || normalizeToolCall(call).resource?.toLowerCase().includes(query) === true));
+      || normalizeToolCall(call).resource?.toLowerCase().includes(query) === true
+      || projectToolOperations(call).some((operation) => operation.resource.toLowerCase().includes(query))));
 }
 
 export function groupActivities(
@@ -209,17 +232,78 @@ export function relationCounts(
 export function resourceLedger(calls: ExperimentToolCall[]): Map<string, Set<string>> {
   const result = new Map<string, Set<string>>();
   for (const call of calls) {
-    const resource = normalizeToolCall(call).resource;
-    if (resource === null) continue;
-    const tools = result.get(resource) ?? new Set<string>();
-    tools.add(call.name);
-    result.set(resource, tools);
+    for (const operation of projectToolOperations(call)) {
+      const tools = result.get(operation.resource) ?? new Set<string>();
+      tools.add(operationLabel(operation.kind));
+      result.set(operation.resource, tools);
+    }
   }
   return result;
 }
 
+export interface ResourceComparisonRow {
+  resource: string;
+  baseline: ToolOperation[];
+  candidate: ToolOperation[];
+}
+
+export function resourceComparisonRows(
+  baseline: readonly ExperimentToolCall[],
+  candidate: readonly ExperimentToolCall[],
+): ResourceComparisonRow[] {
+  const left = resourceOperationLedger(baseline);
+  const right = resourceOperationLedger(candidate);
+  const resources = [...new Set([...left.keys(), ...right.keys()])];
+  return resources
+    .map((resource) => ({
+      resource,
+      baseline: left.get(resource) ?? [],
+      candidate: right.get(resource) ?? [],
+    }))
+    .sort((a, b) => firstOperationSequence(a) - firstOperationSequence(b)
+      || a.resource.localeCompare(b.resource));
+}
+
+export function resourceOperationLedger(
+  calls: readonly ExperimentToolCall[],
+): Map<string, ToolOperation[]> {
+  const result = new Map<string, ToolOperation[]>();
+  for (const call of calls) {
+    for (const operation of projectToolOperations(call)) {
+      const operations = result.get(operation.resource) ?? [];
+      operations.push(operation);
+      result.set(operation.resource, operations);
+    }
+  }
+  return result;
+}
+
+function firstOperationSequence(row: ResourceComparisonRow): number {
+  return Math.min(
+    row.baseline[0]?.callSequence ?? Number.POSITIVE_INFINITY,
+    row.candidate[0]?.callSequence ?? Number.POSITIVE_INFINITY,
+  );
+}
+
+function operationLabel(kind: ToolOperation["kind"]): string {
+  return kind === "read" ? "Read"
+    : kind === "edit" ? "Edit"
+      : kind === "search" ? "Search"
+        : kind === "list" ? "List"
+          : kind === "verify" ? "Verify"
+            : "Run";
+}
+
 export function emptyLane(): LaneTrace {
-  return { status: "idle", calls: [], eventCount: 0 };
+  return {
+    status: "idle",
+    calls: [],
+    eventCount: 0,
+    protocolFrameCount: 0,
+    acpSessionIds: [],
+    pendingPermissions: [],
+    activities: [],
+  };
 }
 
 /** Merge a server page by stable call id while preserving the canonical order. */
@@ -238,7 +322,7 @@ export function applyLaneEvent(lane: LaneTrace, wrapper: StreamEvent): LaneTrace
     : wrapper.type === "lane-started"
       ? "running"
       : wrapper.type === "lane-finished"
-        ? "finished"
+        ? wrapper.result?.classification === "failed" ? "failed" : "finished"
         : wrapper.type === "lane-failed"
           ? "failed"
           : lane.status;
@@ -246,15 +330,90 @@ export function applyLaneEvent(lane: LaneTrace, wrapper: StreamEvent): LaneTrace
     return {
       ...lane,
       status,
+      ...((wrapper.type === "lane-finished" || wrapper.type === "lane-failed")
+        ? { pendingPermissions: [] }
+        : {}),
       ...(wrapper.type === "lane-failed" && wrapper.detail !== undefined ? { detail: wrapper.detail } : {}),
+      ...(wrapper.type === "lane-finished" && wrapper.result?.classification === "failed"
+        ? { detail: wrapper.result.executorError || "The trial finished with failed evidence." }
+        : {}),
     };
   }
+  const protocolEvent = wrapper.event.type === "protocol-observed" || wrapper.event.type === "permission-requested"
+    ? wrapper.event
+    : undefined;
+  const sessionId = protocolEvent?.sessionId;
+  const acpSessionIds = sessionId !== undefined && !lane.acpSessionIds.includes(sessionId)
+    ? [...lane.acpSessionIds, sessionId]
+    : lane.acpSessionIds;
+  const permissionEvent = wrapper.event.type === "permission-requested" ? wrapper.event : undefined;
+  const pendingPermissions = permissionEvent !== undefined
+    ? [...lane.pendingPermissions.filter((item) => item.requestId !== permissionEvent.requestId), {
+        runId: wrapper.runId ?? "run",
+        requestId: permissionEvent.requestId,
+        toolCallId: permissionEvent.toolCallId,
+        title: permissionEvent.title,
+        options: permissionEvent.options,
+      }]
+    : lane.pendingPermissions;
+  const activities = foldLaneActivities(lane.activities, wrapper.event, wrapper.runId ?? "run");
   return {
     ...lane,
     status,
     eventCount: lane.eventCount + 1,
+    protocolFrameCount: lane.protocolFrameCount + (protocolEvent === undefined ? 0 : 1),
+    acpSessionIds,
+    pendingPermissions,
+    activities,
     calls: foldCanonicalToolEvent(lane.calls, wrapper.laneId, wrapper.runId ?? "run", wrapper.event),
   };
+}
+
+export function globalStreamFailure(
+  wrapper: StreamEvent,
+): { status: "failed" | "cancelled"; detail: string } | undefined {
+  if (wrapper.laneId !== null) return undefined;
+  if (wrapper.type === "lane-failed") {
+    return { status: "failed", detail: wrapper.detail ?? "The comparison failed before any lane started." };
+  }
+  if (wrapper.type === "experiment-cancelled") {
+    return { status: "cancelled", detail: wrapper.detail ?? "The comparison was cancelled." };
+  }
+  return undefined;
+}
+
+function foldLaneActivities(
+  activities: LaneTrace["activities"],
+  event: NonNullable<StreamEvent["event"]>,
+  runId: string,
+): LaneTrace["activities"] {
+  const messageActivityId = "messageId" in event ? `${runId}:${event.messageId}` : undefined;
+  if (event.type === "assistant-message-started") {
+    return activities.some((item) => item.kind === "assistant" && item.id === messageActivityId)
+      ? activities
+      : [...activities, { kind: "assistant", id: messageActivityId!, text: "", complete: false }];
+  }
+  if (event.type === "assistant-text-delta") {
+    const exists = activities.some((item) => item.kind === "assistant" && item.id === messageActivityId);
+    const seeded = exists
+      ? activities
+      : [...activities, { kind: "assistant" as const, id: messageActivityId!, text: "", complete: false }];
+    return seeded.map((item) => item.kind === "assistant" && item.id === messageActivityId
+      ? { ...item, text: item.text + event.text }
+      : item);
+  }
+  if (event.type === "assistant-message-finished") {
+    return activities.map((item) => item.kind === "assistant" && item.id === messageActivityId
+      ? { ...item, complete: true }
+      : item);
+  }
+  if (event.type === "tool-call-started") {
+    const id = `tool:${runId}:${event.toolCallId}`;
+    return activities.some((item) => item.id === id)
+      ? activities
+      : [...activities, { kind: "tool", id, runId, toolCallId: event.toolCallId }];
+  }
+  return activities;
 }
 
 export function relationLabel(relation: ToolRelation): string {

@@ -10,6 +10,25 @@ export interface NormalizedToolCall {
   arguments: string;
 }
 
+export type ToolOperationKind = "read" | "edit" | "search" | "list" | "verify" | "command";
+
+export interface ToolOperation {
+  id: string;
+  callId: string;
+  callSequence: number;
+  callName: string;
+  kind: ToolOperationKind;
+  resource: string;
+  status: ExperimentToolCall["status"];
+}
+
+export interface ToolResultSummary {
+  outcome: "running" | "completed" | "failed" | "unavailable";
+  exitCode?: number;
+  durationMs?: number;
+  excerpt?: string;
+}
+
 export interface RelatedToolCall {
   relation: ToolRelation;
   score: number;
@@ -38,6 +57,72 @@ export function normalizeToolCall(call: ExperimentToolCall): NormalizedToolCall 
     tool: call.name.trim().toLowerCase(),
     resource: resourceFrom(call.input),
     arguments: canonicalJson(call.input ?? null),
+  };
+}
+
+/**
+ * Projects a provider call into observable operation atoms. A compound shell
+ * call remains one call through callId/callSequence while each recorded
+ * parsed_cmd or changed path becomes independently comparable.
+ */
+export function projectToolOperations(call: ExperimentToolCall): ToolOperation[] {
+  const input = objectRecord(call.input);
+  const operations: Array<Omit<ToolOperation, "id">> = [];
+  const parsed = Array.isArray(input?.parsed_cmd) ? input.parsed_cmd : [];
+  for (const value of parsed) {
+    const command = objectRecord(value);
+    if (command === null) continue;
+    const commandText = stringValue(command.cmd) ?? "";
+    const kind = operationKind(stringValue(command.type), commandText, call.name);
+    const resource = operationResource(command, kind, commandText);
+    operations.push(operationFrom(call, kind, resource));
+  }
+
+  const changes = objectRecord(input?.changes);
+  if (changes !== null) {
+    const namedResource = resourceFromToolName(call.name);
+    const entries = Object.keys(changes);
+    for (const path of entries) {
+      const resource = entries.length === 1 && namedResource !== null
+        ? namedResource
+        : normalizeOperationResource(path);
+      operations.push(operationFrom(call, "edit", resource));
+    }
+  }
+
+  if (operations.length === 0) {
+    const commandText = commandTextFrom(input);
+    const kind = operationKind(undefined, commandText, call.name);
+    const normalized = resourceFrom(input);
+    const resource = (normalized?.startsWith("command:") === true ? null : normalized)
+      ?? resourceFromToolName(call.name)
+      ?? resourceFromVerification(commandText, call.result)
+      ?? ".";
+    operations.push(operationFrom(call, kind, normalizeOperationResource(resource)));
+  }
+
+  const unique = new Map<string, Omit<ToolOperation, "id">>();
+  for (const operation of operations) {
+    unique.set(`${operation.kind}:${operation.resource}`, operation);
+  }
+  return [...unique.values()].map((operation, index) => ({
+    ...operation,
+    id: `${call.id}:operation:${index}`,
+  }));
+}
+
+export function summarizeToolResult(call: ExperimentToolCall): ToolResultSummary {
+  if (call.status === "running") return { outcome: "running" };
+  if (call.status === "result-unavailable") return { outcome: "unavailable" };
+  const parsed = parseResult(call.result);
+  const exitCode = numberValue(parsed?.exit_code) ?? numberValue(parsed?.exitCode);
+  const durationMs = durationFrom(parsed?.duration);
+  const excerpt = resultExcerpt(parsed, call.result);
+  return {
+    outcome: call.status === "failed" ? "failed" : "completed",
+    ...(exitCode === undefined ? {} : { exitCode }),
+    ...(durationMs === undefined ? {} : { durationMs }),
+    ...(excerpt === undefined ? {} : { excerpt }),
   };
 }
 
@@ -184,6 +269,126 @@ export function activityPhaseSequence(calls: readonly ExperimentToolCall[]): Act
     if (result.at(-1) !== activity.phase) result.push(activity.phase);
   }
   return result;
+}
+
+function operationFrom(
+  call: ExperimentToolCall,
+  kind: ToolOperationKind,
+  resource: string,
+): Omit<ToolOperation, "id"> {
+  return {
+    callId: call.id,
+    callSequence: call.sequence,
+    callName: call.name,
+    kind,
+    resource,
+    status: call.status,
+  };
+}
+
+function operationKind(type: string | undefined, command: string, toolName: string): ToolOperationKind {
+  const parsedType = type?.toLowerCase();
+  if (parsedType === "read") return "read";
+  if (parsedType === "search") return "search";
+  if (parsedType === "list_files" || parsedType === "list") return "list";
+  if (parsedType === "edit" || parsedType === "write" || parsedType === "patch") return "edit";
+  const value = `${command} ${toolName}`.toLowerCase();
+  if (/\b(read|cat|head|tail)\b/.test(value)) return "read";
+  if (/\b(edit|write|patch|replace|delete|remove|move)\b/.test(value)) return "edit";
+  if (/\b(search|find|grep)\b/.test(value)) return "search";
+  if (/\b(list_files|list|ls|rg\s+--files)\b/.test(value)) return "list";
+  if (/\b(test|lint|build|check|verify|typecheck|vitest|playwright)\b/.test(value)
+    || /\bgit\s+(diff|status|show)\b/.test(value)) return "verify";
+  return "command";
+}
+
+function operationResource(
+  command: Record<string, unknown>,
+  kind: ToolOperationKind,
+  commandText: string,
+): string {
+  const path = stringValue(command.path);
+  const query = stringValue(command.query);
+  if (kind === "search" && query !== undefined) return normalizeOperationResource(query);
+  if (path !== undefined && path !== "..") return normalizeOperationResource(path);
+  return resourceFromVerification(commandText) ?? ".";
+}
+
+function commandTextFrom(input: Record<string, unknown> | null): string {
+  const command = input?.command;
+  if (typeof command === "string") return command;
+  if (Array.isArray(command)) return command.filter((part): part is string => typeof part === "string").join(" ");
+  return "";
+}
+
+function resourceFromToolName(name: string): string | null {
+  const match = name.match(/<trial-root>[\\/]([^,]+?)(?:\s*$|,)/);
+  return match?.[1] === undefined ? null : normalizeOperationResource(match[1]);
+}
+
+function resourceFromVerification(command: string, result?: string): string | null {
+  const argument = command.match(/\bgit\s+diff\b[^;&|]*?\s--\s+["']?([^\s"';&|]+)/)?.[1];
+  if (argument !== undefined) return normalizeOperationResource(argument);
+  if (result === undefined) return null;
+  const parsed = parseResult(result);
+  const output = [parsed?.stdout, parsed?.aggregated_output, parsed?.formatted_output]
+    .find((value): value is string => typeof value === "string");
+  const diff = output?.match(/diff --git a\/([^\s]+) b\/[^\s]+/)?.[1];
+  return diff === undefined ? null : normalizeOperationResource(diff);
+}
+
+function normalizeOperationResource(value: string): string {
+  const normalized = normalizeResource(value).replace(/^command:/, "");
+  const worktree = normalized.lastIndexOf("/worktree/");
+  if (worktree >= 0) return normalized.slice(worktree + "/worktree/".length);
+  if (/^(?:[A-Za-z]:)?\//.test(normalized)) return normalized.split("/").at(-1) ?? normalized;
+  return normalized === "" ? "." : normalized;
+}
+
+function parseResult(result: string | undefined): Record<string, unknown> | null {
+  if (result === undefined) return null;
+  try {
+    const parsed: unknown = JSON.parse(result);
+    if (typeof parsed !== "string") return objectRecord(parsed);
+    return objectRecord(JSON.parse(parsed));
+  } catch {
+    return null;
+  }
+}
+
+function resultExcerpt(parsed: Record<string, unknown> | null, raw: string | undefined): string | undefined {
+  const value = [parsed?.stderr, parsed?.stdout, parsed?.formatted_output, raw]
+    .find((item): item is string => typeof item === "string" && item.trim() !== "");
+  if (value === undefined) return undefined;
+  const normalizedLines = value.includes("\n") ? value : value.replaceAll("/n", "\n");
+  const redacted = normalizedLines
+    .replaceAll("\\n", "\n")
+    .replace(/(?:\/[A-Za-z0-9._-]+)+\/worktree\//g, "<trial-root>/")
+    .trim();
+  return redacted.length <= 1_200 ? redacted : `${redacted.slice(0, 1_200)}\n…`;
+}
+
+function durationFrom(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.round(value);
+  const record = objectRecord(value);
+  if (record === null) return undefined;
+  const seconds = numberValue(record.secs) ?? 0;
+  const nanos = numberValue(record.nanos) ?? 0;
+  return Math.round(seconds * 1_000 + nanos / 1_000_000);
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function resourceFrom(input: unknown): string | null {

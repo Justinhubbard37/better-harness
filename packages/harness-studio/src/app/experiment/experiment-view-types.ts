@@ -19,6 +19,7 @@ export interface LaneDefinition {
 
 export interface ExperimentPreview {
   manifest: {
+    runtime?: { host: "qoder" | "acp" };
     lanes: LaneDefinition[];
     contrasts: Array<{ id: string; lanes: string[] }>;
     task: { prompt: string };
@@ -31,6 +32,16 @@ export interface ExperimentPreview {
   }>;
   setup: ExperimentSetupPreview;
   observedCalls: Record<string, ExperimentToolCall[]>;
+  acpAgents?: {
+    agents: Array<{
+      id: string;
+      label: string;
+      available: boolean;
+      modelPolicy: "lane" | "agent-default";
+      detail: string;
+    }>;
+    defaultAgentId?: string;
+  };
   observedCallPages?: Record<string, {
     nextCursor?: string;
     complete: boolean;
@@ -44,10 +55,26 @@ export interface LaneTrace {
   status: "history" | "idle" | "preparing" | "running" | "finished" | "failed" | "cancelled";
   calls: ExperimentToolCall[];
   eventCount: number;
+  protocolFrameCount: number;
+  acpSessionIds: string[];
+  pendingPermissions: PendingAcpPermission[];
+  activities: LaneActivity[];
   detail?: string;
   nextCursor?: string;
   hasMore?: boolean;
   loadingMore?: boolean;
+}
+
+export type LaneActivity =
+  | { kind: "assistant"; id: string; text: string; complete: boolean }
+  | { kind: "tool"; id: string; runId: string; toolCallId: string };
+
+export interface PendingAcpPermission {
+  runId: string;
+  requestId: string;
+  toolCallId: string;
+  title: string;
+  options: Array<{ optionId: string; name: string; kind?: string }>;
 }
 
 export interface ContrastResult {
@@ -64,6 +91,7 @@ export interface StreamEvent {
   runId: string | null;
   detail?: string;
   event?: CanonicalToolEvent;
+  result?: { classification?: "passed" | "failed"; executorError?: string };
   compareSet?: { contrasts: ContrastResult[] };
 }
 

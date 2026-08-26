@@ -63,11 +63,14 @@ export function ExperimentWorkbench(props: {
   running: boolean;
   experimentId: string | null;
   compareSet?: StreamEvent["compareSet"];
+  agentIds?: Readonly<Record<string, string>>;
   railCollapsed: boolean;
   onRailCollapsed: (value: boolean) => void;
   onSetup: () => void;
+  onSimple: () => void;
   onRun: () => void;
   onCancel: () => void;
+  onPermission: (laneId: string, runId: string, requestId: string, optionId: string) => void;
   onSelectRun: (id: string) => void;
   onSelectCall: (selection: Selection) => void;
   onActiveView: (view: CompareView) => void;
@@ -86,12 +89,15 @@ export function ExperimentWorkbench(props: {
   const resultRows = props.compareSet?.contrasts
     ?? props.preview.contrasts.map((item) => ({ id: item.id, lanes: item.lanes, status: "not-run", reason: item.attribution.detail }));
   const focusedResult = resultForPair(resultRows, props.baselineId, props.candidateId);
-  const comparability = deriveComparability(props.preview, baselineDefinition, candidateDefinition, baseline, candidate);
+  const comparability = deriveComparability(props.preview, baselineDefinition, candidateDefinition, baseline, candidate, props.agentIds);
   const totalCalls = Object.values(props.lanes).reduce((count, lane) => count + lane.calls.length, 0);
+  const pendingPermissions = Object.entries(props.lanes).flatMap(([laneId, lane]) =>
+    lane.pendingPermissions.map((permission) => ({ laneId, permission })));
   const treatment = deriveTreatmentSummary(props.preview);
   const freshDefinitions = props.preview.manifest.lanes.filter((lane) => lane.origin === "execute");
   const harnesses = [...new Set(freshDefinitions.map((lane) => lane.harnessId ?? "unknown"))].join(" · ");
   const runtimes = [...new Set(freshDefinitions.map((lane) => laneIdentityLabel(lane)))].join(" ↔ ");
+  const selectedAgents = [props.agentIds?.[props.baselineId], props.agentIds?.[props.candidateId]].filter(Boolean).join(" ↔ ");
   const compareTablist = useRovingTablist({ ids: COMPARE_VIEWS.map((view) => view.id), active: props.activeView, onSelect: props.onActiveView, panelId: "compare-view-panel" });
 
   return <section className={`experiment-shell${props.railCollapsed ? " rail-collapsed" : ""}`}>
@@ -99,7 +105,7 @@ export function ExperimentWorkbench(props: {
       <div className="notebook-brand"><strong>Harness Bench</strong><span>Experiment Notebook</span></div>
       <div className="notebook-navigation">{props.navigation}</div>
       <div className="notebook-document"><strong>Comparison workbench</strong><span>{treatment.value}</span></div>
-      <div className="notebook-bar-actions"><span className={`notebook-save-state${props.running ? " running" : ""}`}>{props.running ? "Running" : "Saved"}</span><button type="button" onClick={props.onSetup}>Setup</button><button className="rail-toggle" type="button" aria-label={props.railCollapsed ? "Show checkpoints" : "Hide checkpoints"} aria-expanded={!props.railCollapsed} onClick={() => props.onRailCollapsed(!props.railCollapsed)}>{props.railCollapsed ? "Checkpoints" : "Hide rail"}</button></div>
+      <div className="notebook-bar-actions"><span className={`notebook-save-state${props.running ? " running" : ""}`}>{props.running ? "Running" : "Saved"}</span><button type="button" onClick={props.onSimple}>Simple compare</button><button type="button" onClick={props.onSetup}>Setup</button><button className="rail-toggle" type="button" aria-label={props.railCollapsed ? "Show checkpoints" : "Hide checkpoints"} aria-expanded={!props.railCollapsed} onClick={() => props.onRailCollapsed(!props.railCollapsed)}>{props.railCollapsed ? "Checkpoints" : "Hide rail"}</button></div>
     </header>
 
     <div className="experiment-workspace">
@@ -109,7 +115,7 @@ export function ExperimentWorkbench(props: {
           <div className="notebook-context-grid">
             <article className="notebook-request"><small>Request</small><p>{compactPrompt(props.preview.setup.request.prompt)}</p><span>{requestProvenanceLabel(props.preview.setup.request.provenance)}</span></article>
             <article><small>Starting checkpoint</small><code title={props.preview.checkpoint.digest}>{shortDigest(props.preview.checkpoint.digest)}</code><span>{props.preview.setup.checkpointSource.revision.value}</span></article>
-            <article><small>Harness</small><strong>{harnesses || "unverified"}</strong><span>{runtimes || "runtime unavailable"}</span></article>
+            <article><small>Harness</small><strong>{harnesses || "unverified"}</strong><span>{selectedAgents || runtimes || "runtime unavailable"}</span></article>
             <article><small>{treatment.label}</small><strong>{treatment.value}</strong><span>{treatment.controlled ? "Single setting changed" : "Descriptive comparison"}</span></article>
           </div>
         </section>
@@ -117,11 +123,13 @@ export function ExperimentWorkbench(props: {
         <section className="notebook-cell notebook-run-cell" aria-labelledby="run-cell-title">
           <div className="notebook-cell-marker"><span>In [1]</span></div>
           <div className="notebook-cell-card">
-            <header className="compare-titlebar"><div><h2 id="run-cell-title">Run comparison</h2><p>Fresh runs execute from the shared checkpoint; the recorded run remains Reference evidence.</p></div><div className="compare-actions"><span className={`live-state${props.running ? " running" : ""}`}>{props.running ? "Streaming" : "Ready"}</span>{props.running ? <button className="secondary" onClick={props.onCancel}>Cancel comparison</button> : <button onClick={props.onRun}>Run comparison</button>}</div></header>
+            <header className="compare-titlebar"><div><h2 id="run-cell-title">Run comparison</h2><p>Fresh {props.preview.manifest.runtime?.host === "acp" ? "ACP " : ""}runs execute from the shared checkpoint; the recorded run remains Reference evidence.</p></div><div className="compare-actions"><span className={`live-state${props.running ? " running" : ""}`}>{props.running ? "Streaming" : "Ready"}</span>{props.running ? <button className="secondary" onClick={props.onCancel}>Cancel comparison</button> : <button onClick={props.onRun}>Run comparison</button>}</div></header>
             <section className="run-prompt"><small>Prompt</small><p>{compactPrompt(props.preview.setup.request.prompt)}</p></section>
+            {pendingPermissions.length > 0 && <section className="acp-permission-queue" aria-live="polite" aria-label="ACP permission requests"><header><strong>ACP permissions</strong><span>{pendingPermissions.length} waiting</span></header>{pendingPermissions.map(({ laneId, permission }) => <article key={`${permission.runId}:${permission.requestId}`}><div><small>{laneId}</small><strong>{permission.title}</strong><code>{permission.toolCallId}</code></div><div>{permission.options.map((option) => <button key={option.optionId} type="button" onClick={() => props.onPermission(laneId, permission.runId, permission.requestId, option.optionId)}>{option.name}</button>)}</div></article>)}</section>}
             <details className="run-process-summary"><summary><span>Process</span><em>{totalCalls} canonical tool calls across {props.preview.manifest.lanes.length} runs</em></summary><ol>{props.preview.manifest.lanes.map((definition) => {
               const run = props.lanes[definition.id] ?? emptyLane();
-              return <li key={definition.id}><strong>{roleFor(definition, props.baselineId, props.candidateId)} · {definition.id}</strong><span>{run.status}</span><em>{run.eventCount}{run.hasMore ? "+" : ""} events</em></li>;
+              const sessions = run.acpSessionIds.map(shortDigest).join(", ");
+              return <li key={definition.id}><strong>{roleFor(definition, props.baselineId, props.candidateId)} · {definition.id}</strong><span>{run.status}</span><em>{run.eventCount}{run.hasMore ? "+" : ""} events{run.protocolFrameCount > 0 ? ` · ${run.protocolFrameCount} ACP` : ""}{sessions ? ` · ${sessions}` : ""}</em></li>;
             })}</ol></details>
             <div className="run-output-label"><strong>Outputs</strong><span>Reference, Baseline, and Candidate stay evidence-distinct.</span></div>
             <div className="object-bar" aria-label="Comparison runs">{props.preview.manifest.lanes.map((definition) => {
