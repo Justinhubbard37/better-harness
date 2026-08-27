@@ -174,8 +174,15 @@ describe("checkpoint experiment runner", () => {
       expect.objectContaining({ experimentId: "exp_parallel_test", laneId: "default", runId: "exp_parallel_test:default:1" }),
       expect.objectContaining({ experimentId: "exp_parallel_test", laneId: "minimal", runId: "exp_parallel_test:minimal:1" }),
     ]));
-    expect(JSON.stringify(events)).not.toContain(root);
-    expect(JSON.stringify(events)).toContain("<trial-root>/README.md");
+    const serializedEvents = JSON.stringify(events);
+    expect(serializedEvents).not.toContain(root);
+    expect(serializedEvents).not.toContain(root.replaceAll("\\", "\\\\"));
+    const callEvent = events.find((event) => event.type === "lane-event"
+      && event.event.type === "tool-call-started");
+    // Redaction rewrites the trial root only; tool inputs keep host-native separators.
+    expect(callEvent?.type === "lane-event" && callEvent.event.type === "tool-call-started"
+      ? (callEvent.event.input as { path: string }).path.replaceAll("\\", "/")
+      : null).toBe("<trial-root>/README.md");
     const resultEvent = events.find((event) => event.type === "lane-event"
       && event.event.type === "tool-call-result");
     expect(resultEvent?.type === "lane-event" && resultEvent.event.type === "tool-call-result"
